@@ -1,0 +1,37 @@
+[Unit]
+Description=ShadowOps Security Discord Bot
+Documentation=https://github.com/commandershadow/shadowops-bot
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=cmdshadow
+Group=cmdshadow
+WorkingDirectory=/home/cmdshadow/shadowops-bot
+
+# Python mit Bot-Script
+ExecStart=/usr/bin/python3 /home/cmdshadow/shadowops-bot/src/bot.py
+
+# Restart-Policy
+Restart=always
+RestartSec=10
+
+# Limits
+LimitNOFILE=65536
+
+# Logs
+StandardOutput=journal
+StandardError=journal
+SyslogIdentifier=shadowops-bot
+
+# Security
+NoNewPrivileges=true
+PrivateTmp=true
+
+# Umgebungsvariablen
+Environment="PYTHONUNBUFFERED=1"
+Environment="PYTHONUTF8=1"
+
+[Install]
+WantedBy=multi-user.target

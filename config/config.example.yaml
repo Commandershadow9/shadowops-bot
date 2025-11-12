@@ -1,0 +1,82 @@
+# ShadowOps Discord Bot Configuration
+# Kopiere diese Datei zu config.yaml und fülle deine Werte ein
+
+discord:
+  # Bot Token vom Discord Developer Portal
+  token: "YOUR_BOT_TOKEN_HERE"
+
+  # Deine Discord Server ID (Guild ID)
+  # Rechtsklick auf Server → ID kopieren (Entwicklermodus muss aktiviert sein)
+  guild_id: 123456789012345678
+
+channels:
+  # Haupt-Channel für alle Security-Alerts
+  # Wenn spezifische Channels null sind, werden Alerts hierhin gesendet
+  security_alerts: 987654321012345678
+
+  # Optional: Separate Channels für verschiedene Alert-Typen
+  # Setze auf null um den Haupt-Channel zu nutzen
+  fail2ban: null
+  crowdsec: null
+  docker_scans: null
+  backups: null
+  aide: null
+  ssh: null
+
+# Projekt-Konfiguration
+# Ermöglicht Tagging und Filterung von Alerts nach Projekt
+projects:
+  sicherheitsdienst:
+    enabled: true
+    tag: "🛡️ [SECURITY]"
+    color: 0xE74C3C  # Rot
+
+  nexus:
+    enabled: true
+    tag: "⚡ [NEXUS]"
+    color: 0x3498DB  # Blau
+
+  server:
+    enabled: true
+    tag: "🖥️ [SERVER]"
+    color: 0x95A5A6  # Grau
+
+# Alert-Einstellungen
+alerts:
+  # Minimale Severity für Alerts: LOW, MEDIUM, HIGH, CRITICAL
+  min_severity: "HIGH"
+
+  # Rate Limiting: Sekunden zwischen identischen Alerts (verhindert Spam)
+  rate_limit_seconds: 60
+
+  # Mention Rollen bei kritischen Alerts
+  mention_roles:
+    critical: null  # Discord Role ID für @mention bei CRITICAL
+    high: null      # Discord Role ID für @mention bei HIGH
+
+# Log-Pfade (normalerweise nicht ändern)
+log_paths:
+  fail2ban: "/var/log/fail2ban/fail2ban.log"
+  crowdsec: "/var/log/crowdsec.log"
+  crowdsec_api: "/var/log/crowdsec_api.log"
+  aide: "/var/log/aide/aideinit.log"
+  docker_scans: "/var/log/trivy-scans"
+  auth: "journalctl"  # Nutzt journalctl für SSH-Logs
+  backup: "/var/backups/sicherheitsdienst-db"
+
+# Command Permissions
+permissions:
+  # User IDs die Admin-Commands nutzen dürfen
+  admins:
+    - 123456789012345678  # Deine Discord User ID
+
+# Bot-Verhalten
+bot:
+  # Status-Nachricht
+  status: "🔒 Monitoring Security"
+
+  # Auto-Reconnect bei Verbindungsproblemen
+  auto_reconnect: true
+
+  # Debug-Modus (mehr Logs)
+  debug: false

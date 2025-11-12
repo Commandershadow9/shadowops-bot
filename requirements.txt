@@ -1,0 +1,13 @@
+# Discord Bot Framework
+discord.py==2.3.2
+aiohttp==3.9.1
+
+# Configuration
+PyYAML==6.0.1
+
+# Utilities
+python-dateutil==2.8.2
+pytz==2024.1
+
+# Logging
+coloredlogs==15.0.1
