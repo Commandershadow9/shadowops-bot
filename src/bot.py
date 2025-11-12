@@ -34,10 +34,10 @@ class ShadowOpsBot(commands.Bot):
         self.config = get_config()
         self.logger = setup_logger("shadowops", self.config.debug_mode)
 
-        # Discord Intents
+        # Discord Intents (ohne Privileged Intents)
         intents = discord.Intents.default()
-        intents.message_content = True
-        intents.guild_messages = True
+        # intents.message_content = True  # Nicht benötigt für Slash Commands
+        # intents.guild_messages = True   # Nicht benötigt für Slash Commands
 
         super().__init__(
             command_prefix="!",  # Fallback, wir nutzen Slash Commands

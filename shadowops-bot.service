@@ -10,8 +10,8 @@ User=cmdshadow
 Group=cmdshadow
 WorkingDirectory=/home/cmdshadow/shadowops-bot
 
-# Python mit Bot-Script
-ExecStart=/usr/bin/python3 /home/cmdshadow/shadowops-bot/src/bot.py
+# Python mit Bot-Script (Virtual Environment)
+ExecStart=/home/cmdshadow/shadowops-bot/venv/bin/python3 /home/cmdshadow/shadowops-bot/src/bot.py
 
 # Restart-Policy
 Restart=always
