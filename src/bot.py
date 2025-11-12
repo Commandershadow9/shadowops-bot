@@ -127,6 +127,7 @@ class ShadowOpsBot(commands.Bot):
             await self.monitor_fail2ban()
             await self.monitor_crowdsec()
             await self.monitor_docker()
+            await self.monitor_aide()
 
         except Exception as e:
             self.logger.error(f"❌ Fehler im Security Monitor: {e}", exc_info=True)
@@ -160,9 +161,40 @@ class ShadowOpsBot(commands.Bot):
             self.logger.info(f"🚫 Fail2ban Ban: {ip} (Jail: {jail})")
 
     async def monitor_crowdsec(self):
-        """Monitort CrowdSec für neue Alerts (simplified)"""
-        # Vereinfachte Implementierung - könnte erweitert werden mit Log-Parsing
-        pass
+        """Monitort CrowdSec für neue Threats"""
+        # Hole neueste Alerts
+        alerts = self.crowdsec.get_recent_alerts(limit=10)
+
+        if not alerts:
+            return
+
+        # Prüfe jeden Alert
+        for alert in alerts:
+            alert_id = alert.get('id', '')
+            source_ip = alert.get('source_ip', 'Unknown')
+            scenario = alert.get('scenario', 'Unknown')
+            country = alert.get('source_country', '')
+
+            # Rate Limiting pro Alert-ID
+            alert_key = f"crowdsec_{alert_id}"
+            if self.is_rate_limited(alert_key, limit_seconds=3600):  # 1 Stunde
+                continue
+
+            # Prüfe ob Scenario kritisch ist (AI-basierte oder kritische Szenarien)
+            is_critical = any(keyword in scenario.lower() for keyword in [
+                'exploit', 'vulnerability', 'cve', 'attack', 'injection',
+                'bruteforce', 'scan', 'probe', 'dos', 'ddos'
+            ])
+
+            if is_critical:
+                # Erstelle Embed
+                embed = EmbedBuilder.crowdsec_alert(source_ip, scenario, country)
+
+                # Sende zu Critical Channel
+                critical_channel_id = self.config.get_channel_for_alert('critical')
+                await self.send_alert(critical_channel_id, embed, self.config.mention_role_critical)
+
+                self.logger.info(f"🛡️ CrowdSec Alert: {source_ip} ({scenario})")
 
     async def monitor_docker(self):
         """Monitort Docker Security Scans für neue Ergebnisse"""
@@ -202,6 +234,40 @@ class ShadowOpsBot(commands.Bot):
                     await self.send_alert(critical_channel_id, embed, self.config.mention_role_critical)
 
             self.logger.info(f"🐳 Docker Scan Alert: {critical} CRITICAL, {high} HIGH")
+
+    async def monitor_aide(self):
+        """Monitort AIDE File Integrity Checks"""
+        # Hole letzte Check-Ergebnisse
+        results = self.aide.get_last_check_results()
+
+        if not results:
+            return
+
+        timestamp = results.get('timestamp', '')
+        files_changed = results.get('files_changed', 0)
+        files_added = results.get('files_added', 0)
+        files_removed = results.get('files_removed', 0)
+
+        # Rate Limiting - nur alle 6 Stunden für denselben Check
+        alert_key = f"aide_check_{timestamp}"
+        if self.is_rate_limited(alert_key, limit_seconds=21600):  # 6 Stunden
+            return
+
+        # Alert nur bei Änderungen
+        total_changes = files_changed + files_added + files_removed
+        if total_changes > 0:
+            # Erstelle Embed
+            embed = EmbedBuilder.aide_check(
+                files_changed=files_changed,
+                files_added=files_added,
+                files_removed=files_removed
+            )
+
+            # Sende zu Critical Channel (File Integrity ist kritisch!)
+            critical_channel_id = self.config.get_channel_for_alert('critical')
+            await self.send_alert(critical_channel_id, embed, self.config.mention_role_critical)
+
+            self.logger.info(f"🔒 AIDE Alert: {total_changes} Datei-Änderungen erkannt")
 
 
 # ========================
