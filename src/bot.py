@@ -90,12 +90,14 @@ class ShadowOpsBot(commands.Bot):
         """Error Handler"""
         self.logger.error(f"❌ Fehler in Event {event}", exc_info=True)
 
-    def is_rate_limited(self, alert_key: str) -> bool:
+    def is_rate_limited(self, alert_key: str, limit_seconds: Optional[int] = None) -> bool:
         """Prüft ob Alert rate-limited ist"""
         now = datetime.now()
+        limit = limit_seconds if limit_seconds else self.config.rate_limit_seconds
+
         if alert_key in self.recent_alerts:
             last_time = self.recent_alerts[alert_key]
-            if (now - last_time).seconds < self.config.rate_limit_seconds:
+            if (now - last_time).seconds < limit:
                 return True
         self.recent_alerts[alert_key] = now
         return False
@@ -124,6 +126,7 @@ class ShadowOpsBot(commands.Bot):
         try:
             await self.monitor_fail2ban()
             await self.monitor_crowdsec()
+            await self.monitor_docker()
 
         except Exception as e:
             self.logger.error(f"❌ Fehler im Security Monitor: {e}", exc_info=True)
@@ -160,6 +163,45 @@ class ShadowOpsBot(commands.Bot):
         """Monitort CrowdSec für neue Alerts (simplified)"""
         # Vereinfachte Implementierung - könnte erweitert werden mit Log-Parsing
         pass
+
+    async def monitor_docker(self):
+        """Monitort Docker Security Scans für neue Ergebnisse"""
+        # Hole neueste Scan-Ergebnisse
+        results = self.docker.get_latest_scan_results()
+
+        if not results:
+            return
+
+        # Rate Limiting - nur alle 5 Minuten für denselben Scan
+        alert_key = f"docker_scan_{results.get('date', '')}"
+        if self.is_rate_limited(alert_key, limit_seconds=300):  # 5 Minuten
+            return
+
+        critical = results.get('critical', 0)
+        high = results.get('high', 0)
+
+        # Nur Alert senden wenn CRITICAL oder HIGH gefunden
+        if critical > 0 or high > 0:
+            # Erstelle Embed
+            embed = EmbedBuilder.docker_scan_result(
+                total_images=results.get('images', 0),
+                critical=critical,
+                high=high,
+                medium=results.get('medium', 0),
+                low=results.get('low', 0)
+            )
+
+            # Sende zu Docker Channel
+            docker_channel_id = self.config.get_channel_for_alert('docker')
+            await self.send_alert(docker_channel_id, embed, self.config.mention_role_critical if critical > 0 else None)
+
+            # Wenn CRITICAL: auch zu Critical Channel
+            if critical > 0:
+                critical_channel_id = self.config.get_channel_for_alert('critical')
+                if critical_channel_id != docker_channel_id:
+                    await self.send_alert(critical_channel_id, embed, self.config.mention_role_critical)
+
+            self.logger.info(f"🐳 Docker Scan Alert: {critical} CRITICAL, {high} HIGH")
 
 
 # ========================
