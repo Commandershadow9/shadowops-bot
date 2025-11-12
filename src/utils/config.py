@@ -41,8 +41,8 @@ class Config:
             raise ValueError("Guild ID fehlt in config.yaml!")
 
         # Mindestens ein Channel erforderlich
-        if not self.security_alerts_channel:
-            raise ValueError("security_alerts Channel-ID fehlt in config.yaml!")
+        if not self.fallback_channel:
+            raise ValueError("Mindestens ein Channel muss konfiguriert sein!")
 
     # Discord Settings
     @property
@@ -55,52 +55,88 @@ class Config:
 
     # Channels
     @property
-    def security_alerts_channel(self) -> int:
-        return int(self._config.get('channels', {}).get('security_alerts', 0))
+    def critical_channel(self) -> int:
+        """Kanal für CRITICAL Alerts"""
+        ch = self._config.get('channels', {}).get('critical')
+        return int(ch) if ch else self.fallback_channel
 
     @property
-    def fail2ban_channel(self) -> Optional[int]:
-        channel = self._config.get('channels', {}).get('fail2ban')
-        return int(channel) if channel else None
+    def sicherheitsdienst_channel(self) -> int:
+        """Kanal für Sicherheitsdienst-Projekt"""
+        ch = self._config.get('channels', {}).get('sicherheitsdienst')
+        return int(ch) if ch else self.fallback_channel
 
     @property
-    def crowdsec_channel(self) -> Optional[int]:
-        channel = self._config.get('channels', {}).get('crowdsec')
-        return int(channel) if channel else None
+    def nexus_channel(self) -> int:
+        """Kanal für NEXUS-Projekt"""
+        ch = self._config.get('channels', {}).get('nexus')
+        return int(ch) if ch else self.fallback_channel
 
     @property
-    def docker_scans_channel(self) -> Optional[int]:
-        channel = self._config.get('channels', {}).get('docker_scans')
-        return int(channel) if channel else None
+    def fail2ban_channel(self) -> int:
+        ch = self._config.get('channels', {}).get('fail2ban')
+        return int(ch) if ch else self.critical_channel
 
     @property
-    def backups_channel(self) -> Optional[int]:
-        channel = self._config.get('channels', {}).get('backups')
-        return int(channel) if channel else None
+    def crowdsec_channel(self) -> int:
+        ch = self._config.get('channels', {}).get('crowdsec')
+        return int(ch) if ch else self.critical_channel
 
     @property
-    def aide_channel(self) -> Optional[int]:
-        channel = self._config.get('channels', {}).get('aide')
-        return int(channel) if channel else None
+    def docker_channel(self) -> int:
+        ch = self._config.get('channels', {}).get('docker')
+        return int(ch) if ch else self.critical_channel
 
     @property
-    def ssh_channel(self) -> Optional[int]:
-        channel = self._config.get('channels', {}).get('ssh')
-        return int(channel) if channel else None
+    def backups_channel(self) -> int:
+        ch = self._config.get('channels', {}).get('backups')
+        return int(ch) if ch else self.fallback_channel
 
-    def get_channel_for_alert(self, alert_type: str) -> int:
-        """Gibt die richtige Channel-ID für einen Alert-Typ zurück"""
+    @property
+    def aide_channel(self) -> int:
+        ch = self._config.get('channels', {}).get('aide')
+        return int(ch) if ch else self.critical_channel
+
+    @property
+    def ssh_channel(self) -> int:
+        ch = self._config.get('channels', {}).get('ssh')
+        return int(ch) if ch else self.critical_channel
+
+    @property
+    def fallback_channel(self) -> int:
+        """Fallback wenn kein spezifischer Channel definiert"""
+        return int(self._config.get('channels', {}).get('security_alerts',
+                   self._config.get('channels', {}).get('critical', 0)))
+
+    def get_channel_for_alert(self, alert_type: str, project: Optional[str] = None) -> int:
+        """
+        Gibt die richtige Channel-ID für einen Alert-Typ zurück
+
+        Args:
+            alert_type: fail2ban, crowdsec, docker, backup, aide, ssh
+            project: sicherheitsdienst, nexus (optional)
+
+        Returns:
+            Channel ID
+        """
+        # Projekt-spezifische Channels
+        if project == 'sicherheitsdienst':
+            return self.sicherheitsdienst_channel
+        elif project == 'nexus':
+            return self.nexus_channel
+
+        # Alert-Typ-spezifische Channels
         channel_map = {
             'fail2ban': self.fail2ban_channel,
             'crowdsec': self.crowdsec_channel,
-            'docker': self.docker_scans_channel,
+            'docker': self.docker_channel,
             'backup': self.backups_channel,
             'aide': self.aide_channel,
             'ssh': self.ssh_channel,
+            'critical': self.critical_channel,
         }
 
-        # Nutze spezifischen Channel oder fallback zu security_alerts
-        return channel_map.get(alert_type) or self.security_alerts_channel
+        return channel_map.get(alert_type, self.fallback_channel)
 
     # Projects
     @property

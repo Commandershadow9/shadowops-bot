@@ -1,0 +1,138 @@
+# ShadowOps Multi-Guild Configuration
+# Unterstützt mehrere Discord-Server mit unterschiedlichen Channels
+
+discord:
+  token: "YOUR_BOT_TOKEN"
+
+  # Hauptserver für Slash Commands (dein Dev-Server)
+  primary_guild_id: 1438065435496157267
+
+# Multi-Guild Channel-Mapping
+# Der Bot kann auf mehreren Servern sein und Alerts intelligent verteilen
+guilds:
+  # DEIN DEV-DISCORD (bekommt ALLES)
+  "1438065435496157267":  # Guild ID
+    name: "CommanderShadow Dev Server"
+    enabled: true
+
+    # Welche Projekte soll dieser Server monitoren?
+    projects:
+      - sicherheitsdienst
+      - nexus
+      - server
+
+    # Channel-Zuordnung
+    channels:
+      # Critical/High Alerts von ALLEN Projekten
+      critical_all: 1234567890  # Channel ID für kritische Alerts
+      high_all: 1234567891      # Channel ID für High Alerts
+
+      # Sicherheitsdienst-spezifisch
+      sicherheitsdienst_alerts: 1234567892
+      sicherheitsdienst_docker: 1234567893
+      sicherheitsdienst_backups: 1234567894
+
+      # NEXUS-spezifisch
+      nexus_alerts: 1234567895
+      nexus_docker: 1234567896
+      nexus_backups: 1234567897
+
+      # Server-wide (Fail2ban, SSH, CrowdSec, AIDE)
+      server_fail2ban: 1234567898
+      server_crowdsec: 1234567899
+      server_aide: 1234567900
+      server_ssh: 1234567901
+
+      # Fallback für alles andere
+      general: 1438100552977350717
+
+  # KUNDEN-DISCORD: Sicherheitsdienst
+  "9999999999999999999":  # Kunden Guild ID (ersetzen!)
+    name: "Sicherheitsdienst Kunde"
+    enabled: true
+
+    # Nur Sicherheitsdienst-Alerts
+    projects:
+      - sicherheitsdienst
+
+    # Minimale Severity für Kunden (nur wichtige Sachen)
+    min_severity: "HIGH"
+
+    channels:
+      # Kunden sehen nur High/Critical
+      security_alerts: 1111111111  # Channel ID beim Kunden
+      docker_scans: 1111111112
+      backups: 1111111113
+      # Server-Alerts nur wenn kritisch
+      server_critical: 1111111114
+
+  # KUNDEN-DISCORD: NEXUS (Beispiel für 2. Kunde)
+  "8888888888888888888":  # 2. Kunden Guild ID
+    name: "NEXUS Kunde"
+    enabled: true
+
+    projects:
+      - nexus
+
+    min_severity: "HIGH"
+
+    channels:
+      security_alerts: 2222222221
+      docker_scans: 2222222222
+      backups: 2222222223
+
+# Projekt-Konfiguration (global)
+projects:
+  sicherheitsdienst:
+    enabled: true
+    tag: "🛡️ [SECURITY]"
+    color: 0xE74C3C
+
+  nexus:
+    enabled: true
+    tag: "⚡ [NEXUS]"
+    color: 0x3498DB
+
+  server:
+    enabled: true
+    tag: "🖥️ [SERVER]"
+    color: 0x95A5A6
+
+# Alert-Einstellungen (global defaults)
+alerts:
+  min_severity: "MEDIUM"  # Default, kann pro Guild überschrieben werden
+  rate_limit_seconds: 60
+
+  # Mention Rollen (optional, pro Guild unterschiedlich)
+  mention_roles:
+    critical: null
+    high: null
+
+# Log-Pfade (global)
+log_paths:
+  fail2ban: "/var/log/fail2ban/fail2ban.log"
+  crowdsec: "/var/log/crowdsec.log"
+  crowdsec_api: "/var/log/crowdsec_api.log"
+  aide: "/var/log/aide/aideinit.log"
+  docker_scans: "/var/log/trivy-scans"
+  auth: "journalctl"
+  backup: "/var/backups/sicherheitsdienst-db"
+
+# Permissions (global)
+permissions:
+  # Deine User ID (hat auf allen Servern Admin-Rechte)
+  super_admins:
+    - 123456789012345678  # Deine Discord User ID
+
+  # Server-spezifische Admins (optional)
+  guild_admins:
+    "1438065435496157267":  # Dein Dev-Server
+      - 123456789012345678  # Du
+    "9999999999999999999":  # Kunden-Server
+      - 987654321098765432  # Kunde
+
+# Bot-Verhalten
+bot:
+  status: "🔒 Monitoring {guild_count} Servers"
+  auto_reconnect: true
+  debug: false
