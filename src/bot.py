@@ -60,6 +60,120 @@ class ShadowOpsBot(commands.Bot):
         # Rate Limiting für Alerts
         self.recent_alerts = {}
 
+    async def _setup_auto_remediation_channels(self):
+        """
+        Erstellt automatisch Discord Channels für Auto-Remediation
+        und speichert die Channel-IDs in der Config
+        """
+        try:
+            self.logger.info("🔧 Prüfe Auto-Remediation Channels...")
+
+            # Hole Guild
+            guild = self.get_guild(self.config.guild_id)
+            if not guild:
+                self.logger.error(f"❌ Guild {self.config.guild_id} nicht gefunden!")
+                return
+
+            # Channel-Namen aus Config
+            channel_names = self.config.auto_remediation.get('channel_names', {})
+            alerts_name = channel_names.get('alerts', '🤖-auto-remediation-alerts')
+            approvals_name = channel_names.get('approvals', '✋-auto-remediation-approvals')
+            stats_name = channel_names.get('stats', '📊-auto-remediation-stats')
+
+            # Aktuelle Channel-IDs aus Config
+            notifications = self.config.auto_remediation.get('notifications', {})
+
+            channels_to_create = [
+                ('alerts', alerts_name, notifications.get('alerts_channel')),
+                ('approvals', approvals_name, notifications.get('approvals_channel')),
+                ('stats', stats_name, notifications.get('stats_channel')),
+            ]
+
+            channels_created = False
+            channel_ids = {}
+
+            for channel_type, channel_name, current_id in channels_to_create:
+                # Prüfe ob Channel bereits existiert (by ID)
+                if current_id:
+                    existing_channel = guild.get_channel(current_id)
+                    if existing_channel:
+                        self.logger.info(f"✅ Channel '{channel_name}' existiert bereits (ID: {current_id})")
+                        channel_ids[f'{channel_type}_channel'] = current_id
+                        continue
+
+                # Prüfe ob Channel existiert (by name)
+                existing_channel = discord.utils.get(guild.text_channels, name=channel_name)
+                if existing_channel:
+                    self.logger.info(f"✅ Channel '{channel_name}' gefunden (ID: {existing_channel.id})")
+                    channel_ids[f'{channel_type}_channel'] = existing_channel.id
+                    channels_created = True
+                    continue
+
+                # Channel existiert nicht → erstellen
+                self.logger.info(f"📝 Erstelle Channel: {channel_name}")
+
+                # Erstelle Channel mit passender Description
+                descriptions = {
+                    'alerts': '🤖 Live-Updates aller Auto-Remediation Fixes',
+                    'approvals': '✋ Human-Approval Requests für kritische Fixes',
+                    'stats': '📊 Tägliche Auto-Remediation Statistiken'
+                }
+
+                new_channel = await guild.create_text_channel(
+                    name=channel_name,
+                    topic=descriptions.get(channel_type, 'Auto-Remediation System'),
+                    reason="Auto-Remediation System Setup"
+                )
+
+                self.logger.info(f"✅ Channel '{channel_name}' erstellt (ID: {new_channel.id})")
+                channel_ids[f'{channel_type}_channel'] = new_channel.id
+                channels_created = True
+
+            # Update Config mit Channel-IDs
+            if channels_created:
+                self.logger.info("💾 Speichere Channel-IDs in Config...")
+                await self._update_config_channel_ids(channel_ids)
+
+                # Update runtime config
+                if 'notifications' not in self.config.auto_remediation:
+                    self.config.auto_remediation['notifications'] = {}
+                self.config.auto_remediation['notifications'].update(channel_ids)
+
+                self.logger.info("✅ Auto-Remediation Channels setup komplett!")
+            else:
+                self.logger.info("ℹ️ Alle Channels existieren bereits")
+
+        except Exception as e:
+            self.logger.error(f"❌ Fehler beim Setup der Auto-Remediation Channels: {e}", exc_info=True)
+
+    async def _update_config_channel_ids(self, channel_ids: dict):
+        """Schreibt Channel-IDs zurück in config.yaml"""
+        try:
+            import yaml
+            from pathlib import Path
+
+            config_path = Path(__file__).parent.parent / 'config' / 'config.yaml'
+
+            # Lese aktuelle Config
+            with open(config_path, 'r', encoding='utf-8') as f:
+                config_data = yaml.safe_load(f)
+
+            # Update notifications section
+            if 'auto_remediation' in config_data:
+                if 'notifications' not in config_data['auto_remediation']:
+                    config_data['auto_remediation']['notifications'] = {}
+
+                config_data['auto_remediation']['notifications'].update(channel_ids)
+
+            # Schreibe zurück
+            with open(config_path, 'w', encoding='utf-8') as f:
+                yaml.dump(config_data, f, allow_unicode=True, default_flow_style=False, sort_keys=False)
+
+            self.logger.info("✅ Config-Datei aktualisiert mit Channel-IDs")
+
+        except Exception as e:
+            self.logger.warning(f"⚠️ Konnte Config-Datei nicht aktualisieren: {e}")
+
     async def setup_hook(self):
         """Setup Hook - wird beim Start aufgerufen"""
         self.logger.info("🗡️ ShadowOps Bot startet...")
@@ -70,6 +184,10 @@ class ShadowOpsBot(commands.Bot):
         await self.tree.sync(guild=guild)
 
         self.logger.info(f"✅ Slash Commands synchronisiert für Guild {self.config.guild_id}")
+
+        # Auto-Create Channels für Auto-Remediation (falls aktiviert)
+        if self.config.auto_remediation.get('enabled', False) and self.config.auto_remediation.get('auto_create_channels', False):
+            await self._setup_auto_remediation_channels()
 
         # Initialisiere Auto-Remediation (falls aktiviert)
         if self.config.auto_remediation.get('enabled', False):

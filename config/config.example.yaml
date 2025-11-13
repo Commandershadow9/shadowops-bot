@@ -86,51 +86,57 @@ bot:
 # ====================================
 auto_remediation:
   # Aktiviert/Deaktiviert das komplette Auto-Remediation System
-  enabled: false  # Setze auf true um Auto-Remediation zu aktivieren
+  enabled: true  # ✅ System ist bereit!
 
   # Approval Mode: Bestimmt wann Human-Approval erforderlich ist
-  # - paranoid: JEDER Fix benötigt manuelle Freigabe (sicherste Option, empfohlen für Start)
-  # - balanced: LOW/MEDIUM werden auto-fixed, HIGH/CRITICAL benötigen Freigabe (empfohlen nach Testphase)
-  # - aggressive: Nur CRITICAL benötigt Freigabe, alles andere wird auto-fixed (NUR für Experten!)
-  approval_mode: "paranoid"
+  # - paranoid: JEDER Fix benötigt manuelle Freigabe (empfohlen für Start)
+  # - balanced: LOW/MEDIUM werden auto-fixed, HIGH/CRITICAL benötigen Freigabe
+  # - aggressive: Nur CRITICAL benötigt Freigabe (NUR für Experten!)
+  approval_mode: "paranoid"  # Sicherster Start-Modus
 
   # Scan Intervals (in Sekunden) - EFFICIENT Mode
-  # Event-Driven: Verschiedene Intervalle basierend auf Urgency
   scan_intervals:
-    trivy: 21600      # 6 Stunden - Docker Scans sind langsam und ressourcenintensiv
-    crowdsec: 30      # 30 Sekunden - Aktive Bedrohungen müssen schnell erkannt werden
-    fail2ban: 30      # 30 Sekunden - Neue Bans schnell erfassen
-    aide: 900         # 15 Minuten - File Integrity Checks sind moderat wichtig
+    trivy: 21600      # 6 Stunden - Docker Scans sind langsam
+    crowdsec: 30      # 30 Sekunden - Aktive Threats schnell erfassen
+    fail2ban: 30      # 30 Sekunden - Neue Bans schnell erkennen
+    aide: 900         # 15 Minuten - File Integrity moderat wichtig
 
   # Circuit Breaker: Stoppt System automatisch bei zu vielen Fehlern
-  circuit_breaker_threshold: 5      # Nach 5 Failures wird System gestoppt
-  circuit_breaker_timeout: 3600     # Cooldown: 1 Stunde (3600 Sekunden)
+  circuit_breaker_threshold: 5      # Nach 5 Failures → STOP
+  circuit_breaker_timeout: 3600     # Cooldown: 1 Stunde
 
   # Self-Healing Retry Settings
   max_retry_attempts: 3             # Max. 3 Versuche pro Fix
 
-  # Discord Notifications für Auto-Remediation
-  # WICHTIG: Erstelle diese Channels manuell in Discord!
+  # ✨ AUTO-CREATE CHANNELS (NEU!)
+  # Bot erstellt Discord Channels automatisch beim Start!
+  auto_create_channels: true        # Bot erstellt Channels automatisch!
+
+  # Discord Channel-Namen (werden automatisch erstellt)
+  channel_names:
+    alerts: "🤖-auto-remediation-alerts"
+    approvals: "✋-auto-remediation-approvals"
+    stats: "📊-auto-remediation-stats"
+
+  # Channel-IDs (werden automatisch gesetzt nach Erstellung)
   notifications:
-    # Channel für alle Auto-Fix Alerts (Live-Updates)
-    alerts_channel: null            # Discord Channel ID hier eintragen
+    alerts_channel: null      # Wird automatisch gesetzt
+    approvals_channel: null   # Wird automatisch gesetzt
+    stats_channel: null       # Wird automatisch gesetzt
 
-    # Channel für Human-Approval Requests
-    approvals_channel: null         # Discord Channel ID hier eintragen
-
-    # Channel für tägliche Statistiken
-    stats_channel: null             # Discord Channel ID hier eintragen
-
-# AI Service Configuration (optional, für erweiterte Fixes)
+# ====================================
+# AI SERVICE CONFIGURATION
+# ====================================
+# WICHTIG: Trage hier deine API Keys ein!
 ai:
   # OpenAI GPT-4 (für intelligente Fix-Strategie-Generierung)
   openai:
-    enabled: false
-    api_key: "sk-proj-YOUR_OPENAI_KEY_HERE"
+    enabled: false  # Setze auf true nach API Key Eintragung
+    api_key: "sk-proj-YOUR_OPENAI_KEY_HERE"  # ⚠️ API KEY HIER EINTRAGEN!
     model: "gpt-4-turbo-preview"
 
   # Anthropic Claude (Alternative/Zusätzlich zu GPT-4)
   anthropic:
-    enabled: false
-    api_key: "sk-ant-YOUR_ANTHROPIC_KEY_HERE"
+    enabled: false  # Setze auf true nach API Key Eintragung
+    api_key: "sk-ant-YOUR_ANTHROPIC_KEY_HERE"  # ⚠️ API KEY HIER EINTRAGEN!
     model: "claude-3-opus-20240229"
