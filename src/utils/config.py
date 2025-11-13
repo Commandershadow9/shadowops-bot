@@ -199,6 +199,24 @@ class Config:
     def auto_reconnect(self) -> bool:
         return self._config.get('bot', {}).get('auto_reconnect', True)
 
+    # Auto-Remediation Settings
+    @property
+    def auto_remediation(self) -> Dict[str, Any]:
+        """Auto-Remediation System Config"""
+        return self._config.get('auto_remediation', {})
+
+    # AI Settings
+    @property
+    def ai(self) -> Dict[str, Any]:
+        """AI Service Config (OpenAI, Anthropic)"""
+        return self._config.get('ai', {})
+
+    # Direct Channels Access
+    @property
+    def channels(self) -> Dict[str, Any]:
+        """Direct access to channels dict"""
+        return self._config.get('channels', {})
+
 
 # Globale Config-Instanz
 config: Optional[Config] = None
