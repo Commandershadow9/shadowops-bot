@@ -62,11 +62,11 @@ class ShadowOpsBot(commands.Bot):
 
     async def _setup_auto_remediation_channels(self):
         """
-        Erstellt automatisch Discord Channels für Auto-Remediation
+        Erstellt automatisch ALLE benötigten Discord Channels
         und speichert die Channel-IDs in der Config
         """
         try:
-            self.logger.info("🔧 Prüfe Auto-Remediation Channels...")
+            self.logger.info("🔧 Prüfe und erstelle Discord Channels...")
 
             # Hole Guild
             guild = self.get_guild(self.config.guild_id)
@@ -74,80 +74,132 @@ class ShadowOpsBot(commands.Bot):
                 self.logger.error(f"❌ Guild {self.config.guild_id} nicht gefunden!")
                 return
 
-            # Channel-Namen aus Config
-            channel_names = self.config.auto_remediation.get('channel_names', {})
-            alerts_name = channel_names.get('alerts', '🤖-auto-remediation-alerts')
-            approvals_name = channel_names.get('approvals', '✋-auto-remediation-approvals')
-            stats_name = channel_names.get('stats', '📊-auto-remediation-stats')
+            # Prüfe Bot Permissions
+            bot_member = guild.get_member(self.user.id)
+            if not bot_member:
+                self.logger.error("❌ Bot-Member nicht gefunden!")
+                return
 
-            # Aktuelle Channel-IDs aus Config
-            notifications = self.config.auto_remediation.get('notifications', {})
+            if not bot_member.guild_permissions.manage_channels:
+                self.logger.error("❌ Bot hat keine 'Manage Channels' Permission!")
+                self.logger.error("   Bitte gebe dem Bot die 'Manage Channels' Berechtigung in Discord!")
+                return
 
-            channels_to_create = [
-                ('alerts', alerts_name, notifications.get('alerts_channel')),
-                ('approvals', approvals_name, notifications.get('approvals_channel')),
-                ('stats', stats_name, notifications.get('stats_channel')),
-            ]
+            self.logger.info("✅ Bot hat 'Manage Channels' Permission")
+
+            # ============================================
+            # TEIL 1: ALLE STANDARD CHANNELS PRÜFEN
+            # ============================================
+            standard_channels = {
+                'critical': ('🔴-critical', 'Kritische Security Alerts - Sofortige Reaktion erforderlich'),
+                'sicherheitsdienst': ('🛡️-security', 'Sicherheitsdienst Project Alerts'),
+                'nexus': ('⚡-nexus', 'Nexus Project Alerts'),
+                'fail2ban': ('🚫-fail2ban', 'Fail2ban Bans und Aktivitäten'),
+                'docker': ('🐳-docker', 'Docker Security Scans (Trivy)'),
+                'backups': ('💾-backups', 'Backup Status und Logs'),
+            }
 
             channels_created = False
-            channel_ids = {}
+            updated_channel_ids = {}
 
-            for channel_type, channel_name, current_id in channels_to_create:
-                # Prüfe ob Channel bereits existiert (by ID)
+            for channel_key, (channel_name, description) in standard_channels.items():
+                current_id = self.config.channels.get(channel_key)
+
+                # Prüfe ob Channel existiert (by ID)
                 if current_id:
                     existing_channel = guild.get_channel(current_id)
                     if existing_channel:
-                        self.logger.info(f"✅ Channel '{channel_name}' existiert bereits (ID: {current_id})")
-                        channel_ids[f'{channel_type}_channel'] = current_id
+                        self.logger.info(f"✅ Channel '{channel_name}' existiert (ID: {current_id})")
                         continue
 
                 # Prüfe ob Channel existiert (by name)
                 existing_channel = discord.utils.get(guild.text_channels, name=channel_name)
                 if existing_channel:
                     self.logger.info(f"✅ Channel '{channel_name}' gefunden (ID: {existing_channel.id})")
-                    channel_ids[f'{channel_type}_channel'] = existing_channel.id
+                    updated_channel_ids[channel_key] = existing_channel.id
                     channels_created = True
                     continue
 
                 # Channel existiert nicht → erstellen
-                self.logger.info(f"📝 Erstelle Channel: {channel_name}")
-
-                # Erstelle Channel mit passender Description
-                descriptions = {
-                    'alerts': '🤖 Live-Updates aller Auto-Remediation Fixes',
-                    'approvals': '✋ Human-Approval Requests für kritische Fixes',
-                    'stats': '📊 Tägliche Auto-Remediation Statistiken'
-                }
+                self.logger.info(f"📝 Erstelle Standard-Channel: {channel_name}")
 
                 new_channel = await guild.create_text_channel(
                     name=channel_name,
-                    topic=descriptions.get(channel_type, 'Auto-Remediation System'),
+                    topic=description,
+                    reason="ShadowOps Bot Setup - Standard Channels"
+                )
+
+                self.logger.info(f"✅ Channel '{channel_name}' erstellt (ID: {new_channel.id})")
+                updated_channel_ids[channel_key] = new_channel.id
+                channels_created = True
+
+            # ============================================
+            # TEIL 2: AUTO-REMEDIATION CHANNELS
+            # ============================================
+            channel_names = self.config.auto_remediation.get('channel_names', {})
+            alerts_name = channel_names.get('alerts', '🤖-auto-remediation-alerts')
+            approvals_name = channel_names.get('approvals', '✋-auto-remediation-approvals')
+            stats_name = channel_names.get('stats', '📊-auto-remediation-stats')
+
+            notifications = self.config.auto_remediation.get('notifications', {})
+
+            auto_remediation_channels = [
+                ('alerts', alerts_name, '🤖 Live-Updates aller Auto-Remediation Fixes'),
+                ('approvals', approvals_name, '✋ Human-Approval Requests für kritische Fixes'),
+                ('stats', stats_name, '📊 Tägliche Auto-Remediation Statistiken'),
+            ]
+
+            for channel_type, channel_name, description in auto_remediation_channels:
+                current_id = notifications.get(f'{channel_type}_channel')
+
+                # Prüfe ob Channel existiert (by ID)
+                if current_id:
+                    existing_channel = guild.get_channel(current_id)
+                    if existing_channel:
+                        self.logger.info(f"✅ Channel '{channel_name}' existiert (ID: {current_id})")
+                        continue
+
+                # Prüfe ob Channel existiert (by name)
+                existing_channel = discord.utils.get(guild.text_channels, name=channel_name)
+                if existing_channel:
+                    self.logger.info(f"✅ Channel '{channel_name}' gefunden (ID: {existing_channel.id})")
+                    updated_channel_ids[f'auto_remediation_{channel_type}'] = existing_channel.id
+                    channels_created = True
+                    continue
+
+                # Channel existiert nicht → erstellen
+                self.logger.info(f"📝 Erstelle Auto-Remediation-Channel: {channel_name}")
+
+                new_channel = await guild.create_text_channel(
+                    name=channel_name,
+                    topic=description,
                     reason="Auto-Remediation System Setup"
                 )
 
                 self.logger.info(f"✅ Channel '{channel_name}' erstellt (ID: {new_channel.id})")
-                channel_ids[f'{channel_type}_channel'] = new_channel.id
+                updated_channel_ids[f'auto_remediation_{channel_type}'] = new_channel.id
                 channels_created = True
 
             # Update Config mit Channel-IDs
             if channels_created:
                 self.logger.info("💾 Speichere Channel-IDs in Config...")
-                await self._update_config_channel_ids(channel_ids)
-
-                # Update runtime config
-                if 'notifications' not in self.config.auto_remediation:
-                    self.config.auto_remediation['notifications'] = {}
-                self.config.auto_remediation['notifications'].update(channel_ids)
-
-                self.logger.info("✅ Auto-Remediation Channels setup komplett!")
+                await self._update_all_channel_ids(updated_channel_ids)
+                self.logger.info("✅ Channel-Setup komplett!")
             else:
                 self.logger.info("ℹ️ Alle Channels existieren bereits")
 
+        except discord.Forbidden:
+            self.logger.error("❌ FEHLER: Bot hat keine Berechtigung Channels zu erstellen!")
+            self.logger.error("   Lösung: Gehe zu Discord Server Settings → Roles → ShadowOps")
+            self.logger.error("   Aktiviere: 'Manage Channels' Permission")
         except Exception as e:
-            self.logger.error(f"❌ Fehler beim Setup der Auto-Remediation Channels: {e}", exc_info=True)
+            self.logger.error(f"❌ Fehler beim Setup der Channels: {e}", exc_info=True)
 
-    async def _update_config_channel_ids(self, channel_ids: dict):
-        """Schreibt Channel-IDs zurück in config.yaml"""
+    async def _update_all_channel_ids(self, channel_ids: dict):
+        """
+        Schreibt ALLE Channel-IDs zurück in config.yaml
+        Unterstützt sowohl Standard-Channels als auch Auto-Remediation Channels
+        """
         try:
             import yaml
             from pathlib import Path
@@ -158,21 +210,48 @@ class ShadowOpsBot(commands.Bot):
             with open(config_path, 'r', encoding='utf-8') as f:
                 config_data = yaml.safe_load(f)
 
-            # Update notifications section
+            # Update Standard Channels
+            standard_channel_keys = ['critical', 'sicherheitsdienst', 'nexus', 'fail2ban', 'docker', 'backups']
+            for key in standard_channel_keys:
+                if key in channel_ids:
+                    if 'channels' not in config_data:
+                        config_data['channels'] = {}
+                    config_data['channels'][key] = channel_ids[key]
+                    self.logger.info(f"💾 Channel '{key}' ID gespeichert: {channel_ids[key]}")
+
+            # Update Auto-Remediation Channels
             if 'auto_remediation' in config_data:
                 if 'notifications' not in config_data['auto_remediation']:
                     config_data['auto_remediation']['notifications'] = {}
 
-                config_data['auto_remediation']['notifications'].update(channel_ids)
+                # Extract auto_remediation channel IDs
+                for key, value in channel_ids.items():
+                    if key.startswith('auto_remediation_'):
+                        channel_type = key.replace('auto_remediation_', '')
+                        config_data['auto_remediation']['notifications'][f'{channel_type}_channel'] = value
+                        self.logger.info(f"💾 Auto-Remediation '{channel_type}' ID gespeichert: {value}")
+
+                # Update runtime config
+                if 'notifications' not in self.config.auto_remediation:
+                    self.config.auto_remediation['notifications'] = {}
+
+                for key, value in channel_ids.items():
+                    if key.startswith('auto_remediation_'):
+                        channel_type = key.replace('auto_remediation_', '')
+                        self.config.auto_remediation['notifications'][f'{channel_type}_channel'] = value
 
             # Schreibe zurück
             with open(config_path, 'w', encoding='utf-8') as f:
                 yaml.dump(config_data, f, allow_unicode=True, default_flow_style=False, sort_keys=False)
 
-            self.logger.info("✅ Config-Datei aktualisiert mit Channel-IDs")
+            self.logger.info("✅ Config-Datei aktualisiert mit allen Channel-IDs")
 
         except Exception as e:
             self.logger.warning(f"⚠️ Konnte Config-Datei nicht aktualisieren: {e}")
+
+    async def _update_config_channel_ids(self, channel_ids: dict):
+        """DEPRECATED: Use _update_all_channel_ids instead"""
+        await self._update_all_channel_ids(channel_ids)
 
     async def setup_hook(self):
         """Setup Hook - wird beim Start aufgerufen"""
