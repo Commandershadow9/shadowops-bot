@@ -234,3 +234,62 @@ class EmbedBuilder:
             ],
             project_tag="🖥️ [SERVER]"
         )
+
+    @staticmethod
+    def error_alert(component: str, error_message: str) -> discord.Embed:
+        """
+        Embed für Monitoring-Fehler
+
+        Args:
+            component: Name des betroffenen Systems (z.B. "Fail2ban Monitoring")
+            error_message: Fehlerbeschreibung
+        """
+        return EmbedBuilder.create_alert(
+            title=f"⚠️ Monitoring Error: {component}",
+            description=f"Ein Fehler ist beim Monitoring aufgetreten:\n\n```\n{error_message[:500]}\n```",
+            severity=Severity.CRITICAL,
+            fields=[
+                {"name": "🔧 Aktion erforderlich", "value": "Bitte Log-Dateien prüfen und System wiederherstellen", "inline": False},
+                {"name": "⏰ Error-Alert Rate", "value": "Max. alle 30 Minuten", "inline": False},
+            ]
+        )
+
+    @staticmethod
+    def health_check_report(
+        fail2ban_ok: bool,
+        fail2ban_bans_today: int,
+        crowdsec_ok: bool,
+        crowdsec_decisions: int,
+        docker_ok: bool,
+        docker_last_scan: Optional[str],
+        docker_vulnerabilities: int,
+        aide_ok: bool,
+        aide_last_check: Optional[str]
+    ) -> discord.Embed:
+        """
+        Daily Health-Check Report
+
+        Shows status of all monitoring systems
+        """
+        # Status Icons
+        def status_icon(ok: bool) -> str:
+            return "✅ Aktiv" if ok else "❌ Fehler"
+
+        # Gesamtstatus
+        all_ok = fail2ban_ok and crowdsec_ok and docker_ok and aide_ok
+        overall_status = "🟢 Alle Systeme operational" if all_ok else "🔴 Fehler erkannt"
+
+        return EmbedBuilder.create_alert(
+            title="📊 Daily Security Health-Check",
+            description=f"**{overall_status}**\n\nTäglicher Status-Report aller Monitoring-Systeme",
+            severity=Severity.SUCCESS if all_ok else Severity.CRITICAL,
+            fields=[
+                {"name": "🚫 Fail2ban", "value": f"{status_icon(fail2ban_ok)}\n{fail2ban_bans_today} Bans heute", "inline": True},
+                {"name": "🛡️ CrowdSec", "value": f"{status_icon(crowdsec_ok)}\n{crowdsec_decisions} aktive Decisions", "inline": True},
+                {"name": "\u200b", "value": "\u200b", "inline": True},
+                {"name": "🐳 Docker Scan", "value": f"{status_icon(docker_ok)}\n{docker_last_scan or 'Kein Scan'}\n{docker_vulnerabilities} CRITICAL", "inline": True},
+                {"name": "🔒 AIDE", "value": f"{status_icon(aide_ok)}\n{aide_last_check or 'Kein Check'}", "inline": True},
+                {"name": "\u200b", "value": "\u200b", "inline": True},
+            ],
+            footer_text="Nächster Check: Morgen 06:00 Uhr"
+        )

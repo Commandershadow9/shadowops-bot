@@ -10,7 +10,7 @@ from discord import app_commands
 import asyncio
 import sys
 from pathlib import Path
-from datetime import datetime
+from datetime import datetime, time
 from typing import Optional
 
 # Füge src/ zum Path hinzu
@@ -68,6 +68,7 @@ class ShadowOpsBot(commands.Bot):
         # Starte Background Tasks
         if not self.monitor_security.is_running():
             self.monitor_security.start()
+            self.daily_health_check.start()
 
     async def on_ready(self):
         """Bot ist bereit"""
@@ -138,136 +139,263 @@ class ShadowOpsBot(commands.Bot):
         await self.wait_until_ready()
         self.logger.info("🔍 Security Monitor gestartet")
 
+    @tasks.loop(time=time(hour=6, minute=0))
+    async def daily_health_check(self):
+        """Daily Health-Check um 06:00 Uhr - zeigt Status aller Systeme"""
+        try:
+            self.logger.info("📊 Führe Daily Health-Check durch...")
+
+            # Prüfe alle Systeme
+            fail2ban_ok = True
+            fail2ban_bans_today = 0
+            try:
+                stats = self.fail2ban.get_jail_stats()
+                fail2ban_bans_today = sum(s.get('currently_banned', 0) for s in stats.values())
+            except:
+                fail2ban_ok = False
+
+            crowdsec_ok = True
+            crowdsec_decisions = 0
+            try:
+                crowdsec_ok = self.crowdsec.is_running()
+                decisions = self.crowdsec.get_active_decisions(limit=100)
+                crowdsec_decisions = len(decisions)
+            except:
+                crowdsec_ok = False
+
+            docker_ok = True
+            docker_last_scan = None
+            docker_vulnerabilities = 0
+            try:
+                results = self.docker.get_latest_scan_results()
+                if results:
+                    docker_last_scan = results.get('date', 'Unbekannt')
+                    docker_vulnerabilities = results.get('critical', 0)
+            except:
+                docker_ok = False
+
+            aide_ok = True
+            aide_last_check = None
+            try:
+                aide_ok = self.aide.is_timer_active()
+                aide_last_check = self.aide.get_last_check_date()
+            except:
+                aide_ok = False
+
+            # Erstelle Health-Check Report
+            embed = EmbedBuilder.health_check_report(
+                fail2ban_ok=fail2ban_ok,
+                fail2ban_bans_today=fail2ban_bans_today,
+                crowdsec_ok=crowdsec_ok,
+                crowdsec_decisions=crowdsec_decisions,
+                docker_ok=docker_ok,
+                docker_last_scan=docker_last_scan,
+                docker_vulnerabilities=docker_vulnerabilities,
+                aide_ok=aide_ok,
+                aide_last_check=aide_last_check
+            )
+
+            # Sende Report - nutze Critical Channel bei Fehlern, sonst Security Channel
+            if not (fail2ban_ok and crowdsec_ok and docker_ok and aide_ok):
+                channel_id = self.config.get_channel_for_alert('critical')
+                await self.send_alert(channel_id, embed, self.config.mention_role_critical)
+            else:
+                channel_id = self.config.get_channel_for_alert('sicherheitsdienst')
+                await self.send_alert(channel_id, embed)
+
+            self.logger.info("✅ Daily Health-Check abgeschlossen")
+
+        except Exception as e:
+            self.logger.error(f"❌ Fehler beim Daily Health-Check: {e}", exc_info=True)
+
+    @daily_health_check.before_loop
+    async def before_health_check(self):
+        """Warte bis Bot bereit ist"""
+        await self.wait_until_ready()
+        self.logger.info("⏰ Daily Health-Check Task gestartet (läuft täglich um 06:00 Uhr)")
+
     async def monitor_fail2ban(self):
         """Monitort Fail2ban für neue Bans"""
-        new_bans = self.fail2ban.get_new_bans()
+        try:
+            new_bans = self.fail2ban.get_new_bans()
 
-        for ban in new_bans:
-            ip = ban["ip"]
-            jail = ban["jail"]
+            for ban in new_bans:
+                ip = ban["ip"]
+                jail = ban["jail"]
 
-            # Rate Limiting: Nur 10 Sekunden pro IP+Jail (verhindert Duplikate, erlaubt Live-Tracking)
-            alert_key = f"fail2ban_{ip}_{jail}"
-            if self.is_rate_limited(alert_key, limit_seconds=10):
-                continue
+                # Rate Limiting: Nur 10 Sekunden pro IP+Jail (verhindert Duplikate, erlaubt Live-Tracking)
+                alert_key = f"fail2ban_{ip}_{jail}"
+                if self.is_rate_limited(alert_key, limit_seconds=10):
+                    continue
 
-            # Erstelle Embed
-            embed = EmbedBuilder.fail2ban_ban(ip, jail)
+                # Erstelle Embed
+                embed = EmbedBuilder.fail2ban_ban(ip, jail)
 
-            # Sende Alert
-            channel_id = self.config.get_channel_for_alert('fail2ban')
-            await self.send_alert(channel_id, embed, self.config.mention_role_high)
+                # Sende Alert
+                channel_id = self.config.get_channel_for_alert('fail2ban')
+                await self.send_alert(channel_id, embed, self.config.mention_role_high)
 
-            self.logger.info(f"🚫 Fail2ban Ban: {ip} (Jail: {jail})")
+                self.logger.info(f"🚫 Fail2ban Ban: {ip} (Jail: {jail})")
+
+        except Exception as e:
+            # Error-Alert nur alle 30 Minuten senden (verhindert Spam bei anhaltendem Problem)
+            error_key = "fail2ban_error"
+            if not self.is_rate_limited(error_key, limit_seconds=1800):
+                error_embed = EmbedBuilder.error_alert(
+                    "Fail2ban Monitoring",
+                    f"Fehler beim Lesen der Fail2ban Logs: {str(e)}"
+                )
+                critical_channel = self.config.get_channel_for_alert('critical')
+                await self.send_alert(critical_channel, error_embed, self.config.mention_role_critical)
+                self.logger.error(f"❌ Fail2ban Monitoring Error: {e}", exc_info=True)
 
     async def monitor_crowdsec(self):
         """Monitort CrowdSec für neue Threats"""
-        # Hole neueste Alerts
-        alerts = self.crowdsec.get_recent_alerts(limit=10)
+        try:
+            # Hole neueste Alerts
+            alerts = self.crowdsec.get_recent_alerts(limit=10)
 
-        if not alerts:
-            return
+            if not alerts:
+                return
 
-        # Prüfe jeden Alert
-        for alert in alerts:
-            alert_id = alert.get('id', '')
-            source_ip = alert.get('source_ip', 'Unknown')
-            scenario = alert.get('scenario', 'Unknown')
-            country = alert.get('source_country', '')
+            # Prüfe jeden Alert
+            for alert in alerts:
+                alert_id = alert.get('id', '')
+                source_ip = alert.get('source_ip', 'Unknown')
+                scenario = alert.get('scenario', 'Unknown')
+                country = alert.get('source_country', '')
 
-            # Rate Limiting pro Alert-ID: 5 Minuten (erlaubt Live-Tracking verschiedener Threats)
-            alert_key = f"crowdsec_{alert_id}"
-            if self.is_rate_limited(alert_key, limit_seconds=300):  # 5 Minuten
-                continue
+                # Rate Limiting pro Alert-ID: 5 Minuten (erlaubt Live-Tracking verschiedener Threats)
+                alert_key = f"crowdsec_{alert_id}"
+                if self.is_rate_limited(alert_key, limit_seconds=300):  # 5 Minuten
+                    continue
 
-            # Prüfe ob Scenario kritisch ist (AI-basierte oder kritische Szenarien)
-            is_critical = any(keyword in scenario.lower() for keyword in [
-                'exploit', 'vulnerability', 'cve', 'attack', 'injection',
-                'bruteforce', 'scan', 'probe', 'dos', 'ddos'
-            ])
+                # Prüfe ob Scenario kritisch ist (AI-basierte oder kritische Szenarien)
+                is_critical = any(keyword in scenario.lower() for keyword in [
+                    'exploit', 'vulnerability', 'cve', 'attack', 'injection',
+                    'bruteforce', 'scan', 'probe', 'dos', 'ddos'
+                ])
 
-            if is_critical:
-                # Erstelle Embed
-                embed = EmbedBuilder.crowdsec_alert(source_ip, scenario, country)
+                if is_critical:
+                    # Erstelle Embed
+                    embed = EmbedBuilder.crowdsec_alert(source_ip, scenario, country)
 
-                # Sende zu Critical Channel
-                critical_channel_id = self.config.get_channel_for_alert('critical')
-                await self.send_alert(critical_channel_id, embed, self.config.mention_role_critical)
+                    # Sende zu Critical Channel
+                    critical_channel_id = self.config.get_channel_for_alert('critical')
+                    await self.send_alert(critical_channel_id, embed, self.config.mention_role_critical)
 
-                self.logger.info(f"🛡️ CrowdSec Alert: {source_ip} ({scenario})")
+                    self.logger.info(f"🛡️ CrowdSec Alert: {source_ip} ({scenario})")
+
+        except Exception as e:
+            # Error-Alert nur alle 30 Minuten
+            error_key = "crowdsec_error"
+            if not self.is_rate_limited(error_key, limit_seconds=1800):
+                error_embed = EmbedBuilder.error_alert(
+                    "CrowdSec Monitoring",
+                    f"Fehler beim Abrufen von CrowdSec Alerts: {str(e)}"
+                )
+                critical_channel = self.config.get_channel_for_alert('critical')
+                await self.send_alert(critical_channel, error_embed, self.config.mention_role_critical)
+                self.logger.error(f"❌ CrowdSec Monitoring Error: {e}", exc_info=True)
 
     async def monitor_docker(self):
         """Monitort Docker Security Scans für neue Ergebnisse"""
-        # Hole neueste Scan-Ergebnisse
-        results = self.docker.get_latest_scan_results()
+        try:
+            # Hole neueste Scan-Ergebnisse
+            results = self.docker.get_latest_scan_results()
 
-        if not results:
-            return
+            if not results:
+                return
 
-        # Rate Limiting - nur alle 5 Minuten für denselben Scan
-        alert_key = f"docker_scan_{results.get('date', '')}"
-        if self.is_rate_limited(alert_key, limit_seconds=300):  # 5 Minuten
-            return
+            # Rate Limiting - nur alle 5 Minuten für denselben Scan
+            alert_key = f"docker_scan_{results.get('date', '')}"
+            if self.is_rate_limited(alert_key, limit_seconds=300):  # 5 Minuten
+                return
 
-        critical = results.get('critical', 0)
-        high = results.get('high', 0)
+            critical = results.get('critical', 0)
+            high = results.get('high', 0)
 
-        # Nur Alert senden wenn CRITICAL oder HIGH gefunden
-        if critical > 0 or high > 0:
-            # Erstelle Embed
-            embed = EmbedBuilder.docker_scan_result(
-                total_images=results.get('images', 0),
-                critical=critical,
-                high=high,
-                medium=results.get('medium', 0),
-                low=results.get('low', 0)
-            )
+            # Nur Alert senden wenn CRITICAL oder HIGH gefunden
+            if critical > 0 or high > 0:
+                # Erstelle Embed
+                embed = EmbedBuilder.docker_scan_result(
+                    total_images=results.get('images', 0),
+                    critical=critical,
+                    high=high,
+                    medium=results.get('medium', 0),
+                    low=results.get('low', 0)
+                )
 
-            # Sende zu Docker Channel
-            docker_channel_id = self.config.get_channel_for_alert('docker')
-            await self.send_alert(docker_channel_id, embed, self.config.mention_role_critical if critical > 0 else None)
+                # Sende zu Docker Channel
+                docker_channel_id = self.config.get_channel_for_alert('docker')
+                await self.send_alert(docker_channel_id, embed, self.config.mention_role_critical if critical > 0 else None)
 
-            # Wenn CRITICAL: auch zu Critical Channel
-            if critical > 0:
-                critical_channel_id = self.config.get_channel_for_alert('critical')
-                if critical_channel_id != docker_channel_id:
-                    await self.send_alert(critical_channel_id, embed, self.config.mention_role_critical)
+                # Wenn CRITICAL: auch zu Critical Channel
+                if critical > 0:
+                    critical_channel_id = self.config.get_channel_for_alert('critical')
+                    if critical_channel_id != docker_channel_id:
+                        await self.send_alert(critical_channel_id, embed, self.config.mention_role_critical)
 
-            self.logger.info(f"🐳 Docker Scan Alert: {critical} CRITICAL, {high} HIGH")
+                self.logger.info(f"🐳 Docker Scan Alert: {critical} CRITICAL, {high} HIGH")
+
+        except Exception as e:
+            # Error-Alert nur alle 30 Minuten
+            error_key = "docker_error"
+            if not self.is_rate_limited(error_key, limit_seconds=1800):
+                error_embed = EmbedBuilder.error_alert(
+                    "Docker Scan Monitoring",
+                    f"Fehler beim Lesen der Docker Scan-Ergebnisse: {str(e)}"
+                )
+                critical_channel = self.config.get_channel_for_alert('critical')
+                await self.send_alert(critical_channel, error_embed, self.config.mention_role_critical)
+                self.logger.error(f"❌ Docker Monitoring Error: {e}", exc_info=True)
 
     async def monitor_aide(self):
         """Monitort AIDE File Integrity Checks"""
-        # Hole letzte Check-Ergebnisse
-        results = self.aide.get_last_check_results()
+        try:
+            # Hole letzte Check-Ergebnisse
+            results = self.aide.get_last_check_results()
 
-        if not results:
-            return
+            if not results:
+                return
 
-        timestamp = results.get('timestamp', '')
-        files_changed = results.get('files_changed', 0)
-        files_added = results.get('files_added', 0)
-        files_removed = results.get('files_removed', 0)
+            timestamp = results.get('timestamp', '')
+            files_changed = results.get('files_changed', 0)
+            files_added = results.get('files_added', 0)
+            files_removed = results.get('files_removed', 0)
 
-        # Rate Limiting - nur 1 Stunde für denselben Check (erlaubt schnellere Updates)
-        alert_key = f"aide_check_{timestamp}"
-        if self.is_rate_limited(alert_key, limit_seconds=3600):  # 1 Stunde
-            return
+            # Rate Limiting - nur 1 Stunde für denselben Check (erlaubt schnellere Updates)
+            alert_key = f"aide_check_{timestamp}"
+            if self.is_rate_limited(alert_key, limit_seconds=3600):  # 1 Stunde
+                return
 
-        # Alert nur bei Änderungen
-        total_changes = files_changed + files_added + files_removed
-        if total_changes > 0:
-            # Erstelle Embed
-            embed = EmbedBuilder.aide_check(
-                files_changed=files_changed,
-                files_added=files_added,
-                files_removed=files_removed
-            )
+            # Alert nur bei Änderungen
+            total_changes = files_changed + files_added + files_removed
+            if total_changes > 0:
+                # Erstelle Embed
+                embed = EmbedBuilder.aide_check(
+                    files_changed=files_changed,
+                    files_added=files_added,
+                    files_removed=files_removed
+                )
 
-            # Sende zu Critical Channel (File Integrity ist kritisch!)
-            critical_channel_id = self.config.get_channel_for_alert('critical')
-            await self.send_alert(critical_channel_id, embed, self.config.mention_role_critical)
+                # Sende zu Critical Channel (File Integrity ist kritisch!)
+                critical_channel_id = self.config.get_channel_for_alert('critical')
+                await self.send_alert(critical_channel_id, embed, self.config.mention_role_critical)
 
-            self.logger.info(f"🔒 AIDE Alert: {total_changes} Datei-Änderungen erkannt")
+                self.logger.info(f"🔒 AIDE Alert: {total_changes} Datei-Änderungen erkannt")
+
+        except Exception as e:
+            # Error-Alert nur alle 30 Minuten
+            error_key = "aide_error"
+            if not self.is_rate_limited(error_key, limit_seconds=1800):
+                error_embed = EmbedBuilder.error_alert(
+                    "AIDE File Integrity Monitoring",
+                    f"Fehler beim Lesen der AIDE Check-Ergebnisse: {str(e)}"
+                )
+                critical_channel = self.config.get_channel_for_alert('critical')
+                await self.send_alert(critical_channel, error_embed, self.config.mention_role_critical)
+                self.logger.error(f"❌ AIDE Monitoring Error: {e}", exc_info=True)
 
 
 # ========================
