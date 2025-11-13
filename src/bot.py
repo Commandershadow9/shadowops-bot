@@ -24,6 +24,8 @@ from integrations.fail2ban import Fail2banMonitor
 from integrations.crowdsec import CrowdSecMonitor
 from integrations.docker import DockerSecurityMonitor
 from integrations.aide import AIDEMonitor
+from integrations.event_watcher import SecurityEventWatcher
+from integrations.self_healing import SelfHealingCoordinator
 
 
 class ShadowOpsBot(commands.Bot):
@@ -51,6 +53,10 @@ class ShadowOpsBot(commands.Bot):
         self.docker = DockerSecurityMonitor(self.config.log_paths.get('docker_scans', ''))
         self.aide = AIDEMonitor()
 
+        # Auto-Remediation System
+        self.event_watcher = None
+        self.self_healing = None
+
         # Rate Limiting für Alerts
         self.recent_alerts = {}
 
@@ -64,6 +70,31 @@ class ShadowOpsBot(commands.Bot):
         await self.tree.sync(guild=guild)
 
         self.logger.info(f"✅ Slash Commands synchronisiert für Guild {self.config.guild_id}")
+
+        # Initialisiere Auto-Remediation (falls aktiviert)
+        if self.config.auto_remediation.get('enabled', False):
+            self.logger.info("🤖 Auto-Remediation System wird initialisiert...")
+
+            # Initialisiere Self-Healing
+            self.self_healing = SelfHealingCoordinator(self, self.config)
+            await self.self_healing.initialize(ai_service=None)  # AI Service später hinzufügen
+
+            # Initialisiere Event Watcher
+            self.event_watcher = SecurityEventWatcher(self, self.config)
+            await self.event_watcher.initialize(
+                trivy=self.docker,
+                crowdsec=self.crowdsec,
+                fail2ban=self.fail2ban,
+                aide=self.aide
+            )
+
+            # Starte Auto-Remediation
+            await self.self_healing.start()
+            await self.event_watcher.start()
+
+            self.logger.info("✅ Auto-Remediation System initialisiert")
+        else:
+            self.logger.info("ℹ️ Auto-Remediation deaktiviert (config: auto_remediation.enabled=false)")
 
         # Starte Background Tasks
         if not self.monitor_security.is_running():
@@ -615,6 +646,153 @@ async def aide_command(interaction: discord.Interaction):
     except Exception as e:
         bot.logger.error(f"❌ Fehler in /aide: {e}", exc_info=True)
         await interaction.followup.send("❌ Fehler beim Abrufen des AIDE Status", ephemeral=True)
+
+
+# ========================
+# AUTO-REMEDIATION COMMANDS
+# ========================
+
+@bot.tree.command(name="stop-all-fixes", description="🛑 EMERGENCY: Stoppt alle laufenden Auto-Fixes sofort")
+@app_commands.describe()
+async def stop_all_fixes(interaction: discord.Interaction):
+    """Emergency stop für Auto-Remediation"""
+    try:
+        await interaction.response.defer(ephemeral=True)
+
+        if not bot.self_healing:
+            await interaction.followup.send("ℹ️ Auto-Remediation ist nicht aktiv", ephemeral=True)
+            return
+
+        # Stoppe alle Jobs
+        stopped_count = await bot.self_healing.stop_all_jobs()
+
+        # Stoppe Event Watcher temporär (kann mit Bot-Neustart reaktiviert werden)
+        if bot.event_watcher:
+            await bot.event_watcher.stop()
+
+        bot.logger.warning(f"🛑 EMERGENCY STOP ausgeführt von {interaction.user} - {stopped_count} Jobs gestoppt")
+
+        embed = discord.Embed(
+            title="🛑 Emergency Stop Executed",
+            description=f"Alle Auto-Remediation Prozesse wurden gestoppt.",
+            color=discord.Color.red()
+        )
+        embed.add_field(name="👤 Ausgeführt von", value=interaction.user.mention, inline=True)
+        embed.add_field(name="📊 Gestoppte Jobs", value=str(stopped_count), inline=True)
+        embed.add_field(
+            name="🔄 Reaktivierung",
+            value="Bot-Neustart erforderlich: `sudo systemctl restart shadowops-bot`",
+            inline=False
+        )
+        embed.timestamp = datetime.now()
+
+        await interaction.followup.send(embed=embed, ephemeral=True)
+
+        # Sende auch Public Notification
+        if hasattr(bot.config, 'auto_remediation_alerts_channel'):
+            channel = bot.get_channel(bot.config.auto_remediation_alerts_channel)
+            if channel:
+                await channel.send(embed=embed)
+
+    except Exception as e:
+        bot.logger.error(f"❌ Fehler in /stop-all-fixes: {e}", exc_info=True)
+        await interaction.followup.send("❌ Fehler beim Stoppen der Auto-Fixes", ephemeral=True)
+
+
+@bot.tree.command(name="remediation-stats", description="📊 Zeigt Auto-Remediation Statistiken an")
+@app_commands.describe()
+async def remediation_stats(interaction: discord.Interaction):
+    """Zeigt Auto-Remediation Statistiken"""
+    try:
+        await interaction.response.defer(ephemeral=False)
+
+        if not bot.self_healing or not bot.event_watcher:
+            await interaction.followup.send("ℹ️ Auto-Remediation ist nicht aktiv", ephemeral=True)
+            return
+
+        # Hole Statistiken
+        healing_stats = bot.self_healing.get_statistics()
+        watcher_stats = bot.event_watcher.get_statistics()
+
+        # Event Watcher Stats
+        embed = discord.Embed(
+            title="📊 Auto-Remediation Statistics",
+            description="Aktuelle Statistiken des Event-Driven Auto-Remediation Systems",
+            color=discord.Color.blue()
+        )
+
+        # Event Watcher
+        embed.add_field(
+            name="🔍 Event Watcher",
+            value=f"Status: {'🟢 Running' if watcher_stats['running'] else '🔴 Stopped'}\n"
+                  f"Total Scans: {watcher_stats['total_scans']}\n"
+                  f"Total Events: {watcher_stats['total_events']}\n"
+                  f"Events in History: {watcher_stats['events_in_history']}",
+            inline=False
+        )
+
+        # Self-Healing Stats
+        success_rate = 0
+        if healing_stats['successful'] + healing_stats['failed'] > 0:
+            success_rate = (healing_stats['successful'] / (healing_stats['successful'] + healing_stats['failed'])) * 100
+
+        embed.add_field(
+            name="🔧 Self-Healing Coordinator",
+            value=f"Total Jobs: {healing_stats['total_jobs']}\n"
+                  f"✅ Successful: {healing_stats['successful']}\n"
+                  f"❌ Failed: {healing_stats['failed']}\n"
+                  f"✋ Requires Approval: {healing_stats['requires_approval']}\n"
+                  f"📈 Success Rate: {success_rate:.1f}%\n"
+                  f"🔄 Avg Attempts: {healing_stats['avg_attempts_per_job']:.1f}",
+            inline=False
+        )
+
+        # Queue Status
+        embed.add_field(
+            name="📋 Queue Status",
+            value=f"Pending: {healing_stats['pending_jobs']}\n"
+                  f"Active: {healing_stats['active_jobs']}\n"
+                  f"Completed: {healing_stats['completed_jobs']}",
+            inline=True
+        )
+
+        # Circuit Breaker
+        cb_status = healing_stats['circuit_breaker']
+        cb_emoji = {'CLOSED': '🟢', 'OPEN': '🔴', 'HALF_OPEN': '🟡'}.get(cb_status['state'], '⚪')
+
+        embed.add_field(
+            name="⚡ Circuit Breaker",
+            value=f"{cb_emoji} {cb_status['state']}\n"
+                  f"Failures: {cb_status['failure_count']}",
+            inline=True
+        )
+
+        # Approval Mode
+        embed.add_field(
+            name="🎯 Approval Mode",
+            value=healing_stats['approval_mode'].upper(),
+            inline=True
+        )
+
+        # Scan Intervals
+        intervals = watcher_stats['intervals']
+        embed.add_field(
+            name="⏱️ Scan Intervals",
+            value=f"Trivy: {intervals['trivy']}s\n"
+                  f"CrowdSec: {intervals['crowdsec']}s\n"
+                  f"Fail2ban: {intervals['fail2ban']}s\n"
+                  f"AIDE: {intervals['aide']}s",
+            inline=False
+        )
+
+        embed.timestamp = datetime.now()
+        embed.set_footer(text="Auto-Remediation System")
+
+        await interaction.followup.send(embed=embed)
+
+    except Exception as e:
+        bot.logger.error(f"❌ Fehler in /remediation-stats: {e}", exc_info=True)
+        await interaction.followup.send("❌ Fehler beim Abrufen der Statistiken", ephemeral=True)
 
 
 # ========================

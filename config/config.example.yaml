@@ -80,3 +80,57 @@ bot:
 
   # Debug-Modus (mehr Logs)
   debug: false
+
+# ====================================
+# AUTO-REMEDIATION SYSTEM (Event-Driven)
+# ====================================
+auto_remediation:
+  # Aktiviert/Deaktiviert das komplette Auto-Remediation System
+  enabled: false  # Setze auf true um Auto-Remediation zu aktivieren
+
+  # Approval Mode: Bestimmt wann Human-Approval erforderlich ist
+  # - paranoid: JEDER Fix benötigt manuelle Freigabe (sicherste Option, empfohlen für Start)
+  # - balanced: LOW/MEDIUM werden auto-fixed, HIGH/CRITICAL benötigen Freigabe (empfohlen nach Testphase)
+  # - aggressive: Nur CRITICAL benötigt Freigabe, alles andere wird auto-fixed (NUR für Experten!)
+  approval_mode: "paranoid"
+
+  # Scan Intervals (in Sekunden) - EFFICIENT Mode
+  # Event-Driven: Verschiedene Intervalle basierend auf Urgency
+  scan_intervals:
+    trivy: 21600      # 6 Stunden - Docker Scans sind langsam und ressourcenintensiv
+    crowdsec: 30      # 30 Sekunden - Aktive Bedrohungen müssen schnell erkannt werden
+    fail2ban: 30      # 30 Sekunden - Neue Bans schnell erfassen
+    aide: 900         # 15 Minuten - File Integrity Checks sind moderat wichtig
+
+  # Circuit Breaker: Stoppt System automatisch bei zu vielen Fehlern
+  circuit_breaker_threshold: 5      # Nach 5 Failures wird System gestoppt
+  circuit_breaker_timeout: 3600     # Cooldown: 1 Stunde (3600 Sekunden)
+
+  # Self-Healing Retry Settings
+  max_retry_attempts: 3             # Max. 3 Versuche pro Fix
+
+  # Discord Notifications für Auto-Remediation
+  # WICHTIG: Erstelle diese Channels manuell in Discord!
+  notifications:
+    # Channel für alle Auto-Fix Alerts (Live-Updates)
+    alerts_channel: null            # Discord Channel ID hier eintragen
+
+    # Channel für Human-Approval Requests
+    approvals_channel: null         # Discord Channel ID hier eintragen
+
+    # Channel für tägliche Statistiken
+    stats_channel: null             # Discord Channel ID hier eintragen
+
+# AI Service Configuration (optional, für erweiterte Fixes)
+ai:
+  # OpenAI GPT-4 (für intelligente Fix-Strategie-Generierung)
+  openai:
+    enabled: false
+    api_key: "sk-proj-YOUR_OPENAI_KEY_HERE"
+    model: "gpt-4-turbo-preview"
+
+  # Anthropic Claude (Alternative/Zusätzlich zu GPT-4)
+  anthropic:
+    enabled: false
+    api_key: "sk-ant-YOUR_ANTHROPIC_KEY_HERE"
+    model: "claude-3-opus-20240229"
