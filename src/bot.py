@@ -146,9 +146,9 @@ class ShadowOpsBot(commands.Bot):
             ip = ban["ip"]
             jail = ban["jail"]
 
-            # Rate Limiting
+            # Rate Limiting: Nur 10 Sekunden pro IP+Jail (verhindert Duplikate, erlaubt Live-Tracking)
             alert_key = f"fail2ban_{ip}_{jail}"
-            if self.is_rate_limited(alert_key):
+            if self.is_rate_limited(alert_key, limit_seconds=10):
                 continue
 
             # Erstelle Embed
@@ -175,9 +175,9 @@ class ShadowOpsBot(commands.Bot):
             scenario = alert.get('scenario', 'Unknown')
             country = alert.get('source_country', '')
 
-            # Rate Limiting pro Alert-ID
+            # Rate Limiting pro Alert-ID: 5 Minuten (erlaubt Live-Tracking verschiedener Threats)
             alert_key = f"crowdsec_{alert_id}"
-            if self.is_rate_limited(alert_key, limit_seconds=3600):  # 1 Stunde
+            if self.is_rate_limited(alert_key, limit_seconds=300):  # 5 Minuten
                 continue
 
             # Prüfe ob Scenario kritisch ist (AI-basierte oder kritische Szenarien)
@@ -248,9 +248,9 @@ class ShadowOpsBot(commands.Bot):
         files_added = results.get('files_added', 0)
         files_removed = results.get('files_removed', 0)
 
-        # Rate Limiting - nur alle 6 Stunden für denselben Check
+        # Rate Limiting - nur 1 Stunde für denselben Check (erlaubt schnellere Updates)
         alert_key = f"aide_check_{timestamp}"
-        if self.is_rate_limited(alert_key, limit_seconds=21600):  # 6 Stunden
+        if self.is_rate_limited(alert_key, limit_seconds=3600):  # 1 Stunde
             return
 
         # Alert nur bei Änderungen
