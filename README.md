@@ -1,6 +1,37 @@
 # 🗡️ ShadowOps - Security Operations Discord Bot
 
-**ShadowOps** ist ein umfassender Security-Monitoring Bot für Discord, der Echtzeit-Benachrichtigungen und Status-Updates von verschiedenen Server-Security-Tools liefert.
+**ShadowOps** ist ein umfassender Security-Monitoring Bot für Discord mit **KI-gesteuerter Auto-Remediation**, der Echtzeit-Benachrichtigungen liefert und Sicherheitslücken automatisch analysiert und behebt.
+
+## ⚡ Highlights
+
+### 🤖 **AI-Powered Auto-Remediation (NEU in v2.0)**
+- **Intelligente Bedrohungsanalyse** mit OpenAI GPT-4o & Anthropic Claude
+- **Live-Status-Updates** während der KI-Analyse in Discord
+- **Confidence-basierte Sicherheit**: Fixes <85% werden automatisch blockiert
+- **Batch-Processing**: 270 Vulnerabilities → 1 Approval-Request
+- **Persistente Event-Tracking**: Keine Duplikate nach Bot-Restarts
+- **Event-Driven Architecture**: Effiziente Echtzeit-Überwachung
+
+### 🎯 Workflow
+```
+1. 🚨 Security Event erkannt
+   └─> 📢 Sofortiger Alert in Discord-Channels
+
+2. 🤖 KI-Analyse startet (Live-Updates!)
+   ├─ 📊 CVE-Research & Package-Analyse
+   ├─ 🧠 Fix-Strategie entwickeln
+   └─ 💯 Confidence-Score berechnen
+
+3. ✋ Smart Approval Request
+   ├─ Detaillierte Event-Infos
+   ├─ KI-Reasoning & Analyse
+   ├─ Konkrete Fix-Steps
+   └─ Risiko-Bewertung
+
+4. 🛡️ User Entscheidet
+   ✅ Approve → KI fixt automatisch
+   ❌ Deny → Manuelle Intervention
+```
 
 ## 🎯 Features
 

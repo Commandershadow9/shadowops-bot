@@ -139,3 +139,12 @@ class AIDEMonitor:
             return True
         except (FileNotFoundError, PermissionError):
             return False
+
+    def get_changes(self) -> Optional[Dict[str, any]]:
+        """
+        Alias für get_last_check_results() für Event Watcher Kompatibilität
+
+        Returns:
+            Dict mit Check-Ergebnissen oder None
+        """
+        return self.get_last_check_results()

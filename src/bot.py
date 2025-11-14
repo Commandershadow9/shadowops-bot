@@ -26,6 +26,7 @@ from integrations.docker import DockerSecurityMonitor
 from integrations.aide import AIDEMonitor
 from integrations.event_watcher import SecurityEventWatcher
 from integrations.self_healing import SelfHealingCoordinator
+from integrations.ai_service import AIService
 
 
 class ShadowOpsBot(commands.Bot):
@@ -60,6 +61,28 @@ class ShadowOpsBot(commands.Bot):
         # Rate Limiting für Alerts
         self.recent_alerts = {}
 
+        # Flag für einmalige Initialisierung in on_ready
+        self._ready_initialized = False
+
+    async def _get_or_create_category(self, guild, category_name: str):
+        """
+        Findet oder erstellt eine Discord-Kategorie
+        """
+        # Suche existierende Kategorie
+        category = discord.utils.get(guild.categories, name=category_name)
+        if category:
+            self.logger.info(f"✅ Kategorie '{category_name}' gefunden (ID: {category.id})")
+            return category
+
+        # Erstelle neue Kategorie
+        self.logger.info(f"📝 Erstelle Kategorie: {category_name}")
+        category = await guild.create_category(
+            name=category_name,
+            reason="ShadowOps Bot Setup"
+        )
+        self.logger.info(f"✅ Kategorie '{category_name}' erstellt (ID: {category.id})")
+        return category
+
     async def _setup_auto_remediation_channels(self):
         """
         Erstellt automatisch ALLE benötigten Discord Channels
@@ -88,33 +111,49 @@ class ShadowOpsBot(commands.Bot):
             self.logger.info("✅ Bot hat 'Manage Channels' Permission")
 
             # ============================================
+            # KATEGORIEN ERSTELLEN/FINDEN
+            # ============================================
+            security_category = await self._get_or_create_category(guild, "🔐 Security Monitoring")
+            auto_remediation_category = await self._get_or_create_category(guild, "🤖 Auto-Remediation")
+            system_category = await self._get_or_create_category(guild, "⚙️ System Status")
+
+            # ============================================
             # TEIL 1: ALLE STANDARD CHANNELS PRÜFEN
             # ============================================
             standard_channels = {
-                'critical': ('🔴-critical', 'Kritische Security Alerts - Sofortige Reaktion erforderlich'),
-                'sicherheitsdienst': ('🛡️-security', 'Sicherheitsdienst Project Alerts'),
-                'nexus': ('⚡-nexus', 'Nexus Project Alerts'),
-                'fail2ban': ('🚫-fail2ban', 'Fail2ban Bans und Aktivitäten'),
-                'docker': ('🐳-docker', 'Docker Security Scans (Trivy)'),
-                'backups': ('💾-backups', 'Backup Status und Logs'),
+                'critical': ('🔴-critical', 'Kritische Security Alerts - Sofortige Reaktion erforderlich', security_category),
+                'sicherheitsdienst': ('🛡️-security', 'Sicherheitsdienst Project Alerts', security_category),
+                'nexus': ('⚡-nexus', 'Nexus Project Alerts', security_category),
+                'fail2ban': ('🚫-fail2ban', 'Fail2ban Bans und Aktivitäten', security_category),
+                'docker': ('🐳-docker', 'Docker Security Scans (Trivy)', security_category),
+                'backups': ('💾-backups', 'Backup Status und Logs', security_category),
+                'bot_status': ('🤖-bot-status', '⚙️ Bot Startup, Health-Checks und System-Status', system_category),
             }
 
             channels_created = False
             updated_channel_ids = {}
 
-            for channel_key, (channel_name, description) in standard_channels.items():
+            for channel_key, (channel_name, description, target_category) in standard_channels.items():
                 current_id = self.config.channels.get(channel_key)
 
                 # Prüfe ob Channel existiert (by ID)
                 if current_id:
                     existing_channel = guild.get_channel(current_id)
                     if existing_channel:
+                        # Verschiebe Channel in richtige Kategorie (falls nicht bereits dort)
+                        if existing_channel.category_id != target_category.id:
+                            self.logger.info(f"📦 Verschiebe '{channel_name}' → {target_category.name}")
+                            await existing_channel.edit(category=target_category)
                         self.logger.info(f"✅ Channel '{channel_name}' existiert (ID: {current_id})")
                         continue
 
                 # Prüfe ob Channel existiert (by name)
                 existing_channel = discord.utils.get(guild.text_channels, name=channel_name)
                 if existing_channel:
+                    # Verschiebe Channel in richtige Kategorie
+                    if existing_channel.category_id != target_category.id:
+                        self.logger.info(f"📦 Verschiebe '{channel_name}' → {target_category.name}")
+                        await existing_channel.edit(category=target_category)
                     self.logger.info(f"✅ Channel '{channel_name}' gefunden (ID: {existing_channel.id})")
                     updated_channel_ids[channel_key] = existing_channel.id
                     channels_created = True
@@ -126,6 +165,7 @@ class ShadowOpsBot(commands.Bot):
                 new_channel = await guild.create_text_channel(
                     name=channel_name,
                     topic=description,
+                    category=target_category,
                     reason="ShadowOps Bot Setup - Standard Channels"
                 )
 
@@ -156,12 +196,20 @@ class ShadowOpsBot(commands.Bot):
                 if current_id:
                     existing_channel = guild.get_channel(current_id)
                     if existing_channel:
+                        # Verschiebe Channel in richtige Kategorie (falls nicht bereits dort)
+                        if existing_channel.category_id != auto_remediation_category.id:
+                            self.logger.info(f"📦 Verschiebe '{channel_name}' → 🤖 Auto-Remediation")
+                            await existing_channel.edit(category=auto_remediation_category)
                         self.logger.info(f"✅ Channel '{channel_name}' existiert (ID: {current_id})")
                         continue
 
                 # Prüfe ob Channel existiert (by name)
                 existing_channel = discord.utils.get(guild.text_channels, name=channel_name)
                 if existing_channel:
+                    # Verschiebe Channel in richtige Kategorie
+                    if existing_channel.category_id != auto_remediation_category.id:
+                        self.logger.info(f"📦 Verschiebe '{channel_name}' → 🤖 Auto-Remediation")
+                        await existing_channel.edit(category=auto_remediation_category)
                     self.logger.info(f"✅ Channel '{channel_name}' gefunden (ID: {existing_channel.id})")
                     updated_channel_ids[f'auto_remediation_{channel_type}'] = existing_channel.id
                     channels_created = True
@@ -173,6 +221,7 @@ class ShadowOpsBot(commands.Bot):
                 new_channel = await guild.create_text_channel(
                     name=channel_name,
                     topic=description,
+                    category=auto_remediation_category,
                     reason="Auto-Remediation System Setup"
                 )
 
@@ -254,29 +303,80 @@ class ShadowOpsBot(commands.Bot):
         await self._update_all_channel_ids(channel_ids)
 
     async def setup_hook(self):
-        """Setup Hook - wird beim Start aufgerufen"""
+        """Setup Hook - wird VOR Discord-Verbindung aufgerufen"""
         self.logger.info("🗡️ ShadowOps Bot startet...")
+        self.logger.info("⏳ Warte auf Discord-Verbindung...")
+
+    async def _send_status_message(self, message: str, color: int = 0x00FF00):
+        """Sendet eine Status-Nachricht an den Bot-Status Channel"""
+        try:
+            bot_status_channel_id = self.config.channels.get('bot_status')
+            if bot_status_channel_id:
+                channel = self.get_channel(bot_status_channel_id)
+                if channel:
+                    embed = discord.Embed(
+                        description=message,
+                        color=color,
+                        timestamp=datetime.now()
+                    )
+                    await channel.send(embed=embed)
+        except Exception as e:
+            self.logger.error(f"Fehler beim Senden der Status-Nachricht: {e}")
+
+    async def on_ready(self):
+        """Bot ist bereit und mit Discord verbunden"""
+        # Verhindere mehrfache Initialisierung (on_ready kann bei Reconnects mehrfach aufgerufen werden)
+        if self._ready_initialized:
+            self.logger.info("🔄 Bot reconnected")
+            await self._send_status_message("🔄 **Bot Reconnected**\nVerbindung zu Discord wiederhergestellt.", 0xFFA500)
+            return
+
+        self.logger.info(f"✅ Bot eingeloggt als {self.user}")
+        self.logger.info(f"🖥️ Verbunden mit {len(self.guilds)} Server(n)")
+
+        # Sende Startup-Message
+        await self._send_status_message(
+            f"🚀 **Bot gestartet**\n"
+            f"• Eingeloggt als **{self.user}**\n"
+            f"• Verbunden mit **{len(self.guilds)} Server(n)**",
+            0x00FF00
+        )
 
         # Sync Slash Commands mit Guild
+        self.logger.info("🔄 Synchronisiere Slash Commands...")
         guild = discord.Object(id=self.config.guild_id)
         self.tree.copy_global_to(guild=guild)
         await self.tree.sync(guild=guild)
-
         self.logger.info(f"✅ Slash Commands synchronisiert für Guild {self.config.guild_id}")
 
         # Auto-Create Channels für Auto-Remediation (falls aktiviert)
         if self.config.auto_remediation.get('enabled', False) and self.config.auto_remediation.get('auto_create_channels', False):
+            self.logger.info("🔄 Starte Auto-Channel-Creation...")
             await self._setup_auto_remediation_channels()
+            self.logger.info("✅ Auto-Channel-Creation abgeschlossen")
 
         # Initialisiere Auto-Remediation (falls aktiviert)
         if self.config.auto_remediation.get('enabled', False):
             self.logger.info("🤖 Auto-Remediation System wird initialisiert...")
 
+            await self._send_status_message(
+                "🤖 **Auto-Remediation System** wird initialisiert...",
+                0x3498DB
+            )
+
+            # Initialisiere AI Service
+            self.logger.info("🔄 Initialisiere AI Service...")
+            self.ai_service = AIService(self.config)
+            self.logger.info("✅ AI Service bereit")
+
             # Initialisiere Self-Healing
+            self.logger.info("🔄 Initialisiere Self-Healing Coordinator...")
             self.self_healing = SelfHealingCoordinator(self, self.config)
-            await self.self_healing.initialize(ai_service=None)  # AI Service später hinzufügen
+            await self.self_healing.initialize(ai_service=self.ai_service)
+            self.logger.info("✅ Self-Healing Coordinator bereit")
 
             # Initialisiere Event Watcher
+            self.logger.info("🔄 Initialisiere Event Watcher...")
             self.event_watcher = SecurityEventWatcher(self, self.config)
             await self.event_watcher.initialize(
                 trivy=self.docker,
@@ -284,24 +384,32 @@ class ShadowOpsBot(commands.Bot):
                 fail2ban=self.fail2ban,
                 aide=self.aide
             )
+            self.logger.info("✅ Event Watcher bereit")
 
             # Starte Auto-Remediation
+            self.logger.info("🔄 Starte Auto-Remediation Services...")
             await self.self_healing.start()
             await self.event_watcher.start()
 
-            self.logger.info("✅ Auto-Remediation System initialisiert")
+            self.logger.info("✅ Auto-Remediation System vollständig initialisiert")
+
+            await self._send_status_message(
+                "✅ **Auto-Remediation System initialisiert**\n"
+                f"• Self-Healing Coordinator: ✅ Bereit\n"
+                f"• Event Watcher: ✅ Aktiv\n"
+                f"• Scan Intervals: Trivy=6h, CrowdSec/Fail2ban=30s, AIDE=15min",
+                0x00FF00
+            )
         else:
             self.logger.info("ℹ️ Auto-Remediation deaktiviert (config: auto_remediation.enabled=false)")
 
         # Starte Background Tasks
-        if not self.monitor_security.is_running():
-            self.monitor_security.start()
+        # DISABLED: Old monitor_security replaced by Event Watcher System
+        # Event Watcher now handles all alerts + auto-remediation with persistence
+        # if not self.monitor_security.is_running():
+        #     self.monitor_security.start()
+        if not self.daily_health_check.is_running():
             self.daily_health_check.start()
-
-    async def on_ready(self):
-        """Bot ist bereit"""
-        self.logger.info(f"✅ Bot eingeloggt als {self.user}")
-        self.logger.info(f"🖥️ Verbunden mit {len(self.guilds)} Server(n)")
 
         # Setze Status
         await self.change_presence(
@@ -309,6 +417,20 @@ class ShadowOpsBot(commands.Bot):
                 type=discord.ActivityType.watching,
                 name=self.config.bot_status
             )
+        )
+
+        # Markiere als initialisiert
+        self._ready_initialized = True
+        self.logger.info("🚀 ShadowOps Bot vollständig einsatzbereit!")
+
+        # Finale Status-Nachricht
+        await self._send_status_message(
+            "🚀 **ShadowOps Bot vollständig einsatzbereit!**\n"
+            f"• Event Watcher: ✅ Läuft (mit Persistenz)\n"
+            f"• Auto-Remediation: ✅ Aktiv (AI-powered)\n"
+            f"• Daily Health-Check: ✅ Geplant (06:00 Uhr)\n\n"
+            f"*Alle Systeme bereit für Security Monitoring*",
+            0x2ECC71
         )
 
     async def on_guild_join(self, guild: discord.Guild):

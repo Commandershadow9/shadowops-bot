@@ -168,3 +168,15 @@ class CrowdSecMonitor:
             return result.stdout.strip() == 'active'
         except (subprocess.TimeoutExpired, FileNotFoundError):
             return False
+
+    def get_decisions(self, limit: int = 50) -> List[Dict[str, str]]:
+        """
+        Alias für get_active_decisions() für Event Watcher Kompatibilität
+
+        Args:
+            limit: Maximale Anzahl
+
+        Returns:
+            Liste von Decisions
+        """
+        return self.get_active_decisions(limit)

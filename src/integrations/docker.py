@@ -110,3 +110,12 @@ class DockerSecurityMonitor:
         """
         results = self.get_latest_scan_results()
         return results["date"] if results else None
+
+    def get_scan_results(self) -> Optional[Dict[str, any]]:
+        """
+        Alias für get_latest_scan_results() für Event Watcher Kompatibilität
+
+        Returns:
+            Dict mit Scan-Ergebnissen oder None
+        """
+        return self.get_latest_scan_results()

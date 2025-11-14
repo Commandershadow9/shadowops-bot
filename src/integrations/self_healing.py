@@ -10,8 +10,48 @@ from typing import Dict, List, Optional
 from dataclasses import dataclass, field
 from enum import Enum
 import json
+import discord
 
 logger = logging.getLogger(__name__)
+
+
+class ApprovalView(discord.ui.View):
+    """Discord UI View for approval buttons"""
+
+    def __init__(self, coordinator: 'SelfHealingCoordinator', job: 'RemediationJob'):
+        super().__init__(timeout=3600)  # 1 hour timeout
+        self.coordinator = coordinator
+        self.job = job
+
+    @discord.ui.button(label="✅ Approve", style=discord.ButtonStyle.success)
+    async def approve_button(self, interaction: discord.Interaction, button: discord.ui.Button):
+        """Approve the remediation"""
+        await interaction.response.send_message(
+            f"✅ Remediation approved by {interaction.user.mention}",
+            ephemeral=True
+        )
+        await self.coordinator.approve_job(self.job.event.event_id)
+
+        # Update message
+        embed = interaction.message.embeds[0]
+        embed.color = discord.Color.green()
+        embed.add_field(name="Status", value=f"✅ Approved by {interaction.user.mention}", inline=False)
+        await interaction.message.edit(embed=embed, view=None)
+
+    @discord.ui.button(label="❌ Reject", style=discord.ButtonStyle.danger)
+    async def reject_button(self, interaction: discord.Interaction, button: discord.ui.Button):
+        """Reject the remediation"""
+        await interaction.response.send_message(
+            f"❌ Remediation rejected by {interaction.user.mention}",
+            ephemeral=True
+        )
+        await self.coordinator.reject_job(self.job.event.event_id)
+
+        # Update message
+        embed = interaction.message.embeds[0]
+        embed.color = discord.Color.red()
+        embed.add_field(name="Status", value=f"❌ Rejected by {interaction.user.mention}", inline=False)
+        await interaction.message.edit(embed=embed, view=None)
 
 
 class ApprovalMode(Enum):
@@ -114,12 +154,12 @@ class SelfHealingCoordinator:
     - Statistics and monitoring
     """
 
-    def __init__(self, bot, config: Dict):
+    def __init__(self, bot, config):
         self.bot = bot
         self.config = config
 
-        # Approval mode
-        approval_mode_str = config.get('auto_remediation', {}).get('approval_mode', 'balanced')
+        # Approval mode - Config ist ein Objekt, kein Dict
+        approval_mode_str = config.auto_remediation.get('approval_mode', 'balanced')
         self.approval_mode = ApprovalMode(approval_mode_str)
         logger.info(f"🎯 Approval Mode: {self.approval_mode.value}")
 
@@ -131,8 +171,8 @@ class SelfHealingCoordinator:
 
         # Circuit breaker
         self.circuit_breaker = CircuitBreaker(
-            failure_threshold=config.get('auto_remediation', {}).get('circuit_breaker_threshold', 5),
-            timeout_seconds=config.get('auto_remediation', {}).get('circuit_breaker_timeout', 3600)
+            failure_threshold=config.auto_remediation.get('circuit_breaker_threshold', 5),
+            timeout_seconds=config.auto_remediation.get('circuit_breaker_timeout', 3600)
         )
 
         # Worker task
@@ -271,6 +311,13 @@ class SelfHealingCoordinator:
             if not strategy:
                 logger.error(f"❌ Failed to generate fix strategy for {event.event_id}")
                 await self._handle_failure(job, "Strategy generation failed")
+                return
+
+            # CONFIDENCE-PRÜFUNG: Verhindere unsichere Fixes
+            confidence = strategy.get('confidence', 0)
+            if confidence < 0.85:
+                logger.error(f"🚨 ABGEBROCHEN: Confidence {confidence:.0%} < 85% - zu riskant für automatische Ausführung!")
+                await self._handle_failure(job, f"Confidence zu niedrig ({confidence:.0%} < 85%). Manuelle Prüfung erforderlich.")
                 return
 
             job.current_strategy = strategy['description']
@@ -470,24 +517,445 @@ class SelfHealingCoordinator:
         if self.approval_mode == ApprovalMode.AGGRESSIVE:
             return event.severity == 'CRITICAL'
 
-        # BALANCED mode
+        # BALANCED mode - mit spezieller Fail2ban-Logik
+        # Fail2ban: Nur bei verdächtigen/koordinierten Angriffen
+        if event.source == 'fail2ban':
+            return self._is_suspicious_fail2ban_activity(event)
+
+        # Andere Sources: CRITICAL oder HIGH
         return event.severity in ['CRITICAL', 'HIGH']
+
+    async def _generate_fix_strategy_with_live_updates(self, job: RemediationJob, channel) -> Optional[Dict]:
+        """
+        Generate fix strategy with live Discord updates
+
+        Sends a status message and updates it in real-time as the AI analyzes.
+        """
+        import discord
+        from datetime import datetime
+
+        event = job.event
+
+        # Create initial status embed
+        status_embed = discord.Embed(
+            title="🤖 KI-Analyse läuft...",
+            description=f"**Event:** {event.source} - {event.severity}\n"
+                       f"**Event ID:** `{event.event_id}`\n\n"
+                       f"⏳ **Status:** Analyse wird vorbereitet...",
+            color=0x3498DB,
+            timestamp=datetime.now()
+        )
+        status_embed.set_footer(text="Live-Status • Updates alle paar Sekunden")
+
+        # Send initial message
+        status_message = await channel.send(embed=status_embed)
+
+        try:
+            # Phase 1: Data Collection
+            await self._update_status(status_message, status_embed,
+                "📊 Sammle Event-Daten...",
+                progress="▰▱▱▱▱▱▱▱▱▱ 10%")
+
+            # Phase 2: Context Building
+            await self._update_status(status_message, status_embed,
+                "🔍 Baue Kontext auf...",
+                progress="▰▰▰▱▱▱▱▱▱▱ 30%",
+                thinking="Analysiere Event-Details, Previous Attempts, und System-Kontext...")
+
+            # Phase 3: AI Analysis
+            await self._update_status(status_message, status_embed,
+                "🧠 KI analysiert Sicherheitslücke...",
+                progress="▰▰▰▰▰▱▱▱▱▱ 50%",
+                thinking="Claude/GPT untersucht CVEs, Packages, Risiken...")
+
+            # Actually generate strategy (this is the long part)
+            strategy = await self._generate_fix_strategy(job)
+
+            if not strategy:
+                await self._update_status(status_message, status_embed,
+                    "❌ KI-Analyse fehlgeschlagen",
+                    progress="▰▰▰▰▰▰▰▰▰▰ 100%",
+                    thinking="Keine Fix-Strategie konnte generiert werden.",
+                    color=0xE74C3C)
+                return None
+
+            # Phase 4: Strategy Validation
+            await self._update_status(status_message, status_embed,
+                "✅ Fix-Strategie entwickelt",
+                progress="▰▰▰▰▰▰▰▰▰▰ 100%",
+                thinking=f"**Confidence:** {strategy.get('confidence', 0):.0%}\n"
+                        f"**Beschreibung:** {strategy.get('description', 'N/A')}\n"
+                        f"**Steps:** {len(strategy.get('steps', []))} Schritte geplant",
+                color=0x2ECC71)
+
+            # Give user time to read
+            await asyncio.sleep(2)
+
+            # Delete status message (or keep it for audit trail?)
+            # await status_message.delete()  # Optional
+
+            return strategy
+
+        except Exception as e:
+            logger.error(f"Live update error: {e}", exc_info=True)
+            await self._update_status(status_message, status_embed,
+                f"❌ Fehler bei KI-Analyse",
+                progress="▰▰▰▰▰▰▰▰▰▰ 100%",
+                thinking=f"Error: {str(e)}",
+                color=0xE74C3C)
+            return None
+
+    async def _update_status(self, message, embed, status: str, progress: str = "", thinking: str = "", color: int = 0x3498DB):
+        """Update status message with new information"""
+        try:
+            # Build description parts
+            parts = [f"**Event:** {message.embeds[0].description.split('**Event:**')[1].split(chr(10)+chr(10))[0]}"]
+            parts.append("")  # Empty line
+            parts.append(f"⏳ **Status:** {status}")
+
+            if progress:
+                parts.append(f"📊 **Progress:** `{progress}`")
+
+            if thinking:
+                parts.append(f"💭 **KI-Reasoning:**")
+                parts.append(thinking)
+
+            embed.description = "\n".join(parts)
+            embed.color = color
+            await message.edit(embed=embed)
+            await asyncio.sleep(0.5)  # Rate limiting
+        except Exception as e:
+            logger.error(f"Failed to update status: {e}")
+
+    def _is_suspicious_fail2ban_activity(self, event: 'SecurityEvent') -> bool:
+        """
+        Intelligente Fail2ban-Analyse: Erkennt verdächtige Aktivitäten
+
+        Approval nur bei:
+        - Massiven koordinierten Angriffen (>50 IPs gleichzeitig)
+        - Gezielten SSH-Bruteforce-Attacken (>10 SSH-Bans)
+        """
+        details = event.details
+        stats = details.get('Stats', {})
+        total_bans = stats.get('total_bans', 0)
+
+        # VERDÄCHTIG wenn:
+        # 1. MASSIVER koordinierter Angriff (>50 IPs gleichzeitig = DDoS/Botnet)
+        if total_bans > 50:
+            logger.warning(f"🚨 VERDÄCHTIG: MASSIVER koordinierter Angriff erkannt - {total_bans} Bans!")
+            return True
+
+        # 2. Gezielte SSH-Bruteforce-Attacke (>=10 SSH-Bans = ernsthafte Bedrohung)
+        bans_list = details.get('Bans', [])
+        ssh_bans = sum(1 for ban in bans_list if 'sshd' in ban.get('jail', '').lower())
+        if ssh_bans >= 10:
+            logger.warning(f"🚨 VERDÄCHTIG: Gezielte SSH-Bruteforce-Attacke - {ssh_bans} SSH-Bans!")
+            return True
+
+        # Ansonsten: Normal, keine Approval nötig (Fail2ban hat bereits gebannt)
+        logger.info(f"✅ Fail2ban: {total_bans} Bans - Bereits gebannt (keine Approval nötig)")
+        return False
 
     async def _request_approval(self, job: RemediationJob):
         """Request human approval via Discord"""
         logger.info(f"✋ Requesting approval for {job.event.event_id}")
-        # TODO: Send Discord message with approval buttons
-        # Store message ID for later approval tracking
+
+        try:
+            # Get approval channel
+            channel_id = self.config.auto_remediation.get('notifications', {}).get('approvals_channel')
+            if not channel_id:
+                logger.error("No approvals channel configured")
+                return
+
+            channel = self.bot.get_channel(channel_id)
+            if not channel:
+                logger.error(f"Approvals channel {channel_id} not found")
+                return
+
+            event = job.event
+
+            # STEP 1: Start KI Analysis with Live Updates
+            strategy = await self._generate_fix_strategy_with_live_updates(job, channel)
+
+            if not strategy:
+                logger.error(f"❌ KI-Analyse fehlgeschlagen für {event.event_id}")
+                # Send error message to channel
+                await channel.send(f"❌ **KI-Analyse fehlgeschlagen** für Event `{event.event_id}`\n"
+                                 f"Keine Fix-Strategie konnte generiert werden.")
+                return
+
+            # Severity color mapping
+            color_map = {
+                'CRITICAL': 0xE74C3C,  # Red
+                'HIGH': 0xE67E22,      # Orange
+                'MEDIUM': 0xF39C12,    # Yellow
+                'LOW': 0x3498DB,       # Blue
+            }
+
+            # Check if it's a batch event
+            is_batch = 'batch' in event.event_type.lower() or 'Stats' in event.details
+
+            # Create detailed embed with ALL event information for KI
+            if is_batch:
+                stats = event.details.get('Stats', {})
+                title_text = f"🛡️ Batch Auto-Remediation Approval Required"
+
+                # Source-specific summary
+                if event.source == 'trivy':
+                    desc_text = (f"**{event.severity}** vulnerabilities detected from **Docker/Trivy**\n\n"
+                               f"📊 **Summary:**\n"
+                               f"• 🔴 CRITICAL: {stats.get('critical', 0)}\n"
+                               f"• 🟠 HIGH: {stats.get('high', 0)}\n"
+                               f"• 🟡 MEDIUM: {stats.get('medium', 0)}\n"
+                               f"• 🔵 LOW: {stats.get('low', 0)}\n"
+                               f"• 📦 Images: {stats.get('images', 0)}")
+                elif event.source == 'fail2ban':
+                    total_bans = stats.get('total_bans', 0)
+                    bans_list = event.details.get('Bans', [])
+                    ssh_bans = sum(1 for ban in bans_list if 'sshd' in ban.get('jail', '').lower())
+
+                    # Erkläre WARUM Approval nötig ist
+                    if total_bans > 50:
+                        reason = f"⚠️ **MASSIVER KOORDINIERTER ANGRIFF!**\n{total_bans} IPs gleichzeitig - mögliches Botnet/DDoS!"
+                    elif ssh_bans >= 10:
+                        reason = f"⚠️ **GEZIELTE SSH-BRUTEFORCE-ATTACKE!**\n{ssh_bans} SSH-Login-Versuche - ernsthafte Bedrohung!"
+                    else:
+                        reason = f"⚠️ **VERDÄCHTIGE AKTIVITÄT ERKANNT!**"
+
+                    desc_text = (f"**{event.severity}** - **Fail2ban** hat verdächtige Aktivität erkannt\n\n"
+                               f"{reason}\n\n"
+                               f"📊 **Summary:**\n"
+                               f"• 🚫 Banned IPs: {total_bans}\n"
+                               f"• 🔐 SSH-Bans: {ssh_bans}\n\n"
+                               f"💡 *Fail2ban hat die IPs bereits gebannt. Weitere Maßnahmen empfohlen:*\n"
+                               f"• Permanente Firewall-Regeln für IP-Ranges\n"
+                               f"• CrowdSec-Integration (IP-Listen teilen)\n"
+                               f"• Security-Monitoring verschärfen")
+                else:
+                    # Generic batch summary
+                    desc_text = f"**{event.severity}** issues detected from **{event.source}**"
+            else:
+                title_text = f"🛡️ Auto-Remediation Approval Required"
+                desc_text = f"**{event.severity}** vulnerability detected from **{event.source}**"
+
+            embed = discord.Embed(
+                title=title_text,
+                description=desc_text,
+                color=color_map.get(event.severity, 0x95A5A6),
+                timestamp=event.timestamp
+            )
+
+            # Event Details
+            embed.add_field(
+                name="📋 Event Type",
+                value=f"`{event.event_type}`",
+                inline=True
+            )
+            embed.add_field(
+                name="🔍 Source",
+                value=f"`{event.source}`",
+                inline=True
+            )
+            embed.add_field(
+                name="⚠️ Severity",
+                value=f"`{event.severity}`",
+                inline=True
+            )
+
+            # Detailed Information (for KI)
+            details_text = "```json\n"
+            details_text += json.dumps(event.details, indent=2, default=str)[:1000]  # Limit to 1000 chars
+            details_text += "\n```"
+            embed.add_field(
+                name="🔬 Detailed Information (for KI Analysis)",
+                value=details_text,
+                inline=False
+            )
+
+            # STEP 2: Show Fix Strategy (already generated above with live updates)
+            if strategy:
+                confidence = strategy.get('confidence', 0)
+
+                # Confidence-basierte Warnung
+                if confidence < 0.85:
+                    confidence_warning = "⚠️ **NIEDRIGE CONFIDENCE - MANUELLE PRÜFUNG ERFORDERLICH!**\n"
+                    confidence_color = "🟡"
+                elif confidence < 0.95:
+                    confidence_warning = "✅ Ausreichende Confidence für manuelle Approval\n"
+                    confidence_color = "🟢"
+                else:
+                    confidence_warning = "✅ Hohe Confidence - Sicher für Automatisierung\n"
+                    confidence_color = "🟢"
+
+                embed.add_field(
+                    name="🔧 Proposed Fix Strategy",
+                    value=f"{confidence_warning}"
+                          f"**Description:** {strategy.get('description', 'N/A')}\n"
+                          f"**Confidence:** {confidence_color} {confidence:.0%}\n"
+                          f"**Steps:** {len(strategy.get('steps', []))} steps",
+                    inline=False
+                )
+
+                # Add steps
+                steps_text = "\n".join([f"{i+1}. {step}" for i, step in enumerate(strategy.get('steps', [])[:5])])
+                embed.add_field(
+                    name="📝 Remediation Steps",
+                    value=steps_text or "No steps available",
+                    inline=False
+                )
+
+                # Zusätzliche Warnung bei sehr niedriger Confidence
+                if confidence < 0.85:
+                    embed.add_field(
+                        name="⚠️ Sicherheitshinweis",
+                        value="**Confidence <85%:** Diese Fix-Strategie ist unsicher!\n"
+                              "• Nur nach gründlicher manueller Prüfung anwenden\n"
+                              "• Risiko von System-Beschädigungen\n"
+                              "• Alternative Lösungen in Betracht ziehen",
+                        inline=False
+                    )
+
+            embed.add_field(
+                name="🆔 Job ID",
+                value=f"`{event.event_id}`",
+                inline=False
+            )
+
+            embed.set_footer(text="Approve or reject this remediation below")
+
+            # Send with approval buttons
+            view = ApprovalView(self, job)
+            message = await channel.send(embed=embed, view=view)
+
+            job.approval_message_id = message.id
+            logger.info(f"✅ Approval request sent to channel {channel_id}")
+
+            # Also send status update to bot-status channel
+            await self._send_status_update(
+                f"✋ **Approval Required**\n"
+                f"• Event: {event.severity} {event.event_type} from {event.source}\n"
+                f"• Job ID: `{event.event_id}`\n"
+                f"• Waiting for human approval in <#{channel_id}>",
+                0xF39C12
+            )
+
+        except Exception as e:
+            logger.error(f"Failed to send approval request: {e}", exc_info=True)
+
+    async def _send_status_update(self, message: str, color: int = 0x3498DB):
+        """Send status update to bot-status channel"""
+        try:
+            bot_status_channel_id = self.config.channels.get('bot_status')
+            if bot_status_channel_id:
+                channel = self.bot.get_channel(bot_status_channel_id)
+                if channel:
+                    embed = discord.Embed(
+                        description=message,
+                        color=color,
+                        timestamp=datetime.now()
+                    )
+                    await channel.send(embed=embed)
+        except Exception as e:
+            logger.error(f"Failed to send status update: {e}")
 
     async def _send_success_notification(self, job: RemediationJob):
         """Send success notification to Discord"""
-        # TODO: Implement Discord notification
-        pass
+        try:
+            # Send to alerts channel
+            channel_id = self.config.auto_remediation.get('notifications', {}).get('alerts_channel')
+            if not channel_id:
+                return
+
+            channel = self.bot.get_channel(channel_id)
+            if not channel:
+                return
+
+            event = job.event
+            embed = discord.Embed(
+                title="✅ Auto-Remediation Successful",
+                description=f"Successfully fixed **{event.severity}** issue from **{event.source}**",
+                color=0x2ECC71,
+                timestamp=datetime.now()
+            )
+
+            embed.add_field(name="Event Type", value=event.event_type, inline=True)
+            embed.add_field(name="Severity", value=event.severity, inline=True)
+            embed.add_field(name="Attempts", value=str(len(job.attempts)), inline=True)
+
+            if job.attempts:
+                last_attempt = job.attempts[-1]
+                embed.add_field(
+                    name="Strategy Used",
+                    value=last_attempt.strategy or "N/A",
+                    inline=False
+                )
+
+            await channel.send(embed=embed)
+
+            # Status update
+            await self._send_status_update(
+                f"✅ **Remediation Successful**\n"
+                f"• Event: {event.severity} {event.event_type}\n"
+                f"• Attempts: {len(job.attempts)}\n"
+                f"• Job ID: `{event.event_id}`",
+                0x2ECC71
+            )
+
+        except Exception as e:
+            logger.error(f"Failed to send success notification: {e}", exc_info=True)
 
     async def _send_failure_notification(self, job: RemediationJob):
         """Send failure notification to Discord"""
-        # TODO: Implement Discord notification
-        pass
+        try:
+            # Send to alerts channel
+            channel_id = self.config.auto_remediation.get('notifications', {}).get('alerts_channel')
+            if not channel_id:
+                return
+
+            channel = self.bot.get_channel(channel_id)
+            if not channel:
+                return
+
+            event = job.event
+            embed = discord.Embed(
+                title="❌ Auto-Remediation Failed",
+                description=f"Failed to fix **{event.severity}** issue from **{event.source}** after {len(job.attempts)} attempts",
+                color=0xE74C3C,
+                timestamp=datetime.now()
+            )
+
+            embed.add_field(name="Event Type", value=event.event_type, inline=True)
+            embed.add_field(name="Severity", value=event.severity, inline=True)
+            embed.add_field(name="Attempts", value=str(len(job.attempts)), inline=True)
+
+            if job.attempts:
+                last_attempt = job.attempts[-1]
+                embed.add_field(
+                    name="Last Error",
+                    value=last_attempt.error_message or "Unknown error",
+                    inline=False
+                )
+
+            embed.add_field(
+                name="⚠️ Action Required",
+                value="Manual intervention needed",
+                inline=False
+            )
+
+            await channel.send(embed=embed)
+
+            # Status update
+            await self._send_status_update(
+                f"❌ **Remediation Failed**\n"
+                f"• Event: {event.severity} {event.event_type}\n"
+                f"• Attempts: {len(job.attempts)}\n"
+                f"• Job ID: `{event.event_id}`\n"
+                f"⚠️ Manual intervention required",
+                0xE74C3C
+            )
+
+        except Exception as e:
+            logger.error(f"Failed to send failure notification: {e}", exc_info=True)
 
     def get_statistics(self) -> Dict:
         """Get self-healing statistics"""
