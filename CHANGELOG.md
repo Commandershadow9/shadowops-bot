@@ -1,5 +1,23 @@
 # ShadowOps Bot - Changelog
 
+## [2.0.1] - 2025-11-15
+
+### 🐛 Bug Fixes
+
+**AI Service Initialization:**
+- Fixed HTTP client conflict between discord.py and AI libraries (OpenAI/Anthropic)
+- Pinned `httpx<0.28` to maintain compatibility with AI client libraries
+- Issue: httpx 0.28+ removed `proxies` parameter causing initialization failures
+- Solution: Downgraded to httpx 0.27.2 which is compatible with all dependencies
+- Verified: All AI clients (sync and async) now initialize successfully
+
+**Impact:**
+- ✅ KI-Analyse funktioniert jetzt korrekt statt Fallback auf 70% Confidence
+- ✅ Realistische Confidence-Scores (85-95%) basierend auf echter AI-Analyse
+- ✅ Live-Status-Updates während der Analyse werden korrekt angezeigt
+
+---
+
 ## [2.0.0] - 2025-11-14
 
 ### 🎯 Major Feature: Event-Driven Auto-Remediation System
