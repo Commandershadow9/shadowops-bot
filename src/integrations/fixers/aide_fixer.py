@@ -12,8 +12,9 @@ import asyncio
 import logging
 import os
 import shutil
+import time
 from dataclasses import dataclass
-from datetime import datetime
+from datetime import datetime, timedelta
 from pathlib import Path
 from typing import Dict, List, Optional, Set
 
@@ -62,6 +63,7 @@ class AideFixer:
 
         # Quarantine directory for suspicious files
         self.quarantine_dir = '/tmp/aide_quarantine'
+        self.quarantine_retention_days = 30  # Keep quarantined files for 30 days
         os.makedirs(self.quarantine_dir, exist_ok=True)
 
         # Critical system paths that should NEVER be auto-restored
@@ -545,3 +547,36 @@ class AideFixer:
         except Exception as e:
             logger.error(f"❌ Restoration failed: {e}")
             return False
+
+    async def cleanup_old_quarantine_files(self) -> int:
+        """
+        Remove quarantined files older than retention period
+
+        Returns:
+            Number of files removed
+        """
+        if not os.path.exists(self.quarantine_dir):
+            return 0
+
+        cutoff_time = time.time() - (self.quarantine_retention_days * 24 * 60 * 60)
+        removed_count = 0
+
+        try:
+            for filename in os.listdir(self.quarantine_dir):
+                file_path = os.path.join(self.quarantine_dir, filename)
+
+                if os.path.isfile(file_path):
+                    file_mtime = os.path.getmtime(file_path)
+
+                    if file_mtime < cutoff_time:
+                        logger.info(f"🗑️ Removing old quarantine file: {filename}")
+                        os.remove(file_path)
+                        removed_count += 1
+
+            if removed_count > 0:
+                logger.info(f"✅ Quarantine cleanup complete: {removed_count} old files removed")
+
+        except Exception as e:
+            logger.error(f"❌ Quarantine cleanup error: {e}")
+
+        return removed_count

@@ -14,7 +14,7 @@ import os
 from dataclasses import dataclass, field
 from enum import Enum
 from pathlib import Path
-from typing import Dict, List, Optional, Set
+from typing import Dict, List, Optional, Set, Tuple
 
 from .command_executor import CommandExecutor
 
@@ -586,8 +586,8 @@ class ImpactAnalyzer:
         affected_paths: Optional[List[str]],
         severity: ImpactSeverity,
         fix_strategy: Optional[Dict]
-    ) -> tuple[bool, Optional[str]]:
-        """Check if human approval is required"""
+    ) -> Tuple[bool, Optional[str]]:
+        """Check if human approval is required (Tuple for Python 3.9 compatibility)"""
 
         # Always require approval for CRITICAL severity
         if severity == ImpactSeverity.CRITICAL:

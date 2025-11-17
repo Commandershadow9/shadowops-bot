@@ -95,7 +95,9 @@ class ServiceManager:
                 name='sicherheitstool',
                 project='sicherheitstool',
                 command="pgrep -f 'node.*sicherheitstool|npm.*start.*project'",
-                start_command='cd /home/cmdshadow/project && DATABASE_URL="postgresql://admin:admin123@localhost:5432/sicherheitsdienst_db?schema=public" PORT=3001 npm start &',
+                # SECURITY: Database credentials must be set in environment (.env file or systemd service)
+                # Never hardcode passwords in code! Use: DATABASE_URL="postgresql://admin:PASSWORD@..."
+                start_command='cd /home/cmdshadow/project && PORT=3001 npm start &',
                 stop_command="pkill -f 'node.*sicherheitstool|npm.*start.*project'",
                 health_check="curl -f http://localhost:3001/api/health || exit 1",
                 graceful_shutdown_timeout=60  # Longer for production

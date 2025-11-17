@@ -13,6 +13,7 @@ Provides comprehensive backup functionality:
 import asyncio
 import logging
 import os
+import shlex
 import shutil
 import tarfile
 from dataclasses import dataclass, field
@@ -99,6 +100,7 @@ class BackupManager:
         # Track active backups
         self.active_backups: Dict[str, BackupInfo] = {}
         self.backup_history: List[BackupInfo] = []
+        self.max_history = 1000  # Prevent memory leak from unbounded history
 
         logger.info(f"💾 Backup Manager initialized (root: {self.config.backup_root})")
 
@@ -160,6 +162,10 @@ class BackupManager:
         # Store backup info
         self.active_backups[backup_id] = backup_info
         self.backup_history.append(backup_info)
+
+        # Limit history size to prevent memory leak
+        if len(self.backup_history) > self.max_history:
+            self.backup_history.pop(0)
 
         logger.info(f"✅ Backup created: {backup_id} ({size_mb:.2f}MB)")
 
@@ -346,9 +352,9 @@ class BackupManager:
 
         # Copy file
         if self.config.compression:
-            # Use gzip compression
+            # Use gzip compression (shlex.quote prevents command injection)
             result = await self.executor.execute(
-                f"gzip -c '{source}' > '{backup_path}'",
+                f"gzip -c {shlex.quote(source)} > {shlex.quote(backup_path)}",
                 timeout=300
             )
             if not result.success:
@@ -456,9 +462,9 @@ class BackupManager:
         # Create backup path
         backup_path = os.path.join(self.config.backup_root, f"{backup_id}.sql.gz")
 
-        # Dump database with compression
+        # Dump database with compression (shlex.quote prevents SQL injection)
         result = await self.executor.execute(
-            f"pg_dump {db_name} | gzip > '{backup_path}'",
+            f"pg_dump {shlex.quote(db_name)} | gzip > {shlex.quote(backup_path)}",
             timeout=600
         )
 
@@ -481,9 +487,9 @@ class BackupManager:
         """Restore a file backup"""
         try:
             if backup_info.backup_path.endswith('.gz'):
-                # Decompress
+                # Decompress (shlex.quote prevents command injection)
                 result = await self.executor.execute(
-                    f"gzip -dc '{backup_info.backup_path}' > '{backup_info.source_path}'",
+                    f"gzip -dc {shlex.quote(backup_info.backup_path)} > {shlex.quote(backup_info.source_path)}",
                     timeout=300
                 )
                 return result.success
@@ -526,9 +532,9 @@ class BackupManager:
     async def _restore_database(self, backup_info: BackupInfo) -> bool:
         """Restore database from backup"""
         try:
-            # Restore from compressed dump
+            # Restore from compressed dump (shlex.quote prevents SQL injection)
             result = await self.executor.execute(
-                f"gzip -dc '{backup_info.backup_path}' | psql {backup_info.source_path}",
+                f"gzip -dc {shlex.quote(backup_info.backup_path)} | psql {shlex.quote(backup_info.source_path)}",
                 timeout=600
             )
             return result.success

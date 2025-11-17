@@ -13,6 +13,7 @@ import asyncio
 import logging
 import shlex
 import subprocess
+from collections import deque
 from dataclasses import dataclass, field
 from datetime import datetime
 from enum import Enum
@@ -92,8 +93,9 @@ class CommandExecutor:
             config: Executor configuration (uses defaults if not provided)
         """
         self.config = config or CommandExecutorConfig()
-        self.execution_history: List[CommandResult] = []
+        # Use deque with maxlen for O(1) operations instead of O(n) list.pop(0)
         self.max_history = 1000  # Keep last 1000 commands
+        self.execution_history = deque(maxlen=self.max_history)
 
         logger.info(f"🔧 Command Executor initialized (mode: {'DRY-RUN' if self.config.dry_run else 'LIVE'})")
 
@@ -183,10 +185,8 @@ class CommandExecutor:
         result.timestamp = start_time
         result.mode = exec_mode
 
-        # Add to history
+        # Add to history (deque with maxlen automatically removes oldest)
         self.execution_history.append(result)
-        if len(self.execution_history) > self.max_history:
-            self.execution_history.pop(0)
 
         # Log result
         if result.success:
