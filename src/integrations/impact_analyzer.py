@@ -9,6 +9,7 @@ Analyzes the impact of security fixes on running projects:
 - Validates against DO-NOT-TOUCH rules
 """
 
+import asyncio
 import logging
 import os
 from dataclasses import dataclass, field
@@ -287,28 +288,48 @@ class ImpactAnalyzer:
         return assessment
 
     async def _update_project_statuses(self):
-        """Update running status of all projects"""
-        for project_name, project in self.projects.items():
-            try:
-                # Check if project processes are running
-                for process_name in project.processes:
-                    result = await self.executor.execute(
-                        f"pgrep -f '{process_name}' > /dev/null 2>&1",
-                        timeout=5
-                    )
+        """
+        Update running status of all projects in parallel
 
-                    if result.success:
-                        project.status = ProjectStatus.RUNNING
-                        logger.debug(f"✅ {project_name}: RUNNING")
-                        break
-                else:
-                    # No processes found
-                    project.status = ProjectStatus.STOPPED
-                    logger.debug(f"⏸️ {project_name}: STOPPED")
+        Uses asyncio.gather() for concurrent status checks to improve performance.
+        Each project status is independent, so no race conditions occur.
+        """
+        # Create tasks for parallel execution
+        tasks = [
+            self._check_single_project_status(project_name, project)
+            for project_name, project in self.projects.items()
+        ]
 
-            except Exception as e:
-                logger.warning(f"⚠️ Failed to check {project_name} status: {e}")
-                project.status = ProjectStatus.UNKNOWN
+        # Execute all status checks concurrently
+        await asyncio.gather(*tasks, return_exceptions=True)
+
+    async def _check_single_project_status(self, project_name: str, project: 'ProjectInfo'):
+        """
+        Check status of a single project (helper for parallel execution)
+
+        This method is safe for concurrent execution as each project has its own status.
+        No shared state is modified, preventing race conditions.
+        """
+        try:
+            # Check if project processes are running
+            for process_name in project.processes:
+                result = await self.executor.execute(
+                    f"pgrep -f '{process_name}' > /dev/null 2>&1",
+                    timeout=5
+                )
+
+                if result.success:
+                    project.status = ProjectStatus.RUNNING
+                    logger.debug(f"✅ {project_name}: RUNNING")
+                    break
+            else:
+                # No processes found
+                project.status = ProjectStatus.STOPPED
+                logger.debug(f"⏸️ {project_name}: STOPPED")
+
+        except Exception as e:
+            logger.warning(f"⚠️ Failed to check {project_name} status: {e}")
+            project.status = ProjectStatus.UNKNOWN
 
     def _determine_affected_projects(
         self,

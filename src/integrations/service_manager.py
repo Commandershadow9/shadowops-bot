@@ -221,13 +221,20 @@ class ServiceManager:
             if graceful:
                 logger.info(f"   ⏳ Waiting for graceful shutdown ({service.graceful_shutdown_timeout}s)...")
 
-                for i in range(service.graceful_shutdown_timeout):
-                    await asyncio.sleep(1)
+                # Adaptive polling: faster checks initially for quick services
+                elapsed = 0
+                check_count = 0
+                while elapsed < service.graceful_shutdown_timeout:
+                    # Fast polling first 5 seconds (0.5s), then normal (1s)
+                    interval = 0.5 if elapsed < 5 else 1.0
+                    await asyncio.sleep(interval)
+                    elapsed += interval
+                    check_count += 1
 
                     state = await self.get_service_state(service_name)
 
                     if state == ServiceState.STOPPED:
-                        logger.info(f"   ✅ Service stopped gracefully after {i+1}s")
+                        logger.info(f"   ✅ Service stopped gracefully after {elapsed:.1f}s ({check_count} checks)")
                         break
                 else:
                     # Timeout reached, force kill
@@ -307,16 +314,27 @@ class ServiceManager:
             # Wait for service to start
             logger.info(f"   ⏳ Waiting for service to start...")
 
+            # Adaptive polling: faster checks initially for quick services
             max_wait = 30  # 30 seconds max wait
-            for i in range(max_wait):
-                await asyncio.sleep(1)
+            elapsed = 0
+            check_count = 0
+            service_started = False
+
+            while elapsed < max_wait:
+                # Fast polling first 5 seconds (0.5s), then normal (1s)
+                interval = 0.5 if elapsed < 5 else 1.0
+                await asyncio.sleep(interval)
+                elapsed += interval
+                check_count += 1
 
                 state = await self.get_service_state(service_name)
 
                 if state == ServiceState.RUNNING:
-                    logger.info(f"   ✅ Service started after {i+1}s")
+                    logger.info(f"   ✅ Service started after {elapsed:.1f}s ({check_count} checks)")
+                    service_started = True
                     break
-            else:
+
+            if not service_started:
                 logger.error(f"❌ Service did not start within {max_wait}s")
                 service.state = ServiceState.FAILED
                 return False
@@ -496,17 +514,30 @@ class ServiceManager:
         service_name: str,
         max_wait: int = 60
     ) -> bool:
-        """Wait for service to become healthy"""
+        """
+        Wait for service to become healthy with adaptive polling
+
+        Uses faster checks initially (0.5s) to detect quick services,
+        then slower checks (1s) to reduce overhead.
+        """
 
         logger.info(f"   🏥 Waiting for health check to pass...")
 
-        for i in range(max_wait):
-            await asyncio.sleep(1)
+        # Adaptive polling: faster checks initially
+        elapsed = 0
+        check_count = 0
+
+        while elapsed < max_wait:
+            # Fast polling first 5 seconds (0.5s), then normal (1s)
+            interval = 0.5 if elapsed < 5 else 1.0
+            await asyncio.sleep(interval)
+            elapsed += interval
+            check_count += 1
 
             healthy = await self.health_check(service_name)
 
             if healthy:
-                logger.info(f"   ✅ Health check passed after {i+1}s")
+                logger.info(f"   ✅ Health check passed after {elapsed:.1f}s ({check_count} checks)")
                 return True
 
         logger.error(f"   ❌ Health check timeout after {max_wait}s")
