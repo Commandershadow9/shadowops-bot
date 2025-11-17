@@ -14,6 +14,7 @@ Workflow:
 
 import asyncio
 import logging
+import os
 import time
 from typing import Dict, List, Optional, Set
 from dataclasses import dataclass, field
@@ -746,12 +747,41 @@ Ausgabe als JSON:
                 )
                 await exec_message.edit(embed=exec_embed)
 
-            # TODO: Implement actual backup creation
-            # For now: Simulate backup
-            await asyncio.sleep(2)
-            backup_created = True
-            backup_path = f"/tmp/orchestrator_backup_{batch.batch_id}_{int(time.time())}"
-            logger.info(f"✅ Backup erstellt: {backup_path}")
+            # Create backup using BackupManager from self_healing
+            backup_manager = self.self_healing.backup_manager
+            backup_metadata = []
+
+            # Collect files to backup based on events
+            files_to_backup = set()
+            for event in batch.events:
+                if event.source == 'trivy':
+                    # Backup Docker-related files
+                    files_to_backup.add('/home/cmdshadow/shadowops-bot/package.json')
+                    files_to_backup.add('/home/cmdshadow/shadowops-bot/Dockerfile')
+                elif event.source in ['fail2ban', 'crowdsec']:
+                    # Backup firewall configs
+                    files_to_backup.add('/etc/fail2ban/jail.local')
+                    files_to_backup.add('/etc/ufw/user.rules')
+                elif event.source == 'aide':
+                    # Backup will be handled by AIDE fixer
+                    pass
+
+            # Create backups
+            for file_path in files_to_backup:
+                if os.path.exists(file_path):
+                    try:
+                        backup = await backup_manager.create_backup(
+                            file_path,
+                            metadata={'batch_id': batch.batch_id}
+                        )
+                        backup_metadata.append(backup)
+                        logger.info(f"   💾 Backed up: {file_path}")
+                    except Exception as e:
+                        logger.warning(f"   ⚠️ Could not backup {file_path}: {e}")
+
+            backup_created = len(backup_metadata) > 0
+            backup_path = f"Batch {batch.batch_id} - {len(backup_metadata)} backups created"
+            logger.info(f"✅ Backup Phase abgeschlossen: {len(backup_metadata)} Dateien gesichert")
 
             # Execute each phase sequentially
             for phase_idx, phase in enumerate(plan.phases, 1):

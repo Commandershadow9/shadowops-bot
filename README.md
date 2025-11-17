@@ -1,36 +1,51 @@
-# 🗡️ ShadowOps - Security Operations Discord Bot
+# 🗡️ ShadowOps - Active Security Guardian
 
-**ShadowOps** ist ein umfassender Security-Monitoring Bot für Discord mit **KI-gesteuerter Auto-Remediation**, der Echtzeit-Benachrichtigungen liefert und Sicherheitslücken automatisch analysiert und behebt.
+**ShadowOps** ist ein **vollständig autonomer Security Guardian** mit KI-gesteuerter Auto-Remediation, der Sicherheitsbedrohungen nicht nur erkennt und analysiert, sondern **eigenständig behebt**.
+
+> 📖 **Vollständige v3.0 Dokumentation:** [ACTIVE_SECURITY_GUARDIAN.md](./ACTIVE_SECURITY_GUARDIAN.md)
+> 📚 **Dokumentations-Übersicht:** [DOCS_OVERVIEW.md](./DOCS_OVERVIEW.md)
 
 ## ⚡ Highlights
 
-### 🤖 **AI-Powered Auto-Remediation (NEU in v2.0)**
-- **Intelligente Bedrohungsanalyse** mit OpenAI GPT-4o & Anthropic Claude
-- **Live-Status-Updates** während der KI-Analyse in Discord
-- **Confidence-basierte Sicherheit**: Fixes <85% werden automatisch blockiert
-- **Batch-Processing**: 270 Vulnerabilities → 1 Approval-Request
-- **Persistente Event-Tracking**: Keine Duplikate nach Bot-Restarts
-- **Event-Driven Architecture**: Effiziente Echtzeit-Überwachung
+### 🛡️ **Active Security Guardian (v3.0 - CURRENT)**
+- ✅ **Echte Fix-Execution**: NPM audit fix, Docker rebuilds, Firewall-Updates, File Restoration
+- ✅ **Automatische Backups**: Vor JEDER Änderung mit 7-Tage Retention & Rollback
+- ✅ **Impact-Analyse**: Projekt-bewusste Entscheidungen (ShadowOps, GuildScout, Nexus, Sicherheitstool)
+- ✅ **Service Management**: Graceful Start/Stop mit Health Checks & Dependency-Ordering
+- ✅ **Koordinierte Remediation**: Multi-Event Batching mit single approval flow
+- ✅ **Safety First**: Dry-Run Mode, DO-NOT-TOUCH Validation, Circuit Breaker, Command Validation
+- ✅ **Live Discord Updates**: Echtzeit-Feedback während kompletter Execution (Backup → Fix → Verify → Restart)
 
-### 🎯 Workflow
+### 🤖 **AI-Powered Analysis**
+- **Hybrid AI System**: Ollama (local) → Claude → OpenAI (fallback chain)
+- **RAG Context**: Projekt-Wissen + DO-NOT-TOUCH Regeln + Infrastructure Knowledge
+- **Confidence-Based**: <85% confidence → automatisch blockiert
+- **Batch-Processing**: Mehrere Events → 1 koordinierter Plan
+- **Learning Retry Logic**: KI lernt aus fehlgeschlagenen Fixes
+
+### 🎯 Workflow (v3.0)
 ```
 1. 🚨 Security Event erkannt
-   └─> 📢 Sofortiger Alert in Discord-Channels
+   └─> Event Watcher → Orchestrator (10s Batch-Fenster)
 
-2. 🤖 KI-Analyse startet (Live-Updates!)
-   ├─ 📊 CVE-Research & Package-Analyse
-   ├─ 🧠 Fix-Strategie entwickeln
-   └─ 💯 Confidence-Score berechnen
+2. 🤖 KI-Analyse (ALLE Events zusammen)
+   ├─ Hybrid AI mit RAG Context
+   ├─ Koordinierter Multi-Phasen Plan
+   └─ Impact-Analyse (Projekte, Downtime, Risks)
 
-3. ✋ Smart Approval Request
-   ├─ Detaillierte Event-Infos
-   ├─ KI-Reasoning & Analyse
-   ├─ Konkrete Fix-Steps
-   └─ Risiko-Bewertung
+3. ✋ Single Approval Request
+   ├─ Kompletter Plan mit allen Phasen
+   ├─ Betroffene Projekte + Downtime-Schätzung
+   └─ Rollback-Strategie
 
-4. 🛡️ User Entscheidet
-   ✅ Approve → KI fixt automatisch
-   ❌ Deny → Manuelle Intervention
+4. 🔧 Autonome Execution
+   ├─ Phase 0: Backups erstellen
+   ├─ Phase 1-N: Fixes ausführen (npm audit, Docker rebuild, etc.)
+   ├─ Verification: Re-Scans prüfen Erfolg
+   └─ Bei Fehler: Automatischer Rollback!
+
+5. ✅ Completion
+   └─> Discord: Status + Results + Stats
 ```
 
 ## 🎯 Features
