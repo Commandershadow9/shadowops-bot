@@ -13,6 +13,11 @@ import json
 import discord
 
 from integrations.approval_modes import ApprovalMode, ApprovalModeManager
+from integrations.command_executor import CommandExecutor, CommandExecutorConfig
+from integrations.backup_manager import BackupManager, BackupConfig
+from integrations.impact_analyzer import ImpactAnalyzer
+from integrations.service_manager import ServiceManager
+from integrations.fixers import TrivyFixer, CrowdSecFixer, Fail2banFixer, AideFixer
 
 logger = logging.getLogger(__name__)
 
@@ -190,6 +195,18 @@ class SelfHealingCoordinator:
         # AI service (will be set during initialization)
         self.ai_service = None
 
+        # Infrastructure components (will be initialized)
+        self.command_executor = None
+        self.backup_manager = None
+        self.impact_analyzer = None
+        self.service_manager = None
+
+        # Fixer modules (will be initialized)
+        self.trivy_fixer = None
+        self.crowdsec_fixer = None
+        self.fail2ban_fixer = None
+        self.aide_fixer = None
+
     async def initialize(self, ai_service):
         """Initialize with AI service and context manager"""
         self.ai_service = ai_service
@@ -198,7 +215,35 @@ class SelfHealingCoordinator:
         context_manager = getattr(ai_service, 'context_manager', None)
         self.approval_manager = ApprovalModeManager(self.approval_mode, context_manager)
 
-        logger.info("✅ Self-Healing Coordinator initialized")
+        # Initialize infrastructure components
+        executor_config = CommandExecutorConfig(
+            dry_run=self.config.auto_remediation.get('dry_run', False),
+            default_timeout=300
+        )
+        self.command_executor = CommandExecutor(executor_config)
+
+        backup_config = BackupConfig(
+            backup_root='/tmp/shadowops_backups',
+            retention_days=7
+        )
+        self.backup_manager = BackupManager(backup_config, self.command_executor)
+
+        self.impact_analyzer = ImpactAnalyzer(self.command_executor)
+
+        self.service_manager = ServiceManager(
+            executor=self.command_executor,
+            discord_notify_callback=self._send_discord_notification
+        )
+
+        # Initialize fixer modules
+        self.trivy_fixer = TrivyFixer(self.command_executor, self.backup_manager)
+        self.crowdsec_fixer = CrowdSecFixer(self.command_executor, self.backup_manager)
+        self.fail2ban_fixer = Fail2banFixer(self.command_executor, self.backup_manager)
+        self.aide_fixer = AideFixer(self.command_executor, self.backup_manager)
+
+        logger.info("✅ Self-Healing Coordinator initialized with all components")
+        logger.info(f"   Dry-run mode: {executor_config.dry_run}")
+        logger.info(f"   Backup retention: {backup_config.retention_days} days")
 
     async def start(self):
         """Start self-healing worker"""
@@ -444,29 +489,127 @@ class SelfHealingCoordinator:
             return {'status': 'failed', 'error': str(e)}
 
     async def _fix_trivy(self, event: 'SecurityEvent', strategy: Dict) -> Dict:
-        """Fix Docker vulnerability"""
-        # Placeholder - actual implementation would update Dockerfile, rebuild, redeploy
+        """Fix Docker vulnerability using TrivyFixer"""
         logger.info(f"🐳 Applying Trivy fix: {strategy['description']}")
-        # TODO: Implement actual Docker fix
-        return {'status': 'success', 'message': 'Docker vulnerability fixed'}
+
+        try:
+            # Convert SecurityEvent to dict for fixer
+            event_dict = event.to_dict()
+
+            # Call TrivyFixer
+            result = await self.trivy_fixer.fix(
+                event=event_dict,
+                strategy=strategy
+            )
+
+            return result
+
+        except Exception as e:
+            logger.error(f"❌ Trivy fix error: {e}", exc_info=True)
+            return {
+                'status': 'failed',
+                'error': str(e)
+            }
 
     async def _fix_crowdsec(self, event: 'SecurityEvent', strategy: Dict) -> Dict:
-        """Fix CrowdSec threat"""
+        """Fix CrowdSec threat using CrowdSecFixer"""
         logger.info(f"🛡️ Applying CrowdSec fix: {strategy['description']}")
-        # TODO: Implement actual CrowdSec remediation
-        return {'status': 'success', 'message': 'Threat mitigated'}
+
+        try:
+            # Convert SecurityEvent to dict for fixer
+            event_dict = event.to_dict()
+
+            # Call CrowdSecFixer
+            result = await self.crowdsec_fixer.fix(
+                event=event_dict,
+                strategy=strategy
+            )
+
+            return result
+
+        except Exception as e:
+            logger.error(f"❌ CrowdSec fix error: {e}", exc_info=True)
+            return {
+                'status': 'failed',
+                'error': str(e)
+            }
 
     async def _fix_fail2ban(self, event: 'SecurityEvent', strategy: Dict) -> Dict:
-        """Fix Fail2ban issue"""
+        """Fix Fail2ban issue using Fail2banFixer"""
         logger.info(f"🚫 Applying Fail2ban fix: {strategy['description']}")
-        # TODO: Implement actual Fail2ban remediation
-        return {'status': 'success', 'message': 'Ban extended'}
+
+        try:
+            # Convert SecurityEvent to dict for fixer
+            event_dict = event.to_dict()
+
+            # Call Fail2banFixer
+            result = await self.fail2ban_fixer.fix(
+                event=event_dict,
+                strategy=strategy
+            )
+
+            return result
+
+        except Exception as e:
+            logger.error(f"❌ Fail2ban fix error: {e}", exc_info=True)
+            return {
+                'status': 'failed',
+                'error': str(e)
+            }
 
     async def _fix_aide(self, event: 'SecurityEvent', strategy: Dict) -> Dict:
-        """Fix AIDE integrity violation"""
+        """Fix AIDE integrity violation using AideFixer"""
         logger.info(f"📁 Applying AIDE fix: {strategy['description']}")
-        # TODO: Implement actual AIDE remediation
-        return {'status': 'success', 'message': 'File restored'}
+
+        try:
+            # Convert SecurityEvent to dict for fixer
+            event_dict = event.to_dict()
+
+            # Call AideFixer
+            result = await self.aide_fixer.fix(
+                event=event_dict,
+                strategy=strategy
+            )
+
+            return result
+
+        except Exception as e:
+            logger.error(f"❌ AIDE fix error: {e}", exc_info=True)
+            return {
+                'status': 'failed',
+                'error': str(e)
+            }
+
+    async def _send_discord_notification(self, message: str, level: str = 'info'):
+        """Send Discord notification (callback for Service Manager)"""
+        try:
+            # Get appropriate channel based on level
+            if level == 'warning' or level == 'error':
+                channel_id = 1438503736220586164  # auto-remediation-alerts
+            else:
+                channel_id = 1438503699302957117  # bot-status
+
+            channel = self.bot.get_channel(channel_id)
+
+            if channel:
+                # Create embed based on level
+                color_map = {
+                    'info': discord.Color.blue(),
+                    'success': discord.Color.green(),
+                    'warning': discord.Color.orange(),
+                    'error': discord.Color.red()
+                }
+
+                embed = discord.Embed(
+                    description=message,
+                    color=color_map.get(level, discord.Color.blue()),
+                    timestamp=datetime.now()
+                )
+
+                await channel.send(embed=embed)
+
+        except Exception as e:
+            logger.error(f"❌ Discord notification error: {e}")
 
     async def _handle_success(self, job: RemediationJob):
         """Handle successful remediation"""

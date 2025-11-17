@@ -88,6 +88,11 @@ auto_remediation:
   # Aktiviert/Deaktiviert das komplette Auto-Remediation System
   enabled: true  # ✅ System ist bereit!
 
+  # Dry-Run Mode: Nur Simulation, KEINE echten Änderungen
+  # Wenn aktiviert, werden alle Commands nur geloggt, aber nicht ausgeführt
+  # EMPFOHLEN beim ersten Start zum Testen!
+  dry_run: false  # false = Echte Fixes | true = Nur Simulation
+
   # Approval Mode: Bestimmt wann Human-Approval erforderlich ist
   # - paranoid: JEDER Fix benötigt manuelle Freigabe (empfohlen für Start)
   # - balanced: LOW/MEDIUM werden auto-fixed, HIGH/CRITICAL benötigen Freigabe
