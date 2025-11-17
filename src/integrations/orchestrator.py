@@ -804,8 +804,13 @@ Ausgabe als JSON:
                     )
                     await exec_message.edit(embed=exec_embed)
 
-                # Execute phase steps
-                phase_success = await self._execute_phase(phase, batch.events)
+                # Execute phase steps (pass Discord message for live updates)
+                phase_success = await self._execute_phase(
+                    phase,
+                    batch.events,
+                    exec_message=exec_message,
+                    exec_embed=exec_embed
+                )
 
                 if phase_success:
                     logger.info(f"✅ Phase {phase_idx} erfolgreich")
@@ -876,11 +881,18 @@ Ausgabe als JSON:
 
             return False
 
-    async def _execute_phase(self, phase: Dict, events: List) -> bool:
+    async def _execute_phase(
+        self,
+        phase: Dict,
+        events: List,
+        exec_message=None,
+        exec_embed=None
+    ) -> bool:
         """
         Führt eine einzelne Phase aus
 
         Delegiert an Self-Healing für tatsächliche Fix-Ausführung
+        Sendet Live-Updates an Discord während der Ausführung
         """
         phase_steps = phase.get('steps', [])
         phase_name = phase.get('name', 'Unnamed Phase')
@@ -891,7 +903,7 @@ Ausgabe als JSON:
             # Execute fixes for each event in this phase
             all_success = True
 
-            for event in events:
+            for idx, event in enumerate(events, 1):
                 try:
                     # Get fix strategy from AI (or use cached from plan)
                     strategy = phase.get('strategy', {})
@@ -903,6 +915,17 @@ Ausgabe als JSON:
                             {'event': event.to_dict()}
                         )
 
+                    # Discord Live Update: Starting fix
+                    if exec_message and exec_embed:
+                        current_field = exec_embed.fields[0]
+                        exec_embed.set_field_at(
+                            0,
+                            name="📊 Status",
+                            value=f"{current_field.value}\n\n🔧 Fix {idx}/{len(events)}: {event.source.upper()}\n⏳ Executing...",
+                            inline=False
+                        )
+                        await exec_message.edit(embed=exec_embed)
+
                     # Execute fix via self-healing
                     logger.info(f"      Executing fix for {event.source} event {event.event_id}...")
 
@@ -910,9 +933,33 @@ Ausgabe als JSON:
 
                     if result['status'] == 'success':
                         logger.info(f"      ✅ Fix successful: {result.get('message', '')}")
+
+                        # Discord Live Update: Fix successful
+                        if exec_message and exec_embed:
+                            current_field = exec_embed.fields[0]
+                            base_value = current_field.value.split('\n\n🔧')[0]  # Remove previous fix status
+                            exec_embed.set_field_at(
+                                0,
+                                name="📊 Status",
+                                value=f"{base_value}\n\n✅ Fix {idx}/{len(events)}: {event.source.upper()} successful\n📝 {result.get('message', '')[:100]}",
+                                inline=False
+                            )
+                            await exec_message.edit(embed=exec_embed)
                     else:
                         logger.error(f"      ❌ Fix failed: {result.get('error', 'Unknown error')}")
                         all_success = False
+
+                        # Discord Live Update: Fix failed
+                        if exec_message and exec_embed:
+                            current_field = exec_embed.fields[0]
+                            base_value = current_field.value.split('\n\n🔧')[0]
+                            exec_embed.set_field_at(
+                                0,
+                                name="📊 Status",
+                                value=f"{base_value}\n\n❌ Fix {idx}/{len(events)}: {event.source.upper()} failed\n⚠️ {result.get('error', 'Unknown')[:100]}",
+                                inline=False
+                            )
+                            await exec_message.edit(embed=exec_embed)
 
                         # If one fix fails, stop phase execution
                         return False

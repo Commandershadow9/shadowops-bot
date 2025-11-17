@@ -148,7 +148,19 @@ class TrivyFixer:
                 )
 
                 if rebuild_result['status'] == 'success':
-                    # Verify fix with Trivy re-scan
+                    # Verify fix with Trivy re-scan (skip if no Docker rebuild happened)
+                    if rebuild_result.get('skipped'):
+                        # No Docker image, skip verification (Python project running directly)
+                        logger.info("✅ Trivy fix successful (non-Docker project, verification skipped)")
+                        return {
+                            'status': 'success',
+                            'message': 'NPM vulnerabilities fixed (no Docker verification needed)',
+                            'details': {
+                                'method': fix_method,
+                                'note': 'Python project without Dockerfile - running directly'
+                            }
+                        }
+
                     verification = await self._verify_fix(
                         project_path,
                         vulnerabilities
@@ -603,7 +615,11 @@ class TrivyFixer:
 
             if not os.path.exists(dockerfile):
                 logger.warning("⚠️ No Dockerfile found, skipping rebuild")
-                return {'status': 'success', 'message': 'No Docker rebuild needed'}
+                return {
+                    'status': 'success',
+                    'skipped': True,
+                    'message': 'No Docker rebuild needed (Python project without Dockerfile)'
+                }
 
             # Determine image name from project
             project_name = os.path.basename(project_path).lower()
