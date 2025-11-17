@@ -107,7 +107,14 @@ class TrivyFixer:
             backup_info = await self._create_backup(project_path, fix_method)
 
             # Apply fix based on method
-            if fix_method == 'npm_audit':
+            if fix_method == 'docker_rebuild':
+                # Docker image rebuild - no package fixes needed, just rebuild with updates
+                logger.info("🐳 Rebuilding Docker images with latest dependencies")
+                result = await self._rebuild_docker_image(
+                    project_path,
+                    strategy
+                )
+            elif fix_method == 'npm_audit':
                 result = await self._fix_npm_vulnerabilities(
                     project_path,
                     vulnerabilities,
@@ -141,11 +148,16 @@ class TrivyFixer:
 
             # Check if fix was successful
             if result['status'] == 'success':
-                # Rebuild Docker image
-                rebuild_result = await self._rebuild_docker_image(
-                    project_path,
-                    strategy
-                )
+                # Rebuild Docker image (unless already done for docker_rebuild method)
+                if fix_method != 'docker_rebuild':
+                    logger.info("🐳 Rebuilding Docker images after package fixes")
+                    rebuild_result = await self._rebuild_docker_image(
+                        project_path,
+                        strategy
+                    )
+                else:
+                    # Already rebuilt, just use the result
+                    rebuild_result = result
 
                 if rebuild_result['status'] == 'success':
                     # Verify fix with Trivy re-scan (skip if no Docker rebuild happened)
@@ -242,28 +254,46 @@ class TrivyFixer:
         """Determine which fix method to use"""
 
         strategy_desc = strategy.get('description', '').lower()
+        strategy_steps = ' '.join(strategy.get('steps', [])).lower()
+        full_strategy = f"{strategy_desc} {strategy_steps}"
+
+        # Check for Docker image vulnerabilities (most common for Trivy)
+        has_docker = any(keyword in full_strategy for keyword in [
+            'docker', 'image', 'container', 'rebuild', 'images'
+        ])
 
         # Check for NPM vulnerabilities
-        has_npm = 'npm' in strategy_desc or 'package.json' in strategy_desc
+        has_npm = 'npm' in full_strategy or 'package.json' in full_strategy
 
         # Check for APT vulnerabilities
-        has_apt = 'apt' in strategy_desc or 'debian' in strategy_desc or 'ubuntu' in strategy_desc
+        has_apt = 'apt' in full_strategy or 'debian' in full_strategy or 'ubuntu' in full_strategy
 
         # Check for base image updates
-        has_base = 'base image' in strategy_desc or 'from' in strategy_desc
+        has_base = 'base image' in full_strategy or 'from' in full_strategy
 
-        # Determine method
-        if has_npm and has_apt:
+        # Determine method (prioritize Docker since Trivy is primarily a Docker scanner)
+        if has_docker:
+            logger.info("   🐳 Detected Docker vulnerabilities - using docker_rebuild")
+            return 'docker_rebuild'
+        elif has_npm and has_apt:
             return 'combined'
         elif has_npm:
-            return 'npm_audit'
+            # Verify package.json exists
+            package_json = os.path.join(project_path, 'package.json')
+            if os.path.exists(package_json):
+                logger.info("   📦 Detected NPM vulnerabilities - using npm_audit")
+                return 'npm_audit'
+            else:
+                logger.warning("   ⚠️ NPM mentioned but no package.json found - falling back to docker_rebuild")
+                return 'docker_rebuild'
         elif has_apt:
             return 'apt_upgrade'
         elif has_base:
             return 'base_image'
         else:
-            # Default to npm_audit for Node.js projects
-            return 'npm_audit'
+            # Default to docker_rebuild for Trivy (Docker scanner)
+            logger.info("   🐳 No specific method detected - defaulting to docker_rebuild")
+            return 'docker_rebuild'
 
     async def _create_backup(self, project_path: str, fix_method: str) -> List:
         """Create backups before making changes"""
