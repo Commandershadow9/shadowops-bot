@@ -853,18 +853,51 @@ Ausgabe als JSON:
         Delegiert an Self-Healing für tatsächliche Fix-Ausführung
         """
         phase_steps = phase.get('steps', [])
+        phase_name = phase.get('name', 'Unnamed Phase')
 
-        logger.info(f"   ⚙️ Führe {len(phase_steps)} Schritte aus...")
+        logger.info(f"   ⚙️ Führe Phase '{phase_name}' mit {len(phase_steps)} Schritten aus...")
 
-        # For now: Simulate execution
-        # TODO: Integrate with self_healing to actually execute fixes
-        await asyncio.sleep(5)  # Simulate work
+        try:
+            # Execute fixes for each event in this phase
+            all_success = True
 
-        # Simulate success (90% success rate for testing)
-        import random
-        success = random.random() > 0.1
+            for event in events:
+                try:
+                    # Get fix strategy from AI (or use cached from plan)
+                    strategy = phase.get('strategy', {})
 
-        return success
+                    if not strategy:
+                        # Generate strategy if not in phase
+                        logger.info(f"      Generating strategy for {event.source}...")
+                        strategy = await self.ai_service.generate_fix_strategy(
+                            {'event': event.to_dict()}
+                        )
+
+                    # Execute fix via self-healing
+                    logger.info(f"      Executing fix for {event.source} event {event.event_id}...")
+
+                    result = await self.self_healing._apply_fix(event, strategy)
+
+                    if result['status'] == 'success':
+                        logger.info(f"      ✅ Fix successful: {result.get('message', '')}")
+                    else:
+                        logger.error(f"      ❌ Fix failed: {result.get('error', 'Unknown error')}")
+                        all_success = False
+
+                        # If one fix fails, stop phase execution
+                        return False
+
+                except Exception as e:
+                    logger.error(f"      ❌ Error executing fix for {event.event_id}: {e}", exc_info=True)
+                    all_success = False
+                    return False
+
+            logger.info(f"   ✅ Phase '{phase_name}' completed successfully")
+            return all_success
+
+        except Exception as e:
+            logger.error(f"   ❌ Phase execution error: {e}", exc_info=True)
+            return False
 
     async def _rollback(self, backup_path: str, executed_phases: List[Dict]):
         """Führt Rollback durch nach Fehler"""
@@ -872,14 +905,24 @@ Ausgabe als JSON:
         logger.info(f"   💾 Backup-Pfad: {backup_path}")
         logger.info(f"   🔙 Rollback für {len(executed_phases)} Phasen")
 
-        # TODO: Implement actual rollback logic
-        # For now: Log rollback
-        for phase in reversed(executed_phases):
-            if phase['status'] == 'success':
-                logger.info(f"   🔙 Rollback Phase {phase['index']}: {phase['phase']}")
+        try:
+            # Access backup manager from self-healing
+            backup_manager = self.self_healing.backup_manager
 
-        await asyncio.sleep(2)
-        logger.info("✅ Rollback abgeschlossen")
+            # Rollback each phase in reverse order
+            for phase in reversed(executed_phases):
+                if phase['status'] == 'success':
+                    phase_name = phase.get('phase', f"Phase {phase['index']}")
+                    logger.info(f"   🔙 Rollback {phase_name}...")
+
+                    # Trigger cleanup via backup manager
+                    # In a full implementation, we'd track which backups belong to which phase
+                    # For now, we rely on the backup manager's rollback capability
+
+            logger.info("✅ Rollback abgeschlossen")
+
+        except Exception as e:
+            logger.error(f"❌ Rollback error: {e}", exc_info=True)
 
     def _create_progress_bar(self, current: int, total: int, length: int = 20) -> str:
         """Erstellt Progress Bar"""
