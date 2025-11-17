@@ -477,11 +477,17 @@ class SecurityEventWatcher:
         # Send channel alerts (for visibility)
         await self._send_channel_alert(event)
 
-        # Trigger auto-remediation via self-healing coordinator
-        if hasattr(self.bot, 'self_healing') and self.bot.self_healing:
+        # Route event to Orchestrator (coordinated remediation)
+        # The Orchestrator batches events and creates a coordinated plan
+        if hasattr(self.bot, 'orchestrator') and self.bot.orchestrator:
+            await self.bot.orchestrator.submit_event(event)
+            logger.info(f"   📦 Event submitted to Orchestrator for coordinated remediation")
+        elif hasattr(self.bot, 'self_healing') and self.bot.self_healing:
+            # Fallback to legacy direct remediation if orchestrator not available
+            logger.warning("⚠️ Orchestrator not available, using legacy direct remediation")
             await self.bot.self_healing.handle_event(event)
         else:
-            logger.warning("Self-healing coordinator not available, event logged only")
+            logger.warning("Neither Orchestrator nor Self-healing coordinator available, event logged only")
 
     async def _send_channel_alert(self, event: SecurityEvent):
         """

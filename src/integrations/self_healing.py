@@ -12,6 +12,8 @@ from enum import Enum
 import json
 import discord
 
+from integrations.approval_modes import ApprovalMode, ApprovalModeManager
+
 logger = logging.getLogger(__name__)
 
 
@@ -52,13 +54,6 @@ class ApprovalView(discord.ui.View):
         embed.color = discord.Color.red()
         embed.add_field(name="Status", value=f"❌ Rejected by {interaction.user.mention}", inline=False)
         await interaction.message.edit(embed=embed, view=None)
-
-
-class ApprovalMode(Enum):
-    """Approval modes for auto-remediation"""
-    PARANOID = "paranoid"      # Always require approval
-    BALANCED = "balanced"      # Auto-fix LOW/MEDIUM, require approval for HIGH/CRITICAL
-    AGGRESSIVE = "aggressive"  # Auto-fix everything except CRITICAL
 
 
 @dataclass
@@ -159,8 +154,11 @@ class SelfHealingCoordinator:
         self.config = config
 
         # Approval mode - Config ist ein Objekt, kein Dict
-        approval_mode_str = config.auto_remediation.get('approval_mode', 'balanced')
+        approval_mode_str = config.auto_remediation.get('approval_mode', 'paranoid')
         self.approval_mode = ApprovalMode(approval_mode_str)
+
+        # Approval Mode Manager (will be set during initialization with context manager)
+        self.approval_manager = None
         logger.info(f"🎯 Approval Mode: {self.approval_mode.value}")
 
         # Job queue
@@ -193,8 +191,13 @@ class SelfHealingCoordinator:
         self.ai_service = None
 
     async def initialize(self, ai_service):
-        """Initialize with AI service"""
+        """Initialize with AI service and context manager"""
         self.ai_service = ai_service
+
+        # Initialize Approval Mode Manager with context from AI service
+        context_manager = getattr(ai_service, 'context_manager', None)
+        self.approval_manager = ApprovalModeManager(self.approval_mode, context_manager)
+
         logger.info("✅ Self-Healing Coordinator initialized")
 
     async def start(self):
@@ -347,11 +350,12 @@ class SelfHealingCoordinator:
             logger.error(f"❌ Remediation execution error: {e}", exc_info=True)
             await self._handle_failure(job, str(e))
 
-    async def _generate_fix_strategy(self, job: RemediationJob) -> Optional[Dict]:
+    async def _generate_fix_strategy(self, job: RemediationJob, streaming_state: Optional[Dict] = None) -> Optional[Dict]:
         """
         Generate fix strategy using AI
 
         Takes into account previous failed attempts to learn and adapt.
+        Accepts optional streaming_state for real-time Discord updates.
         """
         event = job.event
 
@@ -367,6 +371,10 @@ class SelfHealingCoordinator:
                 for attempt in job.attempts
             ]
         }
+
+        # Add streaming state if provided (for real-time Discord updates)
+        if streaming_state is not None:
+            context['streaming_state'] = streaming_state
 
         # Request AI analysis
         if self.ai_service:
@@ -509,20 +517,43 @@ class SelfHealingCoordinator:
             # Send Discord notification
             await self._send_failure_notification(job)
 
-    def _requires_approval(self, event: 'SecurityEvent') -> bool:
-        """Determine if event requires human approval"""
+    def _requires_approval(self, event: 'SecurityEvent', fix_strategy: Optional[Dict] = None) -> bool:
+        """
+        Determine if event requires human approval
+
+        NOTE: This method is called twice:
+        1. Initially before AI analysis (fix_strategy=None) - uses basic logic
+        2. After AI analysis (fix_strategy provided) - uses ApprovalModeManager for intelligent decision
+
+        Args:
+            event: Security event
+            fix_strategy: Optional AI-generated fix strategy (with confidence score)
+
+        Returns:
+            True if approval required, False if can auto-execute
+        """
+        # If we don't have a fix strategy yet, use basic approval logic
+        if fix_strategy is None:
+            # Always start by requiring approval (will be reassessed after AI analysis)
+            return True
+
+        # Use ApprovalModeManager for intelligent decision
+        if self.approval_manager:
+            decision = self.approval_manager.should_auto_execute(event, fix_strategy)
+            logger.info(f"📊 Approval Decision: auto_execute={decision.should_auto_execute}, reason={decision.reason}")
+            return not decision.should_auto_execute
+
+        # Fallback to old logic if no approval manager
         if self.approval_mode == ApprovalMode.PARANOID:
             return True
 
         if self.approval_mode == ApprovalMode.AGGRESSIVE:
             return event.severity == 'CRITICAL'
 
-        # BALANCED mode - mit spezieller Fail2ban-Logik
-        # Fail2ban: Nur bei verdächtigen/koordinierten Angriffen
+        # BALANCED mode
         if event.source == 'fail2ban':
             return self._is_suspicious_fail2ban_activity(event)
 
-        # Andere Sources: CRITICAL oder HIGH
         return event.severity in ['CRITICAL', 'HIGH']
 
     async def _generate_fix_strategy_with_live_updates(self, job: RemediationJob, channel) -> Optional[Dict]:
@@ -554,35 +585,128 @@ class SelfHealingCoordinator:
             # Phase 1: Data Collection
             await self._update_status(status_message, status_embed,
                 "📊 Sammle Event-Daten...",
-                progress="▰▱▱▱▱▱▱▱▱▱ 10%")
+                progress="▰▱▱▱▱▱▱▱▱▱▱▱▱▱▱▱▱▱▱▱ 5%")
 
-            # Phase 2: Context Building
+            # Phase 2: Event Parsing
             await self._update_status(status_message, status_embed,
-                "🔍 Baue Kontext auf...",
-                progress="▰▰▰▱▱▱▱▱▱▱ 30%",
-                thinking="Analysiere Event-Details, Previous Attempts, und System-Kontext...")
+                "🔍 Parse Event-Details...",
+                progress="▰▰▱▱▱▱▱▱▱▱▱▱▱▱▱▱▱▱▱▱ 10%",
+                thinking="Extrahiere CVE-IDs, Packages, Severity...")
 
-            # Phase 3: AI Analysis
+            # Phase 3: Context Building
+            await self._update_status(status_message, status_embed,
+                "🗂️ Baue Kontext auf...",
+                progress="▰▰▰▰▱▱▱▱▱▱▱▱▱▱▱▱▱▱▱▱ 20%",
+                thinking="Sammle Previous Attempts, System-Kontext, und Infrastructure-Daten...")
+
+            # Phase 4: RAG Context
+            await self._update_status(status_message, status_embed,
+                "📚 Lade RAG-Kontext...",
+                progress="▰▰▰▰▰▰▱▱▱▱▱▱▱▱▱▱▱▱▱▱ 30%",
+                thinking="Durchsuche Wissens-Datenbank nach relevanten Fixes...")
+
+            # Phase 5: AI Analysis (longest part with live updates)
             await self._update_status(status_message, status_embed,
                 "🧠 KI analysiert Sicherheitslücke...",
-                progress="▰▰▰▰▰▱▱▱▱▱ 50%",
-                thinking="Claude/GPT untersucht CVEs, Packages, Risiken...")
+                progress="▰▰▰▰▰▰▰▰▱▱▱▱▱▱▱▱▱▱▱▱ 40%",
+                thinking="Ollama/Claude untersucht CVEs, Packages, und Risiken...")
 
             # Actually generate strategy (this is the long part)
-            strategy = await self._generate_fix_strategy(job)
+            # Start a heartbeat task to update Discord every 15 seconds
+            import time
+            start_time = time.time()
+            analysis_done = False
+
+            # Shared state for streaming progress
+            streaming_state = {
+                'token_count': 0,
+                'last_snippet': 'Starte Analyse...',
+                'phase': 'Initialisierung'
+            }
+
+            async def ai_heartbeat():
+                """Update Discord status every 15s during AI analysis"""
+                await asyncio.sleep(15)  # First update after 15s
+                update_count = 1
+                while not analysis_done:
+                    elapsed = int(time.time() - start_time)
+                    minutes = elapsed // 60
+                    seconds = elapsed % 60
+
+                    # Build detailed status message
+                    status_details = f"⏳ **Echtzeit-Analyse läuft...**\n\n"
+
+                    # Show which model is being used
+                    model_name = self.ai_service.ollama_model_critical if job.event.severity == 'CRITICAL' else self.ai_service.ollama_model
+                    status_details += f"🤖 **Modell:** {model_name}\n"
+
+                    # Show elapsed time with progress
+                    timeout_seconds = 360 if job.event.severity == 'CRITICAL' else 120
+                    progress_pct = min(100, int((elapsed / timeout_seconds) * 100))
+                    status_details += f"⏱️ **Zeit:** {minutes}m {seconds}s / {timeout_seconds//60}m ({progress_pct}%)\n"
+
+                    # Show streaming stats
+                    token_count = streaming_state['token_count']
+                    if token_count > 0:
+                        tokens_per_sec = token_count / max(elapsed, 1)
+                        status_details += f"📊 **Tokens:** {token_count} ({tokens_per_sec:.1f}/s)\n\n"
+                    else:
+                        status_details += f"📊 **Tokens:** Warte auf Stream...\n\n"
+
+                    # Show what AI is currently generating
+                    snippet = streaming_state['last_snippet']
+                    if snippet and len(snippet) > 10:
+                        # Clean up snippet
+                        clean_snippet = snippet.replace('\n', ' ').replace('"', '').strip()[:150]
+                        status_details += f"💭 **AI schreibt gerade:**\n`{clean_snippet}...`\n\n"
+
+                    status_details += f"🔄 **Update:** #{update_count} (alle 15s)"
+
+                    await self._update_status(status_message, status_embed,
+                        f"🧠 KI analysiert... ({minutes}m {seconds}s)",
+                        progress="▰▰▰▰▰▰▰▰▱▱▱▱▱▱▱▱▱▱▱▱ 40%",
+                        thinking=status_details)
+
+                    update_count += 1
+                    await asyncio.sleep(15)  # Update every 15 seconds
+
+            heartbeat_task = asyncio.create_task(ai_heartbeat())
+
+            try:
+                # Pass streaming state to AI service
+                strategy = await self._generate_fix_strategy(job, streaming_state=streaming_state)
+            finally:
+                analysis_done = True
+                heartbeat_task.cancel()
+                try:
+                    await heartbeat_task
+                except asyncio.CancelledError:
+                    pass
 
             if not strategy:
                 await self._update_status(status_message, status_embed,
                     "❌ KI-Analyse fehlgeschlagen",
-                    progress="▰▰▰▰▰▰▰▰▰▰ 100%",
+                    progress="▰▰▰▰▰▰▰▰▰▰▰▰▰▰▰▰▰▰▰▰ 100%",
                     thinking="Keine Fix-Strategie konnte generiert werden.",
                     color=0xE74C3C)
                 return None
 
-            # Phase 4: Strategy Validation
+            # Phase 6: Strategy Processing
+            await self._update_status(status_message, status_embed,
+                "⚙️ Verarbeite KI-Antwort...",
+                progress="▰▰▰▰▰▰▰▰▰▰▰▰▰▰▱▱▱▱▱▱ 70%",
+                thinking="Parse JSON, validiere Confidence, prüfe Steps...")
+
+            # Phase 7: Safety Validation
+            await self._update_status(status_message, status_embed,
+                "🔒 Sicherheits-Validierung...",
+                progress="▰▰▰▰▰▰▰▰▰▰▰▰▰▰▰▰▰▱▱▱ 85%",
+                thinking=f"Prüfe Confidence ({strategy.get('confidence', 0):.0%}), Risiken, und Rollback-Plan...")
+
+            # Phase 8: Final Preparation
             await self._update_status(status_message, status_embed,
                 "✅ Fix-Strategie entwickelt",
-                progress="▰▰▰▰▰▰▰▰▰▰ 100%",
+                progress="▰▰▰▰▰▰▰▰▰▰▰▰▰▰▰▰▰▰▰▰ 100%",
                 thinking=f"**Confidence:** {strategy.get('confidence', 0):.0%}\n"
                         f"**Beschreibung:** {strategy.get('description', 'N/A')}\n"
                         f"**Steps:** {len(strategy.get('steps', []))} Schritte geplant",
@@ -787,22 +911,83 @@ class SelfHealingCoordinator:
                     confidence_warning = "✅ Hohe Confidence - Sicher für Automatisierung\n"
                     confidence_color = "🟢"
 
+                # Description field (with text splitting if too long)
+                description_text = strategy.get('description', 'N/A')
+                if len(description_text) > 1024:
+                    # Split long descriptions
+                    description_text = description_text[:1021] + "..."
+
                 embed.add_field(
-                    name="🔧 Proposed Fix Strategy",
+                    name="🔧 Vorgeschlagene Fix-Strategie",
                     value=f"{confidence_warning}"
-                          f"**Description:** {strategy.get('description', 'N/A')}\n"
+                          f"**Beschreibung:** {description_text}\n"
                           f"**Confidence:** {confidence_color} {confidence:.0%}\n"
-                          f"**Steps:** {len(strategy.get('steps', []))} steps",
+                          f"**Schritte:** {len(strategy.get('steps', []))} Schritte geplant",
                     inline=False
                 )
 
-                # Add steps
-                steps_text = "\n".join([f"{i+1}. {step}" for i, step in enumerate(strategy.get('steps', [])[:5])])
-                embed.add_field(
-                    name="📝 Remediation Steps",
-                    value=steps_text or "No steps available",
-                    inline=False
-                )
+                # Add AI analysis (with splitting if too long)
+                analysis_text = strategy.get('analysis', '')
+                if analysis_text:
+                    # Discord field limit is 1024 chars
+                    if len(analysis_text) > 1024:
+                        # Split into multiple fields
+                        analysis_parts = []
+                        remaining = analysis_text
+                        while remaining:
+                            if len(remaining) <= 1024:
+                                analysis_parts.append(remaining)
+                                break
+                            # Find a good break point (newline, period, or space)
+                            break_point = 1000
+                            for sep in ['\n\n', '\n', '. ', ' ']:
+                                idx = remaining[:1024].rfind(sep)
+                                if idx > break_point:
+                                    break_point = idx + len(sep)
+                                    break
+                            analysis_parts.append(remaining[:break_point])
+                            remaining = remaining[break_point:]
+
+                        for idx, part in enumerate(analysis_parts[:3], 1):  # Max 3 parts
+                            embed.add_field(
+                                name=f"🧠 KI-Analyse ({idx}/{len(analysis_parts[:3])})" if len(analysis_parts) > 1 else "🧠 KI-Analyse",
+                                value=part.strip(),
+                                inline=False
+                            )
+                    else:
+                        embed.add_field(
+                            name="🧠 KI-Analyse",
+                            value=analysis_text,
+                            inline=False
+                        )
+
+                # Add steps (with splitting if too long)
+                steps_list = strategy.get('steps', [])
+                steps_text = "\n".join([f"{i+1}. {step}" for i, step in enumerate(steps_list[:10])])
+
+                # Discord field limit is 1024 chars
+                if len(steps_text) > 1024:
+                    # Split into multiple fields
+                    steps_text_1 = "\n".join([f"{i+1}. {step}" for i, step in enumerate(steps_list[:5])])
+                    steps_text_2 = "\n".join([f"{i+6}. {step}" for i, step in enumerate(steps_list[5:10])])
+
+                    embed.add_field(
+                        name="📝 Remediation Steps (1/2)",
+                        value=steps_text_1 or "Keine Schritte verfügbar",
+                        inline=False
+                    )
+                    if steps_text_2:
+                        embed.add_field(
+                            name="📝 Remediation Steps (2/2)",
+                            value=steps_text_2,
+                            inline=False
+                        )
+                else:
+                    embed.add_field(
+                        name="📝 Remediation Steps",
+                        value=steps_text or "Keine Schritte verfügbar",
+                        inline=False
+                    )
 
                 # Zusätzliche Warnung bei sehr niedriger Confidence
                 if confidence < 0.85:

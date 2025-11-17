@@ -26,7 +26,9 @@ from integrations.docker import DockerSecurityMonitor
 from integrations.aide import AIDEMonitor
 from integrations.event_watcher import SecurityEventWatcher
 from integrations.self_healing import SelfHealingCoordinator
+from integrations.orchestrator import RemediationOrchestrator
 from integrations.ai_service import AIService
+from integrations.context_manager import ContextManager
 
 
 class ShadowOpsBot(commands.Bot):
@@ -57,6 +59,7 @@ class ShadowOpsBot(commands.Bot):
         # Auto-Remediation System
         self.event_watcher = None
         self.self_healing = None
+        self.orchestrator = None
 
         # Rate Limiting für Alerts
         self.recent_alerts = {}
@@ -364,9 +367,15 @@ class ShadowOpsBot(commands.Bot):
                 0x3498DB
             )
 
-            # Initialisiere AI Service
+            # Initialisiere Context Manager (RAG System)
+            self.logger.info("🔄 Initialisiere Context Manager (RAG)...")
+            self.context_manager = ContextManager()
+            self.context_manager.load_all_contexts()
+            self.logger.info("✅ Context Manager bereit")
+
+            # Initialisiere AI Service mit Context Manager
             self.logger.info("🔄 Initialisiere AI Service...")
-            self.ai_service = AIService(self.config)
+            self.ai_service = AIService(self.config, context_manager=self.context_manager)
             self.logger.info("✅ AI Service bereit")
 
             # Initialisiere Self-Healing
@@ -374,6 +383,16 @@ class ShadowOpsBot(commands.Bot):
             self.self_healing = SelfHealingCoordinator(self, self.config)
             await self.self_healing.initialize(ai_service=self.ai_service)
             self.logger.info("✅ Self-Healing Coordinator bereit")
+
+            # Initialisiere Remediation Orchestrator
+            self.logger.info("🔄 Initialisiere Remediation Orchestrator...")
+            self.orchestrator = RemediationOrchestrator(
+                ai_service=self.ai_service,
+                self_healing_coordinator=self.self_healing,
+                approval_manager=self.self_healing.approval_manager,
+                bot=self
+            )
+            self.logger.info("✅ Remediation Orchestrator bereit")
 
             # Initialisiere Event Watcher
             self.logger.info("🔄 Initialisiere Event Watcher...")
@@ -395,6 +414,7 @@ class ShadowOpsBot(commands.Bot):
 
             await self._send_status_message(
                 "✅ **Auto-Remediation System initialisiert**\n"
+                f"• Remediation Orchestrator: ✅ Koordinierte Remediation aktiv\n"
                 f"• Self-Healing Coordinator: ✅ Bereit\n"
                 f"• Event Watcher: ✅ Aktiv\n"
                 f"• Scan Intervals: Trivy=6h, CrowdSec/Fail2ban=30s, AIDE=15min",
