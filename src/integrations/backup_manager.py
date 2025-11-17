@@ -16,6 +16,7 @@ import os
 import shlex
 import shutil
 import tarfile
+from collections import deque
 from dataclasses import dataclass, field
 from datetime import datetime, timedelta
 from pathlib import Path
@@ -99,8 +100,9 @@ class BackupManager:
 
         # Track active backups
         self.active_backups: Dict[str, BackupInfo] = {}
-        self.backup_history: List[BackupInfo] = []
+        # Use deque with maxlen for O(1) operations (consistent with command_executor.py)
         self.max_history = 1000  # Prevent memory leak from unbounded history
+        self.backup_history = deque(maxlen=self.max_history)
 
         logger.info(f"💾 Backup Manager initialized (root: {self.config.backup_root})")
 
@@ -161,11 +163,8 @@ class BackupManager:
 
         # Store backup info
         self.active_backups[backup_id] = backup_info
+        # Append to history (deque with maxlen automatically removes oldest)
         self.backup_history.append(backup_info)
-
-        # Limit history size to prevent memory leak
-        if len(self.backup_history) > self.max_history:
-            self.backup_history.pop(0)
 
         logger.info(f"✅ Backup created: {backup_id} ({size_mb:.2f}MB)")
 

@@ -804,8 +804,13 @@ Ausgabe als JSON:
                     )
                     await exec_message.edit(embed=exec_embed)
 
-                # Execute phase steps
-                phase_success = await self._execute_phase(phase, batch.events)
+                # Execute phase steps (pass Discord message for live updates)
+                phase_success = await self._execute_phase(
+                    phase,
+                    batch.events,
+                    exec_message=exec_message,
+                    exec_embed=exec_embed
+                )
 
                 if phase_success:
                     logger.info(f"✅ Phase {phase_idx} erfolgreich")
@@ -833,7 +838,7 @@ Ausgabe als JSON:
                         )
                         await exec_message.edit(embed=exec_embed)
 
-                    await self._rollback(backup_path, executed_phases)
+                    await self._rollback(backup_metadata, executed_phases, exec_message, exec_embed)
                     return False
 
             # All phases successful!
@@ -860,7 +865,7 @@ Ausgabe als JSON:
 
             # Rollback on critical error
             if backup_created:
-                await self._rollback(backup_path, executed_phases)
+                await self._rollback(backup_metadata, executed_phases, exec_message, exec_embed)
 
             # Update Discord
             if exec_message:
@@ -876,11 +881,18 @@ Ausgabe als JSON:
 
             return False
 
-    async def _execute_phase(self, phase: Dict, events: List) -> bool:
+    async def _execute_phase(
+        self,
+        phase: Dict,
+        events: List,
+        exec_message=None,
+        exec_embed=None
+    ) -> bool:
         """
         Führt eine einzelne Phase aus
 
         Delegiert an Self-Healing für tatsächliche Fix-Ausführung
+        Sendet Live-Updates an Discord während der Ausführung
         """
         phase_steps = phase.get('steps', [])
         phase_name = phase.get('name', 'Unnamed Phase')
@@ -891,7 +903,7 @@ Ausgabe als JSON:
             # Execute fixes for each event in this phase
             all_success = True
 
-            for event in events:
+            for idx, event in enumerate(events, 1):
                 try:
                     # Get fix strategy from AI (or use cached from plan)
                     strategy = phase.get('strategy', {})
@@ -903,22 +915,104 @@ Ausgabe als JSON:
                             {'event': event.to_dict()}
                         )
 
-                    # Execute fix via self-healing
-                    logger.info(f"      Executing fix for {event.source} event {event.event_id}...")
+                    # RETRY LOGIC: Try fix up to 3 times
+                    max_retries = 3
+                    fix_success = False
+                    last_error = None
 
-                    result = await self.self_healing._apply_fix(event, strategy)
+                    for attempt in range(1, max_retries + 1):
+                        # Discord Live Update: Starting fix (with retry info)
+                        if exec_message and exec_embed:
+                            current_field = exec_embed.fields[0]
+                            retry_info = f" (Attempt {attempt}/{max_retries})" if attempt > 1 else ""
+                            exec_embed.set_field_at(
+                                0,
+                                name="📊 Status",
+                                value=f"{current_field.value}\n\n🔧 Fix {idx}/{len(events)}: {event.source.upper()}{retry_info}\n⏳ Executing...",
+                                inline=False
+                            )
+                            await exec_message.edit(embed=exec_embed)
 
-                    if result['status'] == 'success':
-                        logger.info(f"      ✅ Fix successful: {result.get('message', '')}")
-                    else:
-                        logger.error(f"      ❌ Fix failed: {result.get('error', 'Unknown error')}")
+                        # Execute fix via self-healing
+                        logger.info(f"      Executing fix for {event.source} event {event.event_id} (Attempt {attempt}/{max_retries})...")
+
+                        result = await self.self_healing._apply_fix(event, strategy)
+
+                        if result['status'] == 'success':
+                            logger.info(f"      ✅ Fix successful on attempt {attempt}/{max_retries}: {result.get('message', '')}")
+                            fix_success = True
+
+                            # Discord Live Update: Fix successful
+                            if exec_message and exec_embed:
+                                current_field = exec_embed.fields[0]
+                                base_value = current_field.value.split('\n\n🔧')[0]  # Remove previous fix status
+                                success_msg = f" after {attempt} attempt(s)" if attempt > 1 else ""
+                                exec_embed.set_field_at(
+                                    0,
+                                    name="📊 Status",
+                                    value=f"{base_value}\n\n✅ Fix {idx}/{len(events)}: {event.source.upper()} successful{success_msg}\n📝 {result.get('message', '')[:100]}",
+                                    inline=False
+                                )
+                                await exec_message.edit(embed=exec_embed)
+                            break  # Success! No more retries needed
+                        else:
+                            last_error = result.get('error', 'Unknown error')
+                            logger.warning(f"      ⚠️ Fix attempt {attempt}/{max_retries} failed: {last_error}")
+
+                            if attempt < max_retries:
+                                # Not the last attempt - retry!
+                                logger.info(f"      🔄 Retrying... ({attempt}/{max_retries})")
+
+                                # Discord Live Update: Retry info
+                                if exec_message and exec_embed:
+                                    current_field = exec_embed.fields[0]
+                                    base_value = current_field.value.split('\n\n🔧')[0]
+                                    exec_embed.set_field_at(
+                                        0,
+                                        name="📊 Status",
+                                        value=f"{base_value}\n\n⚠️ Attempt {attempt} failed - Retrying...\n🔄 {last_error[:100]}",
+                                        inline=False
+                                    )
+                                    await exec_message.edit(embed=exec_embed)
+
+                                # Small delay before retry
+                                await asyncio.sleep(2)
+
+                    # Check if fix ultimately succeeded after all retries
+                    if not fix_success:
+                        logger.error(f"      ❌ Fix failed after {max_retries} attempts: {last_error}")
                         all_success = False
 
-                        # If one fix fails, stop phase execution
+                        # Discord Live Update: All retries failed
+                        if exec_message and exec_embed:
+                            current_field = exec_embed.fields[0]
+                            base_value = current_field.value.split('\n\n🔧')[0]
+                            exec_embed.set_field_at(
+                                0,
+                                name="📊 Status",
+                                value=f"{base_value}\n\n❌ Fix {idx}/{len(events)}: {event.source.upper()} failed\n⚠️ All {max_retries} attempts failed\n💔 {last_error[:80]}",
+                                inline=False
+                            )
+                            await exec_message.edit(embed=exec_embed)
+
+                        # If one fix fails after all retries, stop phase execution
                         return False
 
                 except Exception as e:
                     logger.error(f"      ❌ Error executing fix for {event.event_id}: {e}", exc_info=True)
+
+                    # Discord Update: Exception occurred
+                    if exec_message and exec_embed:
+                        current_field = exec_embed.fields[0]
+                        base_value = current_field.value.split('\n\n🔧')[0]
+                        exec_embed.set_field_at(
+                            0,
+                            name="📊 Status",
+                            value=f"{base_value}\n\n💥 Exception: {event.source.upper()}\n⚠️ {str(e)[:150]}",
+                            inline=False
+                        )
+                        await exec_message.edit(embed=exec_embed)
+
                     all_success = False
                     return False
 
@@ -927,32 +1021,103 @@ Ausgabe als JSON:
 
         except Exception as e:
             logger.error(f"   ❌ Phase execution error: {e}", exc_info=True)
+
+            # Discord Update: Phase-level exception
+            if exec_message and exec_embed:
+                exec_embed.set_field_at(
+                    0,
+                    name="📊 Status",
+                    value=f"💥 Phase Exception: {phase_name}\n\n⚠️ {str(e)[:200]}",
+                    inline=False
+                )
+                await exec_message.edit(embed=exec_embed)
+
             return False
 
-    async def _rollback(self, backup_path: str, executed_phases: List[Dict]):
-        """Führt Rollback durch nach Fehler"""
+    async def _rollback(
+        self,
+        backup_metadata: List,
+        executed_phases: List[Dict],
+        exec_message=None,
+        exec_embed=None
+    ):
+        """
+        Führt Rollback durch nach Fehler
+
+        Restored alle Backups in umgekehrter Reihenfolge
+        """
         logger.warning(f"🔄 Starte Rollback...")
-        logger.info(f"   💾 Backup-Pfad: {backup_path}")
+        logger.info(f"   💾 {len(backup_metadata)} Backups zu restoren")
         logger.info(f"   🔙 Rollback für {len(executed_phases)} Phasen")
 
         try:
             # Access backup manager from self-healing
             backup_manager = self.self_healing.backup_manager
 
-            # Rollback each phase in reverse order
-            for phase in reversed(executed_phases):
-                if phase['status'] == 'success':
-                    phase_name = phase.get('phase', f"Phase {phase['index']}")
-                    logger.info(f"   🔙 Rollback {phase_name}...")
+            # Restore backups in reverse order (undo last changes first)
+            restored_count = 0
+            failed_count = 0
 
-                    # Trigger cleanup via backup manager
-                    # In a full implementation, we'd track which backups belong to which phase
-                    # For now, we rely on the backup manager's rollback capability
+            for backup_info in reversed(backup_metadata):
+                try:
+                    logger.info(f"   🔙 Restoring: {backup_info.source_path}")
 
-            logger.info("✅ Rollback abgeschlossen")
+                    # Discord Live Update
+                    if exec_message and exec_embed:
+                        exec_embed.set_field_at(
+                            0,
+                            name="📊 Status",
+                            value=f"🔄 Rollback läuft...\n\n📝 Restoring {restored_count + 1}/{len(backup_metadata)}\n{backup_info.source_path}",
+                            inline=False
+                        )
+                        await exec_message.edit(embed=exec_embed)
+
+                    # Restore backup
+                    success = await backup_manager.restore_backup(backup_info.backup_id)
+
+                    if success:
+                        logger.info(f"      ✅ Restored: {backup_info.source_path}")
+                        restored_count += 1
+                    else:
+                        logger.error(f"      ❌ Failed to restore: {backup_info.source_path}")
+                        failed_count += 1
+
+                except Exception as e:
+                    logger.error(f"      ❌ Restore error for {backup_info.source_path}: {e}")
+                    failed_count += 1
+
+            # Final Discord Update
+            if exec_message and exec_embed:
+                if failed_count == 0:
+                    exec_embed.set_field_at(
+                        0,
+                        name="📊 Status",
+                        value=f"✅ Rollback abgeschlossen!\n\n📝 {restored_count}/{len(backup_metadata)} Dateien wiederhergestellt",
+                        inline=False
+                    )
+                else:
+                    exec_embed.set_field_at(
+                        0,
+                        name="📊 Status",
+                        value=f"⚠️ Rollback teilweise erfolgreich\n\n✅ {restored_count} wiederhergestellt\n❌ {failed_count} fehlgeschlagen",
+                        inline=False
+                    )
+                await exec_message.edit(embed=exec_embed)
+
+            logger.info(f"✅ Rollback abgeschlossen: {restored_count} restored, {failed_count} failed")
 
         except Exception as e:
             logger.error(f"❌ Rollback error: {e}", exc_info=True)
+
+            # Discord Error Update
+            if exec_message and exec_embed:
+                exec_embed.set_field_at(
+                    0,
+                    name="📊 Status",
+                    value=f"❌ Rollback-Fehler!\n\n```{str(e)[:100]}```",
+                    inline=False
+                )
+                await exec_message.edit(embed=exec_embed)
 
     def _create_progress_bar(self, current: int, total: int, length: int = 20) -> str:
         """Erstellt Progress Bar"""

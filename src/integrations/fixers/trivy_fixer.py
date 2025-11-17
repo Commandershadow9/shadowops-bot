@@ -107,14 +107,7 @@ class TrivyFixer:
             backup_info = await self._create_backup(project_path, fix_method)
 
             # Apply fix based on method
-            if fix_method == 'docker_rebuild':
-                # Docker image rebuild - no package fixes needed, just rebuild with updates
-                logger.info("🐳 Rebuilding Docker images with latest dependencies")
-                result = await self._rebuild_docker_image(
-                    project_path,
-                    strategy
-                )
-            elif fix_method == 'npm_audit':
+            if fix_method == 'npm_audit':
                 result = await self._fix_npm_vulnerabilities(
                     project_path,
                     vulnerabilities,
@@ -148,46 +141,56 @@ class TrivyFixer:
 
             # Check if fix was successful
             if result['status'] == 'success':
-                # Rebuild Docker image (unless already done for docker_rebuild method)
-                if fix_method != 'docker_rebuild':
-                    logger.info("🐳 Rebuilding Docker images after package fixes")
-                    rebuild_result = await self._rebuild_docker_image(
-                        project_path,
-                        strategy
-                    )
-
-                    if rebuild_result['status'] != 'success':
-                        # Rebuild failed, rollback
-                        logger.error("❌ Docker rebuild failed, rolling back")
-                        await self._rollback(backup_info)
-                        return rebuild_result
-
-                # Verify fix with Trivy re-scan
-                verification = await self._verify_fix(
+                # Rebuild Docker image
+                rebuild_result = await self._rebuild_docker_image(
                     project_path,
-                    vulnerabilities
+                    strategy
                 )
 
-                if verification['success']:
-                    logger.info("✅ Trivy fix successful and verified")
-                    return {
-                        'status': 'success',
-                        'message': 'Vulnerabilities fixed and verified',
-                        'details': {
-                            'method': fix_method,
-                            'fixed_count': verification.get('fixed_count', 0),
-                            'remaining_count': verification.get('remaining_count', 0)
+                if rebuild_result['status'] == 'success':
+                    # Verify fix with Trivy re-scan (skip if no Docker rebuild happened)
+                    if rebuild_result.get('skipped'):
+                        # No Docker image, skip verification (Python project running directly)
+                        logger.info("✅ Trivy fix successful (non-Docker project, verification skipped)")
+                        return {
+                            'status': 'success',
+                            'message': 'NPM vulnerabilities fixed (no Docker verification needed)',
+                            'details': {
+                                'method': fix_method,
+                                'note': 'Python project without Dockerfile - running directly'
+                            }
                         }
-                    }
+
+                    verification = await self._verify_fix(
+                        project_path,
+                        vulnerabilities
+                    )
+
+                    if verification['success']:
+                        logger.info("✅ Trivy fix successful and verified")
+                        return {
+                            'status': 'success',
+                            'message': 'Vulnerabilities fixed and verified',
+                            'details': {
+                                'method': fix_method,
+                                'fixed_count': verification.get('fixed_count', 0),
+                                'remaining_count': verification.get('remaining_count', 0)
+                            }
+                        }
+                    else:
+                        # Fix didn't work, rollback
+                        logger.warning("⚠️ Fix verification failed, rolling back")
+                        await self._rollback(backup_info)
+                        return {
+                            'status': 'failed',
+                            'error': 'Fix verification failed',
+                            'details': verification
+                        }
                 else:
-                    # Fix didn't work, rollback
-                    logger.warning("⚠️ Fix verification failed, rolling back")
+                    # Rebuild failed, rollback
+                    logger.error("❌ Docker rebuild failed, rolling back")
                     await self._rollback(backup_info)
-                    return {
-                        'status': 'failed',
-                        'error': 'Fix verification failed',
-                        'details': verification
-                    }
+                    return rebuild_result
             else:
                 # Fix failed, rollback
                 logger.error("❌ Fix failed, rolling back")
@@ -239,46 +242,28 @@ class TrivyFixer:
         """Determine which fix method to use"""
 
         strategy_desc = strategy.get('description', '').lower()
-        strategy_steps = ' '.join(strategy.get('steps', [])).lower()
-        full_strategy = f"{strategy_desc} {strategy_steps}"
-
-        # Check for Docker image vulnerabilities (most common for Trivy)
-        has_docker = any(keyword in full_strategy for keyword in [
-            'docker', 'image', 'container', 'rebuild', 'images'
-        ])
 
         # Check for NPM vulnerabilities
-        has_npm = 'npm' in full_strategy or 'package.json' in full_strategy
+        has_npm = 'npm' in strategy_desc or 'package.json' in strategy_desc
 
         # Check for APT vulnerabilities
-        has_apt = 'apt' in full_strategy or 'debian' in full_strategy or 'ubuntu' in full_strategy
+        has_apt = 'apt' in strategy_desc or 'debian' in strategy_desc or 'ubuntu' in strategy_desc
 
         # Check for base image updates
-        has_base = 'base image' in full_strategy or 'from' in full_strategy
+        has_base = 'base image' in strategy_desc or 'from' in strategy_desc
 
-        # Determine method (prioritize Docker since Trivy is primarily a Docker scanner)
-        if has_docker:
-            logger.info("   🐳 Detected Docker vulnerabilities - using docker_rebuild")
-            return 'docker_rebuild'
-        elif has_npm and has_apt:
+        # Determine method
+        if has_npm and has_apt:
             return 'combined'
         elif has_npm:
-            # Verify package.json exists
-            package_json = os.path.join(project_path, 'package.json')
-            if os.path.exists(package_json):
-                logger.info("   📦 Detected NPM vulnerabilities - using npm_audit")
-                return 'npm_audit'
-            else:
-                logger.warning("   ⚠️ NPM mentioned but no package.json found - falling back to docker_rebuild")
-                return 'docker_rebuild'
+            return 'npm_audit'
         elif has_apt:
             return 'apt_upgrade'
         elif has_base:
             return 'base_image'
         else:
-            # Default to docker_rebuild for Trivy (Docker scanner)
-            logger.info("   🐳 No specific method detected - defaulting to docker_rebuild")
-            return 'docker_rebuild'
+            # Default to npm_audit for Node.js projects
+            return 'npm_audit'
 
     async def _create_backup(self, project_path: str, fix_method: str) -> List:
         """Create backups before making changes"""
@@ -630,7 +615,11 @@ class TrivyFixer:
 
             if not os.path.exists(dockerfile):
                 logger.warning("⚠️ No Dockerfile found, skipping rebuild")
-                return {'status': 'success', 'message': 'No Docker rebuild needed'}
+                return {
+                    'status': 'success',
+                    'skipped': True,
+                    'message': 'No Docker rebuild needed (Python project without Dockerfile)'
+                }
 
             # Determine image name from project
             project_name = os.path.basename(project_path).lower()
