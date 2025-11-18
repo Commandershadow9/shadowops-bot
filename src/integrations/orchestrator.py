@@ -1341,7 +1341,7 @@ Ausgabe als JSON:
             try:
                 # Get fix strategy from AI
                 context = {
-                    'event': event,
+                    'event': event.to_dict(),  # Convert SecurityEvent to dict
                     'previous_attempts': [],
                     'project_path': project_path
                 }
@@ -1353,8 +1353,9 @@ Ausgabe als JSON:
                     fixes_successful = False
                     continue
 
-                # Execute fix via self_healing coordinator
-                fix_result = await self.self_healing.execute_fix(event, strategy)
+                # Execute fix directly via appropriate fixer
+                event_dict = event.to_dict()
+                fix_result = await self._execute_fix_for_source(event.source, event_dict, strategy)
 
                 fix_results.append(fix_result)
 
@@ -1523,6 +1524,40 @@ Ausgabe als JSON:
             logger.error(f"❌ Verification Scan Fehler: {e}", exc_info=True)
             return False
 
+    async def _execute_fix_for_source(self, source: str, event_dict: Dict, strategy: Dict) -> Dict:
+        """
+        Führt Fix aus basierend auf Event-Source
+
+        Ruft direkt die entsprechenden Fixer auf
+        """
+        try:
+            if source == 'trivy':
+                if not self.self_healing.trivy_fixer:
+                    return {'status': 'failed', 'error': 'TrivyFixer not initialized'}
+                return await self.self_healing.trivy_fixer.fix(event=event_dict, strategy=strategy)
+
+            elif source == 'crowdsec':
+                if not self.self_healing.crowdsec_fixer:
+                    return {'status': 'failed', 'error': 'CrowdSecFixer not initialized'}
+                return await self.self_healing.crowdsec_fixer.fix(event=event_dict, strategy=strategy)
+
+            elif source == 'fail2ban':
+                if not self.self_healing.fail2ban_fixer:
+                    return {'status': 'failed', 'error': 'Fail2banFixer not initialized'}
+                return await self.self_healing.fail2ban_fixer.fix(event=event_dict, strategy=strategy)
+
+            elif source == 'aide':
+                if not self.self_healing.aide_fixer:
+                    return {'status': 'failed', 'error': 'AideFixer not initialized'}
+                return await self.self_healing.aide_fixer.fix(event=event_dict, strategy=strategy)
+
+            else:
+                return {'status': 'failed', 'error': f'Unknown source: {source}'}
+
+        except Exception as e:
+            logger.error(f"❌ Fix execution error for {source}: {e}", exc_info=True)
+            return {'status': 'failed', 'error': str(e)}
+
     async def _rollback_project(self, backup_metadata: List, project_name: str):
         """
         Führt Rollback für ein einzelnes Projekt durch
@@ -1533,11 +1568,12 @@ Ausgabe als JSON:
 
         for backup in backup_metadata:
             try:
-                success = await backup_manager.restore_backup(backup['id'])
+                # FIX: backup ist BackupInfo Objekt, nicht Dict!
+                success = await backup_manager.restore_backup(backup.backup_id)
                 if success:
-                    logger.info(f"   ✅ Restored: {backup.get('original_path', 'unknown')}")
+                    logger.info(f"   ✅ Restored: {backup.source_path}")
                 else:
-                    logger.error(f"   ❌ Restore failed: {backup.get('original_path', 'unknown')}")
+                    logger.error(f"   ❌ Restore failed: {backup.source_path}")
             except Exception as e:
                 logger.error(f"   ❌ Rollback error: {e}")
 
