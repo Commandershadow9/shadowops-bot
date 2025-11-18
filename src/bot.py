@@ -9,6 +9,9 @@ from discord.ext import commands, tasks
 from discord import app_commands
 import asyncio
 import sys
+import os
+import atexit
+import signal
 from pathlib import Path
 from datetime import datetime, time
 from typing import Optional
@@ -1181,5 +1184,63 @@ def main():
         sys.exit(1)
 
 
+def ensure_single_instance():
+    """
+    Ensures only one instance of the bot is running using PID file.
+    Prevents multiple instances from running simultaneously.
+    """
+    pid_file = Path(__file__).parent.parent / ".bot.pid"
+    current_pid = os.getpid()
+
+    # Check if PID file exists
+    if pid_file.exists():
+        try:
+            old_pid = int(pid_file.read_text().strip())
+
+            # Check if process with that PID still exists
+            try:
+                os.kill(old_pid, 0)  # Signal 0 = check if process exists
+                print(f"❌ FEHLER: Bot läuft bereits (PID: {old_pid})")
+                print(f"   PID-Datei: {pid_file}")
+                print(f"   Zum Stoppen: kill {old_pid}")
+                sys.exit(1)
+            except OSError:
+                # Process doesn't exist anymore, PID file is stale
+                print(f"⚠️  Stale PID file gefunden (alter PID: {old_pid}), wird entfernt...")
+                pid_file.unlink()
+        except (ValueError, FileNotFoundError):
+            # Invalid or missing PID file
+            pid_file.unlink(missing_ok=True)
+
+    # Write current PID
+    pid_file.write_text(str(current_pid))
+    print(f"✅ Single Instance Lock erstellt (PID: {current_pid})")
+
+    # Register cleanup on exit
+    def cleanup_pid_file():
+        if pid_file.exists():
+            try:
+                stored_pid = int(pid_file.read_text().strip())
+                if stored_pid == current_pid:
+                    pid_file.unlink()
+                    print(f"🧹 PID-Datei entfernt")
+            except:
+                pass
+
+    atexit.register(cleanup_pid_file)
+
+    # Handle SIGTERM and SIGINT
+    def signal_handler(signum, frame):
+        print(f"\n🛑 Signal {signum} empfangen, beende Bot...")
+        cleanup_pid_file()
+        sys.exit(0)
+
+    signal.signal(signal.SIGTERM, signal_handler)
+    signal.signal(signal.SIGINT, signal_handler)
+
+
 if __name__ == "__main__":
+    # Ensure only one instance is running
+    ensure_single_instance()
+
     main()
