@@ -1333,40 +1333,69 @@ Ausgabe als JSON:
             )
             await exec_message.edit(embed=exec_embed)
 
-        # Execute fixes for each event
+        # OPTIMIZATION: Group events by source to generate strategies efficiently
+        events_by_source = {}
+        for event in project_events:
+            if event.source not in events_by_source:
+                events_by_source[event.source] = []
+            events_by_source[event.source].append(event)
+
+        logger.info(f"   📊 Events grouped by source: {', '.join([f'{src}({len(evs)})' for src, evs in events_by_source.items()])}")
+
+        # Execute fixes grouped by source
         fixes_successful = True
         fix_results = []
 
-        for event in project_events:
+        for source, source_events in events_by_source.items():
+            # Safety check: Skip empty event lists
+            if not source_events:
+                logger.warning(f"   ⚠️ Skipping empty event list for source: {source}")
+                continue
+
+            logger.info(f"   🔧 Processing {len(source_events)} {source} event(s)...")
+
             try:
-                # Get fix strategy from AI
+                # Generate ONE strategy for all events of this source
+                # Use first event as representative (they're all same source/project)
+                first_event = source_events[0]
                 context = {
-                    'event': event.to_dict(),  # Convert SecurityEvent to dict
+                    'event': first_event.to_dict(),
                     'previous_attempts': [],
-                    'project_path': project_path
+                    'project_path': project_path,
+                    'batch_mode': len(source_events) > 1,  # Indicate batch processing
+                    'event_count': len(source_events)
                 }
 
+                logger.info(f"      🧠 Generating AI strategy for {len(source_events)} {source} event(s)...")
                 strategy = await self.ai_service.generate_fix_strategy(context)
 
                 if not strategy:
-                    logger.error(f"   ❌ Konnte keine Strategy generieren für Event: {event.event_type}")
+                    logger.error(f"   ❌ Konnte keine Strategy generieren für {source} events")
                     fixes_successful = False
                     continue
 
-                # Execute fix directly via appropriate fixer
-                event_dict = event.to_dict()
-                fix_result = await self._execute_fix_for_source(event.source, event_dict, strategy)
+                logger.info(f"      ✅ Strategy generated: {strategy.get('description', 'N/A')[:80]}")
 
-                fix_results.append(fix_result)
+                # Apply the SAME strategy to all events of this source
+                for event in source_events:
+                    try:
+                        event_dict = event.to_dict()
+                        fix_result = await self._execute_fix_for_source(event.source, event_dict, strategy)
 
-                if fix_result.get('status') != 'success':
-                    logger.error(f"   ❌ Fix fehlgeschlagen: {fix_result.get('error', 'Unknown error')}")
-                    fixes_successful = False
-                else:
-                    logger.info(f"   ✅ Fix erfolgreich: {fix_result.get('message', 'Applied')}")
+                        fix_results.append(fix_result)
+
+                        if fix_result.get('status') != 'success':
+                            logger.error(f"      ❌ Fix fehlgeschlagen für Event {event.event_id[:8]}: {fix_result.get('error', 'Unknown')[:50]}")
+                            fixes_successful = False
+                        else:
+                            logger.info(f"      ✅ Fix erfolgreich für Event {event.event_id[:8]}")
+
+                    except Exception as e:
+                        logger.error(f"      ❌ Exception während Fix: {e}", exc_info=True)
+                        fixes_successful = False
 
             except Exception as e:
-                logger.error(f"   ❌ Exception während Fix: {e}", exc_info=True)
+                logger.error(f"   ❌ Exception während {source} processing: {e}", exc_info=True)
                 fixes_successful = False
 
         if not fixes_successful:
@@ -1392,7 +1421,7 @@ Ausgabe als JSON:
             )
             await exec_message.edit(embed=exec_embed)
 
-        verification_success = await self._verify_project_fixes(project_path, project_name)
+        verification_success = await self._verify_project_fixes(project_path, project_name, project_events)
 
         if not verification_success:
             logger.error(f"❌ Verification fehlgeschlagen für {project_name}")
@@ -1419,11 +1448,16 @@ Ausgabe als JSON:
 
         return True
 
-    async def _verify_project_fixes(self, project_path: str, project_name: str) -> bool:
+    async def _verify_project_fixes(self, project_path: str, project_name: str, project_events: List = None) -> bool:
         """
         Verifiziert ob Fixes erfolgreich waren durch Re-Scan
 
         Für Docker-Projekte: Führt Trivy Scan durch und prüft ob Vulnerabilities reduziert
+
+        Args:
+            project_path: Pfad zum Projekt
+            project_name: Name des Projekts
+            project_events: Optional - Liste der Events für dieses Projekt (um Image-Namen zu extrahieren)
         """
         import subprocess
         import json
@@ -1438,20 +1472,47 @@ Ausgabe als JSON:
             return True  # No verification possible, assume success
 
         try:
-            # Run Trivy scan on this specific project
-            # We need to determine the Docker image name from project
+            # Try to get image name from event data first (most reliable!)
+            image_name = None
 
-            # Map project path to image name
-            project_to_image = {
-                '/home/cmdshadow/GuildScout': 'guildscout-app',
-                '/home/cmdshadow/project': 'sicherheitstool-app',
-                '/home/cmdshadow/shadowops-bot': 'shadowops-bot'
-            }
+            if project_events:
+                for event in project_events:
+                    image_details = event.details.get('ImageDetails', {})
+                    affected_images = event.details.get('AffectedImages', [])
 
-            image_name = project_to_image.get(project_path)
+                    # Try to find an image that belongs to this project
+                    for img_name in affected_images:
+                        img_data = image_details.get(img_name, {})
+                        if img_data.get('project') == project_path:
+                            image_name = img_name
+                            logger.info(f"   📦 Found image from event data: {image_name}")
+                            break
+
+                    if image_name:
+                        break
+
+            # Fallback 1: Try to extract from docker-compose.yml
+            if not image_name:
+                image_name = await self._get_image_from_compose(project_path, project_name)
+
+            # Fallback 2: Try to get from running containers
+            if not image_name:
+                image_name = await self._get_image_from_docker_ps(project_path, project_name)
+
+            # Fallback 3: Hardcoded mapping (last resort)
+            if not image_name:
+                project_to_image = {
+                    '/home/cmdshadow/GuildScout': 'guildscout-app',
+                    '/home/cmdshadow/project': 'sicherheitstool-app',
+                    '/home/cmdshadow/shadowops-bot': 'shadowops-bot'
+                }
+                image_name = project_to_image.get(project_path)
+                if image_name:
+                    logger.info(f"   📦 Using hardcoded image name: {image_name}")
+
             if not image_name:
                 logger.warning(f"⚠️ Konnte Image-Name für {project_path} nicht ermitteln")
-                logger.warning(f"⚠️ Überspringe Verification (keine Image-Mapping)")
+                logger.warning(f"⚠️ Überspringe Verification (kein Image gefunden)")
                 return True
 
             # Try to scan the image (if it exists)
@@ -1523,6 +1584,77 @@ Ausgabe als JSON:
         except Exception as e:
             logger.error(f"❌ Verification Scan Fehler: {e}", exc_info=True)
             return False
+
+    async def _get_image_from_compose(self, project_path: str, project_name: str) -> Optional[str]:
+        """
+        Versucht Image-Namen aus docker-compose.yml zu extrahieren
+        """
+        import os
+        import yaml
+
+        compose_files = ['docker-compose.yml', 'docker-compose.yaml']
+
+        for compose_file in compose_files:
+            compose_path = os.path.join(project_path, compose_file)
+            if not os.path.exists(compose_path):
+                continue
+
+            try:
+                with open(compose_path, 'r') as f:
+                    compose_data = yaml.safe_load(f)
+
+                services = compose_data.get('services', {})
+                if not services:
+                    continue
+
+                # Get first service's image name
+                for service_name, service_config in services.items():
+                    image = service_config.get('image')
+                    if image:
+                        logger.info(f"   📦 Found image from docker-compose.yml: {image}")
+                        return image
+
+                    # If no image specified, try to construct from build context
+                    build = service_config.get('build')
+                    if build:
+                        # Image name is usually project_service
+                        constructed_image = f"{project_name.lower()}-{service_name}"
+                        logger.info(f"   📦 Constructed image from build: {constructed_image}")
+                        return constructed_image
+
+            except Exception as e:
+                logger.debug(f"Could not parse {compose_file}: {e}")
+                continue
+
+        return None
+
+    async def _get_image_from_docker_ps(self, project_path: str, project_name: str) -> Optional[str]:
+        """
+        Versucht Image-Namen von laufenden Containern zu ermitteln
+        """
+        import subprocess
+
+        try:
+            # Get running containers with labels that might match project
+            result = subprocess.run(
+                ['docker', 'ps', '--format', '{{.Image}}'],
+                capture_output=True,
+                text=True,
+                timeout=5
+            )
+
+            if result.returncode == 0:
+                images = result.stdout.strip().split('\n')
+                # Try to find image matching project name
+                for image in images:
+                    if project_name.lower() in image.lower():
+                        logger.info(f"   📦 Found image from docker ps: {image}")
+                        return image
+
+        except Exception as e:
+            logger.debug(f"Could not get images from docker ps: {e}")
+
+        return None
 
     async def _execute_fix_for_source(self, source: str, event_dict: Dict, strategy: Dict) -> Dict:
         """
