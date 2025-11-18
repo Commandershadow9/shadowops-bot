@@ -85,7 +85,7 @@ class AIService:
         if self.discord_logger:
             event_source = event.get('source', 'Unknown').upper()
             event_severity = event.get('severity', 'UNKNOWN')
-            await self.discord_logger.log_ai_learning(
+            self.discord_logger.log_ai_learning(
                 f"🧠 **AI Analyse gestartet**\n"
                 f"📊 Source: **{event_source}** | Severity: **{event_severity}**\n"
                 f"🔄 Retry: {len(previous_attempts)} vorherige Versuche",
@@ -106,7 +106,7 @@ class AIService:
                     if self.discord_logger:
                         confidence = result.get('confidence', 0)
                         description = result.get('description', 'N/A')
-                        await self.discord_logger.log_ai_learning(
+                        self.discord_logger.log_ai_learning(
                             f"✅ **Ollama Analyse erfolgreich**\n"
                             f"🎯 Confidence: **{confidence:.0%}**\n"
                             f"📝 Strategy: {description[:150]}{'...' if len(description) > 150 else ''}",
@@ -140,7 +140,7 @@ class AIService:
 
         # Discord Logger: All AI Services Failed
         if self.discord_logger:
-            await self.discord_logger.log_ai_learning(
+            self.discord_logger.log_ai_learning(
                 f"❌ **ALLE AI Services fehlgeschlagen**\n"
                 f"⚠️ Ollama, Anthropic & OpenAI sind nicht erreichbar\n"
                 f"🔧 Bitte Server-Status prüfen",
@@ -169,7 +169,7 @@ class AIService:
         if self.discord_logger:
             event_count = context.get('event_count', 0)
             sources = context.get('sources', [])
-            await self.discord_logger.log_orchestrator(
+            self.discord_logger.log_orchestrator(
                 f"⚡ **Koordinierter Plan wird erstellt**\n"
                 f"📦 Events: **{event_count}**\n"
                 f"📊 Quellen: {', '.join(sources)}",
@@ -198,7 +198,7 @@ class AIService:
                     if self.discord_logger:
                         confidence = result.get('confidence', 0)
                         phases = len(result.get('phases', []))
-                        await self.discord_logger.log_orchestrator(
+                        self.discord_logger.log_orchestrator(
                             f"✅ **Koordinierter Plan erstellt**\n"
                             f"🎯 Confidence: **{confidence:.0%}**\n"
                             f"📋 Phasen: **{phases}**",
