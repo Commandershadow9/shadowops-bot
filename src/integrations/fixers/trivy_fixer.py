@@ -70,7 +70,7 @@ class TrivyFixer:
         project_path: Optional[str] = None
     ) -> Dict:
         """
-        Fix Docker vulnerabilities
+        Fix Docker vulnerabilities with smart handling of external vs own images
 
         Args:
             event: Security event with vulnerability details
@@ -80,13 +80,39 @@ class TrivyFixer:
         Returns:
             Dict with fix result
         """
-        logger.info("🐳 Starting Trivy fix")
+        logger.info("🐳 Starting Trivy fix (SMART MODE)")
         logger.info(f"   Strategy: {strategy.get('description', 'Unknown')}")
 
         try:
             # Parse event details
             event_details = event.get('event_details', {})
             vulnerabilities = event_details.get('vulnerabilities', {})
+
+            # ENHANCED: Check for image-level details
+            image_details = event_details.get('ImageDetails', {})
+            external_images = event_details.get('ExternalImages', [])
+            own_images = event_details.get('OwnImages', [])
+            upgradeable_images = event_details.get('UpgradeableImages', [])
+            summary_mode = event_details.get('SummaryMode', False)
+
+            logger.info(f"   📊 Images: {len(external_images)} external, {len(own_images)} own")
+            logger.info(f"   ⬆️  Upgradeable: {len(upgradeable_images)}")
+
+            # Handle based on image analysis
+            if image_details:
+                return await self._fix_with_image_details(
+                    event_details,
+                    image_details,
+                    external_images,
+                    own_images,
+                    upgradeable_images,
+                    strategy,
+                    project_path
+                )
+            elif summary_mode or not image_details:
+                logger.warning("⚠️  Summary mode - limited image details available")
+                logger.info("   Falling back to traditional fix method")
+                # Fall through to traditional fix method
 
             # Detect project path if not provided
             if not project_path:
@@ -216,11 +242,189 @@ class TrivyFixer:
                 'error': str(e)
             }
 
+    async def _fix_with_image_details(
+        self,
+        event_details: Dict,
+        image_details: Dict,
+        external_images: List,
+        own_images: List,
+        upgradeable_images: List,
+        strategy: Dict,
+        project_path: Optional[str]
+    ) -> Dict:
+        """
+        Smart fix handling with image-level details
+
+        Args:
+            event_details: Event details
+            image_details: Per-image vulnerability and analysis info
+            external_images: List of external image names
+            own_images: List of own image names
+            upgradeable_images: List of external images with available updates
+            strategy: AI-generated strategy
+            project_path: Optional project path
+
+        Returns:
+            Dict with fix result
+        """
+        logger.info("🎯 SMART FIX MODE - Analyzing images individually")
+
+        results = {
+            'external_handled': [],
+            'own_rebuilt': [],
+            'monitored': [],
+            'failed': []
+        }
+
+        # Handle external images first
+        if external_images:
+            logger.info(f"📦 Processing {len(external_images)} external images")
+
+            for image_name in external_images:
+                img_data = image_details.get(image_name, {})
+                img_info = img_data.get('image_info', {})
+                recommended_action = img_data.get('recommended_action', 'monitor')
+
+                if recommended_action == 'upgrade':
+                    # Upgrade available
+                    current = img_info.get('tag')
+                    latest = img_info.get('latest_version')
+
+                    logger.info(f"⬆️  {image_name}: Upgrade available {current} → {latest}")
+                    logger.info(f"   Recommendation: Update docker-compose.yml or deployment config")
+
+                    results['external_handled'].append({
+                        'image': image_name,
+                        'action': 'upgrade_recommended',
+                        'current_version': current,
+                        'latest_version': latest,
+                        'message': f"Update available: {current} → {latest}"
+                    })
+
+                elif recommended_action == 'monitor':
+                    # No update available, just monitor
+                    logger.info(f"👁️  {image_name}: No updates available - monitoring")
+
+                    results['monitored'].append({
+                        'image': image_name,
+                        'action': 'monitor',
+                        'message': 'No updates available - waiting for upstream fixes'
+                    })
+
+        # Handle own images (rebuild with fixes)
+        if own_images:
+            logger.info(f"🏠 Processing {len(own_images)} own images (with Dockerfiles)")
+
+            for image_name in own_images:
+                img_data = image_details.get(image_name, {})
+                img_info = img_data.get('image_info', {})
+                dockerfile_path = img_info.get('dockerfile_path')
+
+                if dockerfile_path:
+                    project_path = str(Path(dockerfile_path).parent)
+
+                    logger.info(f"🔨 {image_name}: Rebuilding from {dockerfile_path}")
+
+                    # Create backup
+                    backup_info = await self._create_backup(project_path, 'docker_rebuild')
+
+                    # Rebuild
+                    rebuild_result = await self._rebuild_docker_image(
+                        project_path,
+                        strategy
+                    )
+
+                    if rebuild_result['status'] == 'success':
+                        logger.info(f"✅ {image_name}: Rebuild successful")
+                        results['own_rebuilt'].append({
+                            'image': image_name,
+                            'action': 'rebuilt',
+                            'project_path': project_path,
+                            'message': 'Successfully rebuilt with updated dependencies'
+                        })
+                    else:
+                        logger.error(f"❌ {image_name}: Rebuild failed")
+                        results['failed'].append({
+                            'image': image_name,
+                            'action': 'rebuild_failed',
+                            'error': rebuild_result.get('error', 'Unknown error')
+                        })
+
+                        # Rollback
+                        await self._rollback(backup_info)
+
+        # Generate final result
+        total_handled = len(results['external_handled']) + len(results['own_rebuilt'])
+        total_monitored = len(results['monitored'])
+        total_failed = len(results['failed'])
+
+        if total_handled > 0 or total_monitored > 0:
+            message_parts = []
+
+            if results['own_rebuilt']:
+                message_parts.append(f"{len(results['own_rebuilt'])} own images rebuilt")
+
+            if results['external_handled']:
+                message_parts.append(f"{len(results['external_handled'])} external images have updates available")
+
+            if results['monitored']:
+                message_parts.append(f"{len(results['monitored'])} external images monitored (no updates yet)")
+
+            if results['failed']:
+                message_parts.append(f"{len(results['failed'])} images failed")
+
+            logger.info(f"✅ Smart fix complete: {', '.join(message_parts)}")
+
+            return {
+                'status': 'success' if total_failed == 0 else 'partial',
+                'message': ', '.join(message_parts),
+                'details': results,
+                'recommendations': self._generate_recommendations(results, upgradeable_images)
+            }
+        else:
+            logger.warning("⚠️  No actionable fixes available")
+            return {
+                'status': 'partial',
+                'message': 'No immediate fixes available - all images monitored',
+                'details': results
+            }
+
+    def _generate_recommendations(self, results: Dict, upgradeable_images: List) -> List[str]:
+        """Generate human-readable recommendations"""
+        recommendations = []
+
+        # Upgrade recommendations
+        for img in results['external_handled']:
+            recommendations.append(
+                f"⬆️  Upgrade {img['image']}: Update from {img['current_version']} to {img['latest_version']}"
+            )
+
+        # Monitoring notices
+        for img in results['monitored']:
+            recommendations.append(
+                f"👁️  Monitoring {img['image']}: No updates available yet, will check in next scan"
+            )
+
+        # Rebuild confirmations
+        for img in results['own_rebuilt']:
+            recommendations.append(
+                f"✅ Rebuilt {img['image']}: Updated with latest dependencies"
+            )
+
+        return recommendations
+
     async def _detect_project_path(self, event: Dict, strategy: Dict) -> str:
         """Detect project path from event or strategy"""
 
-        # Check event for image/container name
+        # ENHANCED: Check for AffectedProjects first
         event_details = event.get('event_details', {})
+        affected_projects = event_details.get('AffectedProjects', [])
+
+        if affected_projects:
+            logger.info(f"✅ Detected project from AffectedProjects: {affected_projects[0]}")
+            return affected_projects[0]
+
+        # Fallback: Check event for image/container name
         source = event_details.get('source', '')
 
         # Try to extract project from source

@@ -316,42 +316,74 @@ class SecurityEventWatcher:
             await asyncio.sleep(self.intervals['aide'])
 
     async def _get_trivy_results(self) -> List[Dict]:
-        """Get latest Trivy scan results"""
+        """Get latest Trivy scan results with enhanced image details"""
         if not self.trivy:
             return []
 
         try:
-            # Get scan summary from last scan
-            results = self.trivy.get_scan_results()
+            # Get DETAILED scan results (includes per-image analysis)
+            results = self.trivy.get_detailed_scan_results()
 
             if not results:
                 return []
 
-            # Create summary-based events for significant findings
+            # Create enhanced events with image-level details
             vulnerabilities = []
 
-            if results.get('critical', 0) > 0 or results.get('high', 0) > 0:
-                # Create an event for the overall scan results
+            total_critical = results.get('total_critical', 0)
+            total_high = results.get('total_high', 0)
+
+            if total_critical > 0 or total_high > 0:
+                # Get image details
+                images = results.get('images', {})
+                affected_projects = results.get('affected_projects', [])
+
+                # Categorize images
+                external_images = []
+                own_images = []
+                upgradeable_images = []
+
+                for image_name, details in images.items():
+                    img_info = details.get('image_info', {})
+                    if img_info.get('is_external'):
+                        external_images.append(image_name)
+                        if img_info.get('update_available'):
+                            upgradeable_images.append({
+                                'name': image_name,
+                                'current': img_info.get('tag'),
+                                'latest': img_info.get('latest_version')
+                            })
+                    else:
+                        own_images.append(image_name)
+
+                # Create enhanced event with detailed information
                 summary_event = {
-                    'Severity': 'CRITICAL' if results.get('critical', 0) > 0 else 'HIGH',
+                    'Severity': 'CRITICAL' if total_critical > 0 else 'HIGH',
                     'Type': 'Docker Security Scan',
-                    'Title': f"Docker Scan: {results.get('critical', 0)} CRITICAL, {results.get('high', 0)} HIGH vulnerabilities",
-                    'Description': f"Found {results.get('critical', 0)} CRITICAL and {results.get('high', 0)} HIGH vulnerabilities in {results.get('images', 0)} images",
+                    'Title': f"Docker Scan: {total_critical} CRITICAL, {total_high} HIGH vulnerabilities",
+                    'Description': f"Found {total_critical} CRITICAL and {total_high} HIGH vulnerabilities in {len(images)} images",
                     'ScanDate': results.get('date', 'Unknown'),
-                    'SummaryFile': results.get('summary_file', ''),
+                    'SummaryFile': results.get('json_file', ''),
                     'Stats': {
-                        'critical': results.get('critical', 0),
-                        'high': results.get('high', 0),
-                        'medium': results.get('medium', 0),
-                        'low': results.get('low', 0),
-                        'images': results.get('images', 0),
-                    }
+                        'critical': total_critical,
+                        'high': total_high,
+                        'medium': results.get('total_medium', 0),
+                        'low': results.get('total_low', 0),
+                        'images': len(images),
+                    },
+                    # ENHANCED: Image-level details
+                    'ImageDetails': images,
+                    'AffectedProjects': affected_projects,
+                    'ExternalImages': external_images,
+                    'OwnImages': own_images,
+                    'UpgradeableImages': upgradeable_images,
+                    'SummaryMode': results.get('summary_mode', False)
                 }
                 vulnerabilities.append(summary_event)
 
             return vulnerabilities
         except Exception as e:
-            logger.error(f"Error getting Trivy results: {e}")
+            logger.error(f"Error getting Trivy results: {e}", exc_info=True)
             return []
 
     async def _get_crowdsec_decisions(self) -> List[Dict]:
