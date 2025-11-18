@@ -427,15 +427,31 @@ class SecurityEventWatcher:
         Check if event is new (not seen before)
 
         Event Types:
-        - Persistent (Docker, AIDE): Always treated as new until fixed
+        - Persistent (Docker, AIDE): Cached by signature, re-triggers if content changes
         - Self-Resolving (Fail2ban, CrowdSec): 24h expiration cache
         """
         event_signature = self._generate_event_signature(event)
         current_time = datetime.now().timestamp()
 
-        # PERSISTENT EVENTS: Always new (require fix)
+        # PERSISTENT EVENTS: Cache by signature, but use longer duration
         if event.is_persistent:
-            logger.info(f"✅ Persistent event {event_signature} - Always requires action")
+            # Use signature-based caching with 12h duration (2 scan cycles)
+            # This prevents repeated fixes for the same issue
+            if event_signature in self.seen_events:
+                last_seen = self.seen_events[event_signature]
+                time_since_seen = current_time - last_seen
+
+                # If seen within 12 hours, skip (already handled or monitoring)
+                if time_since_seen < 43200:  # 12 hours in seconds
+                    logger.debug(f"Persistent event {event_signature} already seen {time_since_seen/3600:.1f}h ago, skipping")
+                    return False
+                else:
+                    # More than 12h ago, treat as new (allows retry after monitoring period)
+                    logger.info(f"✅ Persistent event {event_signature} expired ({time_since_seen/3600:.1f}h ago), treating as new")
+
+            # Mark as seen with current timestamp
+            self.seen_events[event_signature] = current_time
+            self._save_seen_events()
             return True
 
         # SELF-RESOLVING EVENTS: Use 24h cache
