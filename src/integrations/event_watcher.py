@@ -170,20 +170,77 @@ class SecurityEventWatcher:
                 # Process summary event (should only be 1)
                 new_events = 0
                 for vuln_summary in results:
-                    event = SecurityEvent(
-                        source='trivy',
-                        event_type='docker_vulnerabilities_batch',  # Batch type!
-                        severity=vuln_summary.get('Severity', 'UNKNOWN'),
-                        details=vuln_summary,
-                        is_persistent=True  # Docker vulns require fixing!
-                    )
+                    # Check if multiple projects are affected
+                    affected_projects = vuln_summary.get('AffectedProjects', [])
 
-                    if await self._is_new_event(event):
-                        print(f"🐳 Trivy: NEW batch event detected - {vuln_summary.get('Stats', {}).get('critical', 0)} CRITICAL, {vuln_summary.get('Stats', {}).get('high', 0)} HIGH")
-                        await self._handle_new_event(event)
-                        new_events += 1
+                    if len(affected_projects) > 1:
+                        # MULTI-PROJECT MODE: Create separate events per project
+                        print(f"🐳 Trivy: Multi-Project Detection - {len(affected_projects)} projects affected")
+                        logger.info(f"🐳 Trivy: Multi-Project Scan - splitting into {len(affected_projects)} separate events")
+                        logger.info(f"   📂 Projects: {', '.join(affected_projects)}")
+
+                        # Split vulnerability data per project
+                        image_details = vuln_summary.get('ImageDetails', {})
+
+                        for project_path in affected_projects:
+                            # Filter images that belong to this project
+                            project_images = {
+                                img_name: img_data
+                                for img_name, img_data in image_details.items()
+                                if img_data.get('project') == project_path
+                            }
+
+                            if not project_images:
+                                continue  # Skip if no images for this project
+
+                            # Count vulnerabilities for this project only
+                            project_critical = sum(img.get('critical', 0) for img in project_images.values())
+                            project_high = sum(img.get('high', 0) for img in project_images.values())
+
+                            # Create project-specific event
+                            project_event = SecurityEvent(
+                                source='trivy',
+                                event_type='docker_vulnerabilities_batch',
+                                severity='CRITICAL' if project_critical > 0 else 'HIGH',
+                                details={
+                                    **vuln_summary,
+                                    'AffectedProjects': [project_path],  # Single project!
+                                    'AffectedImages': list(project_images.keys()),
+                                    'ImageDetails': project_images,
+                                    'Stats': {
+                                        'critical': project_critical,
+                                        'high': project_high,
+                                        'images': len(project_images),
+                                        'projects': 1,  # Always 1 per split event
+                                    },
+                                    'MultiProjectSplit': True,  # Flag to indicate this was split
+                                    'OriginalProjectCount': len(affected_projects),
+                                },
+                                is_persistent=True
+                            )
+
+                            if await self._is_new_event(project_event):
+                                print(f"🐳 Trivy: NEW event for {project_path.split('/')[-1]} - {project_critical} CRITICAL, {project_high} HIGH")
+                                logger.info(f"   📦 Project: {project_path} → {project_critical} CRITICAL, {project_high} HIGH")
+                                await self._handle_new_event(project_event)
+                                new_events += 1
+
                     else:
-                        print(f"🐳 Trivy: Scan already processed (no changes since last check)")
+                        # SINGLE-PROJECT MODE: Normal event (wie bisher)
+                        event = SecurityEvent(
+                            source='trivy',
+                            event_type='docker_vulnerabilities_batch',
+                            severity=vuln_summary.get('Severity', 'UNKNOWN'),
+                            details=vuln_summary,
+                            is_persistent=True
+                        )
+
+                        if await self._is_new_event(event):
+                            print(f"🐳 Trivy: NEW batch event detected - {vuln_summary.get('Stats', {}).get('critical', 0)} CRITICAL, {vuln_summary.get('Stats', {}).get('high', 0)} HIGH")
+                            await self._handle_new_event(event)
+                            new_events += 1
+                        else:
+                            print(f"🐳 Trivy: Scan already processed (no changes since last check)")
 
                 if new_events > 0:
                     self.stats['trivy']['events'] += new_events
