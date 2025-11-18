@@ -124,6 +124,8 @@ class DockerSecurityMonitor:
         """
         Liest detaillierte Vulnerabilities aus JSON Scan-Reports
 
+        FALLBACK: Wenn keine JSON-Dateien vorhanden, verwende Summary TXT-Files
+
         Returns:
             Dict mit Image-Namen und deren Vulnerabilities
         """
@@ -134,7 +136,21 @@ class DockerSecurityMonitor:
             json_files = sorted(self.scan_dir.glob("*.json"), reverse=True)
 
             if not json_files:
-                return None
+                # FALLBACK: Verwende Summary TXT-Methode
+                print("🐳 Trivy: No JSON files found, using summary fallback...")
+                summary = self.get_latest_scan_results()
+                if not summary:
+                    return None
+
+                # Konvertiere Summary zu detailed format
+                return {
+                    'images': {},  # Details nicht verfügbar aus Summary
+                    'total_critical': summary.get('critical', 0),
+                    'total_high': summary.get('high', 0),
+                    'affected_projects': [],  # Kann nicht aus Summary extrahiert werden
+                    'summary_mode': True,  # Flag dass dies Fallback-Daten sind
+                    'Severity': 'CRITICAL' if summary.get('critical', 0) > 0 else ('HIGH' if summary.get('high', 0) > 0 else 'MEDIUM')
+                }
 
             detailed_results = {
                 'images': {},
