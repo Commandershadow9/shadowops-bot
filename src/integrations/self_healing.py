@@ -493,6 +493,17 @@ class SelfHealingCoordinator:
         """Fix Docker vulnerability using TrivyFixer"""
         logger.info(f"🐳 Applying Trivy fix: {strategy['description']}")
 
+        # Discord Channel Logger: Fix Start
+        if self.discord_logger:
+            project = event.details.get('AffectedProjects', ['Unknown'])[0] if event.details.get('AffectedProjects') else 'Unknown'
+            project_name = project.split('/')[-1] if '/' in project else project
+            await self.discord_logger.log_code_fix(
+                f"🔧 **Trivy Fix gestartet**\n"
+                f"📂 Projekt: **{project_name}**\n"
+                f"📝 Strategy: {strategy['description'][:100]}",
+                severity="info"
+            )
+
         try:
             # Convert SecurityEvent to dict for fixer
             event_dict = event.to_dict()
@@ -503,10 +514,36 @@ class SelfHealingCoordinator:
                 strategy=strategy
             )
 
+            # Discord Channel Logger: Fix Result
+            if self.discord_logger:
+                if result.get('status') == 'success':
+                    await self.discord_logger.log_code_fix(
+                        f"✅ **Trivy Fix erfolgreich**\n"
+                        f"📂 Projekt: **{project_name}**\n"
+                        f"📝 {result.get('message', 'Fix applied')}",
+                        severity="success"
+                    )
+                else:
+                    await self.discord_logger.log_code_fix(
+                        f"❌ **Trivy Fix fehlgeschlagen**\n"
+                        f"📂 Projekt: **{project_name}**\n"
+                        f"⚠️ Error: {result.get('error', 'Unknown')}",
+                        severity="error"
+                    )
+
             return result
 
         except Exception as e:
             logger.error(f"❌ Trivy fix error: {e}", exc_info=True)
+
+            # Discord Channel Logger: Exception
+            if self.discord_logger:
+                await self.discord_logger.log_code_fix(
+                    f"❌ **Trivy Fix Exception**\n"
+                    f"⚠️ {str(e)[:150]}",
+                    severity="error"
+                )
+
             return {
                 'status': 'failed',
                 'error': str(e)

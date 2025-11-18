@@ -172,6 +172,15 @@ class RemediationOrchestrator:
                 self.current_batch = SecurityEventBatch()
                 logger.info(f"📦 Neuer Event-Batch gestartet: {self.current_batch.batch_id}")
 
+                # Discord Channel Logger: New Batch Started
+                if self.discord_logger:
+                    await self.discord_logger.log_orchestrator(
+                        f"📦 **Neuer Remediation-Batch gestartet**\n"
+                        f"🆔 Batch ID: `{self.current_batch.batch_id}`\n"
+                        f"⏱️ Collection Window: {self.collection_window_seconds}s",
+                        severity="info"
+                    )
+
                 # Starte Collection Timer
                 self.collection_task = asyncio.create_task(self._close_batch_after_timeout())
 
@@ -750,6 +759,16 @@ Ausgabe als JSON:
         from datetime import datetime
 
         logger.info(f"⚙️ Starte sequentielle Ausführung von {len(plan.phases)} Phasen")
+
+        # Discord Channel Logger: Execution Start
+        if self.discord_logger:
+            await self.discord_logger.log_orchestrator(
+                f"⚙️ **Execution gestartet**\n"
+                f"🆔 Batch: `{batch.batch_id}`\n"
+                f"📋 Phasen: **{len(plan.phases)}**\n"
+                f"⏱️ Est. Duration: {plan.estimated_duration_minutes}min",
+                severity="info"
+            )
 
         # Track execution start time for duration calculation
         self._execution_start_time = datetime.now()

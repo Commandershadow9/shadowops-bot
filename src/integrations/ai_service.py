@@ -81,6 +81,17 @@ class AIService:
         event = context['event']
         previous_attempts = context.get('previous_attempts', [])
 
+        # Discord Logger: AI Analysis Start
+        if self.discord_logger:
+            event_source = event.get('source', 'Unknown').upper()
+            event_severity = event.get('severity', 'UNKNOWN')
+            await self.discord_logger.log_ai_learning(
+                f"🧠 **AI Analyse gestartet**\n"
+                f"📊 Source: **{event_source}** | Severity: **{event_severity}**\n"
+                f"🔄 Retry: {len(previous_attempts)} vorherige Versuche",
+                severity="info"
+            )
+
         # Build detailed prompt for deep analysis with RAG context
         prompt = self._build_analysis_prompt(event, previous_attempts)
 
@@ -90,6 +101,17 @@ class AIService:
                 result = await self._analyze_with_ollama(prompt, event, context)
                 if result:
                     logger.info(f"✅ Ollama Analyse: {result.get('confidence', 0):.0%} Confidence")
+
+                    # Discord Logger: Ollama Success
+                    if self.discord_logger:
+                        confidence = result.get('confidence', 0)
+                        description = result.get('description', 'N/A')
+                        await self.discord_logger.log_ai_learning(
+                            f"✅ **Ollama Analyse erfolgreich**\n"
+                            f"🎯 Confidence: **{confidence:.0%}**\n"
+                            f"📝 Strategy: {description[:150]}{'...' if len(description) > 150 else ''}",
+                            severity="success"
+                        )
                     return result
             except Exception as e:
                 logger.warning(f"⚠️ Ollama Analyse fehlgeschlagen, versuche Cloud-Alternativen: {e}")
@@ -115,6 +137,16 @@ class AIService:
                 logger.error(f"❌ OpenAI Analyse fehlgeschlagen: {e}")
 
         logger.error("❌ Alle AI Services fehlgeschlagen")
+
+        # Discord Logger: All AI Services Failed
+        if self.discord_logger:
+            await self.discord_logger.log_ai_learning(
+                f"❌ **ALLE AI Services fehlgeschlagen**\n"
+                f"⚠️ Ollama, Anthropic & OpenAI sind nicht erreichbar\n"
+                f"🔧 Bitte Server-Status prüfen",
+                severity="error"
+            )
+
         return None
 
     async def generate_coordinated_plan(self, prompt: str, context: Dict) -> Optional[Dict]:
@@ -133,6 +165,17 @@ class AIService:
 
         logger.info(f"🎯 Generiere koordinierten Plan für {context.get('event_count', 0)} Events")
 
+        # Discord Logger: Coordinated Plan Start
+        if self.discord_logger:
+            event_count = context.get('event_count', 0)
+            sources = context.get('sources', [])
+            await self.discord_logger.log_orchestrator(
+                f"⚡ **Koordinierter Plan wird erstellt**\n"
+                f"📦 Events: **{event_count}**\n"
+                f"📊 Quellen: {', '.join(sources)}",
+                severity="info"
+            )
+
         # Bestimme Severity für Modell-Auswahl
         severity = context.get('highest_severity', 'HIGH')
 
@@ -150,6 +193,18 @@ class AIService:
                 result = await self._analyze_with_ollama(prompt, synthetic_event, context)
                 if result:
                     logger.info(f"✅ Koordinierter Plan erstellt: {result.get('confidence', 0):.0%} Confidence")
+
+                    # Discord Logger: Plan Created
+                    if self.discord_logger:
+                        confidence = result.get('confidence', 0)
+                        phases = len(result.get('phases', []))
+                        await self.discord_logger.log_orchestrator(
+                            f"✅ **Koordinierter Plan erstellt**\n"
+                            f"🎯 Confidence: **{confidence:.0%}**\n"
+                            f"📋 Phasen: **{phases}**",
+                            severity="success"
+                        )
+
                     return result
             except Exception as e:
                 logger.warning(f"⚠️ Ollama fehlgeschlagen bei koordinierter Planung: {e}")
