@@ -154,9 +154,10 @@ class SelfHealingCoordinator:
     - Statistics and monitoring
     """
 
-    def __init__(self, bot, config):
+    def __init__(self, bot, config, discord_logger=None):
         self.bot = bot
         self.config = config
+        self.discord_logger = discord_logger
 
         # Approval mode - Config ist ein Objekt, kein Dict
         approval_mode_str = config.auto_remediation.get('approval_mode', 'paranoid')

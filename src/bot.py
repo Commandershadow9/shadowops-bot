@@ -419,14 +419,18 @@ class ShadowOpsBot(commands.Bot):
             self.context_manager.load_all_contexts()
             self.logger.info("✅ [1/5] Context Manager bereit")
 
-            # Initialisiere AI Service mit Context Manager
+            # Initialisiere AI Service mit Context Manager und Discord Logger
             self.logger.info("🔄 [2/5] Initialisiere AI Service...")
-            self.ai_service = AIService(self.config, context_manager=self.context_manager)
+            self.ai_service = AIService(
+                self.config,
+                context_manager=self.context_manager,
+                discord_logger=self.discord_logger
+            )
             self.logger.info("✅ [2/5] AI Service bereit")
 
             # Initialisiere Self-Healing
             self.logger.info("🔄 [3/5] Initialisiere Self-Healing Coordinator...")
-            self.self_healing = SelfHealingCoordinator(self, self.config)
+            self.self_healing = SelfHealingCoordinator(self, self.config, discord_logger=self.discord_logger)
             await self.self_healing.initialize(ai_service=self.ai_service)
             self.logger.info("✅ [3/5] Self-Healing Coordinator bereit")
 
@@ -436,7 +440,8 @@ class ShadowOpsBot(commands.Bot):
                 ai_service=self.ai_service,
                 self_healing_coordinator=self.self_healing,
                 approval_manager=self.self_healing.approval_manager,
-                bot=self
+                bot=self,
+                discord_logger=self.discord_logger
             )
             self.logger.info("✅ [4/5] Remediation Orchestrator bereit")
 

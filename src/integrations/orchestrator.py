@@ -80,11 +80,12 @@ class RemediationOrchestrator:
     - Sequentielle Ausführung mit System-Locks
     """
 
-    def __init__(self, ai_service, self_healing_coordinator, approval_manager, bot=None):
+    def __init__(self, ai_service, self_healing_coordinator, approval_manager, bot=None, discord_logger=None):
         self.ai_service = ai_service
         self.self_healing = self_healing_coordinator
         self.approval_manager = approval_manager
         self.bot = bot  # Discord Bot für Approval Messages
+        self.discord_logger = discord_logger
 
         # Event Batching
         self.collection_window_seconds = 10  # Sammelt Events über 10 Sekunden

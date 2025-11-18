@@ -15,9 +15,10 @@ logger = logging.getLogger('shadowops')
 class AIService:
     """AI-powered security analysis and fix generation with hybrid model support"""
 
-    def __init__(self, config, context_manager=None):
+    def __init__(self, config, context_manager=None, discord_logger=None):
         self.config = config
         self.context_manager = context_manager
+        self.discord_logger = discord_logger
         self.openai_client = None
         self.anthropic_client = None
 
