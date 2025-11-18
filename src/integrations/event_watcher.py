@@ -381,18 +381,24 @@ class SecurityEventWatcher:
             # Get detailed vulnerability data (includes affected images & projects)
             detailed_results = self.trivy.get_detailed_vulnerabilities()
 
-            if not detailed_results or not detailed_results.get('images'):
+            if not detailed_results:
                 return []
+
+            # Check if we have vulnerabilities (either from detailed scan or summary fallback)
+            total_critical = detailed_results.get('total_critical', 0)
+            total_high = detailed_results.get('total_high', 0)
+
+            if total_critical == 0 and total_high == 0:
+                return []  # No vulnerabilities found
 
             # Create summary-based events for significant findings
             vulnerabilities = []
 
-            total_critical = detailed_results.get('total_critical', 0)
-            total_high = detailed_results.get('total_high', 0)
             affected_projects = detailed_results.get('affected_projects', [])
             affected_images = list(detailed_results.get('images', {}).keys())
 
-            if total_critical > 0 or total_high > 0:
+            # We know we have vulnerabilities here (checked above)
+            if True:  # Always create event if we reached here
                 # Create an event with DETAILED information
                 summary_event = {
                     'Severity': 'CRITICAL' if total_critical > 0 else 'HIGH',
