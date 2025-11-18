@@ -321,30 +321,35 @@ class SecurityEventWatcher:
             return []
 
         try:
-            # Get scan summary from last scan
-            results = self.trivy.get_scan_results()
+            # Get detailed vulnerability data (includes affected images & projects)
+            detailed_results = self.trivy.get_detailed_vulnerabilities()
 
-            if not results:
+            if not detailed_results or not detailed_results.get('images'):
                 return []
 
             # Create summary-based events for significant findings
             vulnerabilities = []
 
-            if results.get('critical', 0) > 0 or results.get('high', 0) > 0:
-                # Create an event for the overall scan results
+            total_critical = detailed_results.get('total_critical', 0)
+            total_high = detailed_results.get('total_high', 0)
+            affected_projects = detailed_results.get('affected_projects', [])
+            affected_images = list(detailed_results.get('images', {}).keys())
+
+            if total_critical > 0 or total_high > 0:
+                # Create an event with DETAILED information
                 summary_event = {
-                    'Severity': 'CRITICAL' if results.get('critical', 0) > 0 else 'HIGH',
+                    'Severity': 'CRITICAL' if total_critical > 0 else 'HIGH',
                     'Type': 'Docker Security Scan',
-                    'Title': f"Docker Scan: {results.get('critical', 0)} CRITICAL, {results.get('high', 0)} HIGH vulnerabilities",
-                    'Description': f"Found {results.get('critical', 0)} CRITICAL and {results.get('high', 0)} HIGH vulnerabilities in {results.get('images', 0)} images",
-                    'ScanDate': results.get('date', 'Unknown'),
-                    'SummaryFile': results.get('summary_file', ''),
+                    'Title': f"Docker Scan: {total_critical} CRITICAL, {total_high} HIGH vulnerabilities",
+                    'Description': f"Found {total_critical} CRITICAL and {total_high} HIGH vulnerabilities in {len(affected_images)} images across {len(affected_projects)} projects",
+                    'AffectedProjects': affected_projects,  # NEW: Which projects are affected
+                    'AffectedImages': affected_images,      # NEW: Which images are affected
+                    'ImageDetails': detailed_results.get('images', {}),  # NEW: Detailed vuln data per image
                     'Stats': {
-                        'critical': results.get('critical', 0),
-                        'high': results.get('high', 0),
-                        'medium': results.get('medium', 0),
-                        'low': results.get('low', 0),
-                        'images': results.get('images', 0),
+                        'critical': total_critical,
+                        'high': total_high,
+                        'images': len(affected_images),
+                        'projects': len(affected_projects),
                     }
                 }
                 vulnerabilities.append(summary_event)
