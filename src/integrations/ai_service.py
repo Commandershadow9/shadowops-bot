@@ -616,14 +616,33 @@ class AIService:
                     logger.debug(f"Available fields: {list(result.keys())}")
                     return None
             else:
-                # Fix strategy format
-                required = ['description', 'confidence', 'steps']
-                if all(field in result for field in required):
+                # Fix strategy format - FLEXIBLE: accept both 'description' and 'approach'
+                # Check for required fields with fallback for 'approach' → 'description'
+                has_description = 'description' in result
+                has_approach = 'approach' in result
+                has_confidence = 'confidence' in result
+                has_steps = 'steps' in result
+
+                # Accept either 'description' OR 'approach' (for backwards compatibility with Code Fixer)
+                if (has_description or has_approach) and has_confidence and has_steps:
+                    # Normalize: if 'approach' exists but not 'description', copy it over
+                    if has_approach and not has_description:
+                        result['description'] = result['approach']
+                        logger.debug(f"Normalized 'approach' → 'description' for compatibility")
+
                     # Ensure confidence is float
                     result['confidence'] = float(result['confidence'])
                     return result
                 else:
-                    logger.error(f"Missing required fields in AI response: {result.keys()}")
+                    missing = []
+                    if not (has_description or has_approach):
+                        missing.append('description (or approach)')
+                    if not has_confidence:
+                        missing.append('confidence')
+                    if not has_steps:
+                        missing.append('steps')
+                    logger.error(f"Missing required fields in AI response: {missing}")
+                    logger.debug(f"Available fields: {list(result.keys())}")
                     return None
 
         except json.JSONDecodeError as e:
