@@ -70,11 +70,11 @@ class SecurityEventWatcher:
         self.watcher_tasks: List[asyncio.Task] = []
         self.running = False
 
-        # Scan intervals (in seconds) - EFFICIENT mode
+        # Scan intervals (in seconds) - SERVER-FRIENDLY mode
         self.intervals = {
             'trivy': 21600,      # 6 hours (Docker scans are slow)
-            'crowdsec': 30,      # 30 seconds (active threats)
-            'fail2ban': 30,      # 30 seconds (active bans)
+            'crowdsec': 60,      # 60 seconds (active threats - reduced for server limits)
+            'fail2ban': 60,      # 60 seconds (active bans - reduced for server limits)
             'aide': 900,         # 15 minutes (file integrity)
         }
 

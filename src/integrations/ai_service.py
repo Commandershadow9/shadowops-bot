@@ -30,6 +30,10 @@ class AIService:
         # Hybrid model selection (smart model choice based on severity)
         self.use_hybrid_models = config.ai.get('ollama', {}).get('hybrid_models', True)
 
+        # Rate limiting to prevent server overload
+        self.request_delay = config.ai.get('ollama', {}).get('request_delay_seconds', 4.0)  # 4s default (3-5s range)
+        self.last_request_time = 0
+
         # Store config for lazy initialization
         self.openai_enabled = config.ai.get('openai', {}).get('enabled', False)
         self.openai_api_key = config.ai.get('openai', {}).get('api_key')
@@ -44,8 +48,10 @@ class AIService:
                 logger.info(f"✅ Ollama Hybrid konfiguriert:")
                 logger.info(f"   📊 Standard: {self.ollama_model} (schnell)")
                 logger.info(f"   🧠 Critical: {self.ollama_model_critical} (intelligenter)")
+                logger.info(f"   ⏱️  Rate Limit: {self.request_delay}s Verzögerung zwischen Anfragen")
             else:
                 logger.info(f"✅ Ollama konfiguriert ({self.ollama_model} @ {self.ollama_url})")
+                logger.info(f"   ⏱️  Rate Limit: {self.request_delay}s Verzögerung zwischen Anfragen")
 
         if self.openai_enabled and self.openai_api_key:
             logger.info(f"✅ OpenAI konfiguriert ({self.openai_model})")
@@ -68,6 +74,9 @@ class AIService:
         Returns:
             Dict with 'description', 'confidence', 'steps', 'analysis'
         """
+        # Rate limiting: wait if needed to prevent server overload
+        await self._apply_rate_limit()
+
         event = context['event']
         previous_attempts = context.get('previous_attempts', [])
 
@@ -118,6 +127,9 @@ class AIService:
         Returns:
             Dict mit phases, description, confidence, etc.
         """
+        # Rate limiting: wait if needed to prevent server overload
+        await self._apply_rate_limit()
+
         logger.info(f"🎯 Generiere koordinierten Plan für {context.get('event_count', 0)} Events")
 
         # Bestimme Severity für Modell-Auswahl
@@ -360,6 +372,20 @@ class AIService:
                 f"Time: {b.get('time', 'N/A')}"
             )
         return "\n".join(formatted)
+
+    async def _apply_rate_limit(self):
+        """Apply rate limiting delay to prevent server overload"""
+        import time
+
+        current_time = time.time()
+        time_since_last = current_time - self.last_request_time
+
+        if time_since_last < self.request_delay:
+            wait_time = self.request_delay - time_since_last
+            logger.info(f"⏱️  Rate Limit: Warte {wait_time:.1f}s vor nächster AI-Anfrage (Server-Schonung)")
+            await asyncio.sleep(wait_time)
+
+        self.last_request_time = time.time()
 
     async def _analyze_with_anthropic(self, prompt: str, event: Dict) -> Optional[Dict]:
         """Analyze with Anthropic Claude"""

@@ -88,6 +88,7 @@ class RemediationOrchestrator:
 
         # Event Batching
         self.collection_window_seconds = 10  # Sammelt Events über 10 Sekunden
+        self.max_batch_size = 10  # Max 10 Events pro Batch (Server-Schonung)
         self.current_batch: Optional[SecurityEventBatch] = None
         self.batch_lock = asyncio.Lock()
         self.collection_task: Optional[asyncio.Task] = None
@@ -102,6 +103,7 @@ class RemediationOrchestrator:
 
         logger.info("🎯 Remediation Orchestrator initialisiert")
         logger.info(f"   📊 Batching Window: {self.collection_window_seconds}s")
+        logger.info(f"   📦 Max Batch Size: {self.max_batch_size} Events (Server-Schonung)")
         logger.info("   🔒 Sequential Execution Mode: ON")
 
     def _get_status_channel(self):
@@ -179,13 +181,22 @@ class RemediationOrchestrator:
             # Füge Event zum aktuellen Batch hinzu
             self.current_batch.add_event(event)
             logger.info(f"   ➕ Event hinzugefügt: {event.source} ({event.severity})")
-            logger.info(f"   📊 Batch Status: {len(self.current_batch.events)} Events")
+            logger.info(f"   📊 Batch Status: {len(self.current_batch.events)}/{self.max_batch_size} Events")
+
+            # Check if batch size limit reached
+            if len(self.current_batch.events) >= self.max_batch_size:
+                logger.info(f"⚠️ Batch Limit erreicht ({self.max_batch_size} Events) - Schließe Batch sofort")
+                # Cancel collection timer and close batch immediately
+                if self.collection_task:
+                    self.collection_task.cancel()
+                await self._close_batch_immediately()
+                return
 
             # Update Discord-Message mit neuem Event
             event_list = "\n".join([f"• **{e.source.upper()}**: {e.severity}" for e in self.current_batch.events])
             elapsed = int(time.time() - self.current_batch.created_at)
             remaining = max(0, self.collection_window_seconds - elapsed)
-            status_text = f"📦 **Sammle Security-Events**\n\n{event_list}\n\n⏱️ Verbleibend: **{remaining}s** | Events: **{len(self.current_batch.events)}**"
+            status_text = f"📦 **Sammle Security-Events**\n\n{event_list}\n\n⏱️ Verbleibend: **{remaining}s** | Events: **{len(self.current_batch.events)}/{self.max_batch_size}**"
             await self._send_batch_status(self.current_batch, status_text, 0x3498DB)
 
     async def _close_batch_after_timeout(self):
@@ -232,6 +243,25 @@ class RemediationOrchestrator:
 
                 # Starte Verarbeitung
                 asyncio.create_task(self._process_next_batch())
+
+    async def _close_batch_immediately(self):
+        """Schließt Batch sofort wenn Max-Size erreicht ist (Server-Schonung)"""
+        if self.current_batch and len(self.current_batch.events) > 0:
+            logger.info(f"📦 Batch {self.current_batch.batch_id}: {len(self.current_batch.events)} Events (LIMIT)")
+            logger.info(f"   🔍 Quellen: {', '.join(self.current_batch.sources)}")
+
+            # Final Discord Update
+            event_list = "\n".join([f"• **{e.source.upper()}**: {e.severity}" for e in self.current_batch.events])
+            status_text = f"⚠️ **Batch Limit erreicht** ({self.max_batch_size} Events)\n\n{event_list}\n\n📊 Total: **{len(self.current_batch.events)} Events**\n🔍 Quellen: {', '.join(self.current_batch.sources)}\n\n🧠 Starte KI-Analyse..."
+            await self._send_batch_status(self.current_batch, status_text, 0xF39C12)
+
+            # Batch zur Verarbeitung verschieben
+            self.current_batch.status = "analyzing"
+            self.pending_batches.append(self.current_batch)
+            self.current_batch = None
+
+            # Starte Verarbeitung
+            asyncio.create_task(self._process_next_batch())
 
     async def _process_next_batch(self):
         """Verarbeitet nächsten Batch (mit Execution Lock!)"""

@@ -99,11 +99,11 @@ auto_remediation:
   # - aggressive: Nur CRITICAL benötigt Freigabe (NUR für Experten!)
   approval_mode: "paranoid"  # Sicherster Start-Modus
 
-  # Scan Intervals (in Sekunden) - EFFICIENT Mode
+  # Scan Intervals (in Sekunden) - SERVER-FRIENDLY Mode (schont Server-Ressourcen)
   scan_intervals:
     trivy: 21600      # 6 Stunden - Docker Scans sind langsam
-    crowdsec: 30      # 30 Sekunden - Aktive Threats schnell erfassen
-    fail2ban: 30      # 30 Sekunden - Neue Bans schnell erkennen
+    crowdsec: 60      # 60 Sekunden - Aktive Threats (reduziert für Server-Schonung)
+    fail2ban: 60      # 60 Sekunden - Neue Bans (reduziert für Server-Schonung)
     aide: 900         # 15 Minuten - File Integrity moderat wichtig
 
   # Circuit Breaker: Stoppt System automatisch bei zu vielen Fehlern
@@ -145,3 +145,12 @@ ai:
     enabled: false  # Setze auf true nach API Key Eintragung
     api_key: "sk-ant-YOUR_ANTHROPIC_KEY_HERE"  # ⚠️ API KEY HIER EINTRAGEN!
     model: "claude-3-opus-20240229"
+
+  # Ollama (Local LLM - PRIMARY, kostenlos und unbegrenzt)
+  ollama:
+    enabled: true
+    url: "http://127.0.0.1:11434"
+    model: "phi3:mini"  # Schnelles Modell für Standard-Events
+    model_critical: "llama3.1"  # Intelligentes Modell für CRITICAL Events
+    hybrid_models: true  # Nutze verschiedene Modelle basierend auf Severity
+    request_delay_seconds: 4.0  # Verzögerung zwischen AI-Anfragen (Server-Schonung)
