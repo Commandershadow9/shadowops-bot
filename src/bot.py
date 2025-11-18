@@ -351,15 +351,23 @@ class ShadowOpsBot(commands.Bot):
             await self._send_status_message("🔄 **Bot Reconnected**\nVerbindung zu Discord wiederhergestellt.", 0xFFA500)
             return
 
+        # ============================================
+        # PHASE 1: CORE SERVICES
+        # ============================================
+        self.logger.info("=" * 60)
+        self.logger.info("🚀 PHASE 1: Core Services Initialisierung")
+        self.logger.info("=" * 60)
+
         self.logger.info(f"✅ Bot eingeloggt als {self.user}")
         self.logger.info(f"🖥️ Verbunden mit {len(self.guilds)} Server(n)")
 
         # Sende Startup-Message
         await self._send_status_message(
-            f"🚀 **Bot gestartet**\n"
+            f"🚀 **Bot gestartet - Phasenweise Initialisierung**\n"
+            f"⏳ **Phase 1/5:** Core Services\n"
             f"• Eingeloggt als **{self.user}**\n"
             f"• Verbunden mit **{len(self.guilds)} Server(n)**",
-            0x00FF00
+            0x3498DB
         )
 
         # Sync Slash Commands mit Guild
@@ -369,50 +377,71 @@ class ShadowOpsBot(commands.Bot):
         await self.tree.sync(guild=guild)
         self.logger.info(f"✅ Slash Commands synchronisiert für Guild {self.config.guild_id}")
 
-        # Auto-Create Channels für Auto-Remediation (falls aktiviert)
-        if self.config.auto_remediation.get('enabled', False) and self.config.auto_remediation.get('auto_create_channels', False):
-            self.logger.info("🔄 Starte Auto-Channel-Creation...")
-            await self._setup_auto_remediation_channels()
-            self.logger.info("✅ Auto-Channel-Creation abgeschlossen")
+        self.logger.info("=" * 60)
+        self.logger.info("✅ PHASE 1 abgeschlossen")
+        self.logger.info("=" * 60)
 
-        # Initialisiere Auto-Remediation (falls aktiviert)
-        if self.config.auto_remediation.get('enabled', False):
-            self.logger.info("🤖 Auto-Remediation System wird initialisiert...")
+        # ============================================
+        # PHASE 2: AUTO-CREATE CHANNELS
+        # ============================================
+        if self.config.auto_remediation.get('enabled', False) and self.config.auto_remediation.get('auto_create_channels', False):
+            self.logger.info("=" * 60)
+            self.logger.info("🔄 PHASE 2: Channel Setup")
+            self.logger.info("=" * 60)
 
             await self._send_status_message(
-                "🤖 **Auto-Remediation System** wird initialisiert...",
+                "⏳ **Phase 2/5:** Erstelle/Prüfe Discord Channels...",
+                0x3498DB
+            )
+
+            await self._setup_auto_remediation_channels()
+
+            self.logger.info("=" * 60)
+            self.logger.info("✅ PHASE 2 abgeschlossen - Alle Channels bereit")
+            self.logger.info("=" * 60)
+
+        # ============================================
+        # PHASE 3: INITIALISIERE AUTO-REMEDIATION
+        # ============================================
+        if self.config.auto_remediation.get('enabled', False):
+            self.logger.info("=" * 60)
+            self.logger.info("🤖 PHASE 3: Auto-Remediation Initialisierung")
+            self.logger.info("=" * 60)
+
+            await self._send_status_message(
+                "⏳ **Phase 3/5:** Initialisiere Auto-Remediation System...",
                 0x3498DB
             )
 
             # Initialisiere Context Manager (RAG System)
-            self.logger.info("🔄 Initialisiere Context Manager (RAG)...")
+            self.logger.info("🔄 [1/5] Initialisiere Context Manager (RAG)...")
             self.context_manager = ContextManager()
             self.context_manager.load_all_contexts()
-            self.logger.info("✅ Context Manager bereit")
+            self.logger.info("✅ [1/5] Context Manager bereit")
 
             # Initialisiere AI Service mit Context Manager
-            self.logger.info("🔄 Initialisiere AI Service...")
+            self.logger.info("🔄 [2/5] Initialisiere AI Service...")
             self.ai_service = AIService(self.config, context_manager=self.context_manager)
-            self.logger.info("✅ AI Service bereit")
+            self.logger.info("✅ [2/5] AI Service bereit")
 
             # Initialisiere Self-Healing
-            self.logger.info("🔄 Initialisiere Self-Healing Coordinator...")
+            self.logger.info("🔄 [3/5] Initialisiere Self-Healing Coordinator...")
             self.self_healing = SelfHealingCoordinator(self, self.config)
             await self.self_healing.initialize(ai_service=self.ai_service)
-            self.logger.info("✅ Self-Healing Coordinator bereit")
+            self.logger.info("✅ [3/5] Self-Healing Coordinator bereit")
 
             # Initialisiere Remediation Orchestrator
-            self.logger.info("🔄 Initialisiere Remediation Orchestrator...")
+            self.logger.info("🔄 [4/5] Initialisiere Remediation Orchestrator...")
             self.orchestrator = RemediationOrchestrator(
                 ai_service=self.ai_service,
                 self_healing_coordinator=self.self_healing,
                 approval_manager=self.self_healing.approval_manager,
                 bot=self
             )
-            self.logger.info("✅ Remediation Orchestrator bereit")
+            self.logger.info("✅ [4/5] Remediation Orchestrator bereit")
 
             # Initialisiere Event Watcher
-            self.logger.info("🔄 Initialisiere Event Watcher...")
+            self.logger.info("🔄 [5/5] Initialisiere Event Watcher...")
             self.event_watcher = SecurityEventWatcher(self, self.config)
             await self.event_watcher.initialize(
                 trivy=self.docker,
@@ -420,21 +449,80 @@ class ShadowOpsBot(commands.Bot):
                 fail2ban=self.fail2ban,
                 aide=self.aide
             )
-            self.logger.info("✅ Event Watcher bereit")
+            self.logger.info("✅ [5/5] Event Watcher bereit")
 
-            # Starte Auto-Remediation
-            self.logger.info("🔄 Starte Auto-Remediation Services...")
-            await self.self_healing.start()
-            await self.event_watcher.start()
+            self.logger.info("=" * 60)
+            self.logger.info("✅ PHASE 3 abgeschlossen - Alle Komponenten initialisiert")
+            self.logger.info("=" * 60)
 
-            self.logger.info("✅ Auto-Remediation System vollständig initialisiert")
+            # ============================================
+            # PHASE 4: STARTE AUTO-REMEDIATION (mit Delay)
+            # ============================================
+            self.logger.info("=" * 60)
+            self.logger.info("🔄 PHASE 4: Starte Auto-Remediation Services...")
+            self.logger.info("=" * 60)
 
             await self._send_status_message(
-                "✅ **Auto-Remediation System initialisiert**\n"
-                f"• Remediation Orchestrator: ✅ Koordinierte Remediation aktiv\n"
-                f"• Self-Healing Coordinator: ✅ Bereit\n"
-                f"• Event Watcher: ✅ Aktiv\n"
-                f"• Scan Intervals: Trivy=6h, CrowdSec/Fail2ban=30s, AIDE=15min",
+                "⏳ **Phase 4/5:** Starte Auto-Remediation...\n"
+                "Warte 5 Sekunden bis Core Services vollständig hochgefahren sind...",
+                0x3498DB
+            )
+
+            # Warte 5 Sekunden damit alle Core Services vollständig initialisiert sind
+            await asyncio.sleep(5)
+
+            self.logger.info("🚀 Starte Self-Healing Coordinator...")
+            await self.self_healing.start()
+            self.logger.info("✅ Self-Healing Coordinator gestartet")
+
+            # Warte 3 Sekunden bevor Event Watcher startet
+            await asyncio.sleep(3)
+
+            self.logger.info("🚀 Starte Event Watcher...")
+            await self.event_watcher.start()
+            self.logger.info("✅ Event Watcher gestartet")
+
+            self.logger.info("=" * 60)
+            self.logger.info("✅ Auto-Remediation System vollständig aktiv")
+            self.logger.info("=" * 60)
+
+            await self._send_status_message(
+                "✅ **Auto-Remediation System aktiv**\n"
+                f"• Remediation Orchestrator: ✅ Koordination aktiv\n"
+                f"• Self-Healing Coordinator: ✅ Gestartet\n"
+                f"• Event Watcher: ✅ Gestartet\n"
+                f"• Scan Intervals: Trivy=6h, CrowdSec/Fail2ban=60s, AIDE=15min",
+                0x00FF00
+            )
+
+            # ============================================
+            # PHASE 5: STARTE AI LEARNING (mit größerem Delay)
+            # ============================================
+            self.logger.info("=" * 60)
+            self.logger.info("⏳ PHASE 5: AI Learning startet in 15 Sekunden...")
+            self.logger.info("=" * 60)
+
+            await self._send_status_message(
+                "⏳ **Phase 5/5:** AI Learning startet in 15 Sekunden...\n"
+                "Warte bis Monitoring & Auto-Remediation stabil laufen...",
+                0x3498DB
+            )
+
+            # Warte 15 Sekunden bevor AI Learning startet
+            # Damit hat Monitoring Zeit, erste Scans durchzuführen
+            await asyncio.sleep(15)
+
+            # AI Learning wird vom Event Watcher automatisch gestartet
+            # Sende nur Status-Update
+            self.logger.info("=" * 60)
+            self.logger.info("✅ System vollständig hochgefahren - AI Learning kann starten")
+            self.logger.info("=" * 60)
+
+            await self._send_status_message(
+                "✅ **AI Learning bereit**\n"
+                "• Code Analyzer: Bereit für Vulnerability Scans\n"
+                "• Git History Learner: Bereit für Pattern Learning\n"
+                "• Knowledge Base: Aktiv",
                 0x00FF00
             )
         else:
