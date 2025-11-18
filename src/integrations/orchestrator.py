@@ -580,19 +580,36 @@ Ausgabe als JSON:
             inline=False
         )
 
-        # Execution Plan (Phasen)
+        # Execution Plan (Phasen) - Discord Field limit: 1024 characters
         phases_text = ""
         total_minutes = 0
+        max_desc_length = 120  # Max chars per phase description
+
         for i, phase in enumerate(plan.phases[:5], 1):  # Max 5 Phasen anzeigen
             name = phase.get('name', f'Phase {i}')
             desc = phase.get('description', 'N/A')
             minutes = phase.get('estimated_minutes', 5)
             total_minutes += minutes
 
-            phases_text += f"**{i}. {name}** (~{minutes}min)\n{desc}\n\n"
+            # Truncate description if too long
+            if len(desc) > max_desc_length:
+                desc = desc[:max_desc_length] + "..."
 
-        if len(plan.phases) > 5:
+            phase_text = f"**{i}. {name}** (~{minutes}min)\n{desc}\n\n"
+
+            # Check if adding this phase would exceed Discord's 1024 char limit
+            if len(phases_text) + len(phase_text) > 1020:  # Leave some margin
+                phases_text += f"_...und {len(plan.phases) - (i-1)} weitere Phasen_\n"
+                break
+
+            phases_text += phase_text
+
+        if len(plan.phases) > 5 and len(phases_text) < 1020:
             phases_text += f"_...und {len(plan.phases) - 5} weitere Phasen_\n"
+
+        # Ensure we never exceed 1024 characters (Discord limit)
+        if len(phases_text) > 1024:
+            phases_text = phases_text[:1020] + "..."
 
         embed.add_field(
             name="⚙️ Ausführungs-Plan",
