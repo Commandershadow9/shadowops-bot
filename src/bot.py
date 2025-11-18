@@ -19,6 +19,7 @@ sys.path.insert(0, str(Path(__file__).parent))
 from utils.config import get_config
 from utils.logger import setup_logger
 from utils.embeds import EmbedBuilder, Severity
+from utils.discord_logger import DiscordChannelLogger
 
 from integrations.fail2ban import Fail2banMonitor
 from integrations.crowdsec import CrowdSecMonitor
@@ -60,6 +61,9 @@ class ShadowOpsBot(commands.Bot):
         self.event_watcher = None
         self.self_healing = None
         self.orchestrator = None
+
+        # Discord Channel Logger (für kategorisierte Logs)
+        self.discord_logger = DiscordChannelLogger(bot=None, config=self.config)
 
         # Rate Limiting für Alerts
         self.recent_alerts = {}
@@ -131,6 +135,7 @@ class ShadowOpsBot(commands.Bot):
                 'docker': ('🐳-docker', 'Docker Security Scans (Trivy)', security_category),
                 'backups': ('💾-backups', 'Backup Status und Logs', security_category),
                 'bot_status': ('🤖-bot-status', '⚙️ Bot Startup, Health-Checks und System-Status', system_category),
+                'performance': ('📊-performance', '📊 Performance Monitor: CPU, RAM, Resource Anomalies', system_category),
             }
 
             channels_created = False
@@ -190,6 +195,9 @@ class ShadowOpsBot(commands.Bot):
                 ('alerts', alerts_name, '🤖 Live-Updates aller Auto-Remediation Fixes'),
                 ('approvals', approvals_name, '✋ Human-Approval Requests für kritische Fixes'),
                 ('stats', stats_name, '📊 Tägliche Auto-Remediation Statistiken'),
+                ('ai_learning', '🧠-ai-learning', '🧠 AI Learning Logs: Code Analyzer, Git History, Knowledge Base'),
+                ('code_fixes', '🔧-code-fixes', '🔧 Code Fixer: Vulnerability Processing & Fix Generation'),
+                ('orchestrator', '⚡-orchestrator', '⚡ Orchestrator: Batch Event Coordination & Planning'),
             ]
 
             for channel_type, channel_name, description in auto_remediation_channels:
@@ -240,6 +248,12 @@ class ShadowOpsBot(commands.Bot):
             else:
                 self.logger.info("ℹ️ Alle Channels existieren bereits")
 
+            # Initialisiere Discord Channel Logger
+            self.logger.info("🔄 Initialisiere Discord Channel Logger...")
+            self.discord_logger.set_bot(self)
+            await self.discord_logger.start()
+            self.logger.info("✅ Discord Channel Logger bereit")
+
         except discord.Forbidden:
             self.logger.error("❌ FEHLER: Bot hat keine Berechtigung Channels zu erstellen!")
             self.logger.error("   Lösung: Gehe zu Discord Server Settings → Roles → ShadowOps")
@@ -263,7 +277,7 @@ class ShadowOpsBot(commands.Bot):
                 config_data = yaml.safe_load(f)
 
             # Update Standard Channels
-            standard_channel_keys = ['critical', 'sicherheitsdienst', 'nexus', 'fail2ban', 'docker', 'backups']
+            standard_channel_keys = ['critical', 'sicherheitsdienst', 'nexus', 'fail2ban', 'docker', 'backups', 'bot_status', 'performance']
             for key in standard_channel_keys:
                 if key in channel_ids:
                     if 'channels' not in config_data:

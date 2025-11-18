@@ -1,0 +1,194 @@
+"""
+Centralized Discord Logger
+Routes log messages to appropriate Discord channels based on log category
+"""
+
+import asyncio
+import logging
+from datetime import datetime
+from typing import Optional, Dict
+import discord
+
+logger = logging.getLogger('shadowops.discord_logger')
+
+
+class DiscordChannelLogger:
+    """
+    Central Discord logging system that routes messages to appropriate channels
+
+    Channel Routing:
+    - 🧠-ai-learning: AI Learning logs (Code Analyzer, Git History, etc.)
+    - 🔧-code-fixes: Code Fixer vulnerability processing
+    - ⚡-orchestrator: Batch event coordination
+    - 📊-performance: Performance Monitor & Resource Anomalies
+    - 🤖-auto-remediation-alerts: Auto-remediation status updates
+    - ✋-auto-remediation-approvals: Human approval requests
+    - 📊-auto-remediation-stats: Daily statistics
+    - 🤖-bot-status: Bot startup & health checks
+    """
+
+    def __init__(self, bot=None, config=None):
+        """
+        Initialize Discord Channel Logger
+
+        Args:
+            bot: Discord bot instance
+            config: Bot configuration
+        """
+        self.bot = bot
+        self.config = config
+        self.channels: Dict[str, int] = {}
+
+        # Message queue for async sending
+        self.message_queue = asyncio.Queue()
+        self.sender_task: Optional[asyncio.Task] = None
+        self.running = False
+
+    def set_bot(self, bot):
+        """Set bot instance after initialization"""
+        self.bot = bot
+        self._load_channel_ids()
+
+    def _load_channel_ids(self):
+        """Load channel IDs from config"""
+        if not self.config:
+            return
+
+        # Auto-Remediation channels
+        notifications = self.config.auto_remediation.get('notifications', {})
+        self.channels['alerts'] = notifications.get('alerts_channel')
+        self.channels['approvals'] = notifications.get('approvals_channel')
+        self.channels['stats'] = notifications.get('stats_channel')
+        self.channels['ai_learning'] = notifications.get('ai_learning_channel')
+        self.channels['code_fixes'] = notifications.get('code_fixes_channel')
+        self.channels['orchestrator'] = notifications.get('orchestrator_channel')
+
+        # Standard channels
+        self.channels['performance'] = self.config.channels.get('performance')
+        self.channels['bot_status'] = self.config.channels.get('bot_status')
+        self.channels['critical'] = self.config.channels.get('critical')
+        self.channels['docker'] = self.config.channels.get('docker')
+        self.channels['fail2ban'] = self.config.channels.get('fail2ban')
+
+        logger.debug(f"Loaded {len([v for v in self.channels.values() if v])} channel IDs")
+
+    async def start(self):
+        """Start async message sender task"""
+        if self.running:
+            return
+
+        self.running = True
+        self.sender_task = asyncio.create_task(self._message_sender_loop())
+        logger.info("✅ Discord Channel Logger started")
+
+    async def stop(self):
+        """Stop async message sender task"""
+        if not self.running:
+            return
+
+        self.running = False
+        if self.sender_task:
+            self.sender_task.cancel()
+            try:
+                await self.sender_task
+            except asyncio.CancelledError:
+                pass
+        logger.info("🛑 Discord Channel Logger stopped")
+
+    async def _message_sender_loop(self):
+        """Background task that sends queued messages"""
+        while self.running:
+            try:
+                # Get message from queue (wait max 1 second)
+                try:
+                    channel_key, message, embed = await asyncio.wait_for(
+                        self.message_queue.get(),
+                        timeout=1.0
+                    )
+                except asyncio.TimeoutError:
+                    continue
+
+                # Send message
+                await self._send_to_channel(channel_key, message, embed)
+
+            except Exception as e:
+                logger.error(f"Error in message sender loop: {e}")
+                await asyncio.sleep(1)
+
+    async def _send_to_channel(self, channel_key: str, message: str, embed: Optional[discord.Embed] = None):
+        """Send message to Discord channel"""
+        try:
+            if not self.bot:
+                logger.warning(f"Bot not set, cannot send message to {channel_key}")
+                return
+
+            channel_id = self.channels.get(channel_key)
+            if not channel_id:
+                logger.debug(f"Channel ID not found for '{channel_key}'")
+                return
+
+            channel = self.bot.get_channel(channel_id)
+            if not channel:
+                logger.warning(f"Channel {channel_id} not found for '{channel_key}'")
+                return
+
+            # Send message
+            if embed:
+                await channel.send(content=message if message else None, embed=embed)
+            else:
+                await channel.send(message)
+
+        except Exception as e:
+            logger.error(f"Failed to send message to channel '{channel_key}': {e}")
+
+    # =====================================
+    # PUBLIC LOGGING METHODS
+    # =====================================
+
+    def log_ai_learning(self, message: str, embed: Optional[discord.Embed] = None):
+        """Log AI Learning activity (Code Analyzer, Git History, etc.)"""
+        if not self.running:
+            return
+        asyncio.create_task(self.message_queue.put(('ai_learning', message, embed)))
+
+    def log_code_fix(self, message: str, embed: Optional[discord.Embed] = None):
+        """Log Code Fixer activity (Vulnerability processing, fix generation)"""
+        if not self.running:
+            return
+        asyncio.create_task(self.message_queue.put(('code_fixes', message, embed)))
+
+    def log_orchestrator(self, message: str, embed: Optional[discord.Embed] = None):
+        """Log Orchestrator activity (Batch processing, coordination)"""
+        if not self.running:
+            return
+        asyncio.create_task(self.message_queue.put(('orchestrator', message, embed)))
+
+    def log_performance(self, message: str, embed: Optional[discord.Embed] = None):
+        """Log Performance Monitor activity (CPU, RAM anomalies)"""
+        if not self.running:
+            return
+        asyncio.create_task(self.message_queue.put(('performance', message, embed)))
+
+    def log_alert(self, message: str, embed: Optional[discord.Embed] = None):
+        """Log auto-remediation alert"""
+        if not self.running:
+            return
+        asyncio.create_task(self.message_queue.put(('alerts', message, embed)))
+
+    def log_approval(self, message: str, embed: Optional[discord.Embed] = None):
+        """Log approval request"""
+        if not self.running:
+            return
+        asyncio.create_task(self.message_queue.put(('approvals', message, embed)))
+
+    def log_stats(self, message: str, embed: Optional[discord.Embed] = None):
+        """Log statistics"""
+        if not self.running:
+            return
+        asyncio.create_task(self.message_queue.put(('stats', message, embed)))
+
+    def log_bot_status(self, message: str, embed: Optional[discord.Embed] = None):
+        """Log bot status (startup, health checks)"""
+        if not self.running:
+            return
+        asyncio.create_task(self.message_queue.put(('bot_status', message, embed)))
