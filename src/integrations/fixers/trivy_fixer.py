@@ -375,6 +375,8 @@ class TrivyFixer:
 
             logger.info(f"✅ Smart fix complete: {', '.join(message_parts)}")
 
+            # IMPORTANT: Return 'success' even if only monitoring (not a failure!)
+            # Monitoring is a valid outcome - don't trigger retries or pollute learning data
             return {
                 'status': 'success' if total_failed == 0 else 'partial',
                 'message': ', '.join(message_parts),
@@ -382,10 +384,12 @@ class TrivyFixer:
                 'recommendations': self._generate_recommendations(results, upgradeable_images)
             }
         else:
-            logger.warning("⚠️  No actionable fixes available")
+            # Only monitoring external images with no updates available
+            # This is SUCCESS - not a failure! Don't trigger retries.
+            logger.info("✅ All external images monitored - no immediate action needed")
             return {
-                'status': 'partial',
-                'message': 'No immediate fixes available - all images monitored',
+                'status': 'success',  # Changed from 'partial' - monitoring is not a failure!
+                'message': 'All external images monitored (no updates available yet)',
                 'details': results
             }
 
