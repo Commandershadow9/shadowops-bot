@@ -980,22 +980,18 @@ Ausgabe als JSON:
 
             for idx, event in enumerate(events, 1):
                 try:
+                    # Build learning context once per event
+                    event_signature = f"{event.source}_{event.event_type}"
+                    previous_attempts = self.event_history.get(event_signature, [])[-3:]
+                    if previous_attempts:
+                        logger.info(f"      📚 Found {len(previous_attempts)} previous attempt(s) for {event_signature}")
+
                     # Get fix strategy from AI (or use cached from plan)
                     strategy = phase.get('strategy', {})
 
                     if not strategy:
                         # Generate strategy if not in phase
                         logger.info(f"      Generating strategy for {event.source}...")
-
-                        # NEW: Build context with previous attempts for learning
-                        event_signature = f"{event.source}_{event.event_type}"
-                        previous_attempts = []
-
-                        if event_signature in self.event_history:
-                            # Get last 3 attempts for this event type
-                            previous_attempts = self.event_history[event_signature][-3:]
-                            if previous_attempts:
-                                logger.info(f"      📚 Found {len(previous_attempts)} previous attempt(s) for {event_signature}")
 
                         strategy = await self.ai_service.generate_fix_strategy({
                             'event': event.to_dict(),
