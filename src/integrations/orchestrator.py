@@ -456,26 +456,49 @@ class RemediationOrchestrator:
         # (kann passieren wenn done=True gesetzt wird bevor letzte Update)
 
     def _build_coordinated_planning_prompt(self, context: Dict) -> str:
-        """Baut Prompt für koordinierte Planung"""
+        """Baut Prompt für koordinierte Planung mit Infrastructure Context"""
 
-        prompt = f"""# Koordinierte Security Remediation
+        prompt_parts = []
+
+        # ADD: Context Manager Integration for Infrastructure Knowledge
+        if self.ai_service and hasattr(self.ai_service, 'context_manager') and self.ai_service.context_manager:
+            prompt_parts.append("# INFRASTRUCTURE & PROJECT KNOWLEDGE BASE")
+            prompt_parts.append("Du hast Zugriff auf detaillierte Informationen über die Server-Infrastruktur und laufende Projekte.")
+            prompt_parts.append("Nutze diesen Kontext für informierte, sichere Entscheidungen.\n")
+
+            # Get relevant context for all events in batch
+            for event in context['events']:
+                relevant_context = self.ai_service.context_manager.get_relevant_context(
+                    event['source'],
+                    event.get('event_type', 'unknown')
+                )
+                if relevant_context:
+                    prompt_parts.append(relevant_context)
+                    break  # Only add context once (same for all events in batch)
+
+            prompt_parts.append("\n" + "="*80 + "\n")
+
+        # Main coordination prompt
+        prompt_parts.append(f"""# Koordinierte Security Remediation
 
 Du bist ein Security-Engineer der einen KOORDINIERTEN Gesamt-Plan erstellt.
 
 ## Wichtig:
 - Analysiere ALLE {context['event_count']} Events ZUSAMMEN
-- Erkenne Abhängigkeiten und Konflikte
+- Nutze den INFRASTRUCTURE & PROJECT KNOWLEDGE BASE Kontext oben
+- Erkenne Abhängigkeiten zwischen Projekten und Services
 - Erstelle EINE sequentielle Ausführungs-Pipeline
-- Vermeide Race Conditions
+- Vermeide Race Conditions und Breaking Changes
+- Berücksichtige laufende Services (docker-compose.yml, Versionen)
 
 ## Events im Batch:
-"""
+""")
 
         for i, event in enumerate(context['events'], 1):
-            prompt += f"\n### Event {i}: {event['source']} ({event['severity']})\n"
-            prompt += f"```\n{event.get('details', 'N/A')}\n```\n"
+            prompt_parts.append(f"\n### Event {i}: {event['source']} ({event['severity']})\n")
+            prompt_parts.append(f"```\n{event.get('details', 'N/A')}\n```\n")
 
-        prompt += """
+        prompt_parts.append("""
 
 ## Aufgabe:
 Erstelle einen koordinierten Plan mit Phasen die NACHEINANDER ausgeführt werden.
@@ -504,9 +527,9 @@ Ausgabe als JSON:
   ],
   "rollback_plan": "Beschreibung wie Rollback funktioniert (DEUTSCH)"
 }
-"""
+""")
 
-        return prompt
+        return "\n".join(prompt_parts)
 
     async def _request_approval(self, batch: SecurityEventBatch, plan: RemediationPlan) -> bool:
         """
