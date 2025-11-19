@@ -85,7 +85,7 @@ class TrivyFixer:
 
         try:
             # Parse event details
-            event_details = event.get('event_details', {})
+            event_details = event.get('details', {})  # Fixed: was 'event_details', should be 'details'
             vulnerabilities = event_details.get('vulnerabilities', {})
 
             # ENHANCED: Check for image-level details
