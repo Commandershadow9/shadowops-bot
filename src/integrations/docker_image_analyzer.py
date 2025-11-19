@@ -150,6 +150,31 @@ class DockerImageAnalyzer:
                     'reason': f"Update available: {image_info.tag} → {image_info.latest_version}"
                 }
             else:
+                # NEW: Check for major version upgrades
+                upgrade_info = self.check_major_version_upgrade(image_info.name, image_info.tag)
+
+                if upgrade_info and vulnerability_count > 50:  # Only if CRITICAL situation
+                    return {
+                        'action': 'major_upgrade',
+                        'description': f"Consider major version upgrade: {upgrade_info['current_version']} → {upgrade_info['recommended_version']}",
+                        'steps': [
+                            f"⚠️  MANUAL REVIEW REQUIRED",
+                            f"Current: {image_info.name}:{upgrade_info['current_version']}",
+                            f"Recommended: {image_info.name}:{upgrade_info['recommended_version']}",
+                            f"Notes: {upgrade_info['notes']}",
+                            f"Risk Level: {upgrade_info['risk_level']}",
+                            f"Migration Guide: {upgrade_info['migration_url']}",
+                            f"Vulnerabilities: {vulnerability_count} (justifies upgrade consideration)",
+                            "Review breaking changes in upstream documentation",
+                            "Test in staging environment first",
+                            "Perform backup before upgrading"
+                        ],
+                        'confidence': 'medium',
+                        'reason': f"No updates on current version, but major upgrade available. {vulnerability_count} vulnerabilities present.",
+                        'requires_approval': True
+                    }
+
+                # Fallback to monitoring
                 return {
                     'action': 'monitor',
                     'description': f"Monitor external image {image_info.full_name} for future updates",
@@ -192,6 +217,105 @@ class DockerImageAnalyzer:
             tag = 'latest'
 
         return name, tag
+
+    def check_major_version_upgrade(self, image_name: str, current_tag: str) -> Optional[Dict]:
+        """
+        Check if major version upgrade is available and safe
+
+        Args:
+            image_name: Image name (e.g., 'postgres', 'redis')
+            current_tag: Current tag (e.g., '15', '7-alpine')
+
+        Returns:
+            Dict with upgrade info or None if not recommended
+        """
+        # Known safe upgrade paths with migration notes
+        safe_upgrades = {
+            'postgres': {
+                '15': {
+                    'next': '16',
+                    'notes': 'Requires pg_upgrade or dump/restore. Breaking changes: logical replication changes, new pg_hba.conf defaults',
+                    'risk': 'medium',
+                    'migration_url': 'https://www.postgresql.org/docs/16/release-16.html'
+                },
+                '14': {
+                    'next': '15',
+                    'notes': 'Minor breaking changes in config. Check SECURITY INVOKER views',
+                    'risk': 'low',
+                    'migration_url': 'https://www.postgresql.org/docs/15/release-15.html'
+                },
+                '13': {
+                    'next': '14',
+                    'notes': 'Mostly compatible. Check server encoding changes',
+                    'risk': 'low',
+                    'migration_url': 'https://www.postgresql.org/docs/14/release-14.html'
+                },
+            },
+            'redis': {
+                '7': {
+                    'next': '8',
+                    'notes': 'NOT YET RELEASED - Monitor redis.io for Redis 8.0',
+                    'risk': 'unknown',
+                    'migration_url': 'https://redis.io/'
+                },
+                '6': {
+                    'next': '7',
+                    'notes': 'Check for deprecated commands. Review ACL changes. Functions vs EVAL changes',
+                    'risk': 'medium',
+                    'migration_url': 'https://redis.io/docs/about/releases/'
+                },
+            },
+            'mysql': {
+                '8.0': {
+                    'next': '8.4',
+                    'notes': 'LTS upgrade. Check authentication plugin changes',
+                    'risk': 'low',
+                    'migration_url': 'https://dev.mysql.com/doc/relnotes/mysql/8.4/en/'
+                },
+            },
+            'nginx': {
+                '1.24': {
+                    'next': '1.26',
+                    'notes': 'Stable to stable upgrade. Review new directives',
+                    'risk': 'low',
+                    'migration_url': 'https://nginx.org/en/CHANGES'
+                },
+            },
+        }
+
+        # Extract major version from tag
+        version_match = re.match(r'^(\d+)(?:\.(\d+))?', current_tag)
+        if not version_match:
+            return None
+
+        current_major = version_match.group(1)
+        if version_match.group(2):
+            current_major += f".{version_match.group(2)}"
+
+        # Check if we have upgrade info for this image
+        if image_name not in safe_upgrades:
+            return None
+
+        if current_major not in safe_upgrades[image_name]:
+            return None
+
+        upgrade_info = safe_upgrades[image_name][current_major]
+
+        # Preserve tag variant (e.g., -alpine, -slim)
+        tag_variant = ''
+        variant_match = re.search(r'-(.+)$', current_tag)
+        if variant_match:
+            tag_variant = f"-{variant_match.group(1)}"
+
+        return {
+            'current_version': current_tag,
+            'recommended_version': f"{upgrade_info['next']}{tag_variant}",
+            'upgrade_type': 'major',
+            'notes': upgrade_info['notes'],
+            'risk_level': upgrade_info['risk'],
+            'migration_url': upgrade_info['migration_url'],
+            'requires_manual_migration': True
+        }
 
     def _find_dockerfile(self, image_name: str) -> Optional[str]:
         """
