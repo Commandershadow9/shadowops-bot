@@ -13,6 +13,7 @@ Workflow:
 """
 
 import asyncio
+import json
 import logging
 import os
 import time
@@ -100,9 +101,42 @@ class RemediationOrchestrator:
         self.pending_batches: List[SecurityEventBatch] = []
         self.completed_batches: List[SecurityEventBatch] = []
 
+        # NEW: Event History for Learning
+        self.event_history: Dict[str, List[Dict]] = {}  # {event_signature: [attempts]}
+        self.history_file = 'logs/event_history.json'
+        self._load_event_history()
+
         logger.info("🎯 Remediation Orchestrator initialisiert")
         logger.info(f"   📊 Batching Window: {self.collection_window_seconds}s")
         logger.info("   🔒 Sequential Execution Mode: ON")
+
+    def _load_event_history(self):
+        """Load event history from disk for learning"""
+        try:
+            if os.path.exists(self.history_file):
+                with open(self.history_file, 'r') as f:
+                    self.event_history = json.load(f)
+                logger.info(f"📚 Loaded {len(self.event_history)} event type histories")
+
+                # Count total attempts
+                total_attempts = sum(len(attempts) for attempts in self.event_history.values())
+                if total_attempts > 0:
+                    logger.info(f"   📖 Total historical attempts: {total_attempts}")
+            else:
+                logger.info("📚 No event history found, starting fresh")
+        except Exception as e:
+            logger.error(f"❌ Error loading event history: {e}")
+            self.event_history = {}
+
+    def _save_event_history(self):
+        """Save event history to disk for persistence"""
+        try:
+            os.makedirs(os.path.dirname(self.history_file), exist_ok=True)
+            with open(self.history_file, 'w') as f:
+                json.dump(self.event_history, f, indent=2, default=str)
+            logger.debug("💾 Event history saved")
+        except Exception as e:
+            logger.error(f"❌ Error saving event history: {e}")
 
     def _get_status_channel(self):
         """Holt den Status-Channel für Live-Updates"""
@@ -952,9 +986,21 @@ Ausgabe als JSON:
                     if not strategy:
                         # Generate strategy if not in phase
                         logger.info(f"      Generating strategy for {event.source}...")
-                        strategy = await self.ai_service.generate_fix_strategy(
-                            {'event': event.to_dict()}
-                        )
+
+                        # NEW: Build context with previous attempts for learning
+                        event_signature = f"{event.source}_{event.event_type}"
+                        previous_attempts = []
+
+                        if event_signature in self.event_history:
+                            # Get last 3 attempts for this event type
+                            previous_attempts = self.event_history[event_signature][-3:]
+                            if previous_attempts:
+                                logger.info(f"      📚 Found {len(previous_attempts)} previous attempt(s) for {event_signature}")
+
+                        strategy = await self.ai_service.generate_fix_strategy({
+                            'event': event.to_dict(),
+                            'previous_attempts': previous_attempts
+                        })
 
                     # Show planned steps for this fix (for transparency)
                     steps_preview = ""
@@ -999,6 +1045,24 @@ Ausgabe als JSON:
                             logger.info(f"      ✅ Fix successful on attempt {attempt}/{max_retries}: {result.get('message', '')}")
                             fix_success = True
 
+                            # NEW: Record successful fix in history for learning
+                            if event_signature not in self.event_history:
+                                self.event_history[event_signature] = []
+
+                            self.event_history[event_signature].append({
+                                'timestamp': datetime.now().isoformat(),
+                                'strategy': strategy,
+                                'result': 'success',
+                                'message': result.get('message'),
+                                'details': result.get('details'),
+                                'attempt': attempt,
+                                'phase': phase_name
+                            })
+
+                            # Keep only last 10 attempts per event type
+                            self.event_history[event_signature] = self.event_history[event_signature][-10:]
+                            self._save_event_history()
+
                             # Discord Live Update: Fix successful
                             if exec_message and exec_embed:
                                 current_field = exec_embed.fields[0]
@@ -1015,6 +1079,22 @@ Ausgabe als JSON:
                         else:
                             last_error = result.get('error', 'Unknown error')
                             logger.warning(f"      ⚠️ Fix attempt {attempt}/{max_retries} failed: {last_error}")
+
+                            # NEW: Record failed attempt in history for learning
+                            if event_signature not in self.event_history:
+                                self.event_history[event_signature] = []
+
+                            self.event_history[event_signature].append({
+                                'timestamp': datetime.now().isoformat(),
+                                'strategy': strategy,
+                                'result': 'failed',
+                                'error': last_error,
+                                'attempt': attempt,
+                                'phase': phase_name
+                            })
+
+                            self.event_history[event_signature] = self.event_history[event_signature][-10:]
+                            self._save_event_history()
 
                             if attempt < max_retries:
                                 # Not the last attempt - retry!
