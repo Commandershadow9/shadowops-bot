@@ -153,7 +153,8 @@ class DockerImageAnalyzer:
                 # NEW: Check for major version upgrades
                 upgrade_info = self.check_major_version_upgrade(image_info.name, image_info.tag)
 
-                if upgrade_info and vulnerability_count > 50:  # Only if CRITICAL situation
+                # Bei CRITICAL-Funden sofort Major-Upgrade prüfen (kein hoher Schwellenwert mehr)
+                if upgrade_info and vulnerability_count > 0:
                     return {
                         'action': 'major_upgrade',
                         'description': f"Consider major version upgrade: {upgrade_info['current_version']} → {upgrade_info['recommended_version']}",
@@ -410,7 +411,7 @@ class DockerImageAnalyzer:
                             ['docker', 'manifest', 'inspect', f"{image_name}:{test_tag}"],
                             capture_output=True,
                             text=True,
-                            timeout=10
+                            timeout=30  # Increased to better tolerate slow registries
                         )
 
                         if test_result.returncode == 0:
@@ -422,7 +423,7 @@ class DockerImageAnalyzer:
                             ['docker', 'manifest', 'inspect', f"{image_name}:latest"],
                             capture_output=True,
                             text=True,
-                            timeout=10
+                            timeout=30  # Increased to better tolerate slow registries
                         )
 
                         if latest_result.returncode == 0 and current_tag != 'latest':
