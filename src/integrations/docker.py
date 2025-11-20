@@ -1,13 +1,17 @@
 """
 Docker Security Scanner Integration
 Parsed Trivy Scan Reports und triggert neue Scans
+Enhanced with image-level detail extraction from JSON files.
 """
 
 import subprocess
 import re
+import json
 from pathlib import Path
-from typing import Dict, Optional
+from typing import Dict, Optional, List
 from datetime import datetime
+
+from .docker_image_analyzer import DockerImageAnalyzer
 
 
 class DockerSecurityMonitor:
@@ -16,6 +20,7 @@ class DockerSecurityMonitor:
     def __init__(self, scan_dir: str = "/var/log/trivy-scans"):
         self.scan_dir = Path(scan_dir)
         self.scan_script = Path("/home/cmdshadow/docker-security-scan.sh")
+        self.analyzer = DockerImageAnalyzer()
 
     def get_latest_scan_results(self) -> Optional[Dict[str, any]]:
         """
@@ -120,137 +125,98 @@ class DockerSecurityMonitor:
         """
         return self.get_latest_scan_results()
 
-    def get_detailed_vulnerabilities(self) -> Optional[Dict[str, any]]:
+    def get_detailed_scan_results(self) -> Optional[Dict[str, any]]:
         """
-        Liest detaillierte Vulnerabilities aus JSON Scan-Reports
-
-        FALLBACK: Wenn keine JSON-Dateien vorhanden, verwende Summary TXT-Files
+        Enhanced scan results with image-level details from JSON files
 
         Returns:
-            Dict mit Image-Namen und deren Vulnerabilities
+            Dict with detailed scan results including per-image vulnerabilities
         """
         try:
-            import json
+            # First get summary results
+            summary = self.get_latest_scan_results()
 
-            # Finde neueste JSON-Dateien (Trivy speichert pro Image ein JSON)
-            json_files = sorted(self.scan_dir.glob("*.json"), reverse=True)
+            if not summary:
+                return None
+
+            # Find latest JSON file (more detailed than summary)
+            json_files = sorted(self.scan_dir.glob("scan_*.json"), reverse=True)
 
             if not json_files:
-                # FALLBACK: Verwende Summary TXT-Methode
-                print("🐳 Trivy: No JSON files found, using summary fallback...")
-                summary = self.get_latest_scan_results()
-                if not summary:
-                    return None
-
-                # Konvertiere Summary zu detailed format
+                # No JSON files, return summary only (fallback mode)
                 return {
-                    'images': {},  # Details nicht verfügbar aus Summary
+                    'images': {},  # No details available
                     'total_critical': summary.get('critical', 0),
                     'total_high': summary.get('high', 0),
-                    'affected_projects': [],  # Kann nicht aus Summary extrahiert werden
-                    'summary_mode': True,  # Flag dass dies Fallback-Daten sind
-                    'Severity': 'CRITICAL' if summary.get('critical', 0) > 0 else ('HIGH' if summary.get('high', 0) > 0 else 'MEDIUM')
+                    'total_medium': summary.get('medium', 0),
+                    'total_low': summary.get('low', 0),
+                    'affected_projects': [],
+                    'summary_mode': True,
+                    'date': summary.get('date')
                 }
 
-            detailed_results = {
-                'images': {},
-                'total_critical': 0,
-                'total_high': 0,
-                'affected_projects': set()
+            # Parse JSON file for detailed image info
+            latest_json = json_files[0]
+            image_details = self.analyzer.analyze_trivy_scan(str(latest_json))
+
+            # Analyze each image
+            analyzed_images = {}
+            affected_projects = []
+
+            for img_vuln in image_details:
+                image_name = img_vuln['image']
+                image_info = self.analyzer.analyze_image(image_name)
+
+                # Get remediation strategy
+                strategy = self.analyzer.get_remediation_strategy(
+                    image_info,
+                    img_vuln['total']
+                )
+
+                analyzed_images[image_name] = {
+                    'vulnerabilities': img_vuln,
+                    'image_info': {
+                        'name': image_info.name,
+                        'tag': image_info.tag,
+                        'is_external': image_info.is_external,
+                        'has_dockerfile': image_info.has_dockerfile,
+                        'dockerfile_path': image_info.dockerfile_path,
+                        'update_available': image_info.update_available,
+                        'latest_version': image_info.latest_version
+                    },
+                    'recommended_action': strategy['action'],
+                    'strategy': strategy
+                }
+
+                # Track affected projects
+                if not image_info.is_external and image_info.dockerfile_path:
+                    # Extract project name from path
+                    project_path = str(Path(image_info.dockerfile_path).parent)
+                    if project_path not in affected_projects:
+                        affected_projects.append(project_path)
+
+            return {
+                'images': analyzed_images,
+                'total_critical': summary.get('critical', 0),
+                'total_high': summary.get('high', 0),
+                'total_medium': summary.get('medium', 0),
+                'total_low': summary.get('low', 0),
+                'affected_projects': affected_projects,
+                'summary_mode': False,
+                'date': summary.get('date'),
+                'json_file': str(latest_json)
             }
 
-            # Parse alle JSON files
-            for json_file in json_files:
-                try:
-                    with open(json_file, 'r') as f:
-                        scan_data = json.load(f)
-
-                    # Trivy JSON Format: {"Results": [...], "ArtifactName": "image:tag"}
-                    image_name = scan_data.get('ArtifactName', str(json_file.name))
-
-                    # Extrahiere Projekt aus Image-Namen
-                    project_name = self._extract_project_from_image(image_name)
-
-                    if project_name:
-                        detailed_results['affected_projects'].add(project_name)
-
-                    # Zähle Vulnerabilities
-                    critical_count = 0
-                    high_count = 0
-                    vulnerabilities = []
-
-                    for result in scan_data.get('Results', []):
-                        for vuln in result.get('Vulnerabilities', []):
-                            severity = vuln.get('Severity', 'UNKNOWN')
-                            if severity == 'CRITICAL':
-                                critical_count += 1
-                            elif severity == 'HIGH':
-                                high_count += 1
-
-                            vulnerabilities.append({
-                                'cve': vuln.get('VulnerabilityID', 'N/A'),
-                                'package': vuln.get('PkgName', 'N/A'),
-                                'severity': severity,
-                                'installed_version': vuln.get('InstalledVersion', 'N/A'),
-                                'fixed_version': vuln.get('FixedVersion', 'N/A')
-                            })
-
-                    if critical_count > 0 or high_count > 0:
-                        detailed_results['images'][image_name] = {
-                            'project': project_name,
-                            'critical': critical_count,
-                            'high': high_count,
-                            'vulnerabilities': vulnerabilities,
-                            'scan_file': str(json_file)
-                        }
-
-                        detailed_results['total_critical'] += critical_count
-                        detailed_results['total_high'] += high_count
-
-                except (json.JSONDecodeError, KeyError) as e:
-                    # Skip invalid JSON files
-                    continue
-
-            # Convert set to list for JSON serialization
-            detailed_results['affected_projects'] = list(detailed_results['affected_projects'])
-
-            return detailed_results if detailed_results['images'] else None
-
         except Exception as e:
+            # Fallback to summary if detailed analysis fails
+            summary = self.get_latest_scan_results()
+            if summary:
+                return {
+                    'images': {},
+                    'total_critical': summary.get('critical', 0),
+                    'total_high': summary.get('high', 0),
+                    'affected_projects': [],
+                    'summary_mode': True,
+                    'error': str(e)
+                }
             return None
-
-    def _extract_project_from_image(self, image_name: str) -> Optional[str]:
-        """
-        Extrahiert Projekt-Namen aus Docker Image Namen
-
-        Args:
-            image_name: Docker image name (z.B. "guildscout:latest", "ghcr.io/user/sicherheitstool:v1")
-
-        Returns:
-            Projekt-Name oder None
-        """
-        image_lower = image_name.lower()
-
-        # Entferne Registry-Prefix (ghcr.io/, docker.io/, etc.)
-        if '/' in image_name:
-            parts = image_name.split('/')
-            image_lower = parts[-1].lower()
-
-        # Entferne Tag (:latest, :v1, etc.)
-        if ':' in image_lower:
-            image_lower = image_lower.split(':')[0]
-
-        # Match gegen bekannte Projekte
-        project_mappings = {
-            'guildscout': '/home/cmdshadow/GuildScout',
-            'sicherheitstool': '/home/cmdshadow/project',
-            'sicherheitsdienst': '/home/cmdshadow/project',
-            'shadowops': '/home/cmdshadow/shadowops-bot',
-            'bot': '/home/cmdshadow/shadowops-bot'
-        }
-
-        for keyword, path in project_mappings.items():
-            if keyword in image_lower:
-                return path
-
-        return None

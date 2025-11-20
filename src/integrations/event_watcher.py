@@ -70,11 +70,11 @@ class SecurityEventWatcher:
         self.watcher_tasks: List[asyncio.Task] = []
         self.running = False
 
-        # Scan intervals (in seconds) - SERVER-FRIENDLY mode
+        # Scan intervals (in seconds) - EFFICIENT mode
         self.intervals = {
             'trivy': 21600,      # 6 hours (Docker scans are slow)
-            'crowdsec': 60,      # 60 seconds (active threats - reduced for server limits)
-            'fail2ban': 60,      # 60 seconds (active bans - reduced for server limits)
+            'crowdsec': 30,      # 30 seconds (active threats)
+            'fail2ban': 30,      # 30 seconds (active bans)
             'aide': 900,         # 15 minutes (file integrity)
         }
 
@@ -170,77 +170,20 @@ class SecurityEventWatcher:
                 # Process summary event (should only be 1)
                 new_events = 0
                 for vuln_summary in results:
-                    # Check if multiple projects are affected
-                    affected_projects = vuln_summary.get('AffectedProjects', [])
+                    event = SecurityEvent(
+                        source='trivy',
+                        event_type='docker_vulnerabilities_batch',  # Batch type!
+                        severity=vuln_summary.get('Severity', 'UNKNOWN'),
+                        details=vuln_summary,
+                        is_persistent=True  # Docker vulns require fixing!
+                    )
 
-                    if len(affected_projects) > 1:
-                        # MULTI-PROJECT MODE: Create separate events per project
-                        print(f"🐳 Trivy: Multi-Project Detection - {len(affected_projects)} projects affected")
-                        logger.info(f"🐳 Trivy: Multi-Project Scan - splitting into {len(affected_projects)} separate events")
-                        logger.info(f"   📂 Projects: {', '.join(affected_projects)}")
-
-                        # Split vulnerability data per project
-                        image_details = vuln_summary.get('ImageDetails', {})
-
-                        for project_path in affected_projects:
-                            # Filter images that belong to this project
-                            project_images = {
-                                img_name: img_data
-                                for img_name, img_data in image_details.items()
-                                if img_data.get('project') == project_path
-                            }
-
-                            if not project_images:
-                                continue  # Skip if no images for this project
-
-                            # Count vulnerabilities for this project only
-                            project_critical = sum(img.get('critical', 0) for img in project_images.values())
-                            project_high = sum(img.get('high', 0) for img in project_images.values())
-
-                            # Create project-specific event
-                            project_event = SecurityEvent(
-                                source='trivy',
-                                event_type='docker_vulnerabilities_batch',
-                                severity='CRITICAL' if project_critical > 0 else 'HIGH',
-                                details={
-                                    **vuln_summary,
-                                    'AffectedProjects': [project_path],  # Single project!
-                                    'AffectedImages': list(project_images.keys()),
-                                    'ImageDetails': project_images,
-                                    'Stats': {
-                                        'critical': project_critical,
-                                        'high': project_high,
-                                        'images': len(project_images),
-                                        'projects': 1,  # Always 1 per split event
-                                    },
-                                    'MultiProjectSplit': True,  # Flag to indicate this was split
-                                    'OriginalProjectCount': len(affected_projects),
-                                },
-                                is_persistent=True
-                            )
-
-                            if await self._is_new_event(project_event):
-                                print(f"🐳 Trivy: NEW event for {project_path.split('/')[-1]} - {project_critical} CRITICAL, {project_high} HIGH")
-                                logger.info(f"   📦 Project: {project_path} → {project_critical} CRITICAL, {project_high} HIGH")
-                                await self._handle_new_event(project_event)
-                                new_events += 1
-
+                    if await self._is_new_event(event):
+                        print(f"🐳 Trivy: NEW batch event detected - {vuln_summary.get('Stats', {}).get('critical', 0)} CRITICAL, {vuln_summary.get('Stats', {}).get('high', 0)} HIGH")
+                        await self._handle_new_event(event)
+                        new_events += 1
                     else:
-                        # SINGLE-PROJECT MODE: Normal event (wie bisher)
-                        event = SecurityEvent(
-                            source='trivy',
-                            event_type='docker_vulnerabilities_batch',
-                            severity=vuln_summary.get('Severity', 'UNKNOWN'),
-                            details=vuln_summary,
-                            is_persistent=True
-                        )
-
-                        if await self._is_new_event(event):
-                            print(f"🐳 Trivy: NEW batch event detected - {vuln_summary.get('Stats', {}).get('critical', 0)} CRITICAL, {vuln_summary.get('Stats', {}).get('high', 0)} HIGH")
-                            await self._handle_new_event(event)
-                            new_events += 1
-                        else:
-                            print(f"🐳 Trivy: Scan already processed (no changes since last check)")
+                        print(f"🐳 Trivy: Scan already processed (no changes since last check)")
 
                 if new_events > 0:
                     self.stats['trivy']['events'] += new_events
@@ -373,53 +316,74 @@ class SecurityEventWatcher:
             await asyncio.sleep(self.intervals['aide'])
 
     async def _get_trivy_results(self) -> List[Dict]:
-        """Get latest Trivy scan results"""
+        """Get latest Trivy scan results with enhanced image details"""
         if not self.trivy:
             return []
 
         try:
-            # Get detailed vulnerability data (includes affected images & projects)
-            detailed_results = self.trivy.get_detailed_vulnerabilities()
+            # Get DETAILED scan results (includes per-image analysis)
+            results = self.trivy.get_detailed_scan_results()
 
-            if not detailed_results:
+            if not results:
                 return []
 
-            # Check if we have vulnerabilities (either from detailed scan or summary fallback)
-            total_critical = detailed_results.get('total_critical', 0)
-            total_high = detailed_results.get('total_high', 0)
-
-            if total_critical == 0 and total_high == 0:
-                return []  # No vulnerabilities found
-
-            # Create summary-based events for significant findings
+            # Create enhanced events with image-level details
             vulnerabilities = []
 
-            affected_projects = detailed_results.get('affected_projects', [])
-            affected_images = list(detailed_results.get('images', {}).keys())
+            total_critical = results.get('total_critical', 0)
+            total_high = results.get('total_high', 0)
 
-            # We know we have vulnerabilities here (checked above)
-            if True:  # Always create event if we reached here
-                # Create an event with DETAILED information
+            if total_critical > 0 or total_high > 0:
+                # Get image details
+                images = results.get('images', {})
+                affected_projects = results.get('affected_projects', [])
+
+                # Categorize images
+                external_images = []
+                own_images = []
+                upgradeable_images = []
+
+                for image_name, details in images.items():
+                    img_info = details.get('image_info', {})
+                    if img_info.get('is_external'):
+                        external_images.append(image_name)
+                        if img_info.get('update_available'):
+                            upgradeable_images.append({
+                                'name': image_name,
+                                'current': img_info.get('tag'),
+                                'latest': img_info.get('latest_version')
+                            })
+                    else:
+                        own_images.append(image_name)
+
+                # Create enhanced event with detailed information
                 summary_event = {
                     'Severity': 'CRITICAL' if total_critical > 0 else 'HIGH',
                     'Type': 'Docker Security Scan',
                     'Title': f"Docker Scan: {total_critical} CRITICAL, {total_high} HIGH vulnerabilities",
-                    'Description': f"Found {total_critical} CRITICAL and {total_high} HIGH vulnerabilities in {len(affected_images)} images across {len(affected_projects)} projects",
-                    'AffectedProjects': affected_projects,  # NEW: Which projects are affected
-                    'AffectedImages': affected_images,      # NEW: Which images are affected
-                    'ImageDetails': detailed_results.get('images', {}),  # NEW: Detailed vuln data per image
+                    'Description': f"Found {total_critical} CRITICAL and {total_high} HIGH vulnerabilities in {len(images)} images",
+                    'ScanDate': results.get('date', 'Unknown'),
+                    'SummaryFile': results.get('json_file', ''),
                     'Stats': {
                         'critical': total_critical,
                         'high': total_high,
-                        'images': len(affected_images),
-                        'projects': len(affected_projects),
-                    }
+                        'medium': results.get('total_medium', 0),
+                        'low': results.get('total_low', 0),
+                        'images': len(images),
+                    },
+                    # ENHANCED: Image-level details
+                    'ImageDetails': images,
+                    'AffectedProjects': affected_projects,
+                    'ExternalImages': external_images,
+                    'OwnImages': own_images,
+                    'UpgradeableImages': upgradeable_images,
+                    'SummaryMode': results.get('summary_mode', False)
                 }
                 vulnerabilities.append(summary_event)
 
             return vulnerabilities
         except Exception as e:
-            logger.error(f"Error getting Trivy results: {e}")
+            logger.error(f"Error getting Trivy results: {e}", exc_info=True)
             return []
 
     async def _get_crowdsec_decisions(self) -> List[Dict]:
@@ -463,15 +427,31 @@ class SecurityEventWatcher:
         Check if event is new (not seen before)
 
         Event Types:
-        - Persistent (Docker, AIDE): Always treated as new until fixed
+        - Persistent (Docker, AIDE): Cached by signature, re-triggers if content changes
         - Self-Resolving (Fail2ban, CrowdSec): 24h expiration cache
         """
         event_signature = self._generate_event_signature(event)
         current_time = datetime.now().timestamp()
 
-        # PERSISTENT EVENTS: Always new (require fix)
+        # PERSISTENT EVENTS: Cache by signature, but use longer duration
         if event.is_persistent:
-            logger.info(f"✅ Persistent event {event_signature} - Always requires action")
+            # Use signature-based caching with 12h duration (2 scan cycles)
+            # This prevents repeated fixes for the same issue
+            if event_signature in self.seen_events:
+                last_seen = self.seen_events[event_signature]
+                time_since_seen = current_time - last_seen
+
+                # If seen within 12 hours, skip (already handled or monitoring)
+                if time_since_seen < 43200:  # 12 hours in seconds
+                    logger.debug(f"Persistent event {event_signature} already seen {time_since_seen/3600:.1f}h ago, skipping")
+                    return False
+                else:
+                    # More than 12h ago, treat as new (allows retry after monitoring period)
+                    logger.info(f"✅ Persistent event {event_signature} expired ({time_since_seen/3600:.1f}h ago), treating as new")
+
+            # Mark as seen with current timestamp
+            self.seen_events[event_signature] = current_time
+            self._save_seen_events()
             return True
 
         # SELF-RESOLVING EVENTS: Use 24h cache

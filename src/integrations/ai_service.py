@@ -258,6 +258,37 @@ class AIService:
             prompt_parts.append(safety_prompt)
             prompt_parts.append("\n" + "="*80 + "\n")
 
+        # NEW: Add previous attempts context for learning
+        if previous_attempts and len(previous_attempts) > 0:
+            prompt_parts.append("# LEARNING FROM PREVIOUS ATTEMPTS")
+            prompt_parts.append("The system has tried to fix similar issues before. Learn from these attempts:\n")
+
+            for i, attempt in enumerate(previous_attempts, 1):
+                result_emoji = "✅" if attempt.get('result') == 'success' else "❌"
+                prompt_parts.append(f"## Attempt {i} ({attempt.get('timestamp', 'unknown')}) {result_emoji}")
+
+                strategy = attempt.get('strategy', {})
+                prompt_parts.append(f"**Strategy:** {strategy.get('description', 'N/A')}")
+                prompt_parts.append(f"**Confidence:** {strategy.get('confidence', 'N/A')}")
+
+                if attempt.get('result') == 'success':
+                    prompt_parts.append(f"**Result:** SUCCESS")
+                    prompt_parts.append(f"**Message:** {attempt.get('message', 'N/A')}")
+                    if attempt.get('details'):
+                        prompt_parts.append(f"**Details:** {str(attempt.get('details'))[:200]}")
+                else:
+                    prompt_parts.append(f"**Result:** FAILED")
+                    prompt_parts.append(f"**Error:** {attempt.get('error', 'N/A')}")
+
+                prompt_parts.append(f"**Attempt #:** {attempt.get('attempt', 'N/A')}")
+                prompt_parts.append("")
+
+            prompt_parts.append("**IMPORTANT:** Analyze what worked and what didn't. Adapt your strategy accordingly!")
+            prompt_parts.append("- If previous attempts failed, try a DIFFERENT approach")
+            prompt_parts.append("- If previous attempts succeeded, use similar strategy with improvements")
+            prompt_parts.append("- Consider WHY something failed and address root cause")
+            prompt_parts.append("\n" + "="*80 + "\n")
+
         # Main analysis prompt
         prompt_parts.append(f"""You are a senior DevOps security engineer analyzing a security event.
 
@@ -294,6 +325,21 @@ class AIService:
    - Major architectural changes needed → 70-85% confidence
    - No known fix available → <70% confidence
 3. Provide specific Docker fix strategy with exact commands
+
+**SMART DOCKER IMAGE UPGRADE DECISIONS:**
+For external images (from Docker Hub) without security updates on current version:
+1. Check docker-compose.yml/deployment configs for version constraints
+2. Consider major version upgrades ONLY if:
+   - Breaking changes are documented and manageable
+   - Migration path exists (e.g., postgres:15 → postgres:16, redis:7 → redis:8)
+   - Risk is justified by vulnerability severity (CRITICAL with >50 vulns)
+   - You have infrastructure context showing current versions
+3. For unclear/risky cases: MONITOR instead of risky upgrades
+4. ALWAYS mention if you're considering a major version upgrade and explain risks
+
+**External vs Own Images:**
+- External images (postgres, redis, nginx, etc): No Dockerfile → can only upgrade versions
+- Own images (custom apps): Have Dockerfile → can rebuild with updated dependencies
 """
 
         elif source == 'fail2ban':
