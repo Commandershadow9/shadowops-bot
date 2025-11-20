@@ -7,7 +7,14 @@
 
 ## ⚡ Highlights
 
-### 🛡️ **Active Security Guardian (v3.0 - CURRENT)**
+### 🧠 **AI Learning System (v3.0 - CURRENT)**
+- ✅ **Event History Tracking**: Learns from previous fix attempts and failures
+- ✅ **Context-Aware Decisions**: AI remembers past mistakes and improves strategies
+- ✅ **Smart Docker Upgrades**: CVE-aware major version upgrade recommendations
+- ✅ **Image Intelligence**: Automatic detection of external vs. own Docker images
+- ✅ **Learning-Based Retry**: Fix strategies improve based on historical success rates
+
+### 🛡️ **Active Security Guardian (v3.0)**
 - ✅ **Echte Fix-Execution**: NPM audit fix, Docker rebuilds, Firewall-Updates, File Restoration
 - ✅ **Automatische Backups**: Vor JEDER Änderung mit 7-Tage Retention & Rollback
 - ✅ **Impact-Analyse**: Projekt-bewusste Entscheidungen (ShadowOps, GuildScout, Nexus, Sicherheitstool)
@@ -17,11 +24,13 @@
 - ✅ **Live Discord Updates**: Echtzeit-Feedback während kompletter Execution (Backup → Fix → Verify → Restart)
 
 ### 🤖 **AI-Powered Analysis**
-- **Hybrid AI System**: Ollama (local) → Claude → OpenAI (fallback chain)
+- **Hybrid AI System**: Ollama (local llama3.1) → Claude → OpenAI (fallback chain)
 - **RAG Context**: Projekt-Wissen + DO-NOT-TOUCH Regeln + Infrastructure Knowledge
+- **Event History**: Remembers previous fix attempts and failures for better decisions
 - **Confidence-Based**: <85% confidence → automatisch blockiert
 - **Batch-Processing**: Mehrere Events → 1 koordinierter Plan
-- **Learning Retry Logic**: KI lernt aus fehlgeschlagenen Fixes
+- **Learning Retry Logic**: AI learns from failed fixes and adapts strategies
+- **Git History Learning**: Analyzes past commits to understand fix patterns
 
 ### 🎯 Workflow (v3.0)
 ```
@@ -230,14 +239,28 @@ shadowops-bot/
 
 ## 📝 Changelog
 
+See [CHANGELOG.md](./CHANGELOG.md) for detailed version history.
+
+### Version 3.0.0 (2025-11-20) - Current
+- AI Learning System with event history tracking
+- Smart Docker image analysis (external vs. own)
+- CVE-aware major version upgrade recommendations
+- Enhanced multi-project execution
+- Git history learning for better context
+
+### Version 2.0.1 (2025-11-15)
+- AI Service fixes (Ollama llama3.1 support)
+- HTTP client conflict resolution
+
+### Version 2.0.0 (2025-11-14)
+- Event-driven auto-remediation system
+- AI-powered security analysis
+- Live status updates during analysis
+
 ### Version 1.0.0 (2025-11-12)
 - Initial Release
-- Fail2ban Integration
-- CrowdSec Integration
-- AIDE Integration
-- Docker Security Scanning
-- Backup Monitoring
-- Slash Commands
+- Basic security monitoring
+- Discord integration
 
 ## 📄 Lizenz
 

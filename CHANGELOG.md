@@ -1,5 +1,119 @@
 # ShadowOps Bot - Changelog
 
+## [3.0.0] - 2025-11-20
+
+### 🚀 Major Feature: AI Learning System & Smart Docker Vulnerability Management
+
+#### ✨ Added
+
+**Learning System (Phase 1-6):**
+- Comprehensive event history tracking with previous fix attempts
+- AI Context Manager for intelligent prompt building with past failures
+- AI Prompt Enhancement for learning from mistakes
+- Smart Docker major version upgrades with CVE-aware decisions
+- Learning-based retry logic that improves over time
+- Event signature tracking for context-aware decision making
+
+**Docker Image Intelligence:**
+- Automated image analysis (external vs. own images)
+- Dockerfile detection and project mapping
+- Smart remediation strategies based on image ownership
+- Update availability detection for external images
+- Major version upgrade recommendations with safety analysis
+- Extended manifest timeouts (30s) for Docker Hub rate limits
+
+**Enhanced Event Processing:**
+- Event history with previous_attempts field
+- Context-aware event signatures for learning
+- Improved Trivy event reading (correct 'data' key)
+- Fixed critical bug in Trivy Fixer event key reading
+- Better external vs. internal image distinction
+
+**Multi-Project Execution Improvements:**
+- Sequential project handling for better reliability
+- Improved project detection from Docker images
+- Fixed critical bugs in multi-project remediation
+- Better process ID tracking and management
+
+**Discord Logging Enhancements:**
+- Removed await from synchronous discord_logger methods
+- Added severity parameter support for better log visibility
+- Improved fallback handling for summary data
+
+**Configuration & Deployment:**
+- Test mode configuration script (60s scan intervals)
+- Comprehensive bot diagnostic script
+- System service manager for systemd integration
+- Auto-cleanup of stale processes
+
+#### 🔧 Changed
+
+**Smart Upgrade Logic:**
+- Major upgrades now allowed for ANY CVE (not just CRITICAL)
+- Extended Docker manifest timeouts from 10s to 30s
+- Improved CVE detection in upgrade decisions
+
+**Event Watcher:**
+- Always set event_signature and previous_attempts for learning
+- Fixed fallback summary data handling
+- Improved event monitoring for external Docker images
+
+**AI Service:**
+- Fixed client API initialization issues
+- Added Ollama llama3.1 support
+- Improved error handling and fallback chains
+
+#### 🐛 Bug Fixes
+
+**Critical Fixes:**
+- Fixed Trivy Fixer reading from wrong event key ('data' instead of 'event_data')
+- Fixed monitoring external images marked as partial success
+- Fixed repeated Trivy fix attempts for same vulnerabilities
+- Fixed event watcher ignoring fallback summary data
+- Fixed process ID updates in .bot.pid file
+- Fixed Git History Learner hardcoded path → dynamic os.getcwd()
+
+**Performance & Stability:**
+- Fixed 3 critical Performance Monitor bugs
+- Fixed 2 additional critical bugs in multi-project handling
+- Fixed AI Service client initialization conflicts
+- Improved concurrent execution safety
+
+#### 📁 New Files
+
+- `LEARNING_SYSTEM_IMPLEMENTATION_PLAN.md` - Complete learning system architecture
+- `src/integrations/docker_image_analyzer.py` - Intelligent Docker image analysis
+- `diagnose-bot.sh` - Comprehensive bot diagnostics
+- `restart-service.sh` - Service management utility
+- `start-bot.sh` - Single instance bot starter
+- `update-config-test-mode.sh` - Test mode configuration
+- `update-config.sh` - Production configuration updates
+
+#### 🗑️ Removed
+
+- Duplicate start scripts (start_bot.sh, start_single.sh)
+- Old config backups (.OLD files containing secrets)
+- Stale configuration examples
+
+#### 📦 Dependencies
+
+**No new dependencies** - All features use existing libraries
+
+#### 🔐 Security Improvements
+
+**Enhanced Safety:**
+- Smart major version upgrades reduce attack surface
+- Learning system prevents repeated failed fixes
+- Better external image handling reduces false positives
+- Improved event deduplication prevents spam
+
+**Git History Learning:**
+- AI learns from past commits and fixes
+- Dynamic project path detection
+- Better context for decision making
+
+---
+
 ## [2.0.1] - 2025-11-15
 
 ### 🐛 Bug Fixes
