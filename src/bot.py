@@ -415,7 +415,7 @@ class ShadowOpsBot(commands.Bot):
 
             # Initialisiere Context Manager (RAG System)
             self.logger.info("🔄 [1/5] Initialisiere Context Manager (RAG)...")
-            self.context_manager = ContextManager()
+            self.context_manager = ContextManager(config=self.config)
             self.context_manager.load_all_contexts()
             self.logger.info("✅ [1/5] Context Manager bereit")
 

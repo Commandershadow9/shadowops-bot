@@ -40,15 +40,17 @@ except ImportError:
 class ContextManager:
     """Manages project context and infrastructure knowledge with Git history learning"""
 
-    def __init__(self, enable_git_learning: bool = True, git_history_days: int = 30,
+    def __init__(self, config=None, enable_git_learning: bool = True, git_history_days: int = 30,
                  enable_code_analysis: bool = True, enable_log_learning: bool = True):
         """
         Args:
+            config: Optional Config object for loading project paths and log paths
             enable_git_learning: Enable Git history analysis for learning
             git_history_days: How many days of Git history to analyze
             enable_code_analysis: Enable code structure analysis for learning
             enable_log_learning: Enable log file analysis for learning
         """
+        self.config = config
         self.context_dir = Path(__file__).parent.parent.parent / 'context'
         self.projects: Dict[str, str] = {}
         self.infrastructure: str = ""
@@ -135,14 +137,8 @@ class ContextManager:
         """Initialize Git analyzers for known project paths"""
         logger.info("🧠 Initializing Git learning for projects...")
 
-        # Map project names to their Git repository paths
-        # These paths should come from config in production
-        project_paths = {
-            'shadowops-bot': Path(__file__).parent.parent.parent,  # Current bot repo
-            # Add more projects as needed from config
-            # 'sicherheitstool': Path('/home/cmdshadow/project/sicherheitstool'),
-            # 'guildscout': Path('/home/cmdshadow/project/GuildScout'),
-        }
+        # Get project paths from config
+        project_paths = self._get_project_paths()
 
         for project_name, project_path in project_paths.items():
             try:
@@ -168,14 +164,8 @@ class ContextManager:
         """Initialize Code analyzers for known project paths"""
         logger.info("🧠 Initializing Code Analysis for projects...")
 
-        # Map project names to their paths
-        # Same paths as Git analyzers
-        project_paths = {
-            'shadowops-bot': Path(__file__).parent.parent.parent,  # Current bot repo
-            # Add more projects as needed from config
-            # 'sicherheitstool': Path('/home/cmdshadow/project/sicherheitstool'),
-            # 'guildscout': Path('/home/cmdshadow/project/GuildScout'),
-        }
+        # Get project paths from config (same as Git analyzers)
+        project_paths = self._get_project_paths()
 
         for project_name, project_path in project_paths.items():
             try:
@@ -203,14 +193,13 @@ class ContextManager:
         """Initialize Log Analyzer with configured log paths"""
         logger.info("🧠 Initializing Log Learning...")
 
-        # Get log paths from config (needs to be passed or loaded)
-        # For now, use default paths
-        log_paths = {
-            'fail2ban': '/var/log/fail2ban/fail2ban.log',
-            'crowdsec': '/var/log/crowdsec/crowdsec.log',
-            'docker': '/var/log/docker/trivy-scans',
-            'shadowops': str(Path(__file__).parent.parent.parent / 'logs' / 'shadowops.log')
-        }
+        # Get log paths from config
+        log_paths = self._get_log_paths()
+
+        if not log_paths:
+            logger.warning("⚠️ No log paths configured - Log Learning disabled")
+            self.log_analyzer = None
+            return
 
         try:
             self.log_analyzer = LogAnalyzer(log_paths, max_lines=5000)
@@ -218,6 +207,68 @@ class ContextManager:
         except Exception as e:
             logger.warning(f"⚠️ Could not initialize Log Learning: {e}")
             self.log_analyzer = None
+
+    def _get_project_paths(self) -> Dict[str, Path]:
+        """
+        Get project paths from config or use defaults
+
+        Returns:
+            Dict mapping project_name -> project_path
+        """
+        project_paths = {}
+
+        # Always include shadowops-bot itself
+        project_paths['shadowops-bot'] = Path(__file__).parent.parent.parent
+
+        # Load additional projects from config
+        if self.config:
+            for project_name, project_config in self.config.projects.items():
+                if not project_config.get('enabled', False):
+                    logger.debug(f"⏭️ Skipping disabled project: {project_name}")
+                    continue
+
+                project_path = project_config.get('path')
+                if project_path:
+                    project_paths[project_name] = Path(project_path)
+                    logger.debug(f"📁 Added project from config: {project_name} -> {project_path}")
+                else:
+                    logger.warning(f"⚠️ Project {project_name} has no 'path' configured")
+
+        return project_paths
+
+    def _get_log_paths(self) -> Dict[str, str]:
+        """
+        Get log paths from config or use defaults
+
+        Returns:
+            Dict mapping tool_name -> log_path
+        """
+        log_paths = {}
+
+        # Default: Always include shadowops own log
+        shadowops_log = str(Path(__file__).parent.parent.parent / 'logs' / 'shadowops.log')
+        log_paths['shadowops'] = shadowops_log
+
+        # Load log paths from config if available
+        if self.config:
+            config_log_paths = self.config.log_paths
+
+            # Map config keys to tool names
+            log_mapping = {
+                'fail2ban': 'fail2ban',
+                'crowdsec': 'crowdsec',
+                'docker_scans': 'docker',
+                'aide': 'aide',
+                'ssh': 'ssh'
+            }
+
+            for config_key, tool_name in log_mapping.items():
+                log_path = config_log_paths.get(config_key)
+                if log_path:
+                    log_paths[tool_name] = log_path
+                    logger.debug(f"📝 Added log path from config: {tool_name} -> {log_path}")
+
+        return log_paths
 
     def get_relevant_context(self, event_source: str, event_type: str) -> str:
         """
