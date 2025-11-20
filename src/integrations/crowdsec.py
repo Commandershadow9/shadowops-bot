@@ -5,7 +5,8 @@ Monitort CrowdSec für Bedrohungen und Decisions
 
 import subprocess
 import json
-from typing import List, Dict, Optional
+import time
+from typing import List, Dict, Optional, Callable
 from datetime import datetime
 
 
@@ -15,9 +16,46 @@ class CrowdSecMonitor:
     def __init__(self):
         pass
 
+    def _call_with_retry(self, func: Callable, max_retries: int = 3):
+        """
+        Retry wrapper for CrowdSec calls with exponential backoff
+
+        Args:
+            func: Function to call (should return subprocess result)
+            max_retries: Maximum retry attempts
+
+        Returns:
+            Result from func or None on failure
+        """
+        for attempt in range(1, max_retries + 1):
+            try:
+                result = func()
+
+                # If subprocess timed out or failed, retry
+                if result.returncode != 0 and attempt < max_retries:
+                    delay = 2 ** (attempt - 1)  # Exponential: 1s, 2s, 4s
+                    print(f"⚠️ CrowdSec call failed (attempt {attempt}/{max_retries}), retrying in {delay}s...")
+                    time.sleep(delay)
+                    continue
+
+                return result
+
+            except subprocess.TimeoutExpired as e:
+                if attempt < max_retries:
+                    delay = 2 ** (attempt - 1)
+                    print(f"⚠️ CrowdSec timeout (attempt {attempt}/{max_retries}), retrying in {delay}s...")
+                    time.sleep(delay)
+                else:
+                    raise
+            except Exception as e:
+                # Other errors - don't retry
+                raise
+
+        return None
+
     def get_active_decisions(self, limit: int = 50) -> List[Dict[str, str]]:
         """
-        Holt aktive Decisions (gebannte IPs) von CrowdSec
+        Holt aktive Decisions (gebannte IPs) von CrowdSec with retry logic
 
         Args:
             limit: Maximale Anzahl
@@ -28,14 +66,17 @@ class CrowdSecMonitor:
         decisions = []
 
         try:
-            result = subprocess.run(
-                ['sudo', 'cscli', 'decisions', 'list', '-o', 'json'],
-                capture_output=True,
-                text=True,
-                timeout=15
+            # Use retry wrapper for subprocess call
+            result = self._call_with_retry(
+                lambda: subprocess.run(
+                    ['sudo', 'cscli', 'decisions', 'list', '-o', 'json'],
+                    capture_output=True,
+                    text=True,
+                    timeout=15
+                )
             )
 
-            if result.returncode != 0:
+            if not result or result.returncode != 0:
                 return decisions
 
             # Parse JSON Output
