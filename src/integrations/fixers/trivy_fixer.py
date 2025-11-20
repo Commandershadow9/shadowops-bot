@@ -162,14 +162,18 @@ class TrivyFixer:
                 if rebuild_result['status'] == 'success':
                     # Verify fix with Trivy re-scan (skip if no Docker rebuild happened)
                     if rebuild_result.get('skipped'):
-                        # No Docker image, skip verification (Python project running directly)
-                        logger.info("✅ Trivy fix successful (non-Docker project, verification skipped)")
+                        # No Docker image, NO FIX was actually performed!
+                        logger.warning("⚠️ Trivy fix SKIPPED - no Dockerfile found in project")
+                        logger.error(f"❌ Cannot fix Docker vulnerabilities without Dockerfile!")
+                        logger.error(f"❌ Project: {project_path}")
+                        logger.error(f"❌ This likely means wrong project was detected!")
                         return {
-                            'status': 'success',
-                            'message': 'NPM vulnerabilities fixed (no Docker verification needed)',
+                            'status': 'failed',
+                            'error': 'No Dockerfile found - cannot fix Docker vulnerabilities',
                             'details': {
                                 'method': fix_method,
-                                'note': 'Python project without Dockerfile - running directly'
+                                'project_path': project_path,
+                                'reason': 'Project has no Dockerfile - wrong project detected or non-Docker project scanned'
                             }
                         }
 
@@ -219,8 +223,22 @@ class TrivyFixer:
     async def _detect_project_path(self, event: Dict, strategy: Dict) -> str:
         """Detect project path from event or strategy"""
 
-        # Check event for image/container name
+        # Check event for affected projects (NEW: From detailed scan data)
         event_details = event.get('event_details', {})
+        affected_projects = event_details.get('AffectedProjects', [])
+
+        if affected_projects:
+            # Multiple projects affected - WARN user!
+            if len(affected_projects) > 1:
+                logger.warning(f"⚠️ MULTIPLE projects affected: {', '.join(affected_projects)}")
+                logger.warning(f"⚠️ This requires manual review - choosing first project for safety")
+                # TODO: Create approval request for each project separately
+
+            # Use first affected project
+            logger.info(f"✅ Detected affected project from scan: {affected_projects[0]}")
+            return affected_projects[0]
+
+        # Fallback: Check event for image/container name (old method)
         source = event_details.get('source', '')
 
         # Try to extract project from source
@@ -241,8 +259,11 @@ class TrivyFixer:
         elif 'sicherheitstool' in strategy_desc:
             return '/home/cmdshadow/project'
 
-        # Default to shadowops-bot
-        logger.warning("⚠️ Could not detect project path, using default")
+        # Last resort: Default with strong warning
+        logger.error("❌ CRITICAL: Could not detect project path!")
+        logger.error("❌ Event details missing 'AffectedProjects' field")
+        logger.error("❌ This is dangerous - fix may target wrong project!")
+        logger.warning("⚠️ Using default (shadowops-bot) as last resort")
         return '/home/cmdshadow/shadowops-bot'
 
     async def _determine_fix_method(
@@ -303,7 +324,39 @@ class TrivyFixer:
         logger.info("💾 Creating backups...")
 
         try:
-            # Always backup package files
+            # For docker_rebuild: Backup Dockerfile AND docker-compose if they exist
+            if fix_method == 'docker_rebuild':
+                dockerfile = os.path.join(project_path, 'Dockerfile')
+                docker_compose = os.path.join(project_path, 'docker-compose.yml')
+                docker_compose_yaml = os.path.join(project_path, 'docker-compose.yaml')
+
+                if os.path.exists(dockerfile):
+                    backup = await self.backup_manager.create_backup(
+                        dockerfile,
+                        backup_type='file',
+                        metadata={'fix_method': fix_method, 'project': project_path}
+                    )
+                    backups.append(backup)
+                    logger.info(f"   ✅ Backed up Dockerfile")
+
+                if os.path.exists(docker_compose):
+                    backup = await self.backup_manager.create_backup(
+                        docker_compose,
+                        backup_type='file',
+                        metadata={'fix_method': fix_method, 'project': project_path}
+                    )
+                    backups.append(backup)
+                    logger.info(f"   ✅ Backed up docker-compose.yml")
+                elif os.path.exists(docker_compose_yaml):
+                    backup = await self.backup_manager.create_backup(
+                        docker_compose_yaml,
+                        backup_type='file',
+                        metadata={'fix_method': fix_method, 'project': project_path}
+                    )
+                    backups.append(backup)
+                    logger.info(f"   ✅ Backed up docker-compose.yaml")
+
+            # Backup package files for npm_audit
             if fix_method in ['npm_audit', 'combined']:
                 package_json = os.path.join(project_path, 'package.json')
                 package_lock = os.path.join(project_path, 'package-lock.json')
@@ -312,19 +365,21 @@ class TrivyFixer:
                     backup = await self.backup_manager.create_backup(
                         package_json,
                         backup_type='file',
-                        metadata={'fix_method': fix_method}
+                        metadata={'fix_method': fix_method, 'project': project_path}
                     )
                     backups.append(backup)
+                    logger.info(f"   ✅ Backed up package.json")
 
                 if os.path.exists(package_lock):
                     backup = await self.backup_manager.create_backup(
                         package_lock,
                         backup_type='file',
-                        metadata={'fix_method': fix_method}
+                        metadata={'fix_method': fix_method, 'project': project_path}
                     )
                     backups.append(backup)
+                    logger.info(f"   ✅ Backed up package-lock.json")
 
-            # Backup Dockerfile if base image update
+            # Backup Dockerfile for base_image update
             if fix_method in ['base_image', 'combined']:
                 dockerfile = os.path.join(project_path, 'Dockerfile')
 
@@ -332,11 +387,16 @@ class TrivyFixer:
                     backup = await self.backup_manager.create_backup(
                         dockerfile,
                         backup_type='file',
-                        metadata={'fix_method': fix_method}
+                        metadata={'fix_method': fix_method, 'project': project_path}
                     )
                     backups.append(backup)
+                    logger.info(f"   ✅ Backed up Dockerfile")
 
-            logger.info(f"✅ Created {len(backups)} backups")
+            if len(backups) == 0:
+                logger.warning(f"⚠️ No files found to backup in {project_path}")
+                logger.warning(f"⚠️ Fix method: {fix_method}, but no relevant files exist")
+
+            logger.info(f"✅ Created {len(backups)} backup(s) for {project_path}")
 
         except Exception as e:
             logger.error(f"❌ Backup creation failed: {e}")

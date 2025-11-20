@@ -15,9 +15,10 @@ logger = logging.getLogger('shadowops')
 class AIService:
     """AI-powered security analysis and fix generation with hybrid model support"""
 
-    def __init__(self, config, context_manager=None):
+    def __init__(self, config, context_manager=None, discord_logger=None):
         self.config = config
         self.context_manager = context_manager
+        self.discord_logger = discord_logger
         self.openai_client = None
         self.anthropic_client = None
 
@@ -29,6 +30,10 @@ class AIService:
 
         # Hybrid model selection (smart model choice based on severity)
         self.use_hybrid_models = config.ai.get('ollama', {}).get('hybrid_models', True)
+
+        # Rate limiting to prevent server overload
+        self.request_delay = config.ai.get('ollama', {}).get('request_delay_seconds', 4.0)  # 4s default (3-5s range)
+        self.last_request_time = 0
 
         # Store config for lazy initialization
         self.openai_enabled = config.ai.get('openai', {}).get('enabled', False)
@@ -44,8 +49,10 @@ class AIService:
                 logger.info(f"✅ Ollama Hybrid konfiguriert:")
                 logger.info(f"   📊 Standard: {self.ollama_model} (schnell)")
                 logger.info(f"   🧠 Critical: {self.ollama_model_critical} (intelligenter)")
+                logger.info(f"   ⏱️  Rate Limit: {self.request_delay}s Verzögerung zwischen Anfragen")
             else:
                 logger.info(f"✅ Ollama konfiguriert ({self.ollama_model} @ {self.ollama_url})")
+                logger.info(f"   ⏱️  Rate Limit: {self.request_delay}s Verzögerung zwischen Anfragen")
 
         if self.openai_enabled and self.openai_api_key:
             logger.info(f"✅ OpenAI konfiguriert ({self.openai_model})")
@@ -68,8 +75,22 @@ class AIService:
         Returns:
             Dict with 'description', 'confidence', 'steps', 'analysis'
         """
+        # Rate limiting: wait if needed to prevent server overload
+        await self._apply_rate_limit()
+
         event = context['event']
         previous_attempts = context.get('previous_attempts', [])
+
+        # Discord Logger: AI Analysis Start
+        if self.discord_logger:
+            event_source = event.get('source', 'Unknown').upper()
+            event_severity = event.get('severity', 'UNKNOWN')
+            await self.discord_logger.log_ai_learning(
+                f"🧠 **AI Analyse gestartet**\n"
+                f"📊 Source: **{event_source}** | Severity: **{event_severity}**\n"
+                f"🔄 Retry: {len(previous_attempts)} vorherige Versuche",
+                severity="info"
+            )
 
         # Build detailed prompt for deep analysis with RAG context
         prompt = self._build_analysis_prompt(event, previous_attempts)
@@ -80,6 +101,17 @@ class AIService:
                 result = await self._analyze_with_ollama(prompt, event, context)
                 if result:
                     logger.info(f"✅ Ollama Analyse: {result.get('confidence', 0):.0%} Confidence")
+
+                    # Discord Logger: Ollama Success
+                    if self.discord_logger:
+                        confidence = result.get('confidence', 0)
+                        description = result.get('description', 'N/A')
+                        await self.discord_logger.log_ai_learning(
+                            f"✅ **Ollama Analyse erfolgreich**\n"
+                            f"🎯 Confidence: **{confidence:.0%}**\n"
+                            f"📝 Strategy: {description[:150]}{'...' if len(description) > 150 else ''}",
+                            severity="success"
+                        )
                     return result
             except Exception as e:
                 logger.warning(f"⚠️ Ollama Analyse fehlgeschlagen, versuche Cloud-Alternativen: {e}")
@@ -105,6 +137,16 @@ class AIService:
                 logger.error(f"❌ OpenAI Analyse fehlgeschlagen: {e}")
 
         logger.error("❌ Alle AI Services fehlgeschlagen")
+
+        # Discord Logger: All AI Services Failed
+        if self.discord_logger:
+            await self.discord_logger.log_ai_learning(
+                f"❌ **ALLE AI Services fehlgeschlagen**\n"
+                f"⚠️ Ollama, Anthropic & OpenAI sind nicht erreichbar\n"
+                f"🔧 Bitte Server-Status prüfen",
+                severity="error"
+            )
+
         return None
 
     async def generate_coordinated_plan(self, prompt: str, context: Dict) -> Optional[Dict]:
@@ -118,7 +160,21 @@ class AIService:
         Returns:
             Dict mit phases, description, confidence, etc.
         """
+        # Rate limiting: wait if needed to prevent server overload
+        await self._apply_rate_limit()
+
         logger.info(f"🎯 Generiere koordinierten Plan für {context.get('event_count', 0)} Events")
+
+        # Discord Logger: Coordinated Plan Start
+        if self.discord_logger:
+            event_count = context.get('event_count', 0)
+            sources = context.get('sources', [])
+            await self.discord_logger.log_orchestrator(
+                f"⚡ **Koordinierter Plan wird erstellt**\n"
+                f"📦 Events: **{event_count}**\n"
+                f"📊 Quellen: {', '.join(sources)}",
+                severity="info"
+            )
 
         # Bestimme Severity für Modell-Auswahl
         severity = context.get('highest_severity', 'HIGH')
@@ -137,6 +193,18 @@ class AIService:
                 result = await self._analyze_with_ollama(prompt, synthetic_event, context)
                 if result:
                     logger.info(f"✅ Koordinierter Plan erstellt: {result.get('confidence', 0):.0%} Confidence")
+
+                    # Discord Logger: Plan Created
+                    if self.discord_logger:
+                        confidence = result.get('confidence', 0)
+                        phases = len(result.get('phases', []))
+                        await self.discord_logger.log_orchestrator(
+                            f"✅ **Koordinierter Plan erstellt**\n"
+                            f"🎯 Confidence: **{confidence:.0%}**\n"
+                            f"📋 Phasen: **{phases}**",
+                            severity="success"
+                        )
+
                     return result
             except Exception as e:
                 logger.warning(f"⚠️ Ollama fehlgeschlagen bei koordinierter Planung: {e}")
@@ -360,6 +428,20 @@ class AIService:
                 f"Time: {b.get('time', 'N/A')}"
             )
         return "\n".join(formatted)
+
+    async def _apply_rate_limit(self):
+        """Apply rate limiting delay to prevent server overload"""
+        import time
+
+        current_time = time.time()
+        time_since_last = current_time - self.last_request_time
+
+        if time_since_last < self.request_delay:
+            wait_time = self.request_delay - time_since_last
+            logger.info(f"⏱️  Rate Limit: Warte {wait_time:.1f}s vor nächster AI-Anfrage (Server-Schonung)")
+            await asyncio.sleep(wait_time)
+
+        self.last_request_time = time.time()
 
     async def _analyze_with_anthropic(self, prompt: str, event: Dict) -> Optional[Dict]:
         """Analyze with Anthropic Claude"""
@@ -590,14 +672,33 @@ class AIService:
                     logger.debug(f"Available fields: {list(result.keys())}")
                     return None
             else:
-                # Fix strategy format
-                required = ['description', 'confidence', 'steps']
-                if all(field in result for field in required):
+                # Fix strategy format - FLEXIBLE: accept both 'description' and 'approach'
+                # Check for required fields with fallback for 'approach' → 'description'
+                has_description = 'description' in result
+                has_approach = 'approach' in result
+                has_confidence = 'confidence' in result
+                has_steps = 'steps' in result
+
+                # Accept either 'description' OR 'approach' (for backwards compatibility with Code Fixer)
+                if (has_description or has_approach) and has_confidence and has_steps:
+                    # Normalize: if 'approach' exists but not 'description', copy it over
+                    if has_approach and not has_description:
+                        result['description'] = result['approach']
+                        logger.debug(f"Normalized 'approach' → 'description' for compatibility")
+
                     # Ensure confidence is float
                     result['confidence'] = float(result['confidence'])
                     return result
                 else:
-                    logger.error(f"Missing required fields in AI response: {result.keys()}")
+                    missing = []
+                    if not (has_description or has_approach):
+                        missing.append('description (or approach)')
+                    if not has_confidence:
+                        missing.append('confidence')
+                    if not has_steps:
+                        missing.append('steps')
+                    logger.error(f"Missing required fields in AI response: {missing}")
+                    logger.debug(f"Available fields: {list(result.keys())}")
                     return None
 
         except json.JSONDecodeError as e:

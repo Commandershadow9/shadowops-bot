@@ -9,6 +9,9 @@ from discord.ext import commands, tasks
 from discord import app_commands
 import asyncio
 import sys
+import os
+import atexit
+import signal
 from pathlib import Path
 from datetime import datetime, time
 from typing import Optional
@@ -19,6 +22,7 @@ sys.path.insert(0, str(Path(__file__).parent))
 from utils.config import get_config
 from utils.logger import setup_logger
 from utils.embeds import EmbedBuilder, Severity
+from utils.discord_logger import DiscordChannelLogger
 
 from integrations.fail2ban import Fail2banMonitor
 from integrations.crowdsec import CrowdSecMonitor
@@ -60,6 +64,9 @@ class ShadowOpsBot(commands.Bot):
         self.event_watcher = None
         self.self_healing = None
         self.orchestrator = None
+
+        # Discord Channel Logger (für kategorisierte Logs)
+        self.discord_logger = DiscordChannelLogger(bot=None, config=self.config)
 
         # Rate Limiting für Alerts
         self.recent_alerts = {}
@@ -131,6 +138,7 @@ class ShadowOpsBot(commands.Bot):
                 'docker': ('🐳-docker', 'Docker Security Scans (Trivy)', security_category),
                 'backups': ('💾-backups', 'Backup Status und Logs', security_category),
                 'bot_status': ('🤖-bot-status', '⚙️ Bot Startup, Health-Checks und System-Status', system_category),
+                'performance': ('📊-performance', '📊 Performance Monitor: CPU, RAM, Resource Anomalies', system_category),
             }
 
             channels_created = False
@@ -190,6 +198,9 @@ class ShadowOpsBot(commands.Bot):
                 ('alerts', alerts_name, '🤖 Live-Updates aller Auto-Remediation Fixes'),
                 ('approvals', approvals_name, '✋ Human-Approval Requests für kritische Fixes'),
                 ('stats', stats_name, '📊 Tägliche Auto-Remediation Statistiken'),
+                ('ai_learning', '🧠-ai-learning', '🧠 AI Learning Logs: Code Analyzer, Git History, Knowledge Base'),
+                ('code_fixes', '🔧-code-fixes', '🔧 Code Fixer: Vulnerability Processing & Fix Generation'),
+                ('orchestrator', '⚡-orchestrator', '⚡ Orchestrator: Batch Event Coordination & Planning'),
             ]
 
             for channel_type, channel_name, description in auto_remediation_channels:
@@ -240,6 +251,12 @@ class ShadowOpsBot(commands.Bot):
             else:
                 self.logger.info("ℹ️ Alle Channels existieren bereits")
 
+            # Initialisiere Discord Channel Logger
+            self.logger.info("🔄 Initialisiere Discord Channel Logger...")
+            self.discord_logger.set_bot(self)
+            await self.discord_logger.start()
+            self.logger.info("✅ Discord Channel Logger bereit")
+
         except discord.Forbidden:
             self.logger.error("❌ FEHLER: Bot hat keine Berechtigung Channels zu erstellen!")
             self.logger.error("   Lösung: Gehe zu Discord Server Settings → Roles → ShadowOps")
@@ -263,7 +280,7 @@ class ShadowOpsBot(commands.Bot):
                 config_data = yaml.safe_load(f)
 
             # Update Standard Channels
-            standard_channel_keys = ['critical', 'sicherheitsdienst', 'nexus', 'fail2ban', 'docker', 'backups']
+            standard_channel_keys = ['critical', 'sicherheitsdienst', 'nexus', 'fail2ban', 'docker', 'backups', 'bot_status', 'performance']
             for key in standard_channel_keys:
                 if key in channel_ids:
                     if 'channels' not in config_data:
@@ -334,15 +351,23 @@ class ShadowOpsBot(commands.Bot):
             await self._send_status_message("🔄 **Bot Reconnected**\nVerbindung zu Discord wiederhergestellt.", 0xFFA500)
             return
 
+        # ============================================
+        # PHASE 1: CORE SERVICES
+        # ============================================
+        self.logger.info("=" * 60)
+        self.logger.info("🚀 PHASE 1: Core Services Initialisierung")
+        self.logger.info("=" * 60)
+
         self.logger.info(f"✅ Bot eingeloggt als {self.user}")
         self.logger.info(f"🖥️ Verbunden mit {len(self.guilds)} Server(n)")
 
         # Sende Startup-Message
         await self._send_status_message(
-            f"🚀 **Bot gestartet**\n"
+            f"🚀 **Bot gestartet - Phasenweise Initialisierung**\n"
+            f"⏳ **Phase 1/5:** Core Services\n"
             f"• Eingeloggt als **{self.user}**\n"
             f"• Verbunden mit **{len(self.guilds)} Server(n)**",
-            0x00FF00
+            0x3498DB
         )
 
         # Sync Slash Commands mit Guild
@@ -352,50 +377,76 @@ class ShadowOpsBot(commands.Bot):
         await self.tree.sync(guild=guild)
         self.logger.info(f"✅ Slash Commands synchronisiert für Guild {self.config.guild_id}")
 
-        # Auto-Create Channels für Auto-Remediation (falls aktiviert)
-        if self.config.auto_remediation.get('enabled', False) and self.config.auto_remediation.get('auto_create_channels', False):
-            self.logger.info("🔄 Starte Auto-Channel-Creation...")
-            await self._setup_auto_remediation_channels()
-            self.logger.info("✅ Auto-Channel-Creation abgeschlossen")
+        self.logger.info("=" * 60)
+        self.logger.info("✅ PHASE 1 abgeschlossen")
+        self.logger.info("=" * 60)
 
-        # Initialisiere Auto-Remediation (falls aktiviert)
-        if self.config.auto_remediation.get('enabled', False):
-            self.logger.info("🤖 Auto-Remediation System wird initialisiert...")
+        # ============================================
+        # PHASE 2: AUTO-CREATE CHANNELS
+        # ============================================
+        if self.config.auto_remediation.get('enabled', False) and self.config.auto_remediation.get('auto_create_channels', False):
+            self.logger.info("=" * 60)
+            self.logger.info("🔄 PHASE 2: Channel Setup")
+            self.logger.info("=" * 60)
 
             await self._send_status_message(
-                "🤖 **Auto-Remediation System** wird initialisiert...",
+                "⏳ **Phase 2/5:** Erstelle/Prüfe Discord Channels...",
+                0x3498DB
+            )
+
+            await self._setup_auto_remediation_channels()
+
+            self.logger.info("=" * 60)
+            self.logger.info("✅ PHASE 2 abgeschlossen - Alle Channels bereit")
+            self.logger.info("=" * 60)
+
+        # ============================================
+        # PHASE 3: INITIALISIERE AUTO-REMEDIATION
+        # ============================================
+        if self.config.auto_remediation.get('enabled', False):
+            self.logger.info("=" * 60)
+            self.logger.info("🤖 PHASE 3: Auto-Remediation Initialisierung")
+            self.logger.info("=" * 60)
+
+            await self._send_status_message(
+                "⏳ **Phase 3/5:** Initialisiere Auto-Remediation System...",
                 0x3498DB
             )
 
             # Initialisiere Context Manager (RAG System)
-            self.logger.info("🔄 Initialisiere Context Manager (RAG)...")
+            self.logger.info("🔄 [1/5] Initialisiere Context Manager (RAG)...")
             self.context_manager = ContextManager()
             self.context_manager.load_all_contexts()
-            self.logger.info("✅ Context Manager bereit")
+            self.logger.info("✅ [1/5] Context Manager bereit")
 
-            # Initialisiere AI Service mit Context Manager
-            self.logger.info("🔄 Initialisiere AI Service...")
-            self.ai_service = AIService(self.config, context_manager=self.context_manager)
-            self.logger.info("✅ AI Service bereit")
+            # Initialisiere AI Service mit Context Manager und Discord Logger
+            self.logger.info("🔄 [2/5] Initialisiere AI Service...")
+            self.ai_service = AIService(
+                self.config,
+                context_manager=self.context_manager,
+                discord_logger=self.discord_logger
+            )
+            self.logger.info("✅ [2/5] AI Service bereit")
 
             # Initialisiere Self-Healing
-            self.logger.info("🔄 Initialisiere Self-Healing Coordinator...")
-            self.self_healing = SelfHealingCoordinator(self, self.config)
+            self.logger.info("🔄 [3/5] Initialisiere Self-Healing Coordinator...")
+            self.self_healing = SelfHealingCoordinator(self, self.config, discord_logger=self.discord_logger)
             await self.self_healing.initialize(ai_service=self.ai_service)
-            self.logger.info("✅ Self-Healing Coordinator bereit")
+            self.logger.info("✅ [3/5] Self-Healing Coordinator bereit")
 
             # Initialisiere Remediation Orchestrator
-            self.logger.info("🔄 Initialisiere Remediation Orchestrator...")
+            self.logger.info("🔄 [4/5] Initialisiere Remediation Orchestrator...")
             self.orchestrator = RemediationOrchestrator(
                 ai_service=self.ai_service,
                 self_healing_coordinator=self.self_healing,
                 approval_manager=self.self_healing.approval_manager,
-                bot=self
+                bot=self,
+                discord_logger=self.discord_logger
             )
-            self.logger.info("✅ Remediation Orchestrator bereit")
+            self.logger.info("✅ [4/5] Remediation Orchestrator bereit")
 
             # Initialisiere Event Watcher
-            self.logger.info("🔄 Initialisiere Event Watcher...")
+            self.logger.info("🔄 [5/5] Initialisiere Event Watcher...")
             self.event_watcher = SecurityEventWatcher(self, self.config)
             await self.event_watcher.initialize(
                 trivy=self.docker,
@@ -403,21 +454,80 @@ class ShadowOpsBot(commands.Bot):
                 fail2ban=self.fail2ban,
                 aide=self.aide
             )
-            self.logger.info("✅ Event Watcher bereit")
+            self.logger.info("✅ [5/5] Event Watcher bereit")
 
-            # Starte Auto-Remediation
-            self.logger.info("🔄 Starte Auto-Remediation Services...")
-            await self.self_healing.start()
-            await self.event_watcher.start()
+            self.logger.info("=" * 60)
+            self.logger.info("✅ PHASE 3 abgeschlossen - Alle Komponenten initialisiert")
+            self.logger.info("=" * 60)
 
-            self.logger.info("✅ Auto-Remediation System vollständig initialisiert")
+            # ============================================
+            # PHASE 4: STARTE AUTO-REMEDIATION (mit Delay)
+            # ============================================
+            self.logger.info("=" * 60)
+            self.logger.info("🔄 PHASE 4: Starte Auto-Remediation Services...")
+            self.logger.info("=" * 60)
 
             await self._send_status_message(
-                "✅ **Auto-Remediation System initialisiert**\n"
-                f"• Remediation Orchestrator: ✅ Koordinierte Remediation aktiv\n"
-                f"• Self-Healing Coordinator: ✅ Bereit\n"
-                f"• Event Watcher: ✅ Aktiv\n"
-                f"• Scan Intervals: Trivy=6h, CrowdSec/Fail2ban=30s, AIDE=15min",
+                "⏳ **Phase 4/5:** Starte Auto-Remediation...\n"
+                "Warte 5 Sekunden bis Core Services vollständig hochgefahren sind...",
+                0x3498DB
+            )
+
+            # Warte 5 Sekunden damit alle Core Services vollständig initialisiert sind
+            await asyncio.sleep(5)
+
+            self.logger.info("🚀 Starte Self-Healing Coordinator...")
+            await self.self_healing.start()
+            self.logger.info("✅ Self-Healing Coordinator gestartet")
+
+            # Warte 3 Sekunden bevor Event Watcher startet
+            await asyncio.sleep(3)
+
+            self.logger.info("🚀 Starte Event Watcher...")
+            await self.event_watcher.start()
+            self.logger.info("✅ Event Watcher gestartet")
+
+            self.logger.info("=" * 60)
+            self.logger.info("✅ Auto-Remediation System vollständig aktiv")
+            self.logger.info("=" * 60)
+
+            await self._send_status_message(
+                "✅ **Auto-Remediation System aktiv**\n"
+                f"• Remediation Orchestrator: ✅ Koordination aktiv\n"
+                f"• Self-Healing Coordinator: ✅ Gestartet\n"
+                f"• Event Watcher: ✅ Gestartet\n"
+                f"• Scan Intervals: Trivy=6h, CrowdSec/Fail2ban=60s, AIDE=15min",
+                0x00FF00
+            )
+
+            # ============================================
+            # PHASE 5: STARTE AI LEARNING (mit größerem Delay)
+            # ============================================
+            self.logger.info("=" * 60)
+            self.logger.info("⏳ PHASE 5: AI Learning startet in 15 Sekunden...")
+            self.logger.info("=" * 60)
+
+            await self._send_status_message(
+                "⏳ **Phase 5/5:** AI Learning startet in 15 Sekunden...\n"
+                "Warte bis Monitoring & Auto-Remediation stabil laufen...",
+                0x3498DB
+            )
+
+            # Warte 15 Sekunden bevor AI Learning startet
+            # Damit hat Monitoring Zeit, erste Scans durchzuführen
+            await asyncio.sleep(15)
+
+            # AI Learning wird vom Event Watcher automatisch gestartet
+            # Sende nur Status-Update
+            self.logger.info("=" * 60)
+            self.logger.info("✅ System vollständig hochgefahren - AI Learning kann starten")
+            self.logger.info("=" * 60)
+
+            await self._send_status_message(
+                "✅ **AI Learning bereit**\n"
+                "• Code Analyzer: Bereit für Vulnerability Scans\n"
+                "• Git History Learner: Bereit für Pattern Learning\n"
+                "• Knowledge Base: Aktiv",
                 0x00FF00
             )
         else:
@@ -1167,5 +1277,63 @@ def main():
         sys.exit(1)
 
 
+def ensure_single_instance():
+    """
+    Ensures only one instance of the bot is running using PID file.
+    Prevents multiple instances from running simultaneously.
+    """
+    pid_file = Path(__file__).parent.parent / ".bot.pid"
+    current_pid = os.getpid()
+
+    # Check if PID file exists
+    if pid_file.exists():
+        try:
+            old_pid = int(pid_file.read_text().strip())
+
+            # Check if process with that PID still exists
+            try:
+                os.kill(old_pid, 0)  # Signal 0 = check if process exists
+                print(f"❌ FEHLER: Bot läuft bereits (PID: {old_pid})")
+                print(f"   PID-Datei: {pid_file}")
+                print(f"   Zum Stoppen: kill {old_pid}")
+                sys.exit(1)
+            except OSError:
+                # Process doesn't exist anymore, PID file is stale
+                print(f"⚠️  Stale PID file gefunden (alter PID: {old_pid}), wird entfernt...")
+                pid_file.unlink()
+        except (ValueError, FileNotFoundError):
+            # Invalid or missing PID file
+            pid_file.unlink(missing_ok=True)
+
+    # Write current PID
+    pid_file.write_text(str(current_pid))
+    print(f"✅ Single Instance Lock erstellt (PID: {current_pid})")
+
+    # Register cleanup on exit
+    def cleanup_pid_file():
+        if pid_file.exists():
+            try:
+                stored_pid = int(pid_file.read_text().strip())
+                if stored_pid == current_pid:
+                    pid_file.unlink()
+                    print(f"🧹 PID-Datei entfernt")
+            except:
+                pass
+
+    atexit.register(cleanup_pid_file)
+
+    # Handle SIGTERM and SIGINT
+    def signal_handler(signum, frame):
+        print(f"\n🛑 Signal {signum} empfangen, beende Bot...")
+        cleanup_pid_file()
+        sys.exit(0)
+
+    signal.signal(signal.SIGTERM, signal_handler)
+    signal.signal(signal.SIGINT, signal_handler)
+
+
 if __name__ == "__main__":
+    # Ensure only one instance is running
+    ensure_single_instance()
+
     main()
