@@ -41,12 +41,13 @@ class ContextManager:
     """Manages project context and infrastructure knowledge with Git history learning"""
 
     def __init__(self, enable_git_learning: bool = True, git_history_days: int = 30,
-                 enable_code_analysis: bool = True):
+                 enable_code_analysis: bool = True, enable_log_learning: bool = True):
         """
         Args:
             enable_git_learning: Enable Git history analysis for learning
             git_history_days: How many days of Git history to analyze
             enable_code_analysis: Enable code structure analysis for learning
+            enable_log_learning: Enable log file analysis for learning
         """
         self.context_dir = Path(__file__).parent.parent.parent / 'context'
         self.projects: Dict[str, str] = {}
@@ -78,8 +79,17 @@ class ContextManager:
             else:
                 logger.info("ℹ️ Code Analysis disabled by config")
 
-        # === LOG LEARNING (disabled for now - will be enabled in future) ===
-        self.log_analyzer = None  # TODO: Enable log learning in next update
+        # === LOG LEARNING ===
+        self.enable_log_learning = enable_log_learning and LOG_ANALYZER_AVAILABLE
+        self.log_analyzer: Optional[LogAnalyzer] = None
+
+        if self.enable_log_learning:
+            logger.info("🧠 Log Learning enabled: Analyzing tool logs for patterns")
+        else:
+            if not LOG_ANALYZER_AVAILABLE:
+                logger.warning("⚠️ Log Learning disabled: LogAnalyzer not available")
+            else:
+                logger.info("ℹ️ Log Learning disabled by config")
 
     def load_all_contexts(self):
         """Load all project and system contexts + initialize Git learning"""
@@ -109,6 +119,10 @@ class ContextManager:
             # === INITIALIZE CODE ANALYSIS ===
             if self.enable_code_analysis:
                 self._initialize_code_analyzers()
+
+            # === INITIALIZE LOG LEARNING ===
+            if self.enable_log_learning:
+                self._initialize_log_analyzer()
 
             self.loaded = True
             logger.info(f"📚 Knowledge base ready: {len(self.projects)} projects loaded")
@@ -185,6 +199,26 @@ class ContextManager:
         else:
             logger.warning("⚠️ No projects found for code analysis")
 
+    def _initialize_log_analyzer(self):
+        """Initialize Log Analyzer with configured log paths"""
+        logger.info("🧠 Initializing Log Learning...")
+
+        # Get log paths from config (needs to be passed or loaded)
+        # For now, use default paths
+        log_paths = {
+            'fail2ban': '/var/log/fail2ban/fail2ban.log',
+            'crowdsec': '/var/log/crowdsec/crowdsec.log',
+            'docker': '/var/log/docker/trivy-scans',
+            'shadowops': str(Path(__file__).parent.parent.parent / 'logs' / 'shadowops.log')
+        }
+
+        try:
+            self.log_analyzer = LogAnalyzer(log_paths, max_lines=5000)
+            logger.info(f"✅ Log learning active: {len(log_paths)} log sources")
+        except Exception as e:
+            logger.warning(f"⚠️ Could not initialize Log Learning: {e}")
+            self.log_analyzer = None
+
     def get_relevant_context(self, event_source: str, event_type: str) -> str:
         """
         Get relevant context for a security event (WITH GIT LEARNING!)
@@ -213,6 +247,13 @@ class ContextManager:
             code_context = self._get_code_analysis_context(event_source, event_type)
             if code_context:
                 context_parts.append(code_context)
+                context_parts.append("")
+
+        # === LOG LEARNING CONTEXT ===
+        if self.enable_log_learning and self.log_analyzer:
+            log_context = self._get_log_learning_context(event_source, event_type)
+            if log_context:
+                context_parts.append(log_context)
                 context_parts.append("")
 
         # Always include infrastructure context
@@ -322,6 +363,43 @@ class ContextManager:
 
         if code_contexts:
             return '\n'.join(code_contexts)
+
+        return ""
+
+    def _get_log_learning_context(self, event_source: str, event_type: str) -> str:
+        """
+        Generate Log learning context for AI
+
+        Args:
+            event_source: Event source (trivy, fail2ban, etc.)
+            event_type: Event type
+
+        Returns:
+            Formatted log learning context
+        """
+        if not self.log_analyzer:
+            return ""
+
+        # Map event source to tool name
+        tool_map = {
+            'trivy': 'docker',
+            'fail2ban': 'fail2ban',
+            'crowdsec': 'crowdsec',
+            'aide': 'shadowops',  # AIDE events logged in shadowops
+            'docker': 'docker'
+        }
+
+        tool_name = tool_map.get(event_source, event_source)
+
+        try:
+            # Get log context for the relevant tool
+            context = self.log_analyzer.generate_context_for_ai(tool_name, hours=24)
+
+            if context and len(context) > 50:  # Only include if meaningful
+                return f"\n## Log Pattern Insights: {tool_name.upper()}\n{context}"
+
+        except Exception as e:
+            logger.debug(f"Could not generate log context for {tool_name}: {e}")
 
         return ""
 
@@ -600,6 +678,23 @@ class ContextManager:
                 analyzer.analyze_all(force_reload=True)
             logger.info(f"✅ Code analysis reloaded for {len(self.code_analyzers)} project(s)")
 
+    def get_log_learning_stats(self) -> Dict[str, Any]:
+        """
+        Get statistics about Log Learning
+
+        Returns:
+            Dict with log learning stats
+        """
+        if not self.enable_log_learning or not self.log_analyzer:
+            return {'enabled': False}
+
+        stats = {
+            'enabled': True,
+            'log_sources': len(self.log_analyzer.log_paths) if self.log_analyzer else 0
+        }
+
+        return stats
+
     def get_all_learning_stats(self) -> Dict[str, Any]:
         """
         Get combined statistics from all learning systems
@@ -609,5 +704,6 @@ class ContextManager:
         """
         return {
             'git_learning': self.get_git_learning_stats(),
-            'code_analysis': self.get_code_analysis_stats()
+            'code_analysis': self.get_code_analysis_stats(),
+            'log_learning': self.get_log_learning_stats()
         }
