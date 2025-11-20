@@ -147,7 +147,10 @@ class RemediationOrchestrator:
             return None
         # Verwende den Approval-Channel für Live-Updates
         try:
-            approval_channel_id = 1438503737315299351  # auto-remediation-approvals
+            # Get approvals channel from config, fallback to critical channel
+            approval_channel_id = self.config.auto_remediation.get('notifications', {}).get('approvals_channel')
+            if not approval_channel_id:
+                approval_channel_id = self.config.critical_channel
             channel = self.bot.get_channel(approval_channel_id)
             return channel
         except Exception as e:
@@ -712,8 +715,10 @@ Ausgabe als JSON:
                 logger.warning("⚠️ Kein Bot verfügbar für Approval - Auto-Approve")
                 return True
 
-            # Get approval channel
-            approval_channel_id = 1438503737315299351  # auto-remediation-approvals
+            # Get approval channel from config, fallback to critical channel
+            approval_channel_id = self.config.auto_remediation.get('notifications', {}).get('approvals_channel')
+            if not approval_channel_id:
+                approval_channel_id = self.config.critical_channel
             channel = self.bot.get_channel(approval_channel_id)
 
             if not channel:
@@ -868,8 +873,10 @@ Ausgabe als JSON:
         execution_channel = None
         if self.bot:
             try:
-                # Send to remediation-alerts channel for live updates
-                channel_id = 1438503736220586164  # auto-remediation-alerts
+                # Send to remediation-alerts channel for live updates (from config, fallback to critical)
+                channel_id = self.config.auto_remediation.get('notifications', {}).get('alerts_channel')
+                if not channel_id:
+                    channel_id = self.config.critical_channel
                 execution_channel = self.bot.get_channel(channel_id)
             except Exception as e:
                 logger.warning(f"⚠️ Konnte Execution-Channel nicht laden: {e}")
@@ -1113,7 +1120,10 @@ Ausgabe als JSON:
         execution_channel = None
         if self.bot:
             try:
-                channel_id = 1438503736220586164  # auto-remediation-alerts
+                # Get alerts channel from config, fallback to critical channel
+                channel_id = self.config.auto_remediation.get('notifications', {}).get('alerts_channel')
+                if not channel_id:
+                    channel_id = self.config.critical_channel
                 execution_channel = self.bot.get_channel(channel_id)
             except Exception as e:
                 logger.warning(f"⚠️ Konnte Execution-Channel nicht laden: {e}")
