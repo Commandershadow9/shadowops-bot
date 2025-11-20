@@ -20,6 +20,14 @@ except ImportError:
     GIT_ANALYZER_AVAILABLE = False
     logger.warning("⚠️ Git History Analyzer not available")
 
+# Import Log Analyzer for continuous learning from tool logs
+try:
+    from .log_analyzer import LogAnalyzer
+    LOG_ANALYZER_AVAILABLE = True
+except ImportError:
+    LOG_ANALYZER_AVAILABLE = False
+    logger.warning("⚠️ Log Analyzer not available")
+
 
 class ContextManager:
     """Manages project context and infrastructure knowledge with Git history learning"""
@@ -47,6 +55,9 @@ class ContextManager:
                 logger.warning("⚠️ Git Learning disabled: GitHistoryAnalyzer not available")
             else:
                 logger.info("ℹ️ Git Learning disabled by config")
+
+        # === LOG LEARNING (disabled for now - will be enabled in future) ===
+        self.log_analyzer = None  # TODO: Enable log learning in next update
 
     def load_all_contexts(self):
         """Load all project and system contexts + initialize Git learning"""
