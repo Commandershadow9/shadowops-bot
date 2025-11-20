@@ -7,23 +7,49 @@ Provides relevant context to AI models for better security decision-making.
 
 import os
 from pathlib import Path
-from typing import Dict, List, Optional
+from typing import Dict, List, Optional, Any
 import logging
 
 logger = logging.getLogger('shadowops.context')
 
+# Import Git History Analyzer for continuous learning from commits
+try:
+    from .git_history_analyzer import GitHistoryAnalyzer
+    GIT_ANALYZER_AVAILABLE = True
+except ImportError:
+    GIT_ANALYZER_AVAILABLE = False
+    logger.warning("⚠️ Git History Analyzer not available")
+
 
 class ContextManager:
-    """Manages project context and infrastructure knowledge"""
+    """Manages project context and infrastructure knowledge with Git history learning"""
 
-    def __init__(self):
+    def __init__(self, enable_git_learning: bool = True, git_history_days: int = 30):
+        """
+        Args:
+            enable_git_learning: Enable Git history analysis for learning
+            git_history_days: How many days of Git history to analyze
+        """
         self.context_dir = Path(__file__).parent.parent.parent / 'context'
         self.projects: Dict[str, str] = {}
         self.infrastructure: str = ""
         self.loaded = False
 
+        # === GIT HISTORY LEARNING ===
+        self.enable_git_learning = enable_git_learning and GIT_ANALYZER_AVAILABLE
+        self.git_analyzers: Dict[str, GitHistoryAnalyzer] = {}  # {project_name: analyzer}
+        self.git_history_days = git_history_days
+
+        if self.enable_git_learning:
+            logger.info(f"🧠 Git Learning enabled: Analyzing last {git_history_days} days")
+        else:
+            if not GIT_ANALYZER_AVAILABLE:
+                logger.warning("⚠️ Git Learning disabled: GitHistoryAnalyzer not available")
+            else:
+                logger.info("ℹ️ Git Learning disabled by config")
+
     def load_all_contexts(self):
-        """Load all project and system contexts"""
+        """Load all project and system contexts + initialize Git learning"""
         try:
             logger.info("📚 Loading project knowledge base...")
 
@@ -43,6 +69,10 @@ class ContextManager:
                     self.infrastructure = f.read()
                 logger.info("✅ Loaded infrastructure context")
 
+            # === INITIALIZE GIT LEARNING ===
+            if self.enable_git_learning:
+                self._initialize_git_analyzers()
+
             self.loaded = True
             logger.info(f"📚 Knowledge base ready: {len(self.projects)} projects loaded")
 
@@ -50,9 +80,42 @@ class ContextManager:
             logger.error(f"❌ Failed to load contexts: {e}")
             raise
 
+    def _initialize_git_analyzers(self):
+        """Initialize Git analyzers for known project paths"""
+        logger.info("🧠 Initializing Git learning for projects...")
+
+        # Map project names to their Git repository paths
+        # These paths should come from config in production
+        project_paths = {
+            'shadowops-bot': Path(__file__).parent.parent.parent,  # Current bot repo
+            # Add more projects as needed from config
+            # 'sicherheitstool': Path('/home/cmdshadow/project/sicherheitstool'),
+            # 'guildscout': Path('/home/cmdshadow/project/GuildScout'),
+        }
+
+        for project_name, project_path in project_paths.items():
+            try:
+                analyzer = GitHistoryAnalyzer(str(project_path), self.git_history_days)
+
+                if analyzer.is_git_repository():
+                    # Load commits immediately for caching
+                    commits = analyzer.load_commit_history()
+                    self.git_analyzers[project_name] = analyzer
+                    logger.info(f"✅ Git learning active for {project_name} ({len(commits)} commits)")
+                else:
+                    logger.debug(f"⏭️ Skipping {project_name}: Not a git repository")
+
+            except Exception as e:
+                logger.warning(f"⚠️ Could not initialize Git learning for {project_name}: {e}")
+
+        if self.git_analyzers:
+            logger.info(f"🧠 Git learning ready for {len(self.git_analyzers)} project(s)")
+        else:
+            logger.warning("⚠️ No Git repositories found for learning")
+
     def get_relevant_context(self, event_source: str, event_type: str) -> str:
         """
-        Get relevant context for a security event
+        Get relevant context for a security event (WITH GIT LEARNING!)
 
         Args:
             event_source: Source of event (trivy, crowdsec, fail2ban, aide)
@@ -65,6 +128,13 @@ class ContextManager:
             self.load_all_contexts()
 
         context_parts = []
+
+        # === GIT HISTORY LEARNING CONTEXT (NEW!) ===
+        if self.enable_git_learning and self.git_analyzers:
+            git_context = self._get_git_learning_context(event_source, event_type)
+            if git_context:
+                context_parts.append(git_context)
+                context_parts.append("")
 
         # Always include infrastructure context
         context_parts.append("# SERVER INFRASTRUCTURE & SECURITY POLICIES")
@@ -94,6 +164,46 @@ class ContextManager:
                 context_parts.append("")
 
         return "\n".join(context_parts)
+
+    def _get_git_learning_context(self, event_source: str, event_type: str) -> str:
+        """
+        Generate Git history learning context for AI
+
+        Args:
+            event_source: Event source (trivy, fail2ban, etc.)
+            event_type: Event type
+
+        Returns:
+            Formatted Git history context
+        """
+        if not self.git_analyzers:
+            return ""
+
+        # Map event source to relevant keywords
+        keywords_map = {
+            'trivy': ['docker', 'vulnerability', 'CVE', 'security'],
+            'fail2ban': ['ssh', 'ban', 'fail2ban', 'security'],
+            'crowdsec': ['crowdsec', 'threat', 'ban', 'security'],
+            'aide': ['file', 'integrity', 'aide', 'changes']
+        }
+
+        keywords = keywords_map.get(event_source, [event_source])
+
+        # Collect Git context from all available analyzers
+        git_contexts = []
+
+        for project_name, analyzer in self.git_analyzers.items():
+            try:
+                context = analyzer.generate_context_for_ai(event_source, keywords)
+                if context and len(context) > 50:  # Only include if meaningful
+                    git_contexts.append(f"\n## Git History: {project_name.upper()}\n{context}")
+            except Exception as e:
+                logger.debug(f"Could not generate git context for {project_name}: {e}")
+
+        if git_contexts:
+            return '\n'.join(git_contexts)
+
+        return ""
 
     def _determine_relevant_projects(self, event_source: str, event_type: str) -> List[str]:
         """Determine which projects are relevant for this event"""
@@ -266,3 +376,57 @@ class ContextManager:
 """
 
         return prompt
+
+    def get_git_learning_stats(self) -> Dict[str, Any]:
+        """
+        Get statistics about Git learning
+
+        Returns:
+            Dict with learning stats per project
+        """
+        if not self.enable_git_learning or not self.git_analyzers:
+            return {'enabled': False, 'projects': {}}
+
+        stats = {
+            'enabled': True,
+            'days_analyzed': self.git_history_days,
+            'projects': {}
+        }
+
+        for project_name, analyzer in self.git_analyzers.items():
+            try:
+                project_stats = analyzer.get_statistics()
+                stats['projects'][project_name] = project_stats
+            except Exception as e:
+                logger.debug(f"Could not get stats for {project_name}: {e}")
+                stats['projects'][project_name] = {'error': str(e)}
+
+        return stats
+
+    def reload_git_history(self, project_name: Optional[str] = None):
+        """
+        Reload Git history (force cache refresh)
+
+        Args:
+            project_name: Optional - reload specific project, or all if None
+        """
+        if not self.enable_git_learning:
+            logger.warning("Git learning is disabled")
+            return
+
+        if project_name:
+            if project_name in self.git_analyzers:
+                logger.info(f"🔄 Reloading Git history for {project_name}...")
+                self.git_analyzers[project_name].load_commit_history(force_reload=True)
+                self.git_analyzers[project_name].pattern_cache = None  # Clear pattern cache
+                self.git_analyzers[project_name].analyze_patterns()
+                logger.info(f"✅ Git history reloaded for {project_name}")
+            else:
+                logger.warning(f"No Git analyzer for {project_name}")
+        else:
+            logger.info("🔄 Reloading Git history for all projects...")
+            for name, analyzer in self.git_analyzers.items():
+                analyzer.load_commit_history(force_reload=True)
+                analyzer.pattern_cache = None
+                analyzer.analyze_patterns()
+            logger.info(f"✅ Git history reloaded for {len(self.git_analyzers)} project(s)")
