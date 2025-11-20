@@ -21,6 +21,9 @@ from typing import Dict, List, Optional, Set
 from dataclasses import dataclass, field
 from datetime import datetime, timedelta
 
+# Knowledge Base for AI Learning
+from .knowledge_base import get_knowledge_base
+
 logger = logging.getLogger('shadowops')
 
 
@@ -1840,6 +1843,7 @@ Ausgabe als JSON:
                     max_retries = 3
                     fix_success = False
                     last_error = None
+                    fix_start_time = time.time()
 
                     for attempt in range(1, max_retries + 1):
                         # Discord Live Update: Starting fix (with retry info)
@@ -1881,6 +1885,20 @@ Ausgabe als JSON:
                             self.event_history[event_signature] = self.event_history[event_signature][-10:]
                             self._save_event_history()
 
+                            # NEW: Record in Knowledge Base for AI learning
+                            try:
+                                kb = get_knowledge_base()
+                                duration = time.time() - fix_start_time
+                                kb.record_fix(
+                                    event=event.to_dict(),
+                                    strategy=strategy,
+                                    result='success',
+                                    duration_seconds=duration,
+                                    retry_count=attempt - 1
+                                )
+                            except Exception as kb_error:
+                                logger.debug(f"KB tracking failed: {kb_error}")
+
                             # Discord Live Update: Fix successful
                             if exec_message and exec_embed:
                                 current_field = exec_embed.fields[0]
@@ -1913,6 +1931,22 @@ Ausgabe als JSON:
 
                             self.event_history[event_signature] = self.event_history[event_signature][-10:]
                             self._save_event_history()
+
+                            # NEW: Record failure in Knowledge Base (only on last attempt)
+                            if attempt == max_retries:
+                                try:
+                                    kb = get_knowledge_base()
+                                    duration = time.time() - fix_start_time
+                                    kb.record_fix(
+                                        event=event.to_dict(),
+                                        strategy=strategy,
+                                        result='failure',
+                                        error_message=last_error,
+                                        duration_seconds=duration,
+                                        retry_count=attempt - 1
+                                    )
+                                except Exception as kb_error:
+                                    logger.debug(f"KB tracking failed: {kb_error}")
 
                             if attempt < max_retries:
                                 # Not the last attempt - retry!
