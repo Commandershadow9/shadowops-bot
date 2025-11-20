@@ -497,7 +497,7 @@ class SelfHealingCoordinator:
         if self.discord_logger:
             project = event.details.get('AffectedProjects', ['Unknown'])[0] if event.details.get('AffectedProjects') else 'Unknown'
             project_name = project.split('/')[-1] if '/' in project else project
-            await self.discord_logger.log_code_fix(
+            self.discord_logger.log_code_fix(
                 f"🔧 **Trivy Fix gestartet**\n"
                 f"📂 Projekt: **{project_name}**\n"
                 f"📝 Strategy: {strategy['description'][:100]}",
@@ -517,14 +517,14 @@ class SelfHealingCoordinator:
             # Discord Channel Logger: Fix Result
             if self.discord_logger:
                 if result.get('status') == 'success':
-                    await self.discord_logger.log_code_fix(
+                    self.discord_logger.log_code_fix(
                         f"✅ **Trivy Fix erfolgreich**\n"
                         f"📂 Projekt: **{project_name}**\n"
                         f"📝 {result.get('message', 'Fix applied')}",
                         severity="success"
                     )
                 else:
-                    await self.discord_logger.log_code_fix(
+                    self.discord_logger.log_code_fix(
                         f"❌ **Trivy Fix fehlgeschlagen**\n"
                         f"📂 Projekt: **{project_name}**\n"
                         f"⚠️ Error: {result.get('error', 'Unknown')}",
@@ -538,7 +538,7 @@ class SelfHealingCoordinator:
 
             # Discord Channel Logger: Exception
             if self.discord_logger:
-                await self.discord_logger.log_code_fix(
+                self.discord_logger.log_code_fix(
                     f"❌ **Trivy Fix Exception**\n"
                     f"⚠️ {str(e)[:150]}",
                     severity="error"

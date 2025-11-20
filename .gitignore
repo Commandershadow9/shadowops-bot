@@ -53,3 +53,6 @@ Thumbs.db
 .coverage
 htmlcov/
 data/ai_knowledge.db
+
+# Runtime files
+.bot.pid

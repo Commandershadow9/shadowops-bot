@@ -144,51 +144,78 @@ class DiscordChannelLogger:
     # =====================================
     # PUBLIC LOGGING METHODS
     # =====================================
+    # Alle Methoden akzeptieren jetzt severity für bessere Logs
 
-    def log_ai_learning(self, message: str, embed: Optional[discord.Embed] = None):
+    def _add_severity_icon(self, message: str, severity: Optional[str] = None) -> str:
+        """Fügt Severity-Icon zur Message hinzu für bessere Übersichtlichkeit"""
+        if not severity:
+            return message
+
+        icons = {
+            'success': '✅',
+            'info': 'ℹ️',
+            'warning': '⚠️',
+            'error': '❌',
+            'critical': '🔴'
+        }
+
+        icon = icons.get(severity.lower(), '')
+        if icon and not message.startswith(icon):
+            return f"{icon} {message}"
+        return message
+
+    def log_ai_learning(self, message: str, embed: Optional[discord.Embed] = None, severity: Optional[str] = None):
         """Log AI Learning activity (Code Analyzer, Git History, etc.)"""
         if not self.running:
             return
+        message = self._add_severity_icon(message, severity)
         asyncio.create_task(self.message_queue.put(('ai_learning', message, embed)))
 
-    def log_code_fix(self, message: str, embed: Optional[discord.Embed] = None):
+    def log_code_fix(self, message: str, embed: Optional[discord.Embed] = None, severity: Optional[str] = None):
         """Log Code Fixer activity (Vulnerability processing, fix generation)"""
         if not self.running:
             return
+        message = self._add_severity_icon(message, severity)
         asyncio.create_task(self.message_queue.put(('code_fixes', message, embed)))
 
-    def log_orchestrator(self, message: str, embed: Optional[discord.Embed] = None):
+    def log_orchestrator(self, message: str, embed: Optional[discord.Embed] = None, severity: Optional[str] = None):
         """Log Orchestrator activity (Batch processing, coordination)"""
         if not self.running:
             return
+        message = self._add_severity_icon(message, severity)
         asyncio.create_task(self.message_queue.put(('orchestrator', message, embed)))
 
-    def log_performance(self, message: str, embed: Optional[discord.Embed] = None):
+    def log_performance(self, message: str, embed: Optional[discord.Embed] = None, severity: Optional[str] = None):
         """Log Performance Monitor activity (CPU, RAM anomalies)"""
         if not self.running:
             return
+        message = self._add_severity_icon(message, severity)
         asyncio.create_task(self.message_queue.put(('performance', message, embed)))
 
-    def log_alert(self, message: str, embed: Optional[discord.Embed] = None):
+    def log_alert(self, message: str, embed: Optional[discord.Embed] = None, severity: Optional[str] = None):
         """Log auto-remediation alert"""
         if not self.running:
             return
+        message = self._add_severity_icon(message, severity)
         asyncio.create_task(self.message_queue.put(('alerts', message, embed)))
 
-    def log_approval(self, message: str, embed: Optional[discord.Embed] = None):
+    def log_approval(self, message: str, embed: Optional[discord.Embed] = None, severity: Optional[str] = None):
         """Log approval request"""
         if not self.running:
             return
+        message = self._add_severity_icon(message, severity)
         asyncio.create_task(self.message_queue.put(('approvals', message, embed)))
 
-    def log_stats(self, message: str, embed: Optional[discord.Embed] = None):
+    def log_stats(self, message: str, embed: Optional[discord.Embed] = None, severity: Optional[str] = None):
         """Log statistics"""
         if not self.running:
             return
+        message = self._add_severity_icon(message, severity)
         asyncio.create_task(self.message_queue.put(('stats', message, embed)))
 
-    def log_bot_status(self, message: str, embed: Optional[discord.Embed] = None):
+    def log_bot_status(self, message: str, embed: Optional[discord.Embed] = None, severity: Optional[str] = None):
         """Log bot status (startup, health checks)"""
         if not self.running:
             return
+        message = self._add_severity_icon(message, severity)
         asyncio.create_task(self.message_queue.put(('bot_status', message, embed)))

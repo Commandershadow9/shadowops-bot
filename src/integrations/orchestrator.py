@@ -174,7 +174,7 @@ class RemediationOrchestrator:
 
                 # Discord Channel Logger: New Batch Started
                 if self.discord_logger:
-                    await self.discord_logger.log_orchestrator(
+                    self.discord_logger.log_orchestrator(
                         f"📦 **Neuer Remediation-Batch gestartet**\n"
                         f"🆔 Batch ID: `{self.current_batch.batch_id}`\n"
                         f"⏱️ Collection Window: {self.collection_window_seconds}s",
@@ -781,7 +781,7 @@ Ausgabe als JSON:
         if self.discord_logger:
             if multi_project_mode:
                 project_list = "\n".join([f"   📂 {p.split('/')[-1]}" for p in projects_map.keys()])
-                await self.discord_logger.log_orchestrator(
+                self.discord_logger.log_orchestrator(
                     f"⚙️ **MULTI-PROJECT Execution gestartet**\n"
                     f"🆔 Batch: `{batch.batch_id}`\n"
                     f"🐳 Projekte: **{len(projects_map)}**\n{project_list}\n"
@@ -790,7 +790,7 @@ Ausgabe als JSON:
                     severity="info"
                 )
             else:
-                await self.discord_logger.log_orchestrator(
+                self.discord_logger.log_orchestrator(
                     f"⚙️ **Execution gestartet**\n"
                     f"🆔 Batch: `{batch.batch_id}`\n"
                     f"📋 Phasen: **{len(plan.phases)}**\n"
@@ -1097,7 +1097,7 @@ Ausgabe als JSON:
 
             # Discord: Project Start
             if self.discord_logger:
-                await self.discord_logger.log_orchestrator(
+                self.discord_logger.log_orchestrator(
                     f"🐳 **Projekt {project_idx}/{len(projects_map)} gestartet**\n"
                     f"📂 Name: **{project_name}**\n"
                     f"📍 Path: `{project_path}`\n"
@@ -1141,7 +1141,7 @@ Ausgabe als JSON:
 
                 # Discord: Project Success
                 if self.discord_logger:
-                    await self.discord_logger.log_orchestrator(
+                    self.discord_logger.log_orchestrator(
                         f"✅ **Projekt {project_idx}/{len(projects_map)} erfolgreich**\n"
                         f"📂 {project_name}: Alle Fixes angewendet und verifiziert",
                         severity="success"
@@ -1152,7 +1152,7 @@ Ausgabe als JSON:
 
                 # Discord: Project Failed
                 if self.discord_logger:
-                    await self.discord_logger.log_orchestrator(
+                    self.discord_logger.log_orchestrator(
                         f"❌ **Projekt {project_idx}/{len(projects_map)} fehlgeschlagen**\n"
                         f"📂 {project_name}: Fix konnte nicht angewendet werden\n"
                         f"⚠️ Rollback durchgeführt, fahre mit nächstem Projekt fort",
@@ -1215,14 +1215,14 @@ Ausgabe als JSON:
         # Discord Channel Logger: Final Summary
         if self.discord_logger:
             if all_projects_successful:
-                await self.discord_logger.log_orchestrator(
+                self.discord_logger.log_orchestrator(
                     f"✅ **Multi-Project Remediation ERFOLGREICH**\n"
                     f"📊 {len(successful_projects)}/{len(project_results)} Projekte gefixt\n"
                     f"⏱️ Dauer: {duration_str}",
                     severity="success"
                 )
             else:
-                await self.discord_logger.log_orchestrator(
+                self.discord_logger.log_orchestrator(
                     f"⚠️ **Multi-Project Remediation TEILWEISE erfolgreich**\n"
                     f"✅ Erfolgreich: {len(successful_projects)}\n"
                     f"❌ Fehlgeschlagen: {len(failed_projects)}\n"
