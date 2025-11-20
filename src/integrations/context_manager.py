@@ -28,15 +28,25 @@ except ImportError:
     LOG_ANALYZER_AVAILABLE = False
     logger.warning("⚠️ Log Analyzer not available")
 
+# Import Code Analyzer for understanding codebase structure
+try:
+    from .code_analyzer import CodeAnalyzer
+    CODE_ANALYZER_AVAILABLE = True
+except ImportError:
+    CODE_ANALYZER_AVAILABLE = False
+    logger.warning("⚠️ Code Analyzer not available")
+
 
 class ContextManager:
     """Manages project context and infrastructure knowledge with Git history learning"""
 
-    def __init__(self, enable_git_learning: bool = True, git_history_days: int = 30):
+    def __init__(self, enable_git_learning: bool = True, git_history_days: int = 30,
+                 enable_code_analysis: bool = True):
         """
         Args:
             enable_git_learning: Enable Git history analysis for learning
             git_history_days: How many days of Git history to analyze
+            enable_code_analysis: Enable code structure analysis for learning
         """
         self.context_dir = Path(__file__).parent.parent.parent / 'context'
         self.projects: Dict[str, str] = {}
@@ -55,6 +65,18 @@ class ContextManager:
                 logger.warning("⚠️ Git Learning disabled: GitHistoryAnalyzer not available")
             else:
                 logger.info("ℹ️ Git Learning disabled by config")
+
+        # === CODE STRUCTURE LEARNING ===
+        self.enable_code_analysis = enable_code_analysis and CODE_ANALYZER_AVAILABLE
+        self.code_analyzers: Dict[str, CodeAnalyzer] = {}  # {project_name: analyzer}
+
+        if self.enable_code_analysis:
+            logger.info("🧠 Code Analysis enabled: Understanding codebase structure")
+        else:
+            if not CODE_ANALYZER_AVAILABLE:
+                logger.warning("⚠️ Code Analysis disabled: CodeAnalyzer not available")
+            else:
+                logger.info("ℹ️ Code Analysis disabled by config")
 
         # === LOG LEARNING (disabled for now - will be enabled in future) ===
         self.log_analyzer = None  # TODO: Enable log learning in next update
@@ -83,6 +105,10 @@ class ContextManager:
             # === INITIALIZE GIT LEARNING ===
             if self.enable_git_learning:
                 self._initialize_git_analyzers()
+
+            # === INITIALIZE CODE ANALYSIS ===
+            if self.enable_code_analysis:
+                self._initialize_code_analyzers()
 
             self.loaded = True
             logger.info(f"📚 Knowledge base ready: {len(self.projects)} projects loaded")
@@ -124,6 +150,41 @@ class ContextManager:
         else:
             logger.warning("⚠️ No Git repositories found for learning")
 
+    def _initialize_code_analyzers(self):
+        """Initialize Code analyzers for known project paths"""
+        logger.info("🧠 Initializing Code Analysis for projects...")
+
+        # Map project names to their paths
+        # Same paths as Git analyzers
+        project_paths = {
+            'shadowops-bot': Path(__file__).parent.parent.parent,  # Current bot repo
+            # Add more projects as needed from config
+            # 'sicherheitstool': Path('/home/cmdshadow/project/sicherheitstool'),
+            # 'guildscout': Path('/home/cmdshadow/project/GuildScout'),
+        }
+
+        for project_name, project_path in project_paths.items():
+            try:
+                analyzer = CodeAnalyzer(str(project_path))
+
+                # Analyze immediately (caching happens internally)
+                results = analyzer.analyze_all()
+                stats = analyzer.get_statistics()
+
+                self.code_analyzers[project_name] = analyzer
+                logger.info(
+                    f"✅ Code analysis active for {project_name} "
+                    f"({stats['files']} files, {stats['lines']} LOC)"
+                )
+
+            except Exception as e:
+                logger.warning(f"⚠️ Could not initialize Code Analysis for {project_name}: {e}")
+
+        if self.code_analyzers:
+            logger.info(f"🧠 Code analysis ready for {len(self.code_analyzers)} project(s)")
+        else:
+            logger.warning("⚠️ No projects found for code analysis")
+
     def get_relevant_context(self, event_source: str, event_type: str) -> str:
         """
         Get relevant context for a security event (WITH GIT LEARNING!)
@@ -140,11 +201,18 @@ class ContextManager:
 
         context_parts = []
 
-        # === GIT HISTORY LEARNING CONTEXT (NEW!) ===
+        # === GIT HISTORY LEARNING CONTEXT ===
         if self.enable_git_learning and self.git_analyzers:
             git_context = self._get_git_learning_context(event_source, event_type)
             if git_context:
                 context_parts.append(git_context)
+                context_parts.append("")
+
+        # === CODE STRUCTURE LEARNING CONTEXT ===
+        if self.enable_code_analysis and self.code_analyzers:
+            code_context = self._get_code_analysis_context(event_source, event_type)
+            if code_context:
+                context_parts.append(code_context)
                 context_parts.append("")
 
         # Always include infrastructure context
@@ -213,6 +281,47 @@ class ContextManager:
 
         if git_contexts:
             return '\n'.join(git_contexts)
+
+        return ""
+
+    def _get_code_analysis_context(self, event_source: str, event_type: str) -> str:
+        """
+        Generate Code structure learning context for AI
+
+        Args:
+            event_source: Event source (trivy, fail2ban, etc.)
+            event_type: Event type
+
+        Returns:
+            Formatted code structure context
+        """
+        if not self.code_analyzers:
+            return ""
+
+        # Determine focus area based on event
+        focus_map = {
+            'trivy': 'security',
+            'fail2ban': 'security',
+            'crowdsec': 'security',
+            'aide': 'security',
+            'docker': 'performance'
+        }
+
+        focus_area = focus_map.get(event_source, 'structure')
+
+        # Collect Code context from all available analyzers
+        code_contexts = []
+
+        for project_name, analyzer in self.code_analyzers.items():
+            try:
+                context = analyzer.generate_context_for_ai(focus_area)
+                if context and len(context) > 50:  # Only include if meaningful
+                    code_contexts.append(f"\n## Code Structure: {project_name.upper()}\n{context}")
+            except Exception as e:
+                logger.debug(f"Could not generate code context for {project_name}: {e}")
+
+        if code_contexts:
+            return '\n'.join(code_contexts)
 
         return ""
 
@@ -441,3 +550,64 @@ class ContextManager:
                 analyzer.pattern_cache = None
                 analyzer.analyze_patterns()
             logger.info(f"✅ Git history reloaded for {len(self.git_analyzers)} project(s)")
+
+    def get_code_analysis_stats(self) -> Dict[str, Any]:
+        """
+        Get statistics about Code Analysis
+
+        Returns:
+            Dict with code analysis stats per project
+        """
+        if not self.enable_code_analysis or not self.code_analyzers:
+            return {'enabled': False, 'projects': {}}
+
+        stats = {
+            'enabled': True,
+            'projects': {}
+        }
+
+        for project_name, analyzer in self.code_analyzers.items():
+            try:
+                project_stats = analyzer.get_statistics()
+                stats['projects'][project_name] = project_stats
+            except Exception as e:
+                logger.debug(f"Could not get stats for {project_name}: {e}")
+                stats['projects'][project_name] = {'error': str(e)}
+
+        return stats
+
+    def reload_code_analysis(self, project_name: Optional[str] = None):
+        """
+        Reload code analysis (force cache refresh)
+
+        Args:
+            project_name: Optional - reload specific project, or all if None
+        """
+        if not self.enable_code_analysis:
+            logger.warning("Code analysis is disabled")
+            return
+
+        if project_name:
+            if project_name in self.code_analyzers:
+                logger.info(f"🔄 Reloading code analysis for {project_name}...")
+                self.code_analyzers[project_name].analyze_all(force_reload=True)
+                logger.info(f"✅ Code analysis reloaded for {project_name}")
+            else:
+                logger.warning(f"No Code analyzer for {project_name}")
+        else:
+            logger.info("🔄 Reloading code analysis for all projects...")
+            for name, analyzer in self.code_analyzers.items():
+                analyzer.analyze_all(force_reload=True)
+            logger.info(f"✅ Code analysis reloaded for {len(self.code_analyzers)} project(s)")
+
+    def get_all_learning_stats(self) -> Dict[str, Any]:
+        """
+        Get combined statistics from all learning systems
+
+        Returns:
+            Dict with all learning stats
+        """
+        return {
+            'git_learning': self.get_git_learning_stats(),
+            'code_analysis': self.get_code_analysis_stats()
+        }
