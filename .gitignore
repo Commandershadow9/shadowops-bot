@@ -31,11 +31,14 @@ config/*.yaml
 *.token
 *.key
 
-# Logs
+# Logs & Data
+logs/
 logs/*.log
 logs/*.txt
 logs/seen_events.json
+logs/event_history.json
 *.log
+data/
 
 # IDE
 .vscode/
