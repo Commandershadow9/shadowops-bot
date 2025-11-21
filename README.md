@@ -200,6 +200,8 @@ Der Bot erstellt automatisch alle benötigten Channels beim ersten Start:
 - `🔧-code-fixes` - Code Fixer Logs
 - `⚡-orchestrator` - Orchestrator Logs
 
+> ℹ️ **Channel-Fallbacks**: Falls die Auto-Remediation-Notification-IDs nicht gesetzt sind, nutzt der Bot automatisch die IDs aus `channels.*` (z.B. `channels.ai_learning`, `channels.code_fixes`, `channels.orchestrator`). So bleiben AI-Learning und Discord-Logs aktiv, selbst wenn die Notifications-Section fehlt.
+
 **🌐 Multi-Project Kategorie (v3.1):**
 - `👥-customer-alerts` - Kunden-sichtbare Alerts
 - `📊-customer-status` - Projekt-Status Updates
@@ -265,6 +267,8 @@ deployment:
   max_backups: 5
   health_check_timeout: 30
 ```
+
+> ℹ️ **Config Loader**: Die Einstellungen können per Attribute **und** Dictionary-Access gelesen werden (z.B. `config.discord['token']` oder `config['discord']`). Fehlende Pflichtfelder (`discord.token`, `discord.guild_id`) lösen einen klaren `KeyError` aus, damit Fehlkonfigurationen sofort auffallen.
 
 ## 📊 Verwendung
 
