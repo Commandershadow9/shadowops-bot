@@ -1,18 +1,20 @@
 # Discord Bot Framework
-discord.py==2.3.2
-aiohttp==3.9.1
+# Allow minor/patch updates but pin major versions for stability
+discord.py>=2.3.2,<3.0.0
+aiohttp>=3.9.1,<4.0.0
 
 # Configuration
-PyYAML==6.0.1
+PyYAML>=6.0.1,<7.0.0
 
 # Utilities
-python-dateutil==2.8.2
-pytz==2024.1
+python-dateutil>=2.8.2,<3.0.0
+pytz>=2024.1
 
 # Logging
-coloredlogs==15.0.1
+coloredlogs>=15.0.1,<16.0.0
 
 # AI Services
-openai==1.54.0
-anthropic==0.39.0
-httpx<0.28  # Pin to <0.28 for AI library compatibility (proxies parameter removed in 0.28)
+# Allow minor updates for bug fixes and features, but pin major versions
+openai>=1.54.0,<2.0.0
+anthropic>=0.39.0,<1.0.0
+httpx>=0.27.0,<0.28  # Pin to <0.28 for AI library compatibility (proxies parameter removed in 0.28)

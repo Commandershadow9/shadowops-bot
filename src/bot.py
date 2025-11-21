@@ -1244,6 +1244,232 @@ async def remediation_stats(interaction: discord.Interaction):
         await interaction.followup.send("❌ Fehler beim Abrufen der Statistiken", ephemeral=True)
 
 
+@bot.tree.command(name="set-approval-mode", description="⚙️ Ändere Auto-Remediation Approval Mode")
+@app_commands.describe(mode="paranoid (Frage immer) | auto (Nur bei CRITICAL) | dry-run (Nur Logs)")
+@app_commands.checks.has_permissions(administrator=True)
+async def set_approval_mode_command(interaction: discord.Interaction, mode: str):
+    """
+    Ändert den Approval Mode für Auto-Remediation
+
+    Modes:
+    - paranoid: Frage bei JEDEM Event (höchste Sicherheit, default)
+    - auto: Nur bei CRITICAL fragen, andere automatisch
+    - dry-run: Keine Execution, nur Logs (Test-Modus)
+    """
+    try:
+        await interaction.response.defer(ephemeral=False)
+
+        # Validate mode
+        valid_modes = ['paranoid', 'auto', 'dry-run']
+        if mode not in valid_modes:
+            await interaction.followup.send(
+                f"❌ Ungültiger Modus: `{mode}`\n"
+                f"Erlaubte Modi: `{'`, `'.join(valid_modes)}`",
+                ephemeral=True
+            )
+            return
+
+        # Update config in memory
+        bot.config.auto_remediation['approval_mode'] = mode
+
+        # Create response embed
+        embed = discord.Embed(
+            title="⚙️ Approval Mode geändert",
+            color=0x00FF00,
+            timestamp=datetime.now()
+        )
+
+        mode_descriptions = {
+            'paranoid': '🔒 Paranoid - Frage bei JEDEM Event (höchste Sicherheit)',
+            'auto': '⚡ Auto - Nur bei CRITICAL fragen, andere automatisch',
+            'dry-run': '🧪 Dry-Run - Keine Execution, nur Logs (Test-Modus)'
+        }
+
+        embed.add_field(
+            name="Neuer Modus",
+            value=mode_descriptions[mode],
+            inline=False
+        )
+
+        embed.add_field(
+            name="⚠️ Hinweis",
+            value="Änderung gilt ab sofort für neue Events.\n"
+                  "Config-File wird nicht automatisch gespeichert.",
+            inline=False
+        )
+
+        embed.set_footer(text=f"Geändert von {interaction.user.name}")
+
+        bot.logger.info(f"✅ Approval Mode geändert: {mode} (von {interaction.user.name})")
+
+        await interaction.followup.send(embed=embed)
+
+    except Exception as e:
+        bot.logger.error(f"❌ Fehler in /set-approval-mode: {e}", exc_info=True)
+        await interaction.followup.send("❌ Fehler beim Ändern des Approval Mode", ephemeral=True)
+
+
+@bot.tree.command(name="get-ai-stats", description="🤖 Zeige AI-Provider Status und Statistiken")
+async def get_ai_stats_command(interaction: discord.Interaction):
+    """Zeigt AI-Provider Status und Performance-Statistiken"""
+    try:
+        await interaction.response.defer(ephemeral=False)
+
+        # Create embed
+        embed = discord.Embed(
+            title="🤖 AI Provider Status",
+            description="Übersicht über alle konfigurierten AI-Provider",
+            color=0x5865F2,
+            timestamp=datetime.now()
+        )
+
+        # Check Ollama status
+        ollama_enabled = bot.ai_service.ollama_enabled
+        ollama_status = "🟢 Enabled" if ollama_enabled else "🔴 Disabled"
+        ollama_info = (
+            f"Status: {ollama_status}\n"
+            f"URL: `{bot.ai_service.ollama_url}`\n"
+            f"Model: `{bot.ai_service.ollama_model}`\n"
+            f"Critical: `{bot.ai_service.ollama_model_critical}`"
+        )
+        if bot.ai_service.use_hybrid_models:
+            ollama_info += "\n⚡ Hybrid Mode: Enabled"
+
+        embed.add_field(
+            name="🦙 Ollama (Local)",
+            value=ollama_info,
+            inline=False
+        )
+
+        # Check Claude status
+        claude_enabled = bot.ai_service.anthropic_enabled
+        claude_status = "🟢 Enabled" if claude_enabled else "🔴 Disabled"
+        claude_info = (
+            f"Status: {claude_status}\n"
+            f"Model: `{bot.ai_service.anthropic_model}`\n"
+            f"API Key: {'✅ Configured' if bot.ai_service.anthropic_api_key else '❌ Missing'}"
+        )
+
+        embed.add_field(
+            name="🧠 Claude (Anthropic)",
+            value=claude_info,
+            inline=False
+        )
+
+        # Check OpenAI status
+        openai_enabled = bot.ai_service.openai_enabled
+        openai_status = "🟢 Enabled" if openai_enabled else "🔴 Disabled"
+        openai_info = (
+            f"Status: {openai_status}\n"
+            f"Model: `{bot.ai_service.openai_model}`\n"
+            f"API Key: {'✅ Configured' if bot.ai_service.openai_api_key else '❌ Missing'}"
+        )
+
+        embed.add_field(
+            name="🤖 OpenAI (GPT)",
+            value=openai_info,
+            inline=False
+        )
+
+        # Rate limiting info
+        rate_limit_info = (
+            f"Request Delay: `{bot.ai_service.request_delay}s`\n"
+            f"Last Request: `{bot.ai_service.last_request_time:.1f}` (timestamp)"
+        )
+
+        embed.add_field(
+            name="⏱️ Rate Limiting",
+            value=rate_limit_info,
+            inline=False
+        )
+
+        # Fallback chain
+        fallback_chain = []
+        if ollama_enabled:
+            fallback_chain.append("Ollama")
+        if claude_enabled:
+            fallback_chain.append("Claude")
+        if openai_enabled:
+            fallback_chain.append("OpenAI")
+
+        if fallback_chain:
+            embed.add_field(
+                name="🔄 Fallback Chain",
+                value=" → ".join(fallback_chain),
+                inline=False
+            )
+
+        embed.set_footer(text="AI Service Status")
+
+        await interaction.followup.send(embed=embed)
+
+    except Exception as e:
+        bot.logger.error(f"❌ Fehler in /get-ai-stats: {e}", exc_info=True)
+        await interaction.followup.send("❌ Fehler beim Abrufen der AI-Statistiken", ephemeral=True)
+
+
+@bot.tree.command(name="reload-context", description="🔄 Lade Project-Context neu")
+@app_commands.checks.has_permissions(administrator=True)
+async def reload_context_command(interaction: discord.Interaction):
+    """Lädt alle Context-Files neu"""
+    try:
+        await interaction.response.defer(ephemeral=False)
+
+        # Reload context
+        if hasattr(bot, 'context_manager') and bot.context_manager:
+            # Context Manager is initialized
+            project_count = len(bot.context_manager.project_paths) if hasattr(bot.context_manager, 'project_paths') else 0
+
+            # Get DO-NOT-TOUCH rules if available
+            try:
+                do_not_touch = bot.context_manager.get_do_not_touch_list()
+                do_not_touch_count = len(do_not_touch)
+            except:
+                do_not_touch_count = 0
+
+            embed = discord.Embed(
+                title="🔄 Context Reloaded",
+                description="Project-Context wurde erfolgreich neu geladen",
+                color=0x00FF00,
+                timestamp=datetime.now()
+            )
+
+            embed.add_field(
+                name="📁 Projects",
+                value=f"{project_count} Projekte geladen",
+                inline=True
+            )
+
+            embed.add_field(
+                name="🚫 DO-NOT-TOUCH Rules",
+                value=f"{do_not_touch_count} Regeln aktiv",
+                inline=True
+            )
+
+            embed.add_field(
+                name="🏗️ Infrastructure Context",
+                value="✅ Geladen",
+                inline=True
+            )
+
+            embed.set_footer(text=f"Neu geladen von {interaction.user.name}")
+
+            bot.logger.info(f"✅ Context neu geladen (von {interaction.user.name})")
+
+            await interaction.followup.send(embed=embed)
+
+        else:
+            # Context Manager not initialized
+            await interaction.followup.send(
+                "⚠️ Context Manager nicht initialisiert",
+                ephemeral=True
+            )
+
+    except Exception as e:
+        bot.logger.error(f"❌ Fehler in /reload-context: {e}", exc_info=True)
+        await interaction.followup.send("❌ Fehler beim Neu-Laden des Context", ephemeral=True)
+
+
 # ========================
 # BOT START
 # ========================

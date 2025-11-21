@@ -1,0 +1,258 @@
+# Safe Upgrade Paths Configuration
+#
+# This file defines safe upgrade paths for databases, services, and dependencies.
+# Used by the Docker Image Analyzer to recommend safe version upgrades.
+#
+# Format:
+#   service_name:
+#     current_version:
+#       next: recommended_next_version
+#       notes: important upgrade notes
+#       risk: low | medium | high | critical
+#       migration_url: documentation link (optional)
+#       breaking_changes: list of breaking changes (optional)
+
+# ============================================================================
+# DATABASES
+# ============================================================================
+
+postgres:
+  "15":
+    next: "16"
+    notes: "Requires pg_upgrade or dump/restore. Test thoroughly."
+    risk: medium
+    migration_url: "https://www.postgresql.org/docs/16/release-16.html"
+    breaking_changes:
+      - "Some contrib modules require recompilation"
+      - "Check extension compatibility"
+  "14":
+    next: "15"
+    notes: "Minor breaking changes in replication. Generally safe."
+    risk: low
+    migration_url: "https://www.postgresql.org/docs/15/release-15.html"
+  "13":
+    next: "14"
+    notes: "Straightforward upgrade, minimal breaking changes"
+    risk: low
+  "12":
+    next: "13"
+    notes: "EOL soon, upgrade recommended"
+    risk: medium
+  "11":
+    next: "12"
+    notes: "EOL - upgrade urgently"
+    risk: high
+
+mysql:
+  "8.0":
+    next: "8.1"
+    notes: "Check for removed/deprecated features"
+    risk: low
+    migration_url: "https://dev.mysql.com/doc/relnotes/mysql/8.1/en/"
+  "5.7":
+    next: "8.0"
+    notes: "MAJOR upgrade - extensive testing required. Many breaking changes."
+    risk: high
+    migration_url: "https://dev.mysql.com/doc/refman/8.0/en/upgrading.html"
+    breaking_changes:
+      - "Reserved keywords changed"
+      - "SQL mode differences"
+      - "Authentication plugin changes"
+      - "Replication incompatibilities"
+  "5.6":
+    next: "5.7"
+    notes: "EOL - upgrade urgently"
+    risk: critical
+
+mariadb:
+  "10.11":
+    next: "11.0"
+    notes: "Major version jump, test carefully"
+    risk: medium
+  "10.6":
+    next: "10.11"
+    notes: "LTS to LTS upgrade, recommended path"
+    risk: low
+
+mongodb:
+  "7":
+    next: "8"
+    notes: "Check compatibility mode settings"
+    risk: medium
+    migration_url: "https://www.mongodb.com/docs/manual/release-notes/8.0/"
+  "6":
+    next: "7"
+    notes: "Check compatibility mode, test aggregation pipelines"
+    risk: medium
+  "5":
+    next: "6"
+    notes: "Straightforward upgrade"
+    risk: low
+  "4.4":
+    next: "5.0"
+    notes: "EOL - upgrade recommended"
+    risk: medium
+
+redis:
+  "7":
+    next: "7"
+    notes: "Stay on 7.x (latest stable). Redis 8 not released yet."
+    risk: low
+  "6":
+    next: "7"
+    notes: "Check for deprecated commands, review ACL changes"
+    risk: medium
+    breaking_changes:
+      - "Some Lua script behaviors changed"
+      - "ACL improvements may require config updates"
+
+# ============================================================================
+# WEB SERVERS & REVERSE PROXIES
+# ============================================================================
+
+nginx:
+  "1.25":
+    next: "1.26"
+    notes: "Mainline to stable - recommended"
+    risk: low
+  "1.24":
+    next: "1.25"
+    notes: "Stable release, safe upgrade"
+    risk: low
+  "1.22":
+    next: "1.24"
+    notes: "Multiple versions behind, upgrade recommended"
+    risk: medium
+
+apache:
+  "2.4":
+    next: "2.4"
+    notes: "Stay on 2.4.x branch, keep updated with patches"
+    risk: low
+
+# ============================================================================
+# PROGRAMMING LANGUAGES & RUNTIMES
+# ============================================================================
+
+node:
+  "20":
+    next: "22"
+    notes: "LTS to LTS upgrade. Test module compatibility."
+    risk: low
+  "18":
+    next: "20"
+    notes: "LTS to LTS upgrade path"
+    risk: low
+  "16":
+    next: "18"
+    notes: "EOL - upgrade required"
+    risk: medium
+  "14":
+    next: "16"
+    notes: "EOL - upgrade urgently"
+    risk: high
+
+python:
+  "3.12":
+    next: "3.12"
+    notes: "Latest stable, keep updated"
+    risk: low
+  "3.11":
+    next: "3.12"
+    notes: "Safe upgrade, test dependencies"
+    risk: low
+  "3.10":
+    next: "3.11"
+    notes: "Multiple versions behind, upgrade recommended"
+    risk: medium
+  "3.9":
+    next: "3.10"
+    notes: "EOL approaching, upgrade soon"
+    risk: medium
+  "3.8":
+    next: "3.9"
+    notes: "EOL - upgrade required"
+    risk: high
+
+# ============================================================================
+# MESSAGE QUEUES & CACHING
+# ============================================================================
+
+rabbitmq:
+  "3.12":
+    next: "3.13"
+    notes: "Check plugin compatibility"
+    risk: low
+  "3.11":
+    next: "3.12"
+    notes: "Straightforward upgrade"
+    risk: low
+
+memcached:
+  "1.6":
+    next: "1.6"
+    notes: "Keep updated with latest 1.6.x patches"
+    risk: low
+
+# ============================================================================
+# CONTAINER & ORCHESTRATION
+# ============================================================================
+
+alpine:
+  "3.19":
+    next: "3.20"
+    notes: "Latest stable, safe to upgrade"
+    risk: low
+  "3.18":
+    next: "3.19"
+    notes: "Safe upgrade path"
+    risk: low
+  "3.17":
+    next: "3.18"
+    notes: "Multiple versions behind"
+    risk: medium
+
+debian:
+  "bookworm":
+    next: "bookworm"
+    notes: "Current stable (Debian 12), keep updated"
+    risk: low
+  "bullseye":
+    next: "bookworm"
+    notes: "Upgrade to Debian 12 recommended"
+    risk: medium
+  "buster":
+    next: "bullseye"
+    notes: "LTS ending, upgrade soon"
+    risk: high
+
+ubuntu:
+  "24.04":
+    next: "24.04"
+    notes: "LTS - current stable"
+    risk: low
+  "22.04":
+    next: "24.04"
+    notes: "LTS to LTS upgrade path"
+    risk: low
+  "20.04":
+    next: "22.04"
+    notes: "Upgrade recommended"
+    risk: medium
+
+# ============================================================================
+# SPECIAL CASES & NOTES
+# ============================================================================
+
+# General Upgrade Guidelines:
+# - risk: low = Safe upgrade, minimal breaking changes
+# - risk: medium = Test required, some breaking changes possible
+# - risk: high = Extensive testing required, significant changes
+# - risk: critical = Urgent upgrade needed (security/EOL)
+#
+# Always:
+# 1. Backup before upgrading
+# 2. Test in non-production first
+# 3. Review release notes
+# 4. Check dependency compatibility
+# 5. Have rollback plan ready
