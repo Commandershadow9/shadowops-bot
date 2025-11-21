@@ -184,7 +184,7 @@ class IncidentManager:
         self.incidents: Dict[str, Incident] = {}
 
         # Discord channel for incidents
-        self.incident_channel_id = config.get('channels', {}).get('customer_alerts', 0)
+        self.incident_channel_id = config.channels.get('customer_alerts', 0)
 
         # Persistence
         self.state_file = Path('data/incidents.json')
@@ -192,7 +192,11 @@ class IncidentManager:
         self._load_incidents()
 
         # Auto-close resolved incidents after N hours
-        self.auto_close_after_hours = config.get('incidents', {}).get('auto_close_hours', 24)
+        incidents_config = getattr(config, 'incidents', {})
+        if isinstance(incidents_config, dict):
+            self.auto_close_after_hours = incidents_config.get('auto_close_hours', 24)
+        else:
+            self.auto_close_after_hours = getattr(incidents_config, 'auto_close_hours', 24)
 
         self.logger.info(f"🔧 Incident Manager initialized with {len(self.incidents)} active incidents")
 

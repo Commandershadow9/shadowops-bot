@@ -45,15 +45,22 @@ class DeploymentManager:
         self.projects = self._load_projects()
 
         # Deployment settings
-        self.backup_dir = Path(config.get('deployment', {}).get('backup_dir', 'backups'))
+        deployment_config = getattr(config, 'deployment', {})
+        if isinstance(deployment_config, dict):
+            self.backup_dir = Path(deployment_config.get('backup_dir', 'backups'))
+            self.max_backups_per_project = deployment_config.get('max_backups', 5)
+            self.health_check_timeout = deployment_config.get('health_check_timeout', 30)
+            self.test_timeout = deployment_config.get('test_timeout', 300)
+        else:
+            self.backup_dir = Path(getattr(deployment_config, 'backup_dir', 'backups'))
+            self.max_backups_per_project = getattr(deployment_config, 'max_backups', 5)
+            self.health_check_timeout = getattr(deployment_config, 'health_check_timeout', 30)
+            self.test_timeout = getattr(deployment_config, 'test_timeout', 300)
+
         self.backup_dir.mkdir(parents=True, exist_ok=True)
 
-        self.max_backups_per_project = config.get('deployment', {}).get('max_backups', 5)
-        self.health_check_timeout = config.get('deployment', {}).get('health_check_timeout', 30)
-        self.test_timeout = config.get('deployment', {}).get('test_timeout', 300)
-
         # Discord notification channel
-        self.deployment_channel_id = config.get('channels', {}).get('deployment_log', 0)
+        self.deployment_channel_id = config.channels.get('deployment_log', 0)
 
         # Track active deployments
         self.active_deployments: Dict[str, bool] = {}
@@ -63,7 +70,7 @@ class DeploymentManager:
     def _load_projects(self) -> Dict[str, Dict]:
         """Load project configurations from config"""
         projects = {}
-        projects_config = self.config.get('projects', {})
+        projects_config = getattr(self.config, 'projects', {})
 
         for project_name, project_config in projects_config.items():
             if not project_config.get('enabled', False):
