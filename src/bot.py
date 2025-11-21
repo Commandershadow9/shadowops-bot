@@ -1470,6 +1470,225 @@ async def reload_context_command(interaction: discord.Interaction):
         await interaction.followup.send("❌ Fehler beim Neu-Laden des Context", ephemeral=True)
 
 
+@bot.tree.command(name="projekt-status", description="📊 Zeige Status für ein bestimmtes Projekt")
+@app_commands.describe(name="Name des Projekts (z.B. shadowops-bot, guildscout)")
+async def projekt_status_command(interaction: discord.Interaction, name: str):
+    """Zeigt detaillierten Status für ein spezifisches Projekt"""
+    try:
+        await interaction.response.defer(ephemeral=False)
+
+        # Check if project monitor is available
+        if not hasattr(bot, 'project_monitor') or not bot.project_monitor:
+            await interaction.followup.send(
+                "⚠️ Project Monitor nicht verfügbar",
+                ephemeral=True
+            )
+            return
+
+        # Get project status
+        status = bot.project_monitor.get_project_status(name)
+
+        if not status:
+            await interaction.followup.send(
+                f"❌ Projekt '{name}' nicht gefunden.\n"
+                f"Verwende `/alle-projekte` um alle überwachten Projekte zu sehen.",
+                ephemeral=True
+            )
+            return
+
+        # Create detailed status embed
+        is_online = status['is_online']
+        status_emoji = "🟢" if is_online else "🔴"
+        status_text = "Online" if is_online else "Offline"
+        color = discord.Color.green() if is_online else discord.Color.red()
+
+        embed = discord.Embed(
+            title=f"{status_emoji} {status['name']} - Status",
+            description=f"Aktueller Status: **{status_text}**",
+            color=color,
+            timestamp=datetime.now()
+        )
+
+        # Status
+        embed.add_field(
+            name="🔌 Status",
+            value=f"{status_emoji} {status_text}",
+            inline=True
+        )
+
+        # Uptime
+        embed.add_field(
+            name="📈 Uptime",
+            value=f"{status['uptime_percentage']:.2f}%",
+            inline=True
+        )
+
+        # Response Time
+        if is_online:
+            embed.add_field(
+                name="⚡ Avg Response",
+                value=f"{status['average_response_time_ms']:.0f}ms",
+                inline=True
+            )
+        else:
+            embed.add_field(
+                name="⚡ Response",
+                value="N/A",
+                inline=True
+            )
+
+        # Health Checks
+        embed.add_field(
+            name="🔍 Total Checks",
+            value=str(status['total_checks']),
+            inline=True
+        )
+
+        embed.add_field(
+            name="✅ Successful",
+            value=str(status['successful_checks']),
+            inline=True
+        )
+
+        embed.add_field(
+            name="❌ Failed",
+            value=str(status['failed_checks']),
+            inline=True
+        )
+
+        # Last Check Time
+        if status['last_check_time']:
+            last_check = datetime.fromisoformat(status['last_check_time'])
+            time_ago = datetime.utcnow() - last_check
+            minutes_ago = int(time_ago.total_seconds() / 60)
+            embed.add_field(
+                name="🕐 Last Check",
+                value=f"{minutes_ago}m ago",
+                inline=True
+            )
+
+        # Downtime Info (if offline)
+        if not is_online:
+            if status['current_downtime_minutes']:
+                embed.add_field(
+                    name="⏱️ Current Downtime",
+                    value=f"{status['current_downtime_minutes']} minutes",
+                    inline=True
+                )
+
+            if status['consecutive_failures']:
+                embed.add_field(
+                    name="🔁 Consecutive Failures",
+                    value=str(status['consecutive_failures']),
+                    inline=True
+                )
+
+            if status['last_error']:
+                error = status['last_error']
+                if len(error) > 200:
+                    error = error[:197] + "..."
+                embed.add_field(
+                    name="⚠️ Last Error",
+                    value=f"```{error}```",
+                    inline=False
+                )
+
+        embed.set_footer(text=f"Angefragt von {interaction.user.name}")
+
+        await interaction.followup.send(embed=embed)
+
+        bot.logger.info(f"📊 /projekt-status {name} von {interaction.user.name}")
+
+    except Exception as e:
+        bot.logger.error(f"❌ Fehler in /projekt-status: {e}", exc_info=True)
+        await interaction.followup.send("❌ Fehler beim Abrufen des Projekt-Status", ephemeral=True)
+
+
+@bot.tree.command(name="alle-projekte", description="📋 Zeige Übersicht aller überwachten Projekte")
+async def alle_projekte_command(interaction: discord.Interaction):
+    """Zeigt Status-Übersicht für alle Projekte"""
+    try:
+        await interaction.response.defer(ephemeral=False)
+
+        # Check if project monitor is available
+        if not hasattr(bot, 'project_monitor') or not bot.project_monitor:
+            await interaction.followup.send(
+                "⚠️ Project Monitor nicht verfügbar",
+                ephemeral=True
+            )
+            return
+
+        # Get all project statuses
+        all_statuses = bot.project_monitor.get_all_projects_status()
+
+        if not all_statuses:
+            await interaction.followup.send(
+                "ℹ️ Keine Projekte werden derzeit überwacht",
+                ephemeral=True
+            )
+            return
+
+        # Count online/offline
+        online_count = sum(1 for s in all_statuses if s['is_online'])
+        total_count = len(all_statuses)
+        offline_count = total_count - online_count
+
+        # Overall color based on status
+        if offline_count == 0:
+            color = discord.Color.green()
+        elif online_count == 0:
+            color = discord.Color.red()
+        else:
+            color = discord.Color.orange()
+
+        embed = discord.Embed(
+            title="📋 Alle Projekte - Status-Übersicht",
+            description=f"🟢 **{online_count}** Online | 🔴 **{offline_count}** Offline | 📊 **{total_count}** Gesamt",
+            color=color,
+            timestamp=datetime.now()
+        )
+
+        # Sort projects: online first, then alphabetically
+        sorted_statuses = sorted(
+            all_statuses,
+            key=lambda s: (not s['is_online'], s['name'].lower())
+        )
+
+        # Add field for each project
+        for status in sorted_statuses:
+            is_online = status['is_online']
+            status_emoji = "🟢" if is_online else "🔴"
+
+            value_parts = [
+                f"Status: {status_emoji} {'Online' if is_online else 'Offline'}",
+                f"Uptime: {status['uptime_percentage']:.1f}%"
+            ]
+
+            if is_online:
+                value_parts.append(f"Response: {status['average_response_time_ms']:.0f}ms")
+            else:
+                if status['current_downtime_minutes']:
+                    value_parts.append(f"Downtime: {status['current_downtime_minutes']}m")
+                if status['consecutive_failures']:
+                    value_parts.append(f"Failures: {status['consecutive_failures']}")
+
+            embed.add_field(
+                name=f"{status_emoji} **{status['name']}**",
+                value="\n".join(value_parts),
+                inline=True
+            )
+
+        embed.set_footer(text=f"Angefragt von {interaction.user.name} • Verwende /projekt-status [name] für Details")
+
+        await interaction.followup.send(embed=embed)
+
+        bot.logger.info(f"📋 /alle-projekte von {interaction.user.name}")
+
+    except Exception as e:
+        bot.logger.error(f"❌ Fehler in /alle-projekte: {e}", exc_info=True)
+        await interaction.followup.send("❌ Fehler beim Abrufen der Projekt-Übersicht", ephemeral=True)
+
+
 # ========================
 # BOT START
 # ========================
