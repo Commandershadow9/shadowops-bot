@@ -149,8 +149,8 @@ class ProjectMonitor:
         self._load_projects()
 
         # Discord channels
-        self.customer_status_channel_id = config.get('channels', {}).get('customer_status', 0)
-        self.customer_alerts_channel_id = config.get('channels', {}).get('customer_alerts', 0)
+        self.customer_status_channel_id = config.channels.get('customer_status', 0)
+        self.customer_alerts_channel_id = config.channels.get('customer_alerts', 0)
 
         # Monitoring tasks
         self.monitor_tasks: Dict[str, asyncio.Task] = {}
@@ -172,7 +172,7 @@ class ProjectMonitor:
 
     def _load_projects(self):
         """Load project configurations from config"""
-        projects_config = self.config.get('projects', {})
+        projects_config = getattr(self.config, 'projects', {})
 
         for project_name, project_config in projects_config.items():
             if not project_config.get('enabled', False):

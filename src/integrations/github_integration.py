@@ -40,16 +40,22 @@ class GitHubIntegration:
         self.logger = logger
 
         # GitHub webhook settings
-        self.webhook_secret = config.get('github', {}).get('webhook_secret', '')
-        self.webhook_port = config.get('github', {}).get('webhook_port', 8080)
-        self.enabled = config.get('github', {}).get('enabled', False)
-
-        # Deployment settings
-        self.auto_deploy_enabled = config.get('github', {}).get('auto_deploy', False)
-        self.deploy_branches = config.get('github', {}).get('deploy_branches', ['main', 'master'])
+        github_config = getattr(config, 'github', {})
+        if isinstance(github_config, dict):
+            self.webhook_secret = github_config.get('webhook_secret', '')
+            self.webhook_port = github_config.get('webhook_port', 8080)
+            self.enabled = github_config.get('enabled', False)
+            self.auto_deploy_enabled = github_config.get('auto_deploy', False)
+            self.deploy_branches = github_config.get('deploy_branches', ['main', 'master'])
+        else:
+            self.webhook_secret = getattr(github_config, 'webhook_secret', '')
+            self.webhook_port = getattr(github_config, 'webhook_port', 8080)
+            self.enabled = getattr(github_config, 'enabled', False)
+            self.auto_deploy_enabled = getattr(github_config, 'auto_deploy', False)
+            self.deploy_branches = getattr(github_config, 'deploy_branches', ['main', 'master'])
 
         # Discord notification channel
-        self.deployment_channel_id = config.get('channels', {}).get('deployment_log', 0)
+        self.deployment_channel_id = config.channels.get('deployment_log', 0)
 
         # Webhook server
         self.app = None

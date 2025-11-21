@@ -35,14 +35,16 @@ class CustomerNotificationManager:
         self.logger = logger
 
         # Discord channels
-        self.customer_alerts_id = config.get('channels', {}).get('customer_alerts', 0)
-        self.customer_status_id = config.get('channels', {}).get('customer_status', 0)
-        self.deployment_log_id = config.get('channels', {}).get('deployment_log', 0)
+        self.customer_alerts_id = config.channels.get('customer_alerts', 0)
+        self.customer_status_id = config.channels.get('customer_status', 0)
+        self.deployment_log_id = config.channels.get('deployment_log', 0)
 
         # Severity thresholds for customer notifications
-        self.min_severity_for_alert = config.get('customer_notifications', {}).get(
-            'min_severity', 'HIGH'
-        )
+        customer_notif_config = getattr(config, 'customer_notifications', {})
+        if isinstance(customer_notif_config, dict):
+            self.min_severity_for_alert = customer_notif_config.get('min_severity', 'HIGH')
+        else:
+            self.min_severity_for_alert = getattr(customer_notif_config, 'min_severity', 'HIGH')
 
         # Severity levels (ordered)
         self.severity_order = ['LOW', 'MEDIUM', 'HIGH', 'CRITICAL']
