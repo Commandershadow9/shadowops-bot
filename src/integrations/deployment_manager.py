@@ -128,6 +128,9 @@ class DeploymentManager:
 
             self.logger.info(f"🚀 Starting deployment: {project_name} @ {deploy_branch}")
 
+            # Send Discord notification: Deployment started
+            await self._send_deployment_started(project_name, deploy_branch)
+
             result = {
                 'success': False,
                 'project': project_name,
@@ -146,50 +149,64 @@ class DeploymentManager:
 
             # Step 2: Create backup
             self.logger.info(f"📦 Creating backup for {project_name}")
+            await self._send_deployment_update(project_name, "📦 Creating backup...")
             backup_path = await self._create_backup(project)
             result['backup_created'] = True
             self.logger.info(f"✅ Backup created: {backup_path}")
+            await self._send_deployment_update(project_name, f"✅ Backup created: {backup_path.name}")
 
             # Step 3: Pull latest code
             self.logger.info(f"📥 Pulling latest code from {deploy_branch}")
+            await self._send_deployment_update(project_name, f"📥 Pulling latest code from {deploy_branch}...")
             await self._git_pull(project, deploy_branch)
+            await self._send_deployment_update(project_name, "✅ Code updated")
 
             # Step 4: Run tests (if configured)
             if project['run_tests']:
                 self.logger.info(f"🧪 Running tests for {project_name}")
+                await self._send_deployment_update(project_name, "🧪 Running tests...")
                 tests_passed = await self._run_tests(project)
                 result['tests_passed'] = tests_passed
 
                 if not tests_passed:
+                    await self._send_deployment_update(project_name, "❌ Tests failed!")
                     raise DeploymentError("Tests failed")
 
                 self.logger.info(f"✅ Tests passed")
+                await self._send_deployment_update(project_name, "✅ All tests passed")
             else:
                 self.logger.info(f"⏭️ Skipping tests (not configured)")
 
             # Step 5: Execute post-deploy command (if configured)
             if project['post_deploy_command']:
                 self.logger.info(f"⚙️ Running post-deploy command")
+                await self._send_deployment_update(project_name, f"⚙️ Running post-deploy: {project['post_deploy_command']}")
                 await self._run_post_deploy_command(project)
                 self.logger.info(f"✅ Post-deploy command completed")
+                await self._send_deployment_update(project_name, "✅ Post-deploy completed")
 
             # Step 6: Restart service (if configured)
             if project['service_name']:
                 self.logger.info(f"🔄 Restarting service: {project['service_name']}")
+                await self._send_deployment_update(project_name, f"🔄 Restarting service: {project['service_name']}...")
                 await self._restart_service(project)
                 self.logger.info(f"✅ Service restarted")
+                await self._send_deployment_update(project_name, "✅ Service restarted")
 
             result['deployed'] = True
 
             # Step 7: Health check
             if project['health_check_url']:
                 self.logger.info(f"🏥 Running health check")
+                await self._send_deployment_update(project_name, "🏥 Running health check...")
                 health_ok = await self._health_check(project)
 
                 if not health_ok:
+                    await self._send_deployment_update(project_name, "❌ Health check failed!")
                     raise DeploymentError("Health check failed after deployment")
 
                 self.logger.info(f"✅ Health check passed")
+                await self._send_deployment_update(project_name, "✅ Health check passed")
 
             # Success!
             duration = time.time() - start_time
@@ -197,6 +214,9 @@ class DeploymentManager:
             result['duration_seconds'] = duration
 
             self.logger.info(f"✅ Deployment successful: {project_name} ({duration:.1f}s)")
+
+            # Send Discord notification: Deployment success
+            await self._send_deployment_success(project_name, deploy_branch, duration, result)
 
             return result
 
@@ -212,9 +232,11 @@ class DeploymentManager:
             if result['backup_created']:
                 try:
                     self.logger.warning(f"🔄 Attempting rollback for {project_name}")
+                    await self._send_deployment_update(project_name, "🔄 Attempting automatic rollback...")
                     await self._rollback(project, backup_path)
                     result['rolled_back'] = True
                     self.logger.info(f"✅ Rollback successful")
+                    await self._send_deployment_update(project_name, "✅ Rollback successful")
 
                     # Restart service after rollback
                     if project['service_name']:
@@ -226,6 +248,10 @@ class DeploymentManager:
                         exc_info=True
                     )
                     result['error'] += f" | Rollback failed: {rollback_error}"
+                    await self._send_deployment_update(project_name, f"❌ Rollback failed: {rollback_error}")
+
+            # Send Discord notification: Deployment failure
+            await self._send_deployment_failure(project_name, deploy_branch, duration, result)
 
             return result
 
@@ -236,6 +262,9 @@ class DeploymentManager:
             result['error'] = str(e)
             duration = time.time() - start_time
             result['duration_seconds'] = duration
+
+            # Send Discord notification: Deployment exception
+            await self._send_deployment_exception(project_name, str(e), duration)
 
             return result
 
@@ -477,6 +506,158 @@ class DeploymentManager:
 
         if process.returncode != 0:
             raise DeploymentError(f"Rollback failed: {stderr.decode()}")
+
+
+    async def _send_deployment_started(self, project_name: str, branch: str):
+        """Send Discord notification when deployment starts"""
+        channel = self.bot.get_channel(self.deployment_channel_id)
+        if not channel:
+            return
+
+        embed = discord.Embed(
+            title="🚀 Deployment Started",
+            description=f"Deploying **{project_name}** from branch `{branch}`",
+            color=discord.Color.blue(),
+            timestamp=datetime.utcnow()
+        )
+
+        embed.add_field(name="Project", value=project_name, inline=True)
+        embed.add_field(name="Branch", value=f"`{branch}`", inline=True)
+        embed.add_field(name="Status", value="⏳ In Progress", inline=True)
+
+        try:
+            await channel.send(embed=embed)
+            self.logger.debug(f"📢 Sent deployment started notification for {project_name}")
+        except Exception as e:
+            self.logger.error(f"❌ Failed to send Discord notification: {e}", exc_info=True)
+
+    async def _send_deployment_update(self, project_name: str, message: str):
+        """Send short deployment progress update to Discord"""
+        channel = self.bot.get_channel(self.deployment_channel_id)
+        if not channel:
+            return
+
+        try:
+            timestamp = datetime.utcnow().strftime('%H:%M:%S')
+            await channel.send(f"**[{timestamp}] {project_name}:** {message}")
+        except Exception as e:
+            self.logger.error(f"❌ Failed to send Discord update: {e}", exc_info=True)
+
+    async def _send_deployment_success(
+        self, project_name: str, branch: str, duration: float, result: Dict
+    ):
+        """Send Discord notification when deployment succeeds"""
+        channel = self.bot.get_channel(self.deployment_channel_id)
+        if not channel:
+            return
+
+        embed = discord.Embed(
+            title="✅ Deployment Successful",
+            description=f"**{project_name}** deployed successfully",
+            color=discord.Color.green(),
+            timestamp=datetime.utcnow()
+        )
+
+        embed.add_field(name="Project", value=project_name, inline=True)
+        embed.add_field(name="Branch", value=f"`{branch}`", inline=True)
+        embed.add_field(name="Duration", value=f"{duration:.1f}s", inline=True)
+
+        if result.get('tests_passed') is not None:
+            tests_status = "✅ Passed" if result['tests_passed'] else "❌ Failed"
+            embed.add_field(name="Tests", value=tests_status, inline=True)
+
+        if result.get('backup_created'):
+            embed.add_field(name="Backup", value="✅ Created", inline=True)
+
+        if result.get('deployed'):
+            embed.add_field(name="Deployed", value="✅ Yes", inline=True)
+
+        try:
+            await channel.send(embed=embed)
+            self.logger.debug(f"📢 Sent deployment success notification for {project_name}")
+        except Exception as e:
+            self.logger.error(f"❌ Failed to send Discord notification: {e}", exc_info=True)
+
+    async def _send_deployment_failure(
+        self, project_name: str, branch: str, duration: float, result: Dict
+    ):
+        """Send Discord notification when deployment fails"""
+        channel = self.bot.get_channel(self.deployment_channel_id)
+        if not channel:
+            return
+
+        error = result.get('error', 'Unknown error')
+        rolled_back = result.get('rolled_back', False)
+
+        embed = discord.Embed(
+            title="❌ Deployment Failed",
+            description=f"**{project_name}** deployment failed",
+            color=discord.Color.red(),
+            timestamp=datetime.utcnow()
+        )
+
+        embed.add_field(name="Project", value=project_name, inline=True)
+        embed.add_field(name="Branch", value=f"`{branch}`", inline=True)
+        embed.add_field(name="Duration", value=f"{duration:.1f}s", inline=True)
+
+        # Truncate error if too long
+        if len(error) > 500:
+            error = error[:497] + "..."
+        embed.add_field(name="Error", value=f"```{error}```", inline=False)
+
+        if rolled_back:
+            embed.add_field(
+                name="Rollback",
+                value="✅ Automatic rollback successful - previous version restored",
+                inline=False
+            )
+        elif result.get('backup_created'):
+            embed.add_field(
+                name="Rollback",
+                value="❌ Rollback failed or not attempted",
+                inline=False
+            )
+
+        try:
+            await channel.send(embed=embed)
+            self.logger.debug(f"📢 Sent deployment failure notification for {project_name}")
+        except Exception as e:
+            self.logger.error(f"❌ Failed to send Discord notification: {e}", exc_info=True)
+
+    async def _send_deployment_exception(
+        self, project_name: str, error: str, duration: float
+    ):
+        """Send Discord notification when deployment crashes with exception"""
+        channel = self.bot.get_channel(self.deployment_channel_id)
+        if not channel:
+            return
+
+        embed = discord.Embed(
+            title="💥 Deployment Exception",
+            description=f"**{project_name}** deployment crashed with unexpected error",
+            color=discord.Color.dark_red(),
+            timestamp=datetime.utcnow()
+        )
+
+        embed.add_field(name="Project", value=project_name, inline=True)
+        embed.add_field(name="Duration", value=f"{duration:.1f}s", inline=True)
+
+        # Truncate error if too long
+        if len(error) > 500:
+            error = error[:497] + "..."
+        embed.add_field(name="Exception", value=f"```{error}```", inline=False)
+
+        embed.add_field(
+            name="⚠️ Action Required",
+            value="Manual intervention may be required. Check logs for details.",
+            inline=False
+        )
+
+        try:
+            await channel.send(embed=embed)
+            self.logger.debug(f"📢 Sent deployment exception notification for {project_name}")
+        except Exception as e:
+            self.logger.error(f"❌ Failed to send Discord notification: {e}", exc_info=True)
 
 
 class DeploymentError(Exception):

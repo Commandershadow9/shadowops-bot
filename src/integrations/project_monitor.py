@@ -165,6 +165,9 @@ class ProjectMonitor:
         self.state_file.parent.mkdir(exist_ok=True)
         self._load_state()
 
+        # Incident Manager (will be set by bot.py after initialization)
+        self.incident_manager = None
+
         self.logger.info(f"🔧 Project Monitor initialized with {len(self.projects)} projects")
 
     def _load_projects(self):
@@ -192,7 +195,12 @@ class ProjectMonitor:
             with open(self.state_file, 'r') as f:
                 state = json.load(f)
 
-            for project_name, project_state in state.items():
+            # Load dashboard message ID
+            self.dashboard_message_id = state.get('dashboard_message_id')
+
+            # Load project states
+            project_states = state.get('projects', {})
+            for project_name, project_state in project_states.items():
                 if project_name not in self.projects:
                     continue
 
@@ -201,7 +209,10 @@ class ProjectMonitor:
                 project.successful_checks = project_state.get('successful_checks', 0)
                 project.failed_checks = project_state.get('failed_checks', 0)
 
-            self.logger.info(f"📂 Loaded monitoring state from {self.state_file}")
+            self.logger.info(
+                f"📂 Loaded monitoring state from {self.state_file} "
+                f"(dashboard_id: {self.dashboard_message_id})"
+            )
 
         except Exception as e:
             self.logger.error(f"❌ Error loading state: {e}", exc_info=True)
@@ -209,9 +220,15 @@ class ProjectMonitor:
     def _save_state(self):
         """Persist monitoring state"""
         try:
-            state = {}
+            # Build state structure
+            state = {
+                'dashboard_message_id': self.dashboard_message_id,
+                'projects': {}
+            }
+
+            # Save project states
             for project_name, project in self.projects.items():
-                state[project_name] = {
+                state['projects'][project_name] = {
                     'total_checks': project.total_checks,
                     'successful_checks': project.successful_checks,
                     'failed_checks': project.failed_checks
@@ -356,7 +373,31 @@ class ProjectMonitor:
         self._save_state()
 
     async def _send_incident_alert(self, project: ProjectStatus, error: str):
-        """Send Discord alert when project goes down"""
+        """
+        Send Discord alert when project goes down
+
+        If IncidentManager is available, creates a tracked incident with thread.
+        Otherwise, falls back to sending a simple alert.
+        """
+        # Prefer using IncidentManager for proper incident tracking
+        if self.incident_manager:
+            try:
+                await self.incident_manager.detect_project_down_incident(
+                    project_name=project.name,
+                    error=error
+                )
+                self.logger.info(
+                    f"🚨 Created incident for {project.name} via IncidentManager"
+                )
+                return
+            except Exception as e:
+                self.logger.error(
+                    f"❌ Failed to create incident via IncidentManager: {e}",
+                    exc_info=True
+                )
+                # Fall through to send simple alert
+
+        # Fallback: Send simple alert if IncidentManager not available
         channel = self.bot.get_channel(self.customer_alerts_channel_id)
         if not channel:
             return
@@ -384,7 +425,7 @@ class ProjectMonitor:
         )
 
         await channel.send(embed=embed)
-        self.logger.info(f"🚨 Sent incident alert for {project.name}")
+        self.logger.info(f"🚨 Sent incident alert for {project.name} (fallback mode)")
 
     async def _send_recovery_alert(self, project: ProjectStatus):
         """Send Discord alert when project recovers"""

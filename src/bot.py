@@ -34,6 +34,13 @@ from integrations.orchestrator import RemediationOrchestrator
 from integrations.ai_service import AIService
 from integrations.context_manager import ContextManager
 
+# Phase 5: Multi-Project Management (v3.1)
+from integrations.github_integration import GitHubIntegration
+from integrations.project_monitor import ProjectMonitor
+from integrations.deployment_manager import DeploymentManager
+from integrations.incident_manager import IncidentManager
+from integrations.customer_notifications import CustomerNotificationManager
+
 
 class ShadowOpsBot(commands.Bot):
     """ShadowOps Security Bot"""
@@ -64,6 +71,13 @@ class ShadowOpsBot(commands.Bot):
         self.event_watcher = None
         self.self_healing = None
         self.orchestrator = None
+
+        # Phase 5: Multi-Project Management (v3.1)
+        self.github_integration = None
+        self.project_monitor = None
+        self.deployment_manager = None
+        self.incident_manager = None
+        self.customer_notifications = None
 
         # Discord Channel Logger (für kategorisierte Logs)
         self.discord_logger = DiscordChannelLogger(bot=None, config=self.config)
@@ -243,6 +257,57 @@ class ShadowOpsBot(commands.Bot):
                 updated_channel_ids[f'auto_remediation_{channel_type}'] = new_channel.id
                 channels_created = True
 
+            # ============================================
+            # TEIL 3: MULTI-PROJECT CHANNELS (v3.1)
+            # ============================================
+            multi_project_category = await self._get_or_create_category(guild, "🌐 Multi-Project")
+
+            multi_project_channels = [
+                ('customer_alerts', '👥-customer-alerts', '👥 Kunden-sichtbare Alerts und Incidents'),
+                ('customer_status', '📊-customer-status', '📊 Projekt-Status Updates und Dashboards'),
+                ('deployment_log', '🚀-deployment-log', '🚀 Deployment-Benachrichtigungen und Auto-Deploy Logs'),
+            ]
+
+            for channel_key, channel_name, description in multi_project_channels:
+                current_id = self.config.channels.get(channel_key)
+
+                # Prüfe ob Channel existiert (by ID)
+                if current_id:
+                    existing_channel = guild.get_channel(current_id)
+                    if existing_channel:
+                        # Verschiebe Channel in richtige Kategorie (falls nicht bereits dort)
+                        if existing_channel.category_id != multi_project_category.id:
+                            self.logger.info(f"📦 Verschiebe '{channel_name}' → 🌐 Multi-Project")
+                            await existing_channel.edit(category=multi_project_category)
+                        self.logger.info(f"✅ Channel '{channel_name}' existiert (ID: {current_id})")
+                        continue
+
+                # Prüfe ob Channel existiert (by name)
+                existing_channel = discord.utils.get(guild.text_channels, name=channel_name)
+                if existing_channel:
+                    # Verschiebe Channel in richtige Kategorie
+                    if existing_channel.category_id != multi_project_category.id:
+                        self.logger.info(f"📦 Verschiebe '{channel_name}' → 🌐 Multi-Project")
+                        await existing_channel.edit(category=multi_project_category)
+                    self.logger.info(f"✅ Channel '{channel_name}' gefunden (ID: {existing_channel.id})")
+                    updated_channel_ids[channel_key] = existing_channel.id
+                    channels_created = True
+                    continue
+
+                # Channel existiert nicht → erstellen
+                self.logger.info(f"📝 Erstelle Multi-Project-Channel: {channel_name}")
+
+                new_channel = await guild.create_text_channel(
+                    name=channel_name,
+                    topic=description,
+                    category=multi_project_category,
+                    reason="Multi-Project Management Setup (v3.1)"
+                )
+
+                self.logger.info(f"✅ Channel '{channel_name}' erstellt (ID: {new_channel.id})")
+                updated_channel_ids[channel_key] = new_channel.id
+                channels_created = True
+
             # Update Config mit Channel-IDs
             if channels_created:
                 self.logger.info("💾 Speichere Channel-IDs in Config...")
@@ -287,6 +352,17 @@ class ShadowOpsBot(commands.Bot):
                         config_data['channels'] = {}
                     config_data['channels'][key] = channel_ids[key]
                     self.logger.info(f"💾 Channel '{key}' ID gespeichert: {channel_ids[key]}")
+
+            # Update Multi-Project Channels (v3.1)
+            multi_project_keys = ['customer_alerts', 'customer_status', 'deployment_log']
+            for key in multi_project_keys:
+                if key in channel_ids:
+                    if 'channels' not in config_data:
+                        config_data['channels'] = {}
+                    config_data['channels'][key] = channel_ids[key]
+                    self.logger.info(f"💾 Multi-Project Channel '{key}' ID gespeichert: {channel_ids[key]}")
+                    # Update runtime config
+                    self.config.channels[key] = channel_ids[key]
 
             # Update Auto-Remediation Channels
             if 'auto_remediation' in config_data:
@@ -501,14 +577,74 @@ class ShadowOpsBot(commands.Bot):
             )
 
             # ============================================
-            # PHASE 5: STARTE AI LEARNING (mit größerem Delay)
+            # PHASE 5: MULTI-PROJECT MANAGEMENT (v3.1)
             # ============================================
             self.logger.info("=" * 60)
-            self.logger.info("⏳ PHASE 5: AI Learning startet in 15 Sekunden...")
+            self.logger.info("🌐 PHASE 5: Multi-Project Management Initialisierung (v3.1)")
             self.logger.info("=" * 60)
 
             await self._send_status_message(
-                "⏳ **Phase 5/5:** AI Learning startet in 15 Sekunden...\n"
+                "⏳ **Phase 5/6:** Initialisiere Multi-Project Management...",
+                0x3498DB
+            )
+
+            # Initialisiere Customer Notifications
+            self.logger.info("🔄 [1/5] Initialisiere Customer Notification Manager...")
+            self.customer_notifications = CustomerNotificationManager(self, self.config)
+            self.logger.info("✅ [1/5] Customer Notifications bereit")
+
+            # Initialisiere Incident Manager
+            self.logger.info("🔄 [2/5] Initialisiere Incident Manager...")
+            self.incident_manager = IncidentManager(self, self.config)
+            self.logger.info("✅ [2/5] Incident Manager bereit")
+
+            # Initialisiere Deployment Manager
+            self.logger.info("🔄 [3/5] Initialisiere Deployment Manager...")
+            self.deployment_manager = DeploymentManager(self, self.config)
+            self.logger.info("✅ [3/5] Deployment Manager bereit")
+
+            # Initialisiere Project Monitor
+            self.logger.info("🔄 [4/5] Initialisiere Project Monitor...")
+            self.project_monitor = ProjectMonitor(self, self.config)
+            # Link IncidentManager to ProjectMonitor for proper incident tracking
+            self.project_monitor.incident_manager = self.incident_manager
+            await self.project_monitor.start_monitoring()
+            self.logger.info("✅ [4/5] Project Monitor gestartet (mit Incident-Tracking)")
+
+            # Initialisiere GitHub Integration
+            self.logger.info("🔄 [5/5] Initialisiere GitHub Integration...")
+            self.github_integration = GitHubIntegration(self, self.config)
+            # Link Deployment Manager to GitHub Integration
+            if self.github_integration.enabled:
+                self.github_integration.deployment_manager = self.deployment_manager
+                await self.github_integration.start_webhook_server()
+                self.logger.info("✅ [5/5] GitHub Integration gestartet (Webhook Server läuft)")
+            else:
+                self.logger.info("ℹ️ [5/5] GitHub Integration deaktiviert (config: github.enabled=false)")
+
+            self.logger.info("=" * 60)
+            self.logger.info("✅ PHASE 5 abgeschlossen - Multi-Project Management aktiv")
+            self.logger.info("=" * 60)
+
+            await self._send_status_message(
+                "✅ **Multi-Project Management aktiv**\n"
+                f"• Project Monitor: ✅ {len(self.project_monitor.projects)} Projekte überwacht\n"
+                f"• Incident Manager: ✅ Automatisches Tracking\n"
+                f"• Deployment Manager: ✅ CI/CD Pipeline bereit\n"
+                f"• GitHub Webhook: {'✅ Aktiv' if self.github_integration.enabled else '⏸️ Deaktiviert'}\n"
+                f"• Customer Notifications: ✅ Bereit",
+                0x00FF00
+            )
+
+            # ============================================
+            # PHASE 6: STARTE AI LEARNING (mit größerem Delay)
+            # ============================================
+            self.logger.info("=" * 60)
+            self.logger.info("⏳ PHASE 6: AI Learning startet in 15 Sekunden...")
+            self.logger.info("=" * 60)
+
+            await self._send_status_message(
+                "⏳ **Phase 6/6:** AI Learning startet in 15 Sekunden...\n"
                 "Warte bis Monitoring & Auto-Remediation stabil laufen...",
                 0x3498DB
             )
