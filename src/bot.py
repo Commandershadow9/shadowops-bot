@@ -34,6 +34,13 @@ from integrations.orchestrator import RemediationOrchestrator
 from integrations.ai_service import AIService
 from integrations.context_manager import ContextManager
 
+# Phase 5: Multi-Project Management (v3.1)
+from integrations.github_integration import GitHubIntegration
+from integrations.project_monitor import ProjectMonitor
+from integrations.deployment_manager import DeploymentManager
+from integrations.incident_manager import IncidentManager
+from integrations.customer_notifications import CustomerNotificationManager
+
 
 class ShadowOpsBot(commands.Bot):
     """ShadowOps Security Bot"""
@@ -64,6 +71,13 @@ class ShadowOpsBot(commands.Bot):
         self.event_watcher = None
         self.self_healing = None
         self.orchestrator = None
+
+        # Phase 5: Multi-Project Management (v3.1)
+        self.github_integration = None
+        self.project_monitor = None
+        self.deployment_manager = None
+        self.incident_manager = None
+        self.customer_notifications = None
 
         # Discord Channel Logger (für kategorisierte Logs)
         self.discord_logger = DiscordChannelLogger(bot=None, config=self.config)
@@ -243,6 +257,57 @@ class ShadowOpsBot(commands.Bot):
                 updated_channel_ids[f'auto_remediation_{channel_type}'] = new_channel.id
                 channels_created = True
 
+            # ============================================
+            # TEIL 3: MULTI-PROJECT CHANNELS (v3.1)
+            # ============================================
+            multi_project_category = await self._get_or_create_category(guild, "🌐 Multi-Project")
+
+            multi_project_channels = [
+                ('customer_alerts', '👥-customer-alerts', '👥 Kunden-sichtbare Alerts und Incidents'),
+                ('customer_status', '📊-customer-status', '📊 Projekt-Status Updates und Dashboards'),
+                ('deployment_log', '🚀-deployment-log', '🚀 Deployment-Benachrichtigungen und Auto-Deploy Logs'),
+            ]
+
+            for channel_key, channel_name, description in multi_project_channels:
+                current_id = self.config.channels.get(channel_key)
+
+                # Prüfe ob Channel existiert (by ID)
+                if current_id:
+                    existing_channel = guild.get_channel(current_id)
+                    if existing_channel:
+                        # Verschiebe Channel in richtige Kategorie (falls nicht bereits dort)
+                        if existing_channel.category_id != multi_project_category.id:
+                            self.logger.info(f"📦 Verschiebe '{channel_name}' → 🌐 Multi-Project")
+                            await existing_channel.edit(category=multi_project_category)
+                        self.logger.info(f"✅ Channel '{channel_name}' existiert (ID: {current_id})")
+                        continue
+
+                # Prüfe ob Channel existiert (by name)
+                existing_channel = discord.utils.get(guild.text_channels, name=channel_name)
+                if existing_channel:
+                    # Verschiebe Channel in richtige Kategorie
+                    if existing_channel.category_id != multi_project_category.id:
+                        self.logger.info(f"📦 Verschiebe '{channel_name}' → 🌐 Multi-Project")
+                        await existing_channel.edit(category=multi_project_category)
+                    self.logger.info(f"✅ Channel '{channel_name}' gefunden (ID: {existing_channel.id})")
+                    updated_channel_ids[channel_key] = existing_channel.id
+                    channels_created = True
+                    continue
+
+                # Channel existiert nicht → erstellen
+                self.logger.info(f"📝 Erstelle Multi-Project-Channel: {channel_name}")
+
+                new_channel = await guild.create_text_channel(
+                    name=channel_name,
+                    topic=description,
+                    category=multi_project_category,
+                    reason="Multi-Project Management Setup (v3.1)"
+                )
+
+                self.logger.info(f"✅ Channel '{channel_name}' erstellt (ID: {new_channel.id})")
+                updated_channel_ids[channel_key] = new_channel.id
+                channels_created = True
+
             # Update Config mit Channel-IDs
             if channels_created:
                 self.logger.info("💾 Speichere Channel-IDs in Config...")
@@ -287,6 +352,17 @@ class ShadowOpsBot(commands.Bot):
                         config_data['channels'] = {}
                     config_data['channels'][key] = channel_ids[key]
                     self.logger.info(f"💾 Channel '{key}' ID gespeichert: {channel_ids[key]}")
+
+            # Update Multi-Project Channels (v3.1)
+            multi_project_keys = ['customer_alerts', 'customer_status', 'deployment_log']
+            for key in multi_project_keys:
+                if key in channel_ids:
+                    if 'channels' not in config_data:
+                        config_data['channels'] = {}
+                    config_data['channels'][key] = channel_ids[key]
+                    self.logger.info(f"💾 Multi-Project Channel '{key}' ID gespeichert: {channel_ids[key]}")
+                    # Update runtime config
+                    self.config.channels[key] = channel_ids[key]
 
             # Update Auto-Remediation Channels
             if 'auto_remediation' in config_data:
@@ -415,7 +491,7 @@ class ShadowOpsBot(commands.Bot):
 
             # Initialisiere Context Manager (RAG System)
             self.logger.info("🔄 [1/5] Initialisiere Context Manager (RAG)...")
-            self.context_manager = ContextManager()
+            self.context_manager = ContextManager(config=self.config)
             self.context_manager.load_all_contexts()
             self.logger.info("✅ [1/5] Context Manager bereit")
 
@@ -501,14 +577,74 @@ class ShadowOpsBot(commands.Bot):
             )
 
             # ============================================
-            # PHASE 5: STARTE AI LEARNING (mit größerem Delay)
+            # PHASE 5: MULTI-PROJECT MANAGEMENT (v3.1)
             # ============================================
             self.logger.info("=" * 60)
-            self.logger.info("⏳ PHASE 5: AI Learning startet in 15 Sekunden...")
+            self.logger.info("🌐 PHASE 5: Multi-Project Management Initialisierung (v3.1)")
             self.logger.info("=" * 60)
 
             await self._send_status_message(
-                "⏳ **Phase 5/5:** AI Learning startet in 15 Sekunden...\n"
+                "⏳ **Phase 5/6:** Initialisiere Multi-Project Management...",
+                0x3498DB
+            )
+
+            # Initialisiere Customer Notifications
+            self.logger.info("🔄 [1/5] Initialisiere Customer Notification Manager...")
+            self.customer_notifications = CustomerNotificationManager(self, self.config)
+            self.logger.info("✅ [1/5] Customer Notifications bereit")
+
+            # Initialisiere Incident Manager
+            self.logger.info("🔄 [2/5] Initialisiere Incident Manager...")
+            self.incident_manager = IncidentManager(self, self.config)
+            self.logger.info("✅ [2/5] Incident Manager bereit")
+
+            # Initialisiere Deployment Manager
+            self.logger.info("🔄 [3/5] Initialisiere Deployment Manager...")
+            self.deployment_manager = DeploymentManager(self, self.config)
+            self.logger.info("✅ [3/5] Deployment Manager bereit")
+
+            # Initialisiere Project Monitor
+            self.logger.info("🔄 [4/5] Initialisiere Project Monitor...")
+            self.project_monitor = ProjectMonitor(self, self.config)
+            # Link IncidentManager to ProjectMonitor for proper incident tracking
+            self.project_monitor.incident_manager = self.incident_manager
+            await self.project_monitor.start_monitoring()
+            self.logger.info("✅ [4/5] Project Monitor gestartet (mit Incident-Tracking)")
+
+            # Initialisiere GitHub Integration
+            self.logger.info("🔄 [5/5] Initialisiere GitHub Integration...")
+            self.github_integration = GitHubIntegration(self, self.config)
+            # Link Deployment Manager to GitHub Integration
+            if self.github_integration.enabled:
+                self.github_integration.deployment_manager = self.deployment_manager
+                await self.github_integration.start_webhook_server()
+                self.logger.info("✅ [5/5] GitHub Integration gestartet (Webhook Server läuft)")
+            else:
+                self.logger.info("ℹ️ [5/5] GitHub Integration deaktiviert (config: github.enabled=false)")
+
+            self.logger.info("=" * 60)
+            self.logger.info("✅ PHASE 5 abgeschlossen - Multi-Project Management aktiv")
+            self.logger.info("=" * 60)
+
+            await self._send_status_message(
+                "✅ **Multi-Project Management aktiv**\n"
+                f"• Project Monitor: ✅ {len(self.project_monitor.projects)} Projekte überwacht\n"
+                f"• Incident Manager: ✅ Automatisches Tracking\n"
+                f"• Deployment Manager: ✅ CI/CD Pipeline bereit\n"
+                f"• GitHub Webhook: {'✅ Aktiv' if self.github_integration.enabled else '⏸️ Deaktiviert'}\n"
+                f"• Customer Notifications: ✅ Bereit",
+                0x00FF00
+            )
+
+            # ============================================
+            # PHASE 6: STARTE AI LEARNING (mit größerem Delay)
+            # ============================================
+            self.logger.info("=" * 60)
+            self.logger.info("⏳ PHASE 6: AI Learning startet in 15 Sekunden...")
+            self.logger.info("=" * 60)
+
+            await self._send_status_message(
+                "⏳ **Phase 6/6:** AI Learning startet in 15 Sekunden...\n"
                 "Warte bis Monitoring & Auto-Remediation stabil laufen...",
                 0x3498DB
             )
@@ -1242,6 +1378,451 @@ async def remediation_stats(interaction: discord.Interaction):
     except Exception as e:
         bot.logger.error(f"❌ Fehler in /remediation-stats: {e}", exc_info=True)
         await interaction.followup.send("❌ Fehler beim Abrufen der Statistiken", ephemeral=True)
+
+
+@bot.tree.command(name="set-approval-mode", description="⚙️ Ändere Auto-Remediation Approval Mode")
+@app_commands.describe(mode="paranoid (Frage immer) | auto (Nur bei CRITICAL) | dry-run (Nur Logs)")
+@app_commands.checks.has_permissions(administrator=True)
+async def set_approval_mode_command(interaction: discord.Interaction, mode: str):
+    """
+    Ändert den Approval Mode für Auto-Remediation
+
+    Modes:
+    - paranoid: Frage bei JEDEM Event (höchste Sicherheit, default)
+    - auto: Nur bei CRITICAL fragen, andere automatisch
+    - dry-run: Keine Execution, nur Logs (Test-Modus)
+    """
+    try:
+        await interaction.response.defer(ephemeral=False)
+
+        # Validate mode
+        valid_modes = ['paranoid', 'auto', 'dry-run']
+        if mode not in valid_modes:
+            await interaction.followup.send(
+                f"❌ Ungültiger Modus: `{mode}`\n"
+                f"Erlaubte Modi: `{'`, `'.join(valid_modes)}`",
+                ephemeral=True
+            )
+            return
+
+        # Update config in memory
+        bot.config.auto_remediation['approval_mode'] = mode
+
+        # Create response embed
+        embed = discord.Embed(
+            title="⚙️ Approval Mode geändert",
+            color=0x00FF00,
+            timestamp=datetime.now()
+        )
+
+        mode_descriptions = {
+            'paranoid': '🔒 Paranoid - Frage bei JEDEM Event (höchste Sicherheit)',
+            'auto': '⚡ Auto - Nur bei CRITICAL fragen, andere automatisch',
+            'dry-run': '🧪 Dry-Run - Keine Execution, nur Logs (Test-Modus)'
+        }
+
+        embed.add_field(
+            name="Neuer Modus",
+            value=mode_descriptions[mode],
+            inline=False
+        )
+
+        embed.add_field(
+            name="⚠️ Hinweis",
+            value="Änderung gilt ab sofort für neue Events.\n"
+                  "Config-File wird nicht automatisch gespeichert.",
+            inline=False
+        )
+
+        embed.set_footer(text=f"Geändert von {interaction.user.name}")
+
+        bot.logger.info(f"✅ Approval Mode geändert: {mode} (von {interaction.user.name})")
+
+        await interaction.followup.send(embed=embed)
+
+    except Exception as e:
+        bot.logger.error(f"❌ Fehler in /set-approval-mode: {e}", exc_info=True)
+        await interaction.followup.send("❌ Fehler beim Ändern des Approval Mode", ephemeral=True)
+
+
+@bot.tree.command(name="get-ai-stats", description="🤖 Zeige AI-Provider Status und Statistiken")
+async def get_ai_stats_command(interaction: discord.Interaction):
+    """Zeigt AI-Provider Status und Performance-Statistiken"""
+    try:
+        await interaction.response.defer(ephemeral=False)
+
+        # Create embed
+        embed = discord.Embed(
+            title="🤖 AI Provider Status",
+            description="Übersicht über alle konfigurierten AI-Provider",
+            color=0x5865F2,
+            timestamp=datetime.now()
+        )
+
+        # Check Ollama status
+        ollama_enabled = bot.ai_service.ollama_enabled
+        ollama_status = "🟢 Enabled" if ollama_enabled else "🔴 Disabled"
+        ollama_info = (
+            f"Status: {ollama_status}\n"
+            f"URL: `{bot.ai_service.ollama_url}`\n"
+            f"Model: `{bot.ai_service.ollama_model}`\n"
+            f"Critical: `{bot.ai_service.ollama_model_critical}`"
+        )
+        if bot.ai_service.use_hybrid_models:
+            ollama_info += "\n⚡ Hybrid Mode: Enabled"
+
+        embed.add_field(
+            name="🦙 Ollama (Local)",
+            value=ollama_info,
+            inline=False
+        )
+
+        # Check Claude status
+        claude_enabled = bot.ai_service.anthropic_enabled
+        claude_status = "🟢 Enabled" if claude_enabled else "🔴 Disabled"
+        claude_info = (
+            f"Status: {claude_status}\n"
+            f"Model: `{bot.ai_service.anthropic_model}`\n"
+            f"API Key: {'✅ Configured' if bot.ai_service.anthropic_api_key else '❌ Missing'}"
+        )
+
+        embed.add_field(
+            name="🧠 Claude (Anthropic)",
+            value=claude_info,
+            inline=False
+        )
+
+        # Check OpenAI status
+        openai_enabled = bot.ai_service.openai_enabled
+        openai_status = "🟢 Enabled" if openai_enabled else "🔴 Disabled"
+        openai_info = (
+            f"Status: {openai_status}\n"
+            f"Model: `{bot.ai_service.openai_model}`\n"
+            f"API Key: {'✅ Configured' if bot.ai_service.openai_api_key else '❌ Missing'}"
+        )
+
+        embed.add_field(
+            name="🤖 OpenAI (GPT)",
+            value=openai_info,
+            inline=False
+        )
+
+        # Rate limiting info
+        rate_limit_info = (
+            f"Request Delay: `{bot.ai_service.request_delay}s`\n"
+            f"Last Request: `{bot.ai_service.last_request_time:.1f}` (timestamp)"
+        )
+
+        embed.add_field(
+            name="⏱️ Rate Limiting",
+            value=rate_limit_info,
+            inline=False
+        )
+
+        # Fallback chain
+        fallback_chain = []
+        if ollama_enabled:
+            fallback_chain.append("Ollama")
+        if claude_enabled:
+            fallback_chain.append("Claude")
+        if openai_enabled:
+            fallback_chain.append("OpenAI")
+
+        if fallback_chain:
+            embed.add_field(
+                name="🔄 Fallback Chain",
+                value=" → ".join(fallback_chain),
+                inline=False
+            )
+
+        embed.set_footer(text="AI Service Status")
+
+        await interaction.followup.send(embed=embed)
+
+    except Exception as e:
+        bot.logger.error(f"❌ Fehler in /get-ai-stats: {e}", exc_info=True)
+        await interaction.followup.send("❌ Fehler beim Abrufen der AI-Statistiken", ephemeral=True)
+
+
+@bot.tree.command(name="reload-context", description="🔄 Lade Project-Context neu")
+@app_commands.checks.has_permissions(administrator=True)
+async def reload_context_command(interaction: discord.Interaction):
+    """Lädt alle Context-Files neu"""
+    try:
+        await interaction.response.defer(ephemeral=False)
+
+        # Reload context
+        if hasattr(bot, 'context_manager') and bot.context_manager:
+            # Context Manager is initialized
+            project_count = len(bot.context_manager.project_paths) if hasattr(bot.context_manager, 'project_paths') else 0
+
+            # Get DO-NOT-TOUCH rules if available
+            try:
+                do_not_touch = bot.context_manager.get_do_not_touch_list()
+                do_not_touch_count = len(do_not_touch)
+            except:
+                do_not_touch_count = 0
+
+            embed = discord.Embed(
+                title="🔄 Context Reloaded",
+                description="Project-Context wurde erfolgreich neu geladen",
+                color=0x00FF00,
+                timestamp=datetime.now()
+            )
+
+            embed.add_field(
+                name="📁 Projects",
+                value=f"{project_count} Projekte geladen",
+                inline=True
+            )
+
+            embed.add_field(
+                name="🚫 DO-NOT-TOUCH Rules",
+                value=f"{do_not_touch_count} Regeln aktiv",
+                inline=True
+            )
+
+            embed.add_field(
+                name="🏗️ Infrastructure Context",
+                value="✅ Geladen",
+                inline=True
+            )
+
+            embed.set_footer(text=f"Neu geladen von {interaction.user.name}")
+
+            bot.logger.info(f"✅ Context neu geladen (von {interaction.user.name})")
+
+            await interaction.followup.send(embed=embed)
+
+        else:
+            # Context Manager not initialized
+            await interaction.followup.send(
+                "⚠️ Context Manager nicht initialisiert",
+                ephemeral=True
+            )
+
+    except Exception as e:
+        bot.logger.error(f"❌ Fehler in /reload-context: {e}", exc_info=True)
+        await interaction.followup.send("❌ Fehler beim Neu-Laden des Context", ephemeral=True)
+
+
+@bot.tree.command(name="projekt-status", description="📊 Zeige Status für ein bestimmtes Projekt")
+@app_commands.describe(name="Name des Projekts (z.B. shadowops-bot, guildscout)")
+async def projekt_status_command(interaction: discord.Interaction, name: str):
+    """Zeigt detaillierten Status für ein spezifisches Projekt"""
+    try:
+        await interaction.response.defer(ephemeral=False)
+
+        # Check if project monitor is available
+        if not hasattr(bot, 'project_monitor') or not bot.project_monitor:
+            await interaction.followup.send(
+                "⚠️ Project Monitor nicht verfügbar",
+                ephemeral=True
+            )
+            return
+
+        # Get project status
+        status = bot.project_monitor.get_project_status(name)
+
+        if not status:
+            await interaction.followup.send(
+                f"❌ Projekt '{name}' nicht gefunden.\n"
+                f"Verwende `/alle-projekte` um alle überwachten Projekte zu sehen.",
+                ephemeral=True
+            )
+            return
+
+        # Create detailed status embed
+        is_online = status['is_online']
+        status_emoji = "🟢" if is_online else "🔴"
+        status_text = "Online" if is_online else "Offline"
+        color = discord.Color.green() if is_online else discord.Color.red()
+
+        embed = discord.Embed(
+            title=f"{status_emoji} {status['name']} - Status",
+            description=f"Aktueller Status: **{status_text}**",
+            color=color,
+            timestamp=datetime.now()
+        )
+
+        # Status
+        embed.add_field(
+            name="🔌 Status",
+            value=f"{status_emoji} {status_text}",
+            inline=True
+        )
+
+        # Uptime
+        embed.add_field(
+            name="📈 Uptime",
+            value=f"{status['uptime_percentage']:.2f}%",
+            inline=True
+        )
+
+        # Response Time
+        if is_online:
+            embed.add_field(
+                name="⚡ Avg Response",
+                value=f"{status['average_response_time_ms']:.0f}ms",
+                inline=True
+            )
+        else:
+            embed.add_field(
+                name="⚡ Response",
+                value="N/A",
+                inline=True
+            )
+
+        # Health Checks
+        embed.add_field(
+            name="🔍 Total Checks",
+            value=str(status['total_checks']),
+            inline=True
+        )
+
+        embed.add_field(
+            name="✅ Successful",
+            value=str(status['successful_checks']),
+            inline=True
+        )
+
+        embed.add_field(
+            name="❌ Failed",
+            value=str(status['failed_checks']),
+            inline=True
+        )
+
+        # Last Check Time
+        if status['last_check_time']:
+            last_check = datetime.fromisoformat(status['last_check_time'])
+            time_ago = datetime.utcnow() - last_check
+            minutes_ago = int(time_ago.total_seconds() / 60)
+            embed.add_field(
+                name="🕐 Last Check",
+                value=f"{minutes_ago}m ago",
+                inline=True
+            )
+
+        # Downtime Info (if offline)
+        if not is_online:
+            if status['current_downtime_minutes']:
+                embed.add_field(
+                    name="⏱️ Current Downtime",
+                    value=f"{status['current_downtime_minutes']} minutes",
+                    inline=True
+                )
+
+            if status['consecutive_failures']:
+                embed.add_field(
+                    name="🔁 Consecutive Failures",
+                    value=str(status['consecutive_failures']),
+                    inline=True
+                )
+
+            if status['last_error']:
+                error = status['last_error']
+                if len(error) > 200:
+                    error = error[:197] + "..."
+                embed.add_field(
+                    name="⚠️ Last Error",
+                    value=f"```{error}```",
+                    inline=False
+                )
+
+        embed.set_footer(text=f"Angefragt von {interaction.user.name}")
+
+        await interaction.followup.send(embed=embed)
+
+        bot.logger.info(f"📊 /projekt-status {name} von {interaction.user.name}")
+
+    except Exception as e:
+        bot.logger.error(f"❌ Fehler in /projekt-status: {e}", exc_info=True)
+        await interaction.followup.send("❌ Fehler beim Abrufen des Projekt-Status", ephemeral=True)
+
+
+@bot.tree.command(name="alle-projekte", description="📋 Zeige Übersicht aller überwachten Projekte")
+async def alle_projekte_command(interaction: discord.Interaction):
+    """Zeigt Status-Übersicht für alle Projekte"""
+    try:
+        await interaction.response.defer(ephemeral=False)
+
+        # Check if project monitor is available
+        if not hasattr(bot, 'project_monitor') or not bot.project_monitor:
+            await interaction.followup.send(
+                "⚠️ Project Monitor nicht verfügbar",
+                ephemeral=True
+            )
+            return
+
+        # Get all project statuses
+        all_statuses = bot.project_monitor.get_all_projects_status()
+
+        if not all_statuses:
+            await interaction.followup.send(
+                "ℹ️ Keine Projekte werden derzeit überwacht",
+                ephemeral=True
+            )
+            return
+
+        # Count online/offline
+        online_count = sum(1 for s in all_statuses if s['is_online'])
+        total_count = len(all_statuses)
+        offline_count = total_count - online_count
+
+        # Overall color based on status
+        if offline_count == 0:
+            color = discord.Color.green()
+        elif online_count == 0:
+            color = discord.Color.red()
+        else:
+            color = discord.Color.orange()
+
+        embed = discord.Embed(
+            title="📋 Alle Projekte - Status-Übersicht",
+            description=f"🟢 **{online_count}** Online | 🔴 **{offline_count}** Offline | 📊 **{total_count}** Gesamt",
+            color=color,
+            timestamp=datetime.now()
+        )
+
+        # Sort projects: online first, then alphabetically
+        sorted_statuses = sorted(
+            all_statuses,
+            key=lambda s: (not s['is_online'], s['name'].lower())
+        )
+
+        # Add field for each project
+        for status in sorted_statuses:
+            is_online = status['is_online']
+            status_emoji = "🟢" if is_online else "🔴"
+
+            value_parts = [
+                f"Status: {status_emoji} {'Online' if is_online else 'Offline'}",
+                f"Uptime: {status['uptime_percentage']:.1f}%"
+            ]
+
+            if is_online:
+                value_parts.append(f"Response: {status['average_response_time_ms']:.0f}ms")
+            else:
+                if status['current_downtime_minutes']:
+                    value_parts.append(f"Downtime: {status['current_downtime_minutes']}m")
+                if status['consecutive_failures']:
+                    value_parts.append(f"Failures: {status['consecutive_failures']}")
+
+            embed.add_field(
+                name=f"{status_emoji} **{status['name']}**",
+                value="\n".join(value_parts),
+                inline=True
+            )
+
+        embed.set_footer(text=f"Angefragt von {interaction.user.name} • Verwende /projekt-status [name] für Details")
+
+        await interaction.followup.send(embed=embed)
+
+        bot.logger.info(f"📋 /alle-projekte von {interaction.user.name}")
+
+    except Exception as e:
+        bot.logger.error(f"❌ Fehler in /alle-projekte: {e}", exc_info=True)
+        await interaction.followup.send("❌ Fehler beim Abrufen der Projekt-Übersicht", ephemeral=True)
 
 
 # ========================

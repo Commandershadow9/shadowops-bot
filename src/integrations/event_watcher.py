@@ -55,6 +55,7 @@ class SecurityEventWatcher:
 
         # Event tracking with persistence
         self.seen_events: Dict[str, float] = {}  # event_signature -> timestamp
+        self.seen_events_lock = asyncio.Lock()  # Protect against race conditions
         self.event_history: List[SecurityEvent] = []
         self.max_history = 1000
         self.event_cache_file = Path("/home/cmdshadow/shadowops-bot/logs/seen_events.json")
@@ -433,46 +434,47 @@ class SecurityEventWatcher:
         event_signature = self._generate_event_signature(event)
         current_time = datetime.now().timestamp()
 
-        # PERSISTENT EVENTS: Cache by signature, but use longer duration
-        if event.is_persistent:
-            # Use signature-based caching with 12h duration (2 scan cycles)
-            # This prevents repeated fixes for the same issue
+        async with self.seen_events_lock:
+            # PERSISTENT EVENTS: Cache by signature, but use longer duration
+            if event.is_persistent:
+                # Use signature-based caching with 12h duration (2 scan cycles)
+                # This prevents repeated fixes for the same issue
+                if event_signature in self.seen_events:
+                    last_seen = self.seen_events[event_signature]
+                    time_since_seen = current_time - last_seen
+
+                    # If seen within 12 hours, skip (already handled or monitoring)
+                    if time_since_seen < 43200:  # 12 hours in seconds
+                        logger.debug(f"Persistent event {event_signature} already seen {time_since_seen/3600:.1f}h ago, skipping")
+                        return False
+                    else:
+                        # More than 12h ago, treat as new (allows retry after monitoring period)
+                        logger.info(f"✅ Persistent event {event_signature} expired ({time_since_seen/3600:.1f}h ago), treating as new")
+
+                # Mark as seen with current timestamp
+                self.seen_events[event_signature] = current_time
+                self._save_seen_events()
+                return True
+
+            # SELF-RESOLVING EVENTS: Use 24h cache
+            # Check if event was seen before
             if event_signature in self.seen_events:
                 last_seen = self.seen_events[event_signature]
-                time_since_seen = current_time - last_seen
 
-                # If seen within 12 hours, skip (already handled or monitoring)
-                if time_since_seen < 43200:  # 12 hours in seconds
-                    logger.debug(f"Persistent event {event_signature} already seen {time_since_seen/3600:.1f}h ago, skipping")
+                # If event is older than 24h, consider it new again
+                if current_time - last_seen < self.event_cache_duration:
+                    logger.debug(f"Event {event_signature} already seen within 24h")
                     return False
                 else:
-                    # More than 12h ago, treat as new (allows retry after monitoring period)
-                    logger.info(f"✅ Persistent event {event_signature} expired ({time_since_seen/3600:.1f}h ago), treating as new")
+                    logger.debug(f"Event {event_signature} expired (>24h), treating as new")
 
             # Mark as seen with current timestamp
             self.seen_events[event_signature] = current_time
+
+            # Save to persistent storage
             self._save_seen_events()
+
             return True
-
-        # SELF-RESOLVING EVENTS: Use 24h cache
-        # Check if event was seen before
-        if event_signature in self.seen_events:
-            last_seen = self.seen_events[event_signature]
-
-            # If event is older than 24h, consider it new again
-            if current_time - last_seen < self.event_cache_duration:
-                logger.debug(f"Event {event_signature} already seen within 24h")
-                return False
-            else:
-                logger.debug(f"Event {event_signature} expired (>24h), treating as new")
-
-        # Mark as seen with current timestamp
-        self.seen_events[event_signature] = current_time
-
-        # Save to persistent storage
-        self._save_seen_events()
-
-        return True
 
     def _generate_event_signature(self, event: SecurityEvent) -> str:
         """Generate unique signature for event deduplication"""

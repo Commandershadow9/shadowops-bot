@@ -1,0 +1,259 @@
+# ╔═══════════════════════════════════════════════════════════════════════════╗
+# ║                     ShadowOps Bot - Configuration                         ║
+# ║                                                                           ║
+# ║  WICHTIG: Kopiere diese Datei zu config.yaml und fülle deine Werte ein   ║
+# ║  Befehl: cp config/config.example.yaml config/config.yaml                ║
+# ╚═══════════════════════════════════════════════════════════════════════════╝
+
+# ╔═══════════════════════════════════════════════════════════════════════════╗
+# ║ DISCORD SETTINGS                                                          ║
+# ╚═══════════════════════════════════════════════════════════════════════════╝
+discord:
+  # Bot Token vom Discord Developer Portal
+  # https://discord.com/developers/applications
+  token: "YOUR_BOT_TOKEN_HERE"
+
+  # Discord Server (Guild) ID
+  # Rechtsklick auf Server → "ID kopieren" (Developer Mode aktivieren!)
+  guild_id: 0
+
+# ╔═══════════════════════════════════════════════════════════════════════════╗
+# ║ DISCORD CHANNELS                                                          ║
+# ║ Rechtsklick auf Channel → "ID kopieren"                                  ║
+# ║ Alle Channels sind optional - Fallback zu 'critical' wenn nicht gesetzt  ║
+# ╚═══════════════════════════════════════════════════════════════════════════╝
+channels:
+  # === HAUPT-CHANNELS ===
+
+  # 🔴 Kritische Alerts (PFLICHT - Fallback für alle anderen)
+  critical: 0
+
+  # 🛡️ Alternative: security_alerts (wenn critical nicht gesetzt)
+  # security_alerts: 0
+
+  # 🤖 Bot-Status-Updates (Startup, Shutdown, Errors)
+  bot_status: 0
+
+  # === PROJEKT-SPEZIFISCHE CHANNELS ===
+
+  # 🔐 Sicherheitstool-Projekt
+  sicherheitsdienst: 0
+
+  # ⚡ Nexus-Projekt
+  nexus: 0
+
+  # === TOOL-SPEZIFISCHE CHANNELS ===
+
+  # 🚫 Fail2ban Alerts (IP-Bans)
+  fail2ban: 0
+
+  # 🛡️ CrowdSec Alerts (AI-basierte Threat Detection)
+  crowdsec: 0
+
+  # 🐳 Docker Security Scans (Trivy)
+  docker: 0
+
+  # 💾 Backup Status
+  backups: 0
+
+  # 📁 AIDE File Integrity Monitoring
+  aide: 0
+
+  # 🔑 SSH Anomalien
+  ssh: 0
+
+  # 📊 Performance Monitoring (optional)
+  performance: 0
+
+# ╔═══════════════════════════════════════════════════════════════════════════╗
+# ║ AUTO-REMEDIATION SYSTEM                                                   ║
+# ║ Autonome Behebung von Security-Issues durch KI                           ║
+# ╚═══════════════════════════════════════════════════════════════════════════╝
+auto_remediation:
+  # System aktivieren (true/false)
+  enabled: true
+
+  # === BETRIEBSMODUS ===
+  # dry_run: Nur Simulation, keine echten Änderungen (EMPFOHLEN für Tests!)
+  dry_run: true
+
+  # approval_mode: Wie viel manuelle Genehmigung wird benötigt?
+  # - "paranoid": Frage bei JEDEM Event (Maximum Safety)
+  # - "auto": Nur bei CRITICAL fragen, REST automatisch
+  # - "dry_run": Nur Logging, keine Execution
+  approval_mode: "paranoid"
+
+  # === SCAN-INTERVALLE (in Sekunden) ===
+  scan_intervals:
+    trivy: 21600      # 6 Stunden - Docker Security Scans
+    crowdsec: 30      # 30 Sekunden - Echtzeit Threat Detection
+    fail2ban: 30      # 30 Sekunden - IP-Ban Monitoring
+    aide: 900         # 15 Minuten - File Integrity Checks
+
+  # === CIRCUIT BREAKER (Verhindert Endlos-Loops) ===
+  circuit_breaker_threshold: 5    # Max 5 Fehler...
+  circuit_breaker_timeout: 3600   # ...dann 1h Pause
+
+  # === RETRY-LOGIC ===
+  max_retry_attempts: 3  # Maximal 3 Versuche pro Fix
+
+  # === AUTO-CHANNEL-CREATION ===
+  # Soll der Bot fehlende Discord-Channels automatisch erstellen?
+  auto_create_channels: true
+
+  # Channel-Namen (wenn auto_create_channels = true)
+  channel_names:
+    alerts: "🤖-auto-remediation-alerts"
+    approvals: "✋-auto-remediation-approvals"
+    stats: "📊-auto-remediation-stats"
+    ai_learning: "🧠-ai-learning"
+    code_fixes: "🔧-code-fixes"
+    orchestrator: "🎯-orchestrator"
+
+  # === NOTIFICATION CHANNELS (werden auto-erstellt oder manuell gesetzt) ===
+  notifications:
+    alerts_channel: 0         # Alerts & Status-Updates
+    approvals_channel: 0      # Approval-Requests
+    stats_channel: 0          # Statistiken & Erfolgsraten
+    ai_learning_channel: 0    # AI-Learning-Insights
+    code_fixes_channel: 0     # Code-Fix-Details
+    orchestrator_channel: 0   # Orchestrator-Details
+
+# ╔═══════════════════════════════════════════════════════════════════════════╗
+# ║ AI SERVICES (KI-gestützte Analyse)                                       ║
+# ║ Hierarchie: Ollama (lokal) → Claude → OpenAI (Fallback)                 ║
+# ╚═══════════════════════════════════════════════════════════════════════════╝
+ai:
+  # === OLLAMA (PRIMARY - lokal & kostenlos) ===
+  ollama:
+    enabled: true
+    url: "http://127.0.0.1:11434"
+
+    # Standard-Modell (schnell, für normale Events)
+    model: "phi3:mini"
+
+    # Critical-Modell (intelligenter, für schwere Events)
+    model_critical: "llama3.1"
+
+    # Hybrid-Modus: Automatisch bestes Modell wählen basiert auf Severity
+    hybrid_models: true
+
+    # Rate Limiting: Verzögerung zwischen Anfragen (verhindert Server-Überlastung)
+    request_delay_seconds: 4.0  # 4 Sekunden Pause zwischen AI-Calls
+
+  # === ANTHROPIC CLAUDE (Fallback #1 - wenn Ollama fehlt) ===
+  anthropic:
+    enabled: false
+    api_key: ""  # Dein Anthropic API Key
+    model: "claude-3-5-sonnet-20241022"
+
+  # === OPENAI (Fallback #2 - wenn Claude auch fehlt) ===
+  openai:
+    enabled: false
+    api_key: ""  # Dein OpenAI API Key
+    model: "gpt-4o"
+
+# ╔═══════════════════════════════════════════════════════════════════════════╗
+# ║ PROJECTS (Überwachte Projekte)                                           ║
+# ╚═══════════════════════════════════════════════════════════════════════════╝
+projects:
+  # === SICHERHEITSTOOL ===
+  sicherheitstool:
+    enabled: true
+    tag: "[SECURITY]"
+    color: 0xFF0000  # Rot
+    path: "/home/cmdshadow/project/sicherheitstool"
+    services:
+      - "sicherheitstool"
+    critical: true  # Kritisches Projekt - höchste Priorität
+
+  # === GUILDSCOUT ===
+  guildscout:
+    enabled: true
+    tag: "[GUILDSCOUT]"
+    color: 0x9B59B6  # Lila
+    path: "/home/cmdshadow/project/GuildScout"
+    services:
+      - "guildscout"
+    critical: false
+
+  # === NEXUS ===
+  nexus:
+    enabled: true
+    tag: "[NEXUS]"
+    color: 0x00FF00  # Grün
+    path: "/home/cmdshadow/project/nexus"
+    services:
+      - "nexus"
+    critical: false
+
+  # === SHADOWOPS-BOT (dieser Bot selbst) ===
+  shadowops-bot:
+    enabled: true
+    tag: "[SHADOWOPS]"
+    color: 0x0099FF  # Blau
+    path: "/home/cmdshadow/shadowops-bot"
+    services:
+      - "shadowops-bot"
+    critical: true  # Kritisch - Bot muss immer laufen!
+
+# ╔═══════════════════════════════════════════════════════════════════════════╗
+# ║ ALERTS & NOTIFICATIONS                                                    ║
+# ╚═══════════════════════════════════════════════════════════════════════════╝
+alerts:
+  # Minimale Severity für Alerts
+  # Optionen: "LOW", "MEDIUM", "HIGH", "CRITICAL"
+  min_severity: "HIGH"
+
+  # Rate-Limiting: Sekunden zwischen gleichen Alerts
+  rate_limit_seconds: 60
+
+  # Role-Mentions (Discord-Rollen die bei Alerts erwähnt werden)
+  mention_roles:
+    critical: 0  # Role-ID für CRITICAL Alerts
+    high: 0      # Role-ID für HIGH Alerts
+
+# ╔═══════════════════════════════════════════════════════════════════════════╗
+# ║ LOG PATHS (Pfade zu System-Logs)                                         ║
+# ╚═══════════════════════════════════════════════════════════════════════════╝
+log_paths:
+  # === ERFORDERLICH ===
+  fail2ban: "/var/log/fail2ban/fail2ban.log"
+  docker_scans: "/var/log/trivy-scans"
+
+  # === OPTIONAL ===
+  crowdsec: "/var/log/crowdsec/crowdsec.log"
+  aide: "/var/log/aide/aide.log"
+  ssh: "/var/log/auth.log"
+
+# ╔═══════════════════════════════════════════════════════════════════════════╗
+# ║ BOT SETTINGS                                                              ║
+# ╚═══════════════════════════════════════════════════════════════════════════╝
+bot:
+  # Discord-Bot-Status (wird als "Playing..." angezeigt)
+  status: "🔒 Monitoring Security"
+
+  # Debug-Modus (mehr Logs, für Entwicklung)
+  debug: false
+
+  # Auto-Reconnect bei Verbindungsverlust
+  auto_reconnect: true
+
+# ╔═══════════════════════════════════════════════════════════════════════════╗
+# ║ PERMISSIONS                                                               ║
+# ╚═══════════════════════════════════════════════════════════════════════════╝
+permissions:
+  # Admin Discord-User-IDs (können alle Commands nutzen)
+  # Rechtsklick auf User → "ID kopieren"
+  admins:
+    - 0  # Deine Discord User ID hier eintragen
+
+# ╔═══════════════════════════════════════════════════════════════════════════╗
+# ║ ENDE DER KONFIGURATION                                                   ║
+# ║                                                                           ║
+# ║ NÄCHSTE SCHRITTE:                                                        ║
+# ║ 1. Kopiere diese Datei: cp config/config.example.yaml config/config.yaml║
+# ║ 2. Fülle deine Werte ein (Token, Channel IDs, etc.)                     ║
+# ║ 3. Starte Bot: python3 src/bot.py                                       ║
+# ║ 4. Prüfe Status: /status in Discord                                     ║
+# ╚═══════════════════════════════════════════════════════════════════════════╝

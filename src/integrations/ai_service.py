@@ -258,6 +258,31 @@ class AIService:
             prompt_parts.append(safety_prompt)
             prompt_parts.append("\n" + "="*80 + "\n")
 
+        # NEW: Add best strategies from Knowledge Base
+        try:
+            from .knowledge_base import get_knowledge_base
+            kb = get_knowledge_base()
+            best_strategies = kb.get_best_strategies(event_type, limit=3)
+
+            if best_strategies:
+                prompt_parts.append("# SUCCESSFUL STRATEGIES FROM HISTORY")
+                prompt_parts.append("Learn from past successful fixes for similar events:\n")
+
+                for i, strategy in enumerate(best_strategies, 1):
+                    prompt_parts.append(f"## Strategy {i}: {strategy['strategy_name']}")
+                    prompt_parts.append(f"**Success Rate:** {strategy['success_rate']:.1%} "
+                                      f"({strategy['success_count']} successes, {strategy['failure_count']} failures)")
+                    prompt_parts.append(f"**Avg Confidence:** {strategy['avg_confidence']:.1%}")
+                    prompt_parts.append(f"**Avg Duration:** {strategy['avg_duration']:.1f}s")
+                    prompt_parts.append(f"**Last Used:** {strategy['last_used']}")
+                    prompt_parts.append("")
+
+                prompt_parts.append("**RECOMMENDATION:** Consider using or adapting these proven strategies!")
+                prompt_parts.append("\n" + "="*80 + "\n")
+        except Exception as e:
+            # KB not available - continue without it
+            pass
+
         # NEW: Add previous attempts context for learning
         if previous_attempts and len(previous_attempts) > 0:
             prompt_parts.append("# LEARNING FROM PREVIOUS ATTEMPTS")
@@ -489,23 +514,59 @@ For external images (from Docker Hub) without security updates on current versio
 
         self.last_request_time = time.time()
 
+    async def _call_with_retry(self, func, max_retries: int = 3):
+        """
+        Exponential backoff retry wrapper for API calls
+
+        Retries temporary failures (network errors, timeouts) but not permanent errors.
+
+        Args:
+            func: Async function to call
+            max_retries: Maximum number of retry attempts (default: 3)
+
+        Returns:
+            Result from func or raises exception on final failure
+        """
+        for attempt in range(1, max_retries + 1):
+            try:
+                return await func()
+            except (httpx.ConnectError, httpx.ReadTimeout, httpx.TimeoutException, asyncio.TimeoutError) as e:
+                # Temporary network/timeout errors - retry with backoff
+                if attempt < max_retries:
+                    delay = 2 ** (attempt - 1)  # Exponential: 1s, 2s, 4s
+                    logger.warning(f"⚠️ Retry {attempt}/{max_retries} after {delay}s: {type(e).__name__}")
+                    await asyncio.sleep(delay)
+                else:
+                    # Final attempt failed
+                    logger.error(f"❌ All {max_retries} retry attempts failed: {e}")
+                    raise
+            except Exception as e:
+                # Permanent errors (auth, invalid request, etc.) - don't retry
+                logger.error(f"❌ Non-retryable error: {e}")
+                raise
+
     async def _analyze_with_anthropic(self, prompt: str, event: Dict) -> Optional[Dict]:
-        """Analyze with Anthropic Claude"""
+        """Analyze with Anthropic Claude with retry logic"""
         try:
             # Lazy initialize client
             if not self.anthropic_client:
                 import anthropic
                 self.anthropic_client = anthropic.AsyncAnthropic(api_key=self.anthropic_api_key)
 
-            message = await self.anthropic_client.messages.create(
-                model=self.anthropic_model,
-                max_tokens=2000,
-                temperature=0.3,  # Lower temperature for more focused analysis
-                messages=[{
-                    "role": "user",
-                    "content": prompt
-                }]
-            )
+            # Define API call as lambda for retry wrapper
+            async def make_api_call():
+                return await self.anthropic_client.messages.create(
+                    model=self.anthropic_model,
+                    max_tokens=2000,
+                    temperature=0.3,  # Lower temperature for more focused analysis
+                    messages=[{
+                        "role": "user",
+                        "content": prompt
+                    }]
+                )
+
+            # Call with retry logic
+            message = await self._call_with_retry(make_api_call)
 
             # Parse JSON response
             content = message.content[0].text
@@ -523,22 +584,27 @@ For external images (from Docker Hub) without security updates on current versio
             return None
 
     async def _analyze_with_openai(self, prompt: str, event: Dict) -> Optional[Dict]:
-        """Analyze with OpenAI"""
+        """Analyze with OpenAI with retry logic"""
         try:
             # Lazy initialize client
             if not self.openai_client:
                 import openai
                 self.openai_client = openai.AsyncOpenAI(api_key=self.openai_api_key)
 
-            response = await self.openai_client.chat.completions.create(
-                model=self.openai_model,
-                messages=[
-                    {"role": "system", "content": "You are a security engineer providing fix strategies in JSON format."},
-                    {"role": "user", "content": prompt}
-                ],
-                temperature=0.3,
-                max_tokens=2000
-            )
+            # Define API call as lambda for retry wrapper
+            async def make_api_call():
+                return await self.openai_client.chat.completions.create(
+                    model=self.openai_model,
+                    messages=[
+                        {"role": "system", "content": "You are a security engineer providing fix strategies in JSON format."},
+                        {"role": "user", "content": prompt}
+                    ],
+                    temperature=0.3,
+                    max_tokens=2000
+                )
+
+            # Call with retry logic
+            response = await self._call_with_retry(make_api_call)
 
             # Parse JSON response
             content = response.choices[0].message.content
@@ -589,7 +655,9 @@ For external images (from Docker Hub) without security updates on current versio
             token_count = 0
             content = ""
 
-            try:
+            # Define API call as lambda for retry wrapper
+            async def make_api_call():
+                nonlocal token_count, content  # Allow modification of outer scope variables
                 async with httpx.AsyncClient(timeout=timeout) as client:
                     async with client.stream(
                         "POST",
@@ -607,7 +675,7 @@ For external images (from Docker Hub) without security updates on current versio
                     ) as response:
                         if response.status_code != 200:
                             logger.error(f"Ollama API error: HTTP {response.status_code}")
-                            return None
+                            raise httpx.HTTPStatusError(f"HTTP {response.status_code}", request=response.request, response=response)
 
                         # Process stream line by line
                         full_response = ""
@@ -646,6 +714,11 @@ For external images (from Docker Hub) without security updates on current versio
 
                         # Store final response
                         content = full_response
+                        return content
+
+            try:
+                # Call with retry logic
+                content = await self._call_with_retry(make_api_call)
 
                 # Calculate stats
                 elapsed_time = time.time() - start_time

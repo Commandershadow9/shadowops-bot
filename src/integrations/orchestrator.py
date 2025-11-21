@@ -21,6 +21,9 @@ from typing import Dict, List, Optional, Set
 from dataclasses import dataclass, field
 from datetime import datetime, timedelta
 
+# Knowledge Base for AI Learning
+from .knowledge_base import get_knowledge_base
+
 logger = logging.getLogger('shadowops')
 
 
@@ -141,13 +144,78 @@ class RemediationOrchestrator:
         except Exception as e:
             logger.error(f"❌ Error saving event history: {e}")
 
+    def _calculate_adaptive_retry_delay(self, event_signature: str, attempt: int,
+                                        last_error: str = None) -> float:
+        """
+        Calculate adaptive retry delay based on success rate and error type
+
+        Args:
+            event_signature: Event signature for KB lookup
+            attempt: Current attempt number (1-based)
+            last_error: Last error message for error type detection
+
+        Returns:
+            Delay in seconds (float)
+        """
+        # Base exponential backoff: 2^(attempt-1) seconds
+        base_delay = 2 ** (attempt - 1)  # 2, 4, 8, ...
+
+        # Get success rate from Knowledge Base
+        try:
+            kb = get_knowledge_base()
+            stats = kb.get_success_rate(event_signature=event_signature, days=30)
+            success_rate = stats.get('success_rate', 0.5)  # Default to 50%
+
+            # Adjust delay based on success rate
+            if success_rate >= 0.8:
+                # High success rate → faster retries (problem is usually solvable)
+                multiplier = 0.5
+            elif success_rate >= 0.5:
+                # Medium success rate → normal retries
+                multiplier = 1.0
+            else:
+                # Low success rate → slower retries (problem is difficult)
+                multiplier = 2.0
+
+        except Exception as e:
+            # KB not available - use default multiplier
+            logger.debug(f"KB lookup failed for adaptive delay: {e}")
+            multiplier = 1.0
+
+        # Error-type specific adjustments
+        if last_error:
+            error_lower = last_error.lower()
+
+            # Network errors → retry faster
+            if any(keyword in error_lower for keyword in ['network', 'timeout', 'connection', 'unreachable']):
+                multiplier *= 0.7
+
+            # Permission errors → retry slower (unlikely to change quickly)
+            elif any(keyword in error_lower for keyword in ['permission', 'denied', 'forbidden', 'unauthorized']):
+                multiplier *= 1.5
+
+            # Resource errors → moderate delay
+            elif any(keyword in error_lower for keyword in ['resource', 'busy', 'locked', 'unavailable']):
+                multiplier *= 1.2
+
+        # Calculate final delay
+        delay = base_delay * multiplier
+
+        # Cap at minimum 1s and maximum 60s (1 minute)
+        delay = max(1.0, min(60.0, delay))
+
+        return delay
+
     def _get_status_channel(self):
         """Holt den Status-Channel für Live-Updates"""
         if not self.bot:
             return None
         # Verwende den Approval-Channel für Live-Updates
         try:
-            approval_channel_id = 1438503737315299351  # auto-remediation-approvals
+            # Get approvals channel from config, fallback to critical channel
+            approval_channel_id = self.config.auto_remediation.get('notifications', {}).get('approvals_channel')
+            if not approval_channel_id:
+                approval_channel_id = self.config.critical_channel
             channel = self.bot.get_channel(approval_channel_id)
             return channel
         except Exception as e:
@@ -712,8 +780,10 @@ Ausgabe als JSON:
                 logger.warning("⚠️ Kein Bot verfügbar für Approval - Auto-Approve")
                 return True
 
-            # Get approval channel
-            approval_channel_id = 1438503737315299351  # auto-remediation-approvals
+            # Get approval channel from config, fallback to critical channel
+            approval_channel_id = self.config.auto_remediation.get('notifications', {}).get('approvals_channel')
+            if not approval_channel_id:
+                approval_channel_id = self.config.critical_channel
             channel = self.bot.get_channel(approval_channel_id)
 
             if not channel:
@@ -868,8 +938,10 @@ Ausgabe als JSON:
         execution_channel = None
         if self.bot:
             try:
-                # Send to remediation-alerts channel for live updates
-                channel_id = 1438503736220586164  # auto-remediation-alerts
+                # Send to remediation-alerts channel for live updates (from config, fallback to critical)
+                channel_id = self.config.auto_remediation.get('notifications', {}).get('alerts_channel')
+                if not channel_id:
+                    channel_id = self.config.critical_channel
                 execution_channel = self.bot.get_channel(channel_id)
             except Exception as e:
                 logger.warning(f"⚠️ Konnte Execution-Channel nicht laden: {e}")
@@ -1113,7 +1185,10 @@ Ausgabe als JSON:
         execution_channel = None
         if self.bot:
             try:
-                channel_id = 1438503736220586164  # auto-remediation-alerts
+                # Get alerts channel from config, fallback to critical channel
+                channel_id = self.config.auto_remediation.get('notifications', {}).get('alerts_channel')
+                if not channel_id:
+                    channel_id = self.config.critical_channel
                 execution_channel = self.bot.get_channel(channel_id)
             except Exception as e:
                 logger.warning(f"⚠️ Konnte Execution-Channel nicht laden: {e}")
@@ -1478,7 +1553,19 @@ Ausgabe als JSON:
             )
             await exec_message.edit(embed=exec_embed)
 
-        verification_success = await self._verify_project_fixes(project_path, project_name, project_events)
+        # Extract before_counts from events
+        before_counts = {}
+        for event in project_events:
+            if event.source == 'trivy':
+                # Extract vulnerability counts from event details
+                details = event.details
+                before_counts['critical'] = details.get('total_critical', 0)
+                before_counts['high'] = details.get('total_high', 0)
+                before_counts['medium'] = details.get('total_medium', 0)
+                before_counts['low'] = details.get('total_low', 0)
+                break  # Use first trivy event
+
+        verification_success = await self._verify_project_fixes(project_path, project_name, project_events, before_counts)
 
         if not verification_success:
             logger.error(f"❌ Verification fehlgeschlagen für {project_name}")
@@ -1505,7 +1592,7 @@ Ausgabe als JSON:
 
         return True
 
-    async def _verify_project_fixes(self, project_path: str, project_name: str, project_events: List = None) -> bool:
+    async def _verify_project_fixes(self, project_path: str, project_name: str, project_events: List = None, before_counts: Dict = None) -> bool:
         """
         Verifiziert ob Fixes erfolgreich waren durch Re-Scan
 
@@ -1515,6 +1602,7 @@ Ausgabe als JSON:
             project_path: Pfad zum Projekt
             project_name: Name des Projekts
             project_events: Optional - Liste der Events für dieses Projekt (um Image-Namen zu extrahieren)
+            before_counts: Optional - Vulnerability counts vor dem Fix (für Vergleich)
         """
         import subprocess
         import json
@@ -1621,15 +1709,39 @@ Ausgabe als JSON:
                 logger.info(f"      CRITICAL: {critical_count}")
                 logger.info(f"      HIGH: {high_count}")
 
-                # Success criteria: No critical vulnerabilities
-                if critical_count == 0:
-                    logger.info(f"   ✅ Keine CRITICAL Vulnerabilities mehr!")
-                    return True
+                # Compare with before_counts if available
+                if before_counts:
+                    before_critical = before_counts.get('critical', 0)
+                    before_high = before_counts.get('high', 0)
+
+                    improvements = {
+                        'critical': before_critical - critical_count,
+                        'high': before_high - high_count
+                    }
+
+                    logger.info(f"   📊 Comparison with before fix:")
+                    logger.info(f"      CRITICAL: {before_critical} → {critical_count} (Δ {improvements['critical']:+d})")
+                    logger.info(f"      HIGH: {before_high} → {high_count} (Δ {improvements['high']:+d})")
+
+                    # Success criteria: No critical vulnerabilities OR significant improvement
+                    if critical_count == 0:
+                        logger.info(f"   ✅ Keine CRITICAL Vulnerabilities mehr!")
+                        return True
+                    elif improvements['critical'] > 0 or improvements['high'] > 0:
+                        logger.info(f"   ✅ Verbesserung erkannt: CRITICAL -{improvements['critical']}, HIGH -{improvements['high']}")
+                        return True
+                    else:
+                        logger.warning(f"   ⚠️ Keine Verbesserung erkannt - Fix möglicherweise fehlgeschlagen")
+                        return False
                 else:
-                    logger.warning(f"   ⚠️ Noch {critical_count} CRITICAL Vulnerabilities vorhanden")
-                    # For now, still consider it success if we reduced them
-                    # TODO: Implement comparison with before/after counts
-                    return True
+                    # No before_counts available, use simple criteria
+                    if critical_count == 0:
+                        logger.info(f"   ✅ Keine CRITICAL Vulnerabilities mehr!")
+                        return True
+                    else:
+                        logger.warning(f"   ⚠️ Noch {critical_count} CRITICAL Vulnerabilities vorhanden")
+                        # Without before_counts, we can't verify improvement, assume success
+                        return True
 
             else:
                 logger.warning(f"⚠️ Scan Output nicht gefunden: {scan_output}")
@@ -1830,6 +1942,7 @@ Ausgabe als JSON:
                     max_retries = 3
                     fix_success = False
                     last_error = None
+                    fix_start_time = time.time()
 
                     for attempt in range(1, max_retries + 1):
                         # Discord Live Update: Starting fix (with retry info)
@@ -1871,6 +1984,20 @@ Ausgabe als JSON:
                             self.event_history[event_signature] = self.event_history[event_signature][-10:]
                             self._save_event_history()
 
+                            # NEW: Record in Knowledge Base for AI learning
+                            try:
+                                kb = get_knowledge_base()
+                                duration = time.time() - fix_start_time
+                                kb.record_fix(
+                                    event=event.to_dict(),
+                                    strategy=strategy,
+                                    result='success',
+                                    duration_seconds=duration,
+                                    retry_count=attempt - 1
+                                )
+                            except Exception as kb_error:
+                                logger.debug(f"KB tracking failed: {kb_error}")
+
                             # Discord Live Update: Fix successful
                             if exec_message and exec_embed:
                                 current_field = exec_embed.fields[0]
@@ -1904,6 +2031,22 @@ Ausgabe als JSON:
                             self.event_history[event_signature] = self.event_history[event_signature][-10:]
                             self._save_event_history()
 
+                            # NEW: Record failure in Knowledge Base (only on last attempt)
+                            if attempt == max_retries:
+                                try:
+                                    kb = get_knowledge_base()
+                                    duration = time.time() - fix_start_time
+                                    kb.record_fix(
+                                        event=event.to_dict(),
+                                        strategy=strategy,
+                                        result='failure',
+                                        error_message=last_error,
+                                        duration_seconds=duration,
+                                        retry_count=attempt - 1
+                                    )
+                                except Exception as kb_error:
+                                    logger.debug(f"KB tracking failed: {kb_error}")
+
                             if attempt < max_retries:
                                 # Not the last attempt - retry!
                                 logger.info(f"      🔄 Retrying... ({attempt}/{max_retries})")
@@ -1920,8 +2063,14 @@ Ausgabe als JSON:
                                     )
                                     await exec_message.edit(embed=exec_embed)
 
-                                # Small delay before retry
-                                await asyncio.sleep(2)
+                                # Adaptive delay before retry based on success rate
+                                delay = self._calculate_adaptive_retry_delay(
+                                    event_signature=event_signature,
+                                    attempt=attempt,
+                                    last_error=last_error
+                                )
+                                logger.debug(f"      ⏱️ Adaptive delay: {delay}s")
+                                await asyncio.sleep(delay)
 
                     # Check if fix ultimately succeeded after all retries
                     if not fix_success:

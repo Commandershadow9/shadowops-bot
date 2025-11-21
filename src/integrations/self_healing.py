@@ -621,11 +621,17 @@ class SelfHealingCoordinator:
     async def _send_discord_notification(self, message: str, level: str = 'info'):
         """Send Discord notification (callback for Service Manager)"""
         try:
-            # Get appropriate channel based on level
+            # Get appropriate channel based on level from config
             if level == 'warning' or level == 'error':
-                channel_id = 1438503736220586164  # auto-remediation-alerts
+                # Try auto-remediation alerts channel, fallback to critical channel
+                channel_id = self.config.auto_remediation.get('notifications', {}).get('alerts_channel')
+                if not channel_id:
+                    channel_id = self.config.critical_channel
             else:
-                channel_id = 1438503699302957117  # bot-status
+                # Try bot status channel, fallback to critical channel
+                channel_id = self.config.channels.get('bot_status')
+                if not channel_id:
+                    channel_id = self.config.critical_channel
 
             channel = self.bot.get_channel(channel_id)
 

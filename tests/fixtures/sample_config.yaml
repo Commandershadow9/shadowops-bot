@@ -1,0 +1,62 @@
+# Sample Config for Testing
+
+discord:
+  token: test_discord_token_12345
+  guild_id: 123456789
+
+channels:
+  ai_learning: 111111111
+  security_alerts: 222222222
+  approval_requests: 333333333
+  execution_logs: 444444444
+
+ai:
+  ollama:
+    enabled: true
+    url: http://localhost:11434
+    model: phi3:mini
+    model_critical: llama3.1
+    hybrid_models: true
+    request_delay_seconds: 4.0
+
+  anthropic:
+    enabled: false
+    api_key: null
+    model: claude-3-5-sonnet-20241022
+
+  openai:
+    enabled: false
+    api_key: null
+    model: gpt-4o
+
+auto_remediation:
+  enabled: true
+  dry_run: false
+  approval_mode: paranoid
+  max_batch_size: 10
+  collection_window_seconds: 300
+
+  scan_intervals:
+    trivy: 21600
+    crowdsec: 30
+    fail2ban: 30
+    aide: 900
+
+projects:
+  shadowops-bot:
+    enabled: true
+    path: /home/user/shadowops-bot
+
+  guildscout:
+    enabled: true
+    path: /home/user/guildscout
+
+  nexus:
+    enabled: false
+    path: /home/user/nexus
+
+log_paths:
+  fail2ban: /var/log/fail2ban/fail2ban.log
+  crowdsec: /var/log/crowdsec/crowdsec.log
+  docker: /var/log/docker.log
+  shadowops: logs/shadowops.log

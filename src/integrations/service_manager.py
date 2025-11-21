@@ -31,6 +31,11 @@ class ServiceState(Enum):
     UNKNOWN = "unknown"
 
 
+class ServiceNotFoundError(Exception):
+    """Raised when a systemd service is not found"""
+    pass
+
+
 @dataclass
 class ServiceInfo:
     """Information about a service"""
@@ -123,6 +128,50 @@ class ServiceManager:
         }
 
         logger.info(f"🔧 Service Manager initialized ({len(self.services)} services)")
+
+    async def validate_all_services(self):
+        """
+        Validate that all systemd-based services exist
+        Should be called after initialization to catch configuration errors early
+        """
+        for service_name, service_info in self.services.items():
+            # Only validate systemctl-based services
+            if service_info.start_command and 'systemctl' in service_info.start_command:
+                exists = await self._validate_service(service_name)
+                if not exists:
+                    logger.warning(f"⚠️ Systemd service '{service_name}' not found - start/stop may fail")
+
+    async def _validate_service(self, service_name: str) -> bool:
+        """
+        Check if a systemd service exists
+
+        Args:
+            service_name: Name of the systemd service to check
+
+        Returns:
+            True if service exists, False otherwise
+
+        Raises:
+            ServiceNotFoundError: If service does not exist and is required
+        """
+        try:
+            # Check if service unit file exists
+            result = await self.executor.execute(
+                f"systemctl list-unit-files | grep -w {service_name}.service",
+                timeout=5,
+                sudo=False
+            )
+
+            if result.returncode == 0:
+                logger.debug(f"✅ Service {service_name} exists")
+                return True
+            else:
+                logger.warning(f"⚠️ Service {service_name} not found in systemd")
+                return False
+
+        except Exception as e:
+            logger.error(f"❌ Failed to validate service {service_name}: {e}")
+            return False
 
     async def get_service_state(self, service_name: str) -> ServiceState:
         """

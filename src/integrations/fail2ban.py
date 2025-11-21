@@ -19,6 +19,37 @@ class Fail2banMonitor:
         self.log_path = log_path
         self._last_position = 0
 
+    def validate_permissions(self) -> bool:
+        """
+        Check if bot has necessary permissions for fail2ban-client
+
+        Returns:
+            True if permissions are valid, False otherwise
+        """
+        try:
+            result = subprocess.run(
+                ['sudo', '-n', 'fail2ban-client', 'ping'],
+                capture_output=True,
+                text=True,
+                timeout=5
+            )
+
+            if result.returncode != 0:
+                print("❌ No permissions for fail2ban-client.")
+                print("   Bot needs sudo access without password for fail2ban-client.")
+                print("   Add to /etc/sudoers: 'username ALL=(ALL) NOPASSWD: /usr/bin/fail2ban-client'")
+                return False
+
+            print("✅ Fail2ban permissions validated successfully")
+            return True
+
+        except FileNotFoundError:
+            print("❌ fail2ban-client not found. Is Fail2ban installed?")
+            return False
+        except Exception as e:
+            print(f"❌ Failed to validate fail2ban permissions: {e}")
+            return False
+
     def get_new_bans(self) -> List[Dict[str, str]]:
         """
         Liest neue Bans aus dem Log

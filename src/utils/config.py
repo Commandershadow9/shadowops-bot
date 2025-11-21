@@ -5,8 +5,11 @@ Lädt YAML-Config und bietet Type-Safe Zugriff
 
 import yaml
 import os
+import logging
 from pathlib import Path
 from typing import Optional, Dict, Any, List
+
+logger = logging.getLogger('shadowops')
 
 
 class Config:
@@ -20,29 +23,133 @@ class Config:
     def load(self) -> None:
         """Lädt Config aus YAML-Datei"""
         if not self.config_path.exists():
-            raise FileNotFoundError(
-                f"Config-Datei nicht gefunden: {self.config_path}\n"
-                f"Erstelle config/config.yaml aus config.example.yaml!"
+            error_msg = (
+                f"\n{'='*70}\n"
+                f"❌ CONFIG-DATEI NICHT GEFUNDEN: {self.config_path}\n"
+                f"{'='*70}\n\n"
+                f"LÖSUNG:\n"
+                f"1. Kopiere die Example-Config:\n"
+                f"   cp config/config.example.yaml config/config.yaml\n\n"
+                f"2. Bearbeite die Config:\n"
+                f"   nano config/config.yaml\n\n"
+                f"3. Fülle mindestens diese Werte aus:\n"
+                f"   - discord.token (von https://discord.com/developers/applications)\n"
+                f"   - discord.guild_id (Discord Server ID)\n"
+                f"   - channels.critical (Channel ID für Alerts)\n\n"
+                f"TIP: Entwickler-Modus in Discord aktivieren für ID-Kopieren!\n"
+                f"{'='*70}\n"
             )
+            raise FileNotFoundError(error_msg)
 
-        with open(self.config_path, 'r', encoding='utf-8') as f:
-            self._config = yaml.safe_load(f)
+        # Load YAML with error handling
+        try:
+            with open(self.config_path, 'r', encoding='utf-8') as f:
+                self._config = yaml.safe_load(f)
+        except yaml.YAMLError as e:
+            error_msg = (
+                f"\n{'='*70}\n"
+                f"❌ YAML-SYNTAX-FEHLER in {self.config_path}\n"
+                f"{'='*70}\n\n"
+                f"Fehler: {e}\n\n"
+                f"LÖSUNG:\n"
+                f"- Prüfe YAML-Syntax (Einrückung, Doppelpunkte, Anführungszeichen)\n"
+                f"- Vergleiche mit config.example.yaml\n"
+                f"- Online YAML-Validator nutzen: https://www.yamllint.com/\n"
+                f"{'='*70}\n"
+            )
+            raise ValueError(error_msg) from e
 
+        # Validate config
         self._validate()
 
+        # Log successful load
+        if hasattr(logger, 'info'):
+            logger.info(f"✅ Config geladen: {self.config_path}")
+
     def _validate(self) -> None:
-        """Validiert Config-Werte"""
-        # Discord Token erforderlich
+        """Validiert Config-Werte mit detailliertem Feedback"""
+        errors = []
+        warnings = []
+
+        # === PFLICHTFELDER ===
+
+        # Discord Token
         if not self.discord_token or self.discord_token == "YOUR_BOT_TOKEN_HERE":
-            raise ValueError("Discord Token fehlt in config.yaml!")
+            errors.append(
+                "discord.token fehlt!\n"
+                "   → Hole Token von: https://discord.com/developers/applications\n"
+                "   → Bot → Reset Token → Kopieren → In config.yaml einfügen"
+            )
 
-        # Guild ID erforderlich
-        if not self.guild_id:
-            raise ValueError("Guild ID fehlt in config.yaml!")
+        # Guild ID
+        if not self.guild_id or self.guild_id == 0:
+            errors.append(
+                "discord.guild_id fehlt!\n"
+                "   → Discord Developer Mode aktivieren: Einstellungen → Erweitert\n"
+                "   → Rechtsklick auf Server → 'ID kopieren'\n"
+                "   → In config.yaml einfügen"
+            )
 
-        # Mindestens ein Channel erforderlich
-        if not self.fallback_channel:
-            raise ValueError("Mindestens ein Channel muss konfiguriert sein!")
+        # Mindestens ein Channel
+        if not self.fallback_channel or self.fallback_channel == 0:
+            errors.append(
+                "channels.critical fehlt!\n"
+                "   → Rechtsklick auf Channel → 'ID kopieren'\n"
+                "   → Mindestens channels.critical muss konfiguriert sein"
+            )
+
+        # === OPTIONALE ABER EMPFOHLENE FELDER ===
+
+        # Auto-Remediation
+        if not self.auto_remediation.get('enabled'):
+            warnings.append("auto_remediation.enabled ist false - Bot ist im passiven Modus")
+
+        # AI Service
+        ai_ollama = self._config.get('ai', {}).get('ollama', {}).get('enabled', False)
+        ai_claude_enabled = self._config.get('ai', {}).get('anthropic', {}).get('enabled', False)
+        ai_claude_key = self._config.get('ai', {}).get('anthropic', {}).get('api_key', '')
+        ai_openai_enabled = self._config.get('ai', {}).get('openai', {}).get('enabled', False)
+        ai_openai_key = self._config.get('ai', {}).get('openai', {}).get('api_key', '')
+
+        ai_claude = ai_claude_enabled and ai_claude_key
+        ai_openai = ai_openai_enabled and ai_openai_key
+
+        if not (ai_ollama or ai_claude or ai_openai):
+            warnings.append(
+                "Keine AI-Services konfiguriert!\n"
+                "   → Mindestens Ollama, Claude oder OpenAI sollte aktiviert sein\n"
+                "   → Auto-Remediation benötigt AI für Analyse"
+            )
+
+        # Projects
+        if not self.projects:
+            warnings.append("Keine Projekte konfiguriert - Bot überwacht nur System")
+
+        # === FEHLERAUSGABE ===
+
+        if errors:
+            error_msg = (
+                f"\n{'='*70}\n"
+                f"❌ CONFIG-VALIDIERUNG FEHLGESCHLAGEN\n"
+                f"{'='*70}\n\n"
+                f"Folgende PFLICHTFELDER fehlen:\n\n"
+            )
+            for i, err in enumerate(errors, 1):
+                error_msg += f"{i}. {err}\n\n"
+
+            error_msg += (
+                f"{'='*70}\n"
+                f"LÖSUNG: Bearbeite config/config.yaml und fülle die Pflichtfelder!\n"
+                f"{'='*70}\n"
+            )
+            raise ValueError(error_msg)
+
+        # === WARNINGS AUSGEBEN ===
+
+        if warnings and hasattr(logger, 'warning'):
+            logger.warning("⚠️ Config-Warnings:")
+            for warn in warnings:
+                logger.warning(f"   - {warn}")
 
     # Discord Settings
     @property

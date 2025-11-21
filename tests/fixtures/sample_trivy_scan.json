@@ -1,0 +1,101 @@
+{
+  "SchemaVersion": 2,
+  "ArtifactName": "test-image:latest",
+  "ArtifactType": "container_image",
+  "Metadata": {
+    "ImageID": "sha256:abc123",
+    "DiffIDs": ["sha256:def456"],
+    "RepoTags": ["test-image:latest"],
+    "RepoDigests": []
+  },
+  "Results": [
+    {
+      "Target": "test-image:latest (alpine 3.18.0)",
+      "Class": "os-pkgs",
+      "Type": "alpine",
+      "Vulnerabilities": [
+        {
+          "VulnerabilityID": "CVE-2024-1234",
+          "PkgName": "openssl",
+          "InstalledVersion": "1.0.0-r0",
+          "FixedVersion": "1.1.0-r0",
+          "Layer": {
+            "Digest": "sha256:xyz789",
+            "DiffID": "sha256:abc123"
+          },
+          "SeveritySource": "nvd",
+          "PrimaryURL": "https://avd.aquasec.com/nvd/cve-2024-1234",
+          "Title": "openssl: critical security vulnerability",
+          "Description": "A critical security vulnerability was found in OpenSSL.",
+          "Severity": "CRITICAL",
+          "CweIDs": ["CWE-119"],
+          "CVSS": {
+            "nvd": {
+              "V3Vector": "CVSS:3.1/AV:N/AC:L/PR:N/UI:N/S:U/C:H/I:H/A:H",
+              "V3Score": 9.8
+            }
+          },
+          "References": [
+            "https://cve.mitre.org/cgi-bin/cvename.cgi?name=CVE-2024-1234"
+          ],
+          "PublishedDate": "2024-01-01T00:00:00Z",
+          "LastModifiedDate": "2024-01-02T00:00:00Z"
+        },
+        {
+          "VulnerabilityID": "CVE-2024-5678",
+          "PkgName": "curl",
+          "InstalledVersion": "7.88.0-r0",
+          "FixedVersion": "7.88.1-r0",
+          "Layer": {
+            "Digest": "sha256:xyz789",
+            "DiffID": "sha256:abc123"
+          },
+          "SeveritySource": "nvd",
+          "PrimaryURL": "https://avd.aquasec.com/nvd/cve-2024-5678",
+          "Title": "curl: high severity vulnerability",
+          "Description": "A high severity vulnerability was found in curl.",
+          "Severity": "HIGH",
+          "CweIDs": ["CWE-120"],
+          "CVSS": {
+            "nvd": {
+              "V3Vector": "CVSS:3.1/AV:N/AC:L/PR:N/UI:R/S:U/C:H/I:H/A:H",
+              "V3Score": 8.8
+            }
+          },
+          "References": [
+            "https://cve.mitre.org/cgi-bin/cvename.cgi?name=CVE-2024-5678"
+          ],
+          "PublishedDate": "2024-01-03T00:00:00Z",
+          "LastModifiedDate": "2024-01-04T00:00:00Z"
+        },
+        {
+          "VulnerabilityID": "CVE-2024-9999",
+          "PkgName": "libxml2",
+          "InstalledVersion": "2.10.0-r0",
+          "FixedVersion": "",
+          "Layer": {
+            "Digest": "sha256:xyz789",
+            "DiffID": "sha256:abc123"
+          },
+          "SeveritySource": "nvd",
+          "PrimaryURL": "https://avd.aquasec.com/nvd/cve-2024-9999",
+          "Title": "libxml2: medium severity vulnerability",
+          "Description": "A medium severity vulnerability was found in libxml2.",
+          "Severity": "MEDIUM",
+          "CweIDs": ["CWE-79"],
+          "CVSS": {
+            "nvd": {
+              "V3Vector": "CVSS:3.1/AV:N/AC:L/PR:N/UI:R/S:C/C:L/I:L/A:N",
+              "V3Score": 6.1
+            }
+          },
+          "References": [
+            "https://cve.mitre.org/cgi-bin/cvename.cgi?name=CVE-2024-9999"
+          ],
+          "PublishedDate": "2024-01-05T00:00:00Z",
+          "LastModifiedDate": "2024-01-06T00:00:00Z"
+        }
+      ]
+    }
+  ]
+}
