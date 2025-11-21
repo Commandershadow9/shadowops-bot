@@ -54,14 +54,13 @@ class DiscordChannelLogger:
         if not self.config:
             return
 
-        # Auto-Remediation channels
-        notifications = self.config.auto_remediation.get('notifications', {})
-        self.channels['alerts'] = notifications.get('alerts_channel')
-        self.channels['approvals'] = notifications.get('approvals_channel')
-        self.channels['stats'] = notifications.get('stats_channel')
-        self.channels['ai_learning'] = notifications.get('ai_learning_channel')
-        self.channels['code_fixes'] = notifications.get('code_fixes_channel')
-        self.channels['orchestrator'] = notifications.get('orchestrator_channel')
+        # Auto-Remediation channels with fallbacks to general channel map
+        self.channels['alerts'] = self.config.alerts_channel
+        self.channels['approvals'] = self.config.approvals_channel
+        self.channels['stats'] = self.config.stats_channel
+        self.channels['ai_learning'] = self.config.ai_learning_channel
+        self.channels['code_fixes'] = self.config.code_fixes_channel
+        self.channels['orchestrator'] = self.config.orchestrator_channel
 
         # Standard channels
         self.channels['performance'] = self.config.channels.get('performance')
