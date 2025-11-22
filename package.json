@@ -1,0 +1,9 @@
+{
+  "devDependencies": {
+    "esprima": "^4.0.1",
+    "typescript": "^5.9.3"
+  },
+  "scripts": {
+    "parse-js-ts": "node scripts/parse-js-ts.js"
+  }
+}

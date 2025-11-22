@@ -23,6 +23,7 @@ from utils.config import get_config
 from utils.logger import setup_logger
 from utils.embeds import EmbedBuilder, Severity
 from utils.discord_logger import DiscordChannelLogger
+from utils.health_server import HealthCheckServer
 
 from integrations.fail2ban import Fail2banMonitor
 from integrations.crowdsec import CrowdSecMonitor
@@ -33,6 +34,7 @@ from integrations.self_healing import SelfHealingCoordinator
 from integrations.orchestrator import RemediationOrchestrator
 from integrations.ai_service import AIService
 from integrations.context_manager import ContextManager
+from integrations.auto_fix_manager import AutoFixManager
 
 # Phase 5: Multi-Project Management (v3.1)
 from integrations.github_integration import GitHubIntegration
@@ -40,6 +42,10 @@ from integrations.project_monitor import ProjectMonitor
 from integrations.deployment_manager import DeploymentManager
 from integrations.incident_manager import IncidentManager
 from integrations.customer_notifications import CustomerNotificationManager
+
+# AI Learning System
+from integrations.ai_learning import ContinuousLearningAgent
+from integrations.research_fetcher import ResearchFetcher
 
 
 class ShadowOpsBot(commands.Bot):
@@ -79,8 +85,20 @@ class ShadowOpsBot(commands.Bot):
         self.incident_manager = None
         self.customer_notifications = None
 
+        # AI Learning System
+        self.continuous_learning = None
+
+        # Health Check HTTP Server
+        self.health_server = HealthCheckServer(bot=self, port=8766)
+
         # Discord Channel Logger (für kategorisierte Logs)
         self.discord_logger = DiscordChannelLogger(bot=None, config=self.config)
+        # Research Fetcher (sicherer Allowlist-Fetch)
+        self.research_fetcher = ResearchFetcher(config=self.config, discord_logger=self.discord_logger)
+        # Auto-Fix Manager (Reaction-gesteuert)
+        self.auto_fix_manager = AutoFixManager(config=self.config, ai_service=None)
+        # Auto-Fix Manager (Proposal/Reaction Flow)
+        self.auto_fix_manager = AutoFixManager(config=self.config, ai_service=None)
 
         # Rate Limiting für Alerts
         self.recent_alerts = {}
@@ -215,6 +233,7 @@ class ShadowOpsBot(commands.Bot):
                 ('ai_learning', '🧠-ai-learning', '🧠 AI Learning Logs: Code Analyzer, Git History, Knowledge Base'),
                 ('code_fixes', '🔧-code-fixes', '🔧 Code Fixer: Vulnerability Processing & Fix Generation'),
                 ('orchestrator', '⚡-orchestrator', '⚡ Orchestrator: Batch Event Coordination & Planning'),
+                ('ai_code_scans', '🔎-ai-code-scans', '🔎 Auto-Fix Vorschläge & Status (Reaction-basiert)')
             ]
 
             for channel_type, channel_name, description in auto_remediation_channels:
@@ -316,18 +335,23 @@ class ShadowOpsBot(commands.Bot):
             else:
                 self.logger.info("ℹ️ Alle Channels existieren bereits")
 
-            # Initialisiere Discord Channel Logger
-            self.logger.info("🔄 Initialisiere Discord Channel Logger...")
-            self.discord_logger.set_bot(self)
-            await self.discord_logger.start()
-            self.logger.info("✅ Discord Channel Logger bereit")
-
         except discord.Forbidden:
             self.logger.error("❌ FEHLER: Bot hat keine Berechtigung Channels zu erstellen!")
             self.logger.error("   Lösung: Gehe zu Discord Server Settings → Roles → ShadowOps")
             self.logger.error("   Aktiviere: 'Manage Channels' Permission")
         except Exception as e:
             self.logger.error(f"❌ Fehler beim Setup der Channels: {e}", exc_info=True)
+        # Initialisiere Discord Channel Logger
+        self.logger.info("🔄 Initialisiere Discord Channel Logger...")
+        self.discord_logger.set_bot(self)
+        await self.discord_logger.start()
+        self.logger.info("✅ Discord Channel Logger bereit")
+
+        # Initialisiere Auto-Fix Manager Channels
+        try:
+            await self.auto_fix_manager.ensure_channels(self)
+        except Exception as e:
+            self.logger.warning(f"Auto-Fix Channel Setup fehlgeschlagen: {e}")
 
     async def _update_all_channel_ids(self, channel_ids: dict):
         """
@@ -502,6 +526,8 @@ class ShadowOpsBot(commands.Bot):
                 context_manager=self.context_manager,
                 discord_logger=self.discord_logger
             )
+            # Set ai_service reference for Auto-Fix Manager
+            self.auto_fix_manager.ai_service = self.ai_service
             self.logger.info("✅ [2/5] AI Service bereit")
 
             # Initialisiere Self-Healing
@@ -666,8 +692,39 @@ class ShadowOpsBot(commands.Bot):
                 "• Knowledge Base: Aktiv",
                 0x00FF00
             )
+
+            # ============================================
+            # START CONTINUOUS LEARNING SYSTEM
+            # ============================================
+            self.logger.info("=" * 60)
+            self.logger.info("🧠 Starting Continuous Learning System...")
+            self.logger.info("=" * 60)
+
+            try:
+                self.continuous_learning = ContinuousLearningAgent(
+                    bot=self,
+                    config=self.config,
+                    ai_service=self.ai_service,
+                    context_manager=self.context_manager,
+                    discord_logger=self.discord_logger
+                )
+                await self.continuous_learning.start()
+                self.logger.info("✅ Continuous Learning System gestartet")
+            except Exception as e:
+                self.logger.error(f"❌ Continuous Learning System konnte nicht gestartet werden: {e}", exc_info=True)
+
         else:
             self.logger.info("ℹ️ Auto-Remediation deaktiviert (config: auto_remediation.enabled=false)")
+
+        # ============================================
+        # START HEALTH CHECK SERVER
+        # ============================================
+        self.logger.info("🔄 Starte Health Check Server...")
+        try:
+            await self.health_server.start()
+            self.logger.info("✅ Health Check Server gestartet (Port 8766)")
+        except Exception as e:
+            self.logger.error(f"❌ Health Check Server konnte nicht gestartet werden: {e}")
 
         # Starte Background Tasks
         # DISABLED: Old monitor_security replaced by Event Watcher System
@@ -699,6 +756,15 @@ class ShadowOpsBot(commands.Bot):
             0x2ECC71
         )
 
+    async def on_raw_reaction_add(self, payload: discord.RawReactionActionEvent):
+        """Handle Reaktionen für Auto-Fix Vorschläge (Reaction-basiert)."""
+        try:
+            if payload.user_id == self.user.id:
+                return
+            await self.auto_fix_manager.handle_reaction(self, payload)
+        except Exception as e:
+            self.logger.error(f"Reaction handler error: {e}", exc_info=True)
+
     async def on_guild_join(self, guild: discord.Guild):
         """Bot wurde zu Server hinzugefügt"""
         self.logger.info(f"➕ Bot zu Server hinzugefügt: {guild.name} ({guild.id})")
@@ -706,6 +772,42 @@ class ShadowOpsBot(commands.Bot):
     async def on_error(self, event: str, *args, **kwargs):
         """Error Handler"""
         self.logger.error(f"❌ Fehler in Event {event}", exc_info=True)
+
+    async def close(self):
+        """Clean shutdown of the bot"""
+        self.logger.info("🛑 Shutting down ShadowOps Bot...")
+
+        # Stop continuous learning system
+        if self.continuous_learning:
+            try:
+                await self.continuous_learning.stop()
+            except Exception as e:
+                self.logger.error(f"Error stopping continuous learning: {e}")
+
+        # Stop health check server
+        try:
+            await self.health_server.stop()
+        except Exception as e:
+            self.logger.error(f"Error stopping health server: {e}")
+
+        # Stop project monitor
+        if self.project_monitor:
+            try:
+                await self.project_monitor.stop_monitoring()
+            except Exception as e:
+                self.logger.error(f"Error stopping project monitor: {e}")
+
+        # Stop GitHub webhook server
+        if self.github_integration and self.github_integration.enabled:
+            try:
+                await self.github_integration.stop_webhook_server()
+            except Exception as e:
+                self.logger.error(f"Error stopping GitHub integration: {e}")
+
+        # Close parent bot
+        await super().close()
+
+        self.logger.info("✅ ShadowOps Bot shutdown complete")
 
     def is_rate_limited(self, alert_key: str, limit_seconds: Optional[int] = None) -> bool:
         """Prüft ob Alert rate-limited ist"""

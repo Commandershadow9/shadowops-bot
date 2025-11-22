@@ -259,7 +259,8 @@ class ContextManager:
                 'crowdsec': 'crowdsec',
                 'docker_scans': 'docker',
                 'aide': 'aide',
-                'ssh': 'ssh'
+                'ssh': 'ssh',
+                'bot_runtime': 'bot_runtime'
             }
 
             for config_key, tool_name in log_mapping.items():
@@ -267,6 +268,16 @@ class ContextManager:
                 if log_path:
                     log_paths[tool_name] = log_path
                     logger.debug(f"📝 Added log path from config: {tool_name} -> {log_path}")
+
+        # Auto-discover project logs (lightweight heuristic)
+        project_paths = self._get_project_paths()
+        for project_name, project_path in project_paths.items():
+            logs_dir = project_path / 'logs'
+            if logs_dir.exists() and logs_dir.is_dir():
+                for log_file in sorted(logs_dir.glob('*.log'))[:3]:  # cap to avoid noise
+                    key = f"{project_name}_{log_file.stem}"
+                    log_paths[key] = str(log_file)
+                    logger.debug(f"📝 Auto-added project log: {key} -> {log_file}")
 
         return log_paths
 

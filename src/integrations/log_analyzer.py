@@ -85,6 +85,13 @@ class LogAnalyzer:
             'timestamp': re.compile(r'(\d{4}-\d{2}-\d{2}\s+\d{2}:\d{2}:\d{2})')
         }
 
+        # === BOT RUNTIME LOG PATTERNS ===
+        self.bot_runtime_patterns = {
+            'error': re.compile(r'(ERROR|Error|Traceback|Exception)', re.IGNORECASE),
+            'warning': re.compile(r'(WARN|Warning)', re.IGNORECASE),
+            'timestamp': re.compile(r'(\d{4}-\d{2}-\d{2}\s+\d{2}:\d{2}:\d{2})')
+        }
+
     def parse_log_file(self, tool_name: str, max_age_hours: int = 24) -> List[Dict]:
         """
         Parse ein Log-File und extrahiere strukturierte Daten
@@ -124,6 +131,8 @@ class LogAnalyzer:
                 entries = self._parse_docker(lines, cutoff_time)
             elif tool_name == 'shadowops':
                 entries = self._parse_shadowops(lines, cutoff_time)
+            elif tool_name == 'bot_runtime':
+                entries = self._parse_bot_runtime(lines, cutoff_time)
             else:
                 # Generic parsing
                 entries = self._parse_generic(lines, cutoff_time)
@@ -334,6 +343,38 @@ class LogAnalyzer:
 
             if 'type' in entry or 'event' in entry:
                 entries.append(entry)
+
+        return entries
+
+    def _parse_bot_runtime(self, lines: List[str], cutoff_time: datetime) -> List[Dict]:
+        """Parse bot runtime log (/tmp/shadowops-bot.log)"""
+        entries = []
+
+        for line in lines:
+            ts_match = self.bot_runtime_patterns['timestamp'].search(line)
+            timestamp = None
+            if ts_match:
+                try:
+                    timestamp = datetime.strptime(ts_match.group(1), '%Y-%m-%d %H:%M:%S')
+                except:
+                    timestamp = None
+
+            if timestamp and timestamp < cutoff_time:
+                continue
+
+            level = None
+            if self.bot_runtime_patterns['error'].search(line):
+                level = 'error'
+            elif self.bot_runtime_patterns['warning'].search(line):
+                level = 'warning'
+
+            if level:
+                entries.append({
+                    'timestamp': timestamp,
+                    'level': level,
+                    'message': line.strip(),
+                    'raw': line.strip()
+                })
 
         return entries
 
@@ -591,6 +632,16 @@ class LogAnalyzer:
                     context_parts.append("\n## Most Common Events")
                     for event, count in patterns['events'].most_common(5):
                         context_parts.append(f"- {event}: {count}x")
+            else:
+                # Generic logs (including bot_runtime/project logs)
+                if patterns.get('levels'):
+                    context_parts.append("## Log Levels")
+                    for level, count in patterns['levels'].most_common():
+                        context_parts.append(f"- {level.upper()}: {count}x")
+                if patterns.get('common_errors'):
+                    context_parts.append("\n## Common Errors/Warnings")
+                    for error, count in patterns['common_errors'].most_common(5):
+                        context_parts.append(f"- {error}... ({count}x)")
 
             # Add anomalies
             anomalies = self.detect_anomalies(tool_name)
@@ -628,3 +679,14 @@ class LogAnalyzer:
             return '\n\n'.join(insights)
         else:
             return "# LOG INSIGHTS\nNo log data available for analysis.\n"
+
+    def get_anomalies_summary(self, hours: int = 6) -> List[str]:
+        """Return list of anomaly summaries for alerting."""
+        alerts = []
+        for tool_name in self.log_paths.keys():
+            anomalies = self.detect_anomalies(tool_name, threshold=2.5)
+            if anomalies:
+                for anomaly in anomalies[:3]:
+                    hour = anomaly['hour'].strftime('%Y-%m-%d %H:00')
+                    alerts.append(f"{tool_name}: Spike {anomaly['count']} events at {hour} ({anomaly['deviation']:.1f}σ)")
+        return alerts

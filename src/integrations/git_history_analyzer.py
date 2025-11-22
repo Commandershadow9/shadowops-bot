@@ -99,8 +99,7 @@ class GitHistoryAnalyzer:
             git_command = [
                 'git', 'log',
                 f'--since={since_date}',
-                '--pretty=format:%H|%an|%ae|%ai|%s|%b',
-                '--no-merges'  # Skip merge commits for cleaner analysis
+                '--pretty=format:%H|%an|%ae|%ai|%s|%b'
             ]
 
             result = subprocess.run(
