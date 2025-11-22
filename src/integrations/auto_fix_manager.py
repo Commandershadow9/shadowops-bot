@@ -181,6 +181,18 @@ class AutoFixManager:
             logger.warning("Kein ai_code_scans Channel gefunden")
             return
 
+        # Ergänze Standard-Tests, falls keine angegeben
+        project_path = self._get_project_path(proposal.project)
+        default_tests = self._default_tests_for_project(proposal.project, project_path) if project_path else []
+        tests_list = proposal.tests or []
+        if not tests_list:
+            tests_list = default_tests
+        all_tests = tests_list.copy()
+        if proposal.suggested_tests:
+            all_tests += [f"(KI empfohlen) {t}" for t in proposal.suggested_tests]
+        if not all_tests:
+            all_tests = ["Keine Tests definiert/gefunden"]
+
         embed = discord.Embed(
             title=f"🔎 Fix-Vorschlag: {proposal.project}",
             description=proposal.summary,
@@ -192,9 +204,8 @@ class AutoFixManager:
                 value="\n".join([f"• {a}" for a in proposal.actions])[:1024],
                 inline=False
             )
-        all_tests = proposal.tests or []
-        if proposal.suggested_tests:
-            all_tests += [f"(KI empfohlen) {t}" for t in proposal.suggested_tests]
+        else:
+            embed.add_field(name="Geplante Actions", value="Keine spezifischen Actions erkannt", inline=False)
         if all_tests:
             embed.add_field(
                 name="Geplante Tests",
@@ -223,6 +234,8 @@ class AutoFixManager:
         # Nur Admins dürfen approvals auslösen
         admins = self.config.permissions.get("admins", []) if self.config else []
         if payload.user_id not in admins:
+            if channel:
+                await channel.send("⛔ Keine Berechtigung für Auto-Fix Approvals.")
             return
 
         proposal = self.proposals[payload.message_id]
@@ -240,7 +253,7 @@ class AutoFixManager:
             return
 
         run_tests_only = emoji == "🧪"
-        await channel.send(f"🧪 Starte {'Tests' if run_tests_only else 'Umsetzungs-'}Pipeline für {proposal.project} ...")
+        await channel.send(f"🧪 Starte {'Tests' if run_tests_only else 'Umsetzungs-'}Pipeline für {proposal.project} ... (ausgelöst von <@{payload.user_id}>)")
 
         await self._execute_pipeline(bot, proposal, channel, run_tests_only=run_tests_only)
 
