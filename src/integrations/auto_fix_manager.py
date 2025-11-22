@@ -54,6 +54,7 @@ class AutoFixManager:
         self.channel_id = None
         self._load_state()
         self.max_patch_size = 12000  # chars safeguard
+        self._pytest_install_attempted = False
         # Per-Project Profile (Tests/Lint)
         self.project_profiles = {
             "shadowops-bot": {
@@ -520,10 +521,53 @@ class AutoFixManager:
             if venv_pytest.exists():
                 rest = stripped.split(" ", 1)[1] if " " in stripped else ""
                 return f"{venv_pytest} {rest}".strip(), None
+            # Versuche pytest zu installieren (einmal pro Manager-Instanz)
+            if not self._pytest_install_attempted:
+                self._pytest_install_attempted = True
+                success, output = self._install_pytest(repo_root)
+                if success:
+                    # Prüfe erneut
+                    if venv_pytest.exists():
+                        rest = stripped.split(" ", 1)[1] if " " in stripped else ""
+                        return f"{venv_pytest} {rest}".strip(), None
+                    if shutil.which("pytest"):
+                        return stripped, None
+                return None, f"Pytest Installation fehlgeschlagen: {output[:200]}"
             return None, "Pytest nicht installiert (kein pytest gefunden)"
 
         # Standard: nichts zu tun
         return stripped, None
+
+    def _install_pytest(self, repo_root: Path) -> Tuple[bool, str]:
+        """
+        Installiert pytest in der bevorzugten Umgebung.
+        Priorität: venv/pip -> pip3 -> pip.
+        """
+        candidates = []
+        venv_pip = repo_root / "venv" / "bin" / "pip"
+        if venv_pip.exists():
+            candidates.append(str(venv_pip))
+        candidates.extend([shutil.which("pip3"), shutil.which("pip")])
+        candidates = [c for c in candidates if c]
+
+        if not candidates:
+            return False, "Kein pip gefunden"
+
+        for pip_cmd in candidates:
+            try:
+                res = subprocess.run(
+                    [pip_cmd, "install", "pytest"],
+                    capture_output=True,
+                    text=True,
+                    timeout=120
+                )
+                if res.returncode == 0:
+                    return True, res.stdout.strip() or "pytest installiert"
+                output = (res.stderr or res.stdout or "").strip()
+            except Exception as e:
+                output = str(e)
+            # falls erster Kandidat scheitert, probiere nächsten
+        return False, output or "Installation fehlgeschlagen"
 
     async def _run_command(self, cmd: str, cwd: Path, timeout: int = 300) -> Dict[str, Any]:
         """Führt einen Shell-Befehl aus und gibt Resultat zurück."""
