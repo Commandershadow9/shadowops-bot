@@ -512,25 +512,30 @@ class AutoFixManager:
 
         # Spezielle Behandlung für pytest
         if stripped.startswith("pytest"):
-            # Direkter Fund im PATH?
-            if shutil.which("pytest"):
-                return stripped, None
-            # venv-Fallback im Repo
             repo_root = Path(__file__).parent.parent.parent
+            need_cov = self._needs_pytest_cov(repo_root)
+            requested_packages = ["pytest", "pytest-cov"] if need_cov else ["pytest"]
+
+            # Direkter Fund im PATH?
+            if shutil.which("pytest") and (not need_cov or self._has_pytest_cov()):
+                return stripped, None
+
+            # venv-Fallback im Repo
             venv_pytest = repo_root / "venv" / "bin" / "pytest"
-            if venv_pytest.exists():
+            if venv_pytest.exists() and (not need_cov or self._has_pytest_cov(venv_pytest.parent)):
                 rest = stripped.split(" ", 1)[1] if " " in stripped else ""
                 return f"{venv_pytest} {rest}".strip(), None
-            # Versuche pytest zu installieren (einmal pro Manager-Instanz)
+
+            # Versuche pytest (ggf. mit pytest-cov) zu installieren (einmal pro Manager-Instanz)
             if not self._pytest_install_attempted:
                 self._pytest_install_attempted = True
-                success, output = self._install_pytest(repo_root)
+                success, output = self._install_pytest(repo_root, requested_packages)
                 if success:
                     # Prüfe erneut
-                    if venv_pytest.exists():
+                    if venv_pytest.exists() and (not need_cov or self._has_pytest_cov(venv_pytest.parent)):
                         rest = stripped.split(" ", 1)[1] if " " in stripped else ""
                         return f"{venv_pytest} {rest}".strip(), None
-                    if shutil.which("pytest"):
+                    if shutil.which("pytest") and (not need_cov or self._has_pytest_cov()):
                         return stripped, None
                 return None, f"Pytest Installation fehlgeschlagen: {output[:200]}"
             return None, "Pytest nicht installiert (kein pytest gefunden)"
@@ -538,9 +543,9 @@ class AutoFixManager:
         # Standard: nichts zu tun
         return stripped, None
 
-    def _install_pytest(self, repo_root: Path) -> Tuple[bool, str]:
+    def _install_pytest(self, repo_root: Path, packages: List[str]) -> Tuple[bool, str]:
         """
-        Installiert pytest in der bevorzugten Umgebung.
+        Installiert pytest (+ optionale Plugins) in der bevorzugten Umgebung.
         Priorität: venv/pip -> pip3 -> pip.
         """
         candidates = []
@@ -556,18 +561,51 @@ class AutoFixManager:
         for pip_cmd in candidates:
             try:
                 res = subprocess.run(
-                    [pip_cmd, "install", "pytest"],
+                    [pip_cmd, "install"] + packages,
                     capture_output=True,
                     text=True,
                     timeout=120
                 )
                 if res.returncode == 0:
-                    return True, res.stdout.strip() or "pytest installiert"
+                    return True, res.stdout.strip() or f"{' '.join(packages)} installiert"
                 output = (res.stderr or res.stdout or "").strip()
             except Exception as e:
                 output = str(e)
             # falls erster Kandidat scheitert, probiere nächsten
         return False, output or "Installation fehlgeschlagen"
+
+    def _needs_pytest_cov(self, repo_root: Path) -> bool:
+        """Prüft, ob pytest.ini Coverage-Flags enthält, die pytest-cov erfordern."""
+        ini_path = repo_root / "pytest.ini"
+        if not ini_path.exists():
+            return False
+        try:
+            text = ini_path.read_text(encoding="utf-8")
+            return "--cov" in text or "cov-report" in text
+        except Exception:
+            return False
+
+    def _has_pytest_cov(self, bin_dir: Optional[Path] = None) -> bool:
+        """Rudimentäre Prüfung, ob pytest-cov verfügbar ist."""
+        python_exe = None
+        if bin_dir:
+            cand = bin_dir / "python"
+            if cand.exists():
+                python_exe = str(cand)
+        if not python_exe:
+            python_exe = shutil.which("python3") or shutil.which("python")
+        if not python_exe:
+            return False
+        try:
+            res = subprocess.run(
+                [python_exe, "-c", "import pytest_cov"],
+                capture_output=True,
+                text=True,
+                timeout=5
+            )
+            return res.returncode == 0
+        except Exception:
+            return False
 
     async def _run_command(self, cmd: str, cwd: Path, timeout: int = 300) -> Dict[str, Any]:
         """Führt einen Shell-Befehl aus und gibt Resultat zurück."""
