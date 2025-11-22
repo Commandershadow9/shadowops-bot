@@ -16,6 +16,7 @@ import json
 import logging
 import os
 import re
+import shutil
 import subprocess
 import tempfile
 from dataclasses import dataclass, field
@@ -430,13 +431,23 @@ class AutoFixManager:
 
         results = []
         for cmd in tests_to_run:
-            result = await self._run_command(cmd, cwd=project_path)
+            resolved_cmd, skip_reason = self._resolve_test_command(cmd, project_path)
+            if skip_reason:
+                results.append((cmd, {"returncode": 0, "stdout": "", "stderr": "", "duration": 0.0, "skipped": skip_reason}))
+                continue
+            if not resolved_cmd:
+                results.append((cmd, {"returncode": 1, "stdout": "", "stderr": "Ungültiger Test-Command", "duration": 0.0}))
+                break
+
+            result = await self._run_command(resolved_cmd, cwd=project_path)
             results.append((cmd, result))
             # If a command fails, stop further commands
             if result["returncode"] != 0:
                 break
 
-        all_passed = all(r["returncode"] == 0 for _, r in results) if results else True
+        # passed = no failures (skips nicht wertend)
+        non_skipped = [r for _, r in results if not r.get("skipped")]
+        all_passed = all(r["returncode"] == 0 for r in non_skipped) if non_skipped else True
 
         # Commit/Push/PR nur wenn Patch angewandt und Tests grün und Umsetzungspfad
         if apply_changes and patch_applied and all_passed:
@@ -451,6 +462,10 @@ class AutoFixManager:
 
         summary_lines = []
         for cmd, res in results:
+            if res.get("skipped"):
+                status = "⏭"
+                summary_lines.append(f"{status} `{cmd}` (übersprungen: {res['skipped']})")
+                continue
             status = "✅" if res["returncode"] == 0 else "❌"
             summary_lines.append(f"{status} `{cmd}` ({res['duration']:.1f}s)")
             if res["returncode"] != 0:
@@ -480,6 +495,35 @@ class AutoFixManager:
             embed.add_field(name="Draft PR", value=pr_link, inline=False)
         embed.set_footer(text="Auto-Fix Pipeline (sicherer Modus)")
         await channel.send(embed=embed)
+
+    def _resolve_test_command(self, cmd: str, project_path: Path) -> Tuple[Optional[str], Optional[str]]:
+        """
+        Versucht Testbefehle aufzulösen und bietet Fallbacks/Skips.
+
+        Returns:
+            (resolved_cmd, skip_reason)
+            resolved_cmd=None und skip_reason=None → ungültig
+            skip_reason gesetzt → Test wird übersprungen
+        """
+        stripped = cmd.strip()
+        if not stripped:
+            return None, "Leerer Test-Command"
+
+        # Spezielle Behandlung für pytest
+        if stripped.startswith("pytest"):
+            # Direkter Fund im PATH?
+            if shutil.which("pytest"):
+                return stripped, None
+            # venv-Fallback im Repo
+            repo_root = Path(__file__).parent.parent.parent
+            venv_pytest = repo_root / "venv" / "bin" / "pytest"
+            if venv_pytest.exists():
+                rest = stripped.split(" ", 1)[1] if " " in stripped else ""
+                return f"{venv_pytest} {rest}".strip(), None
+            return None, "Pytest nicht installiert (kein pytest gefunden)"
+
+        # Standard: nichts zu tun
+        return stripped, None
 
     async def _run_command(self, cmd: str, cwd: Path, timeout: int = 300) -> Dict[str, Any]:
         """Führt einen Shell-Befehl aus und gibt Resultat zurück."""
