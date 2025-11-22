@@ -15,6 +15,7 @@ import asyncio
 import json
 import logging
 import os
+import re
 import subprocess
 import tempfile
 from dataclasses import dataclass, field
@@ -410,9 +411,9 @@ class AutoFixManager:
                 apply_changes = False
             else:
                 branch_name = self._make_branch_name(proposal)
-                created = await self._create_branch(project_path, branch_name)
+                created, err = await self._create_branch(project_path, branch_name)
                 if not created:
-                    await channel.send("❌ Konnte Branch nicht erstellen.")
+                    await channel.send(f"❌ Konnte Branch nicht erstellen: {err}")
                     return
                 branch_created = True
                 # Patch-Generierung via KI
@@ -519,18 +520,35 @@ class AutoFixManager:
             return False
 
     def _make_branch_name(self, proposal: FixProposal) -> str:
-        slug = proposal.summary.lower().replace(" ", "-")[:30]
-        return f"ai-fix/{slug or 'proposal'}"
+        """
+        Erzeugt einen Git-Branch-Namen und entfernt ungültige Zeichen.
 
-    async def _create_branch(self, project_path: Path, branch_name: str) -> bool:
+        Beispiel: "Fix: docker scan" -> "ai-fix/fix-docker-scan"
+        """
+        raw = (proposal.summary or "proposal").lower()
+        slug = raw.replace(" ", "-")
+        slug = re.sub(r"[^a-z0-9-_]+", "-", slug)
+        slug = re.sub(r"-{2,}", "-", slug).strip("-")
+        slug = slug[:40] if slug else "proposal"
+        return f"ai-fix/{slug}"
+
+    async def _create_branch(self, project_path: Path, branch_name: str) -> Tuple[bool, str]:
         """Erstellt neuen Branch und wechselt hinein."""
         try:
             # fetch not needed in safe mode
-            subprocess.run(["git", "checkout", "-B", branch_name], cwd=project_path, check=True, timeout=20)
-            return True
+            res = subprocess.run(
+                ["git", "checkout", "-B", branch_name],
+                cwd=project_path,
+                capture_output=True,
+                text=True,
+                timeout=20
+            )
+            if res.returncode != 0:
+                return False, (res.stderr or res.stdout or "Unbekannter Fehler").strip()
+            return True, ""
         except Exception as e:
             logger.debug(f"create branch failed: {e}")
-            return False
+            return False, str(e)
 
     async def _get_diff_stat(self, project_path: Path) -> str:
         try:
