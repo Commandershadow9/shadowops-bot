@@ -77,30 +77,65 @@ class AutoFixManager:
         Sicherstellen, dass es einen Channel für Code-Scans gibt.
         Nutzt auto_create_channels Mechanik aus bot.setup; falls nicht angelegt, versucht hier eine minimale Prüfung.
         """
-        # Wenn Channel schon in Config, übernehmen
-        cid = self.config.channels.get("ai_code_scans")
-        if cid:
-            self.channel_id = cid
+        if not self.config:
             return
 
-        guild = bot.get_guild(self.config.guild_id)
+        # Wenn Channel schon in Config, übernehmen (nutzt Config-Fallbacks)
+        cid = None
+        if hasattr(self.config, "code_fixes_channel"):
+            cid = getattr(self.config, "code_fixes_channel", None)
+        if not cid and hasattr(self.config, "channels"):
+            cid = self.config.channels.get("ai_code_scans")  # Legacy-Key
+
+        if cid:
+            self.channel_id = int(cid)
+            return
+
+        guild = bot.get_guild(getattr(self.config, "guild_id", 0))
         if not guild:
             return
 
         # Versuche bestehenden Channel per Name zu finden
-        channel = discord.utils.get(guild.text_channels, name="🔎-ai-code-scans")
-        if channel:
-            self.channel_id = channel.id
-            return
+        names = []
+        channel_names_cfg = {}
+        try:
+            channel_names_cfg = self.config.auto_remediation.get("channel_names", {})
+        except Exception:
+            channel_names_cfg = {}
+
+        preferred_names = [
+            channel_names_cfg.get("code_fixes"),
+            "🔧-code-fixes",
+            "🔎-ai-code-scans",
+        ]
+
+        for name in preferred_names:
+            if not name:
+                continue
+            channel = discord.utils.get(guild.text_channels, name=name)
+            if channel:
+                self.channel_id = channel.id
+                return
 
         # Minimaler Fallback: erstelle Channel in Auto-Remediation Kategorie, falls erlaubt
         try:
+            auto_create = True
+            try:
+                auto_create = self.config.auto_remediation.get("auto_create_channels", True)
+            except Exception:
+                auto_create = True
+
+            if not auto_create:
+                logger.info("auto_create_channels=false -> erstelle keinen neuen Code-Fix Channel")
+                return
+
             category = discord.utils.get(guild.categories, name="🤖 Auto-Remediation")
             if not category:
                 category = await guild.create_category("🤖 Auto-Remediation", reason="Auto-Fix Manager Setup")
 
+            new_name = channel_names_cfg.get("code_fixes") or "🔧-code-fixes"
             new_channel = await guild.create_text_channel(
-                name="🔎-ai-code-scans",
+                name=new_name,
                 topic="Auto-Fix Vorschläge & Status (Reaction-basiert)",
                 category=category,
                 reason="Auto-Fix Manager Setup"
@@ -198,6 +233,8 @@ class AutoFixManager:
             description=proposal.summary,
             color=0x3498DB
         )
+        embed.add_field(name="Severity", value=str(proposal.severity or "unknown"), inline=True)
+        embed.add_field(name="Initiator", value=str(proposal.author_id) if proposal.author_id else "Auto-Learning", inline=True)
         if proposal.actions:
             embed.add_field(
                 name="Geplante Actions",
@@ -206,56 +243,142 @@ class AutoFixManager:
             )
         else:
             embed.add_field(name="Geplante Actions", value="Keine spezifischen Actions erkannt", inline=False)
+        if proposal.suggested_tests:
+            embed.add_field(
+                name="KI-empfohlene Tests",
+                value="\n".join([f"• {t}" for t in proposal.suggested_tests])[:1024],
+                inline=False
+            )
         if all_tests:
             embed.add_field(
                 name="Geplante Tests",
                 value="\n".join([f"• {t}" for t in all_tests])[:1024],
                 inline=False
             )
-        embed.set_footer(text=f"Reagiere mit ✅ (umsetzen), 🧪 (nur Tests), ❌ (verwerfen)")
+        embed.set_footer(text="Nutze die Buttons: ✅ Umsetzen, 🧪 Nur Tests, ❌ Verwerfen")
 
-        msg = await channel.send(embed=embed)
-        for emoji in ["✅", "🧪", "❌"]:
-            try:
-                await msg.add_reaction(emoji)
-            except Exception:
-                pass
+        view = self._build_view(bot, persistent=True)
+        msg = await channel.send(embed=embed, view=view)
 
         proposal.message_id = msg.id
         proposal.channel_id = msg.channel.id
         self.proposals[msg.id] = proposal
         self._save_state()
 
+    def register_persistent_view(self, bot):
+        """Register persistent view so buttons survive restarts."""
+        try:
+            bot.add_view(self._build_view(bot, persistent=True))
+            logger.info("✅ Persistent view for Auto-Fix proposals registriert")
+        except Exception as e:
+            logger.warning(f"Could not register persistent view: {e}")
+
+    def _build_view(self, bot, persistent: bool = False):
+        manager = self
+
+        class ProposalView(discord.ui.View):
+            def __init__(self):
+                super().__init__(timeout=None)
+
+            @discord.ui.button(
+                label="Umsetzen",
+                style=discord.ButtonStyle.success,
+                emoji="✅",
+                custom_id="auto_fix_approve" if persistent else None,
+            )
+            async def approve(self, interaction: discord.Interaction, button: discord.ui.Button):
+                await manager._handle_decision(bot, interaction, decision="approve")
+
+            @discord.ui.button(
+                label="Nur Tests",
+                style=discord.ButtonStyle.primary,
+                emoji="🧪",
+                custom_id="auto_fix_tests" if persistent else None,
+            )
+            async def tests(self, interaction: discord.Interaction, button: discord.ui.Button):
+                await manager._handle_decision(bot, interaction, decision="tests")
+
+            @discord.ui.button(
+                label="Verwerfen",
+                style=discord.ButtonStyle.danger,
+                emoji="❌",
+                custom_id="auto_fix_reject" if persistent else None,
+            )
+            async def reject(self, interaction: discord.Interaction, button: discord.ui.Button):
+                await manager._handle_decision(bot, interaction, decision="reject")
+
+        return ProposalView()
+
+    async def _handle_decision(self, bot, interaction: discord.Interaction, decision: str):
+        proposal = None
+        if interaction.message and interaction.message.id in self.proposals:
+            proposal = self.proposals[interaction.message.id]
+        if not proposal:
+            try:
+                await interaction.response.send_message("❌ Vorschlag nicht gefunden oder veraltet.", ephemeral=True)
+            except Exception:
+                await interaction.followup.send("❌ Vorschlag nicht gefunden oder veraltet.", ephemeral=True)
+            return
+
+        admin_ids: List[int] = []
+        if self.config:
+            try:
+                admin_ids = list(getattr(self.config, "admin_user_ids", []))
+            except Exception:
+                admin_ids = []
+            if not admin_ids and hasattr(self.config, "permissions"):
+                try:
+                    admin_ids = [int(a) for a in self.config.permissions.get("admins", [])]
+                except Exception:
+                    admin_ids = []
+
+        if admin_ids and interaction.user.id not in admin_ids:
+            try:
+                await interaction.response.send_message("⛔ Keine Berechtigung für Auto-Fix Approvals.", ephemeral=True)
+            except Exception:
+                await interaction.followup.send("⛔ Keine Berechtigung für Auto-Fix Approvals.", ephemeral=True)
+            return
+
+        if decision == "reject":
+            try:
+                await interaction.response.send_message(f"❌ Vorschlag verworfen: {proposal.project}", ephemeral=False)
+            except Exception:
+                await interaction.followup.send(f"❌ Vorschlag verworfen: {proposal.project}", ephemeral=False)
+            return
+
+        run_tests_only = decision == "tests"
+        # Sofortige Acknowledgement, damit Interaction nicht timed-out
+        try:
+            await interaction.response.defer(ephemeral=False, thinking=True)
+        except Exception:
+            pass
+        try:
+            await interaction.followup.send(
+                f"🧪 Starte {'Tests' if run_tests_only else 'Umsetzungs-'}Pipeline für {proposal.project} ... (ausgelöst von {interaction.user.mention})",
+                ephemeral=False
+            )
+        except Exception as e:
+            logger.debug(f"Followup send failed: {e}")
+        channel = interaction.channel or bot.get_channel(proposal.channel_id)
+        try:
+            await self._execute_pipeline(bot, proposal, channel, run_tests_only=run_tests_only)
+        except Exception as e:
+            msg = f"❌ Pipeline Fehler: {e}"
+            try:
+                await interaction.followup.send(msg, ephemeral=False)
+            except Exception:
+                try:
+                    await interaction.response.send_message(msg, ephemeral=False)
+                except Exception:
+                    pass
+
     async def handle_reaction(self, bot, payload: discord.RawReactionActionEvent):
         """Verarbeitet Reaktionen auf Vorschlags-Messages."""
         if payload.message_id not in self.proposals:
             return
 
-        # Nur Admins dürfen approvals auslösen
-        admins = self.config.permissions.get("admins", []) if self.config else []
-        if payload.user_id not in admins:
-            if channel:
-                await channel.send("⛔ Keine Berechtigung für Auto-Fix Approvals.")
-            return
-
-        proposal = self.proposals[payload.message_id]
-        emoji = str(payload.emoji)
-        channel = bot.get_channel(payload.channel_id)
-        if not channel:
-            return
-        try:
-            message = await channel.fetch_message(payload.message_id)
-        except Exception:
-            return
-
-        if emoji == "❌":
-            await channel.send(f"❌ Vorschlag verworfen: {proposal.project}")
-            return
-
-        run_tests_only = emoji == "🧪"
-        await channel.send(f"🧪 Starte {'Tests' if run_tests_only else 'Umsetzungs-'}Pipeline für {proposal.project} ... (ausgelöst von <@{payload.user_id}>)")
-
-        await self._execute_pipeline(bot, proposal, channel, run_tests_only=run_tests_only)
+        # Deprecated: Reactions werden nicht mehr genutzt; Buttons/Interactions verwenden.
+        return
 
     async def _execute_pipeline(self, bot, proposal: FixProposal, channel, run_tests_only: bool = False):
         """
@@ -267,6 +390,7 @@ class AutoFixManager:
             await channel.send(f"❌ Projektpfad nicht gefunden: {proposal.project}")
             return
 
+        apply_changes = not run_tests_only
         tests_to_run = proposal.tests or self._default_tests_for_project(proposal.project, project_path)
         if proposal.suggested_tests:
             tests_to_run.extend(proposal.suggested_tests)
@@ -279,28 +403,29 @@ class AutoFixManager:
         commit_hash = None
         diff_stat = ""
 
-        if not run_tests_only:
+        if apply_changes:
             clean = await self._check_git_clean(project_path)
             if not clean:
-                await channel.send("❌ Git-Working-Tree ist nicht clean. Abbruch (sicherheit).")
-                return
-            branch_name = self._make_branch_name(proposal)
-            created = await self._create_branch(project_path, branch_name)
-            if not created:
-                await channel.send("❌ Konnte Branch nicht erstellen.")
-                return
-            branch_created = True
-            # Patch-Generierung via KI
-            patch_text = await self._generate_patch(bot, proposal, project_path)
-            if patch_text:
-                applied, patch_output = await self._apply_patch(project_path, patch_text)
-                patch_applied = applied
-                if not applied:
-                    await channel.send(f"❌ Patch konnte nicht angewendet werden:\n{patch_output[:800]}")
-                    return
+                await channel.send("⚠️ Git-Working-Tree ist nicht clean. Führe nur Tests aus, keine Auto-Patches. Bitte Working Tree bereinigen und erneut versuchen.")
+                apply_changes = False
             else:
-                await channel.send("⚠️ Keine Patch-Änderung generiert; führe nur Tests auf aktuellem Stand aus.")
-            diff_stat = await self._get_diff_stat(project_path)
+                branch_name = self._make_branch_name(proposal)
+                created = await self._create_branch(project_path, branch_name)
+                if not created:
+                    await channel.send("❌ Konnte Branch nicht erstellen.")
+                    return
+                branch_created = True
+                # Patch-Generierung via KI
+                patch_text = await self._generate_patch(bot, proposal, project_path)
+                if patch_text:
+                    applied, patch_output = await self._apply_patch(project_path, patch_text)
+                    patch_applied = applied
+                    if not applied:
+                        await channel.send(f"❌ Patch konnte nicht angewendet werden:\n{patch_output[:800]}")
+                        return
+                else:
+                    await channel.send("⚠️ Keine Patch-Änderung generiert; führe nur Tests auf aktuellem Stand aus.")
+                diff_stat = await self._get_diff_stat(project_path)
 
         results = []
         for cmd in tests_to_run:
@@ -313,7 +438,7 @@ class AutoFixManager:
         all_passed = all(r["returncode"] == 0 for _, r in results) if results else True
 
         # Commit/Push/PR nur wenn Patch angewandt und Tests grün und Umsetzungspfad
-        if not run_tests_only and patch_applied and all_passed:
+        if apply_changes and patch_applied and all_passed:
             commit_hash = await self._commit_changes(project_path, proposal)
             pushed = False
             if commit_hash:
@@ -339,7 +464,7 @@ class AutoFixManager:
             description="\n".join(summary_lines)[:1900],
             color=color
         )
-        embed.add_field(name="Modus", value="Nur Tests" if run_tests_only else "Umsetzung (Branch, Patch, Tests)", inline=False)
+        embed.add_field(name="Modus", value="Nur Tests" if not apply_changes else "Umsetzung (Branch, Patch, Tests)", inline=False)
         if branch_created and branch_name:
             embed.add_field(name="Branch", value=branch_name, inline=False)
         if patch_applied:

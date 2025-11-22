@@ -350,6 +350,7 @@ class ShadowOpsBot(commands.Bot):
         # Initialisiere Auto-Fix Manager Channels
         try:
             await self.auto_fix_manager.ensure_channels(self)
+            self.auto_fix_manager.register_persistent_view(self)
         except Exception as e:
             self.logger.warning(f"Auto-Fix Channel Setup fehlgeschlagen: {e}")
 
@@ -542,6 +543,7 @@ class ShadowOpsBot(commands.Bot):
                 ai_service=self.ai_service,
                 self_healing_coordinator=self.self_healing,
                 approval_manager=self.self_healing.approval_manager,
+                config=self.config,
                 bot=self,
                 discord_logger=self.discord_logger
             )

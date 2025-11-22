@@ -84,16 +84,43 @@ class RemediationOrchestrator:
     - Sequentielle Ausführung mit System-Locks
     """
 
-    def __init__(self, ai_service, self_healing_coordinator, approval_manager, bot=None, discord_logger=None):
+    def __init__(self, ai_service=None, self_healing_coordinator=None, approval_manager=None,
+                 bot=None, discord_logger=None, config=None, **kwargs):
+        """
+        Initialize the orchestrator.
+
+        Args:
+            ai_service: AI service instance for plan generation
+            self_healing_coordinator: Self healing coordinator instance
+            approval_manager: Approval manager for remediation flows
+            bot: Discord bot reference for messaging
+            discord_logger: Discord logger helper
+            config: Loaded Config object (required for channel lookups)
+            **kwargs: legacy keywords (self_healing, config)
+        """
+        # Support legacy keyword `self_healing`
+        if self_healing_coordinator is None:
+            self_healing_coordinator = kwargs.get('self_healing')
+        if config is None:
+            config = kwargs.get('config')
+
         self.ai_service = ai_service
         self.self_healing = self_healing_coordinator
-        self.approval_manager = approval_manager
+        self.approval_manager = approval_manager or getattr(self.self_healing, 'approval_manager', None)
         self.bot = bot  # Discord Bot für Approval Messages
         self.discord_logger = discord_logger
+        self.config = config
 
         # Event Batching
-        self.collection_window_seconds = 10  # Sammelt Events über 10 Sekunden
-        self.max_batch_size = 10  # Max 10 Events pro Batch (Server-Schonung)
+        default_window = 10
+        default_batch_size = 10
+        if self.config and getattr(self.config, "auto_remediation", None):
+            auto_cfg = self.config.auto_remediation or {}
+            default_window = int(auto_cfg.get('collection_window_seconds', default_window) or default_window)
+            default_batch_size = int(auto_cfg.get('max_batch_size', default_batch_size) or default_batch_size)
+
+        self.collection_window_seconds = default_window  # Sammelt Events über 10 Sekunden
+        self.max_batch_size = default_batch_size  # Max 10 Events pro Batch (Server-Schonung)
         self.current_batch: Optional[SecurityEventBatch] = None
         self.batch_lock = asyncio.Lock()
         self.collection_task: Optional[asyncio.Task] = None
@@ -210,13 +237,12 @@ class RemediationOrchestrator:
         """Holt den Status-Channel für Live-Updates"""
         if not self.bot:
             return None
+        if not self.config:
+            logger.warning("⚠️ Keine Config verfügbar - Status-Channel kann nicht geladen werden")
+            return None
         # Verwende den Approval-Channel für Live-Updates
         try:
-            # Get approvals channel from config, fallback to critical channel
-            approval_channel_id = self.config.auto_remediation.get('notifications', {}).get('approvals_channel')
-            if not approval_channel_id:
-                approval_channel_id = self.config.critical_channel
-            channel = self.bot.get_channel(approval_channel_id)
+            channel = self.bot.get_channel(self.config.approvals_channel)
             return channel
         except Exception as e:
             logger.error(f"Fehler beim Holen des Status-Channels: {e}")
@@ -780,14 +806,15 @@ Ausgabe als JSON:
                 logger.warning("⚠️ Kein Bot verfügbar für Approval - Auto-Approve")
                 return True
 
-            # Get approval channel from config, fallback to critical channel
-            approval_channel_id = self.config.auto_remediation.get('notifications', {}).get('approvals_channel')
-            if not approval_channel_id:
-                approval_channel_id = self.config.critical_channel
-            channel = self.bot.get_channel(approval_channel_id)
+            if not self.config:
+                logger.error("❌ Keine Config vorhanden - Approval-Channel kann nicht bestimmt werden")
+                return False
+
+            # Get approval channel from config (includes fallback logic)
+            channel = self.bot.get_channel(self.config.approvals_channel)
 
             if not channel:
-                logger.error(f"❌ Approval Channel {approval_channel_id} nicht gefunden")
+                logger.error(f"❌ Approval Channel {self.config.approvals_channel} nicht gefunden")
                 return False
 
             # Create approval buttons
@@ -938,11 +965,10 @@ Ausgabe als JSON:
         execution_channel = None
         if self.bot:
             try:
-                # Send to remediation-alerts channel for live updates (from config, fallback to critical)
-                channel_id = self.config.auto_remediation.get('notifications', {}).get('alerts_channel')
-                if not channel_id:
-                    channel_id = self.config.critical_channel
-                execution_channel = self.bot.get_channel(channel_id)
+                # Send to remediation-alerts channel for live updates (from config, includes fallbacks)
+                if not self.config:
+                    raise ValueError("Config nicht gesetzt")
+                execution_channel = self.bot.get_channel(self.config.alerts_channel)
             except Exception as e:
                 logger.warning(f"⚠️ Konnte Execution-Channel nicht laden: {e}")
 
@@ -1185,11 +1211,10 @@ Ausgabe als JSON:
         execution_channel = None
         if self.bot:
             try:
-                # Get alerts channel from config, fallback to critical channel
-                channel_id = self.config.auto_remediation.get('notifications', {}).get('alerts_channel')
-                if not channel_id:
-                    channel_id = self.config.critical_channel
-                execution_channel = self.bot.get_channel(channel_id)
+                # Get alerts channel from config, fallback handled in config helper
+                if not self.config:
+                    raise ValueError("Config nicht gesetzt")
+                execution_channel = self.bot.get_channel(self.config.alerts_channel)
             except Exception as e:
                 logger.warning(f"⚠️ Konnte Execution-Channel nicht laden: {e}")
 

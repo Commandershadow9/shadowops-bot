@@ -291,5 +291,5 @@ class EmbedBuilder:
                 {"name": "🔒 AIDE", "value": f"{status_icon(aide_ok)}\n{aide_last_check or 'Kein Check'}", "inline": True},
                 {"name": "\u200b", "value": "\u200b", "inline": True},
             ],
-            footer_text="Nächster Check: Morgen 06:00 Uhr"
+            footer="Nächster Check: Morgen 06:00 Uhr"
         )
