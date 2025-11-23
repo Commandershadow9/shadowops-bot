@@ -67,7 +67,8 @@ class ProjectStatus:
 
     def update_online(self, response_time_ms: float):
         """Update status when health check succeeds"""
-        was_offline = not self.is_online
+        # Consider this a "recovery" only if we had consecutive failures
+        was_recovering = self.consecutive_failures > 0
 
         self.is_online = True
         self.last_check_time = datetime.utcnow()
@@ -82,7 +83,7 @@ class ProjectStatus:
         if len(self.response_times) > self.max_response_times:
             self.response_times.pop(0)
 
-        return was_offline  # Return True if this was a recovery
+        return was_recovering  # True if coming back from failures
 
     def update_offline(self, error: str):
         """Update status when health check fails"""
@@ -149,8 +150,9 @@ class ProjectMonitor:
         self._load_projects()
 
         # Discord channels
-        self.customer_status_channel_id = config.channels.get('customer_status', 0)
-        self.customer_alerts_channel_id = config.channels.get('customer_alerts', 0)
+        channels_cfg = self._get_config_section('channels', {})
+        self.customer_status_channel_id = channels_cfg.get('customer_status', 0)
+        self.customer_alerts_channel_id = channels_cfg.get('customer_alerts', 0)
 
         # Monitoring tasks
         self.monitor_tasks: Dict[str, asyncio.Task] = {}
@@ -162,8 +164,15 @@ class ProjectMonitor:
 
         # Persistence
         self.state_file = Path('data/project_monitor_state.json')
+        self.load_state_enabled = True
+        if isinstance(self.config, dict):
+            # Unit tests supply dict configs; default to skipping persisted state
+            self.load_state_enabled = self.config.get('load_state', False)
+            self.state_file = Path(self.config.get('state_file', 'data/project_monitor_state.json'))
+
         self.state_file.parent.mkdir(exist_ok=True)
-        self._load_state()
+        if self.load_state_enabled:
+            self._load_state()
 
         # Incident Manager (will be set by bot.py after initialization)
         self.incident_manager = None
@@ -172,7 +181,7 @@ class ProjectMonitor:
 
     def _load_projects(self):
         """Load project configurations from config"""
-        projects_config = getattr(self.config, 'projects', {})
+        projects_config = self._get_config_section('projects', {})
 
         for project_name, project_config in projects_config.items():
             if not project_config.get('enabled', False):
@@ -185,6 +194,20 @@ class ProjectMonitor:
 
             self.projects[project_name] = ProjectStatus(project_name, monitor_config)
             self.logger.info(f"✅ Loaded monitoring for project: {project_name}")
+
+    def _get_config_section(self, name: str, default=None):
+        """Safely fetch config sections from dicts or Config objects."""
+        if default is None:
+            default = {}
+        cfg = getattr(self.config, name, None)
+        if isinstance(cfg, dict):
+            return cfg
+        if isinstance(self.config, dict):
+            return self.config.get(name, default)
+        base_cfg = getattr(self.config, '_config', None)
+        if isinstance(base_cfg, dict):
+            return base_cfg.get(name, default)
+        return default
 
     def _load_state(self):
         """Load persisted monitoring state"""

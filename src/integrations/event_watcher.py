@@ -48,6 +48,9 @@ class SecurityEventWatcher:
     Watches all security integrations and triggers auto-remediation on new events.
     Uses efficient polling intervals based on event type urgency.
     """
+    # Class-level defaults allow easy test overrides
+    event_cache_file: Path = Path("logs/seen_events.json")
+    event_cache_duration: int = 86400  # 24 hours
 
     def __init__(self, bot, config: Dict):
         self.bot = bot
@@ -58,8 +61,9 @@ class SecurityEventWatcher:
         self.seen_events_lock = asyncio.Lock()  # Protect against race conditions
         self.event_history: List[SecurityEvent] = []
         self.max_history = 1000
-        self.event_cache_file = Path("/home/cmdshadow/shadowops-bot/logs/seen_events.json")
-        self.event_cache_duration = 86400  # 24 hours in seconds
+        # Instance paths default to class-level for easier patching in tests
+        self.event_cache_file = Path(self.event_cache_file)
+        self.event_cache_duration = self.event_cache_duration
 
         # Integration references
         self.trivy = None

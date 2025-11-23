@@ -341,6 +341,7 @@ class AIService:
 
 **Sample vulnerabilities:**
 {self._format_vulnerabilities(details.get('Vulnerabilities', [])[:5])}
+{self._format_single_vuln(details)}
 
 **Your Task:**
 1. Analyze the vulnerability types and affected packages
@@ -486,6 +487,23 @@ For external images (from Docker Hub) without security updates on current versio
                 f"({v.get('InstalledVersion', 'N/A')} → {v.get('FixedVersion', 'N/A')})"
             )
         return "\n".join(formatted)
+
+    def _format_single_vuln(self, details: dict) -> str:
+        """Fallback formatting when only a single vulnerability is provided."""
+        if not isinstance(details, dict):
+            return ""
+        vuln_id = details.get('VulnerabilityID') or details.get('CVE')
+        pkg = details.get('PkgName') or details.get('Package')
+        installed = details.get('InstalledVersion') or details.get('CurrentVersion')
+        fixed = details.get('FixedVersion') or details.get('PatchedVersion')
+
+        if not vuln_id and not pkg:
+            return ""
+
+        return "\n".join(filter(None, [
+            "Single Vulnerability Details:",
+            f"- {vuln_id or 'Unknown'}: {pkg or 'Unknown'} ({installed or 'N/A'} → {fixed or 'N/A'})"
+        ]))
 
     def _format_bans(self, bans: list) -> str:
         """Format ban list for prompt"""

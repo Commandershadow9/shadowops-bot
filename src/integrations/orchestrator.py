@@ -143,6 +143,23 @@ class RemediationOrchestrator:
         logger.info(f"   📦 Max Batch Size: {self.max_batch_size} Events (Server-Schonung)")
         logger.info("   🔒 Sequential Execution Mode: ON")
 
+    async def schedule_remediation(self, events: List) -> None:
+        """
+        Legacy wrapper used by older tests: create batches from incoming events.
+
+        This method only batches events and enqueues them for processing; it does
+        not execute remediation. It preserves max batch size semantics expected
+        by the unit tests.
+        """
+        if not events:
+            return
+
+        # Split events into batches respecting max_batch_size
+        for i in range(0, len(events), self.max_batch_size):
+            batch_events = events[i:i + self.max_batch_size]
+            batch = SecurityEventBatch(events=batch_events)
+            self.pending_batches.append(batch)
+
     def _load_event_history(self):
         """Load event history from disk for learning"""
         try:
