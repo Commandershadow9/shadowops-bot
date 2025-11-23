@@ -105,6 +105,10 @@ class ContinuousLearningAgent:
 
         # Discord channel
         self.learning_channel_id = config.channels.get('ai_learning', 0)
+        if not self.learning_channel_id:
+            # Fallback: auto-remediation notifications mapping
+            notifications = getattr(config, 'auto_remediation', {}).get('notifications', {}) if hasattr(config, 'auto_remediation') else {}
+            self.learning_channel_id = notifications.get('ai_learning_channel', 0)
 
         # Tasks
         self.continuous_task: Optional[asyncio.Task] = None

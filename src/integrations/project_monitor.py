@@ -144,6 +144,7 @@ class ProjectMonitor:
         self.bot = bot
         self.config = config
         self.logger = logger
+        self.startup_grace_seconds = 10  # Avoid race with health server on startup
 
         # Project configurations
         self.projects: Dict[str, ProjectStatus] = {}
@@ -306,6 +307,9 @@ class ProjectMonitor:
         Args:
             project: ProjectStatus instance to monitor
         """
+        # Give core services (e.g., health server) a moment to start
+        await asyncio.sleep(self.startup_grace_seconds)
+
         while True:
             try:
                 await self._check_project_health(project)
