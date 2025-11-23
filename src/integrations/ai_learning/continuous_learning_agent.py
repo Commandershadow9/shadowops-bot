@@ -105,10 +105,10 @@ class ContinuousLearningAgent:
 
         # Discord channel
         self.learning_channel_id = config.channels.get('ai_learning', 0)
-        if not self.learning_channel_id:
-            # Fallback: auto-remediation notifications mapping
-            notifications = getattr(config, 'auto_remediation', {}).get('notifications', {}) if hasattr(config, 'auto_remediation') else {}
-            self.learning_channel_id = notifications.get('ai_learning_channel', 0)
+        notifications = getattr(config, 'auto_remediation', {}).get('notifications', {}) if hasattr(config, 'auto_remediation') else {}
+        self._learning_channel_fallback = notifications.get('ai_learning_channel')
+        if not self.learning_channel_id and self._learning_channel_fallback:
+            self.learning_channel_id = self._learning_channel_fallback
 
         # Tasks
         self.continuous_task: Optional[asyncio.Task] = None
@@ -791,6 +791,10 @@ Liefer konkrete Hinweise für Stabilität, Wartbarkeit oder Security (keine Flos
         """Send a message to the AI learning channel"""
         try:
             channel = self.bot.get_channel(self.learning_channel_id)
+            if not channel and self._learning_channel_fallback:
+                channel = self.bot.get_channel(self._learning_channel_fallback)
+                if channel:
+                    self.learning_channel_id = self._learning_channel_fallback
             if not channel:
                 self.logger.warning("⚠️ AI learning channel not found")
                 return
@@ -817,6 +821,10 @@ Liefer konkrete Hinweise für Stabilität, Wartbarkeit oder Security (keine Flos
         """Send immediate notification for high-confidence insights"""
         try:
             channel = self.bot.get_channel(self.learning_channel_id)
+            if not channel and self._learning_channel_fallback:
+                channel = self.bot.get_channel(self._learning_channel_fallback)
+                if channel:
+                    self.learning_channel_id = self._learning_channel_fallback
             if not channel:
                 return
 
@@ -843,6 +851,10 @@ Liefer konkrete Hinweise für Stabilität, Wartbarkeit oder Security (keine Flos
         """Send periodic learning report to Discord"""
         try:
             channel = self.bot.get_channel(self.learning_channel_id)
+            if not channel and self._learning_channel_fallback:
+                channel = self.bot.get_channel(self._learning_channel_fallback)
+                if channel:
+                    self.learning_channel_id = self._learning_channel_fallback
             if not channel:
                 return
 
