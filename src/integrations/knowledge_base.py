@@ -271,21 +271,27 @@ class KnowledgeBase:
         results = cursor.fetchall()
 
         stats = {
-            'success': 0,
-            'failure': 0,
-            'partial': 0,
-            'total': 0,
+            'successful_attempts': 0,
+            'failed_attempts': 0,
+            'partial_attempts': 0,
+            'total_attempts': 0,
             'success_rate': 0.0
         }
 
         for row in results:
-            result_type = row[0]
-            count = row[1]
-            stats[result_type] = count
-            stats['total'] += count
+            result_type, count = row[0], row[1]
+            
+            if result_type == 'success':
+                stats['successful_attempts'] = count
+            elif result_type == 'failure':
+                stats['failed_attempts'] = count
+            elif result_type == 'partial':
+                stats['partial_attempts'] = count
+            
+            stats['total_attempts'] += count
 
-        if stats['total'] > 0:
-            stats['success_rate'] = stats['success'] / stats['total']
+        if stats['total_attempts'] > 0:
+            stats['success_rate'] = stats['successful_attempts'] / stats['total_attempts']
 
         return stats
 

@@ -116,11 +116,11 @@ class TestRecordFix:
         }
 
         fix_id = kb.record_fix(
-            event=event,
-            strategy=strategy,
-            result='failed',
-            error_message='Package not found',
-            retry_count=2
+            event={'source': 'test', 'signature': 'sig123'},
+            strategy={'description': 'test strategy'},
+            result='failure',
+            error_message='It failed',
+            duration_seconds=1.2
         )
 
         assert fix_id > 0
@@ -225,7 +225,7 @@ class TestSuccessRateTracking:
             kb.record_fix(
                 event={'source': 'trivy', 'event_type': 'vulnerability', 'severity': 'HIGH'},
                 strategy={'description': 'Failure', 'confidence': 0.6},
-                result='failed',
+                result='failure',
                 error_message='Error'
             )
 
@@ -249,6 +249,7 @@ class TestSuccessRateTracking:
                     'source': 'trivy',
                     'event_type': 'vulnerability',
                     'severity': 'HIGH',
+                    'signature': 'CVE-2024-1234',
                     'details': {'VulnerabilityID': 'CVE-2024-1234'}
                 },
                 strategy={'description': 'Fix CVE-1234', 'confidence': 0.9},
@@ -261,10 +262,11 @@ class TestSuccessRateTracking:
                     'source': 'trivy',
                     'event_type': 'vulnerability',
                     'severity': 'HIGH',
+                    'signature': 'CVE-2024-1234',
                     'details': {'VulnerabilityID': 'CVE-2024-1234'}
                 },
                 strategy={'description': 'Fix CVE-1234', 'confidence': 0.9},
-                result='failed'
+                result='failure'
             )
 
         # Record fixes for CVE-2024-5678 (low success)
@@ -274,10 +276,11 @@ class TestSuccessRateTracking:
                     'source': 'trivy',
                     'event_type': 'vulnerability',
                     'severity': 'HIGH',
+                    'signature': 'CVE-2024-5678',
                     'details': {'VulnerabilityID': 'CVE-2024-5678'}
                 },
                 strategy={'description': 'Fix CVE-5678', 'confidence': 0.7},
-                result='failed'
+                result='failure'
             )
 
         # Get success rate for specific CVE
@@ -347,7 +350,7 @@ class TestBestStrategies:
         kb.record_fix(
             event={'source': 'trivy', 'event_type': 'vulnerability', 'severity': 'HIGH'},
             strategy={'description': 'Strategy A', 'confidence': 0.9},
-            result='failed'
+            result='failure'
         )
 
         # Strategy B: 50% success (5/10)
@@ -361,7 +364,7 @@ class TestBestStrategies:
             kb.record_fix(
                 event={'source': 'trivy', 'event_type': 'vulnerability', 'severity': 'HIGH'},
                 strategy={'description': 'Strategy B', 'confidence': 0.7},
-                result='failed'
+                result='failure'
             )
 
         # Strategy C: 100% success (3/3)
@@ -496,7 +499,7 @@ class TestLearningInsights:
             kb.record_fix(
                 event={'source': 'trivy', 'event_type': 'vulnerability', 'severity': 'HIGH'},
                 strategy={'description': 'Try manual compilation', 'confidence': 0.6},
-                result='failed',
+                result='failure',
                 error_message='Compilation failed'
             )
 

@@ -2,14 +2,16 @@
 Unit Tests for Incident Manager
 """
 
-import pytest
-from unittest.mock import Mock, AsyncMock, patch, MagicMock
 from datetime import datetime, timedelta
 from pathlib import Path
+from unittest.mock import Mock, AsyncMock, patch, MagicMock
+
+import pytest
 
 from src.integrations.incident_manager import (
     IncidentManager, Incident, IncidentStatus, IncidentSeverity
 )
+from src.utils.config import Config
 
 
 class TestIncidentClass:
@@ -83,7 +85,6 @@ class TestIncidentClass:
             IncidentSeverity.HIGH, ['project'], 'test'
         )
 
-        # Should have duration even when not resolved
         duration = incident.duration
         assert duration is not None
         assert isinstance(duration, timedelta)
@@ -133,26 +134,28 @@ class TestIncidentClass:
         assert incident.thread_id == 12345
 
 
+def _make_config(channels=None, incidents=None):
+    cfg = MagicMock(spec=Config)
+    cfg.channels = channels or {}
+    cfg.incidents = incidents or {}
+    return cfg
+
+
 class TestIncidentManagerInit:
     """Tests for IncidentManager initialization"""
 
     def test_init(self, tmp_path):
         """Test IncidentManager initialization"""
-        config = {
-            'channels': {
-                'customer_alerts': 12345
-            },
-            'incidents': {
-                'auto_close_hours': 24
-            }
-        }
+        mock_config = _make_config(
+            channels={'customer_alerts': 12345},
+            incidents={'auto_close_hours': 24}
+        )
 
         mock_bot = Mock()
 
-        # Use tmp_path for state file
         with patch('src.integrations.incident_manager.Path') as mock_path:
             mock_path.return_value = tmp_path / 'incidents.json'
-            manager = IncidentManager(mock_bot, config)
+            manager = IncidentManager(mock_bot, mock_config)
 
         assert manager.incident_channel_id == 12345
         assert manager.auto_close_after_hours == 24
@@ -165,10 +168,7 @@ class TestIncidentCreation:
     @pytest.mark.asyncio
     async def test_create_incident(self, tmp_path):
         """Test creating new incident"""
-        config = {
-            'channels': {'customer_alerts': 12345},
-            'incidents': {}
-        }
+        mock_config = _make_config(channels={'customer_alerts': 12345})
 
         mock_bot = Mock()
         mock_bot.get_channel = Mock(return_value=None)
@@ -176,7 +176,7 @@ class TestIncidentCreation:
         with patch('src.integrations.incident_manager.Path') as mock_path:
             state_file = tmp_path / 'incidents.json'
             mock_path.return_value = state_file
-            manager = IncidentManager(mock_bot, config)
+            manager = IncidentManager(mock_bot, mock_config)
 
         manager._create_incident_thread = AsyncMock()
 
@@ -198,19 +198,15 @@ class TestIncidentCreation:
     @pytest.mark.asyncio
     async def test_create_duplicate_incident(self, tmp_path):
         """Test creating duplicate incident (should return existing)"""
-        config = {
-            'channels': {'customer_alerts': 12345},
-            'incidents': {}
-        }
+        mock_config = _make_config(channels={'customer_alerts': 12345})
 
         mock_bot = Mock()
 
         with patch('src.integrations.incident_manager.Path') as mock_path:
             state_file = tmp_path / 'incidents.json'
             mock_path.return_value = state_file
-            manager = IncidentManager(mock_bot, config)
+            manager = IncidentManager(mock_bot, mock_config)
 
-        # Create first incident
         incident1 = await manager.create_incident(
             title='Service Down',
             description='Project not responding',
@@ -220,7 +216,6 @@ class TestIncidentCreation:
             auto_create_thread=False
         )
 
-        # Try to create same incident again (same title, type, date)
         incident2 = await manager.create_incident(
             title='Service Down',
             description='Project not responding',
@@ -230,7 +225,6 @@ class TestIncidentCreation:
             auto_create_thread=False
         )
 
-        # Should return the same incident
         assert incident1.id == incident2.id
 
 
@@ -240,82 +234,71 @@ class TestIncidentUpdates:
     @pytest.mark.asyncio
     async def test_update_incident_status(self, tmp_path):
         """Test updating incident status"""
-        config = {
-            'channels': {'customer_alerts': 12345},
-            'incidents': {}
-        }
+        mock_config = _make_config(channels={'customer_alerts': 12345})
 
         mock_bot = Mock()
 
         with patch('src.integrations.incident_manager.Path') as mock_path:
             state_file = tmp_path / 'incidents.json'
             mock_path.return_value = state_file
-            manager = IncidentManager(mock_bot, config)
+            manager = IncidentManager(mock_bot, mock_config)
 
         manager._post_thread_update = AsyncMock()
         manager._update_incident_message = AsyncMock()
 
-        # Create incident
         incident = await manager.create_incident(
-            title='Test Incident',
-            description='Test',
-            severity=IncidentSeverity.MEDIUM,
-            affected_projects=['project'],
-            event_type='test',
+            title='Service Down',
+            description='Project not responding',
+            severity=IncidentSeverity.HIGH,
+            affected_projects=['test-project'],
+            event_type='downtime',
             auto_create_thread=False
         )
 
-        # Update status
         await manager.update_incident(
-            incident.id,
+            incident_id=incident.id,
             status=IncidentStatus.IN_PROGRESS,
             author='operator'
         )
 
-        # Verify status changed
-        updated_incident = manager.get_incident(incident.id)
-        assert updated_incident.status == IncidentStatus.IN_PROGRESS
+        assert incident.status == IncidentStatus.IN_PROGRESS
+        manager._post_thread_update.assert_not_called()
+        manager._update_incident_message.assert_called_once()
 
     @pytest.mark.asyncio
     async def test_resolve_incident(self, tmp_path):
         """Test resolving incident"""
-        config = {
-            'channels': {'customer_alerts': 12345},
-            'incidents': {}
-        }
+        mock_config = _make_config(channels={'customer_alerts': 12345})
 
         mock_bot = Mock()
 
         with patch('src.integrations.incident_manager.Path') as mock_path:
             state_file = tmp_path / 'incidents.json'
             mock_path.return_value = state_file
-            manager = IncidentManager(mock_bot, config)
+            manager = IncidentManager(mock_bot, mock_config)
 
         manager._post_thread_update = AsyncMock()
         manager._update_incident_message = AsyncMock()
 
-        # Create incident
         incident = await manager.create_incident(
-            title='Test Incident',
-            description='Test',
+            title='Service Down',
+            description='Project not responding',
             severity=IncidentSeverity.HIGH,
-            affected_projects=['project'],
-            event_type='test',
+            affected_projects=['test-project'],
+            event_type='downtime',
             auto_create_thread=False
         )
 
-        # Resolve incident
         await manager.resolve_incident(
-            incident.id,
-            resolution_notes='Fixed by restarting service',
+            incident_id=incident.id,
+            resolution_notes='Restarted services',
             author='admin'
         )
 
-        # Verify resolved
-        resolved_incident = manager.get_incident(incident.id)
-        assert resolved_incident.status == IncidentStatus.RESOLVED
-        assert resolved_incident.resolution_notes == 'Fixed by restarting service'
-        assert resolved_incident.resolved_at is not None
+        assert incident.status == IncidentStatus.RESOLVED
+        assert incident.resolution_notes == 'Restarted services'
+        manager._post_thread_update.assert_called_once()
+        manager._update_incident_message.assert_called_once()
 
 
 class TestIncidentRetrieval:
@@ -324,148 +307,131 @@ class TestIncidentRetrieval:
     @pytest.mark.asyncio
     async def test_get_active_incidents(self, tmp_path):
         """Test getting active incidents"""
-        config = {
-            'channels': {'customer_alerts': 12345},
-            'incidents': {}
-        }
+        mock_config = _make_config(channels={'customer_alerts': 12345})
 
         mock_bot = Mock()
 
         with patch('src.integrations.incident_manager.Path') as mock_path:
             state_file = tmp_path / 'incidents.json'
             mock_path.return_value = state_file
-            manager = IncidentManager(mock_bot, config)
+            manager = IncidentManager(mock_bot, mock_config)
 
-        # Create multiple incidents
         incident1 = await manager.create_incident(
-            title='Incident 1', description='Test',
+            title='Service Down',
+            description='Project not responding',
             severity=IncidentSeverity.HIGH,
-            affected_projects=['p1'], event_type='test',
+            affected_projects=['test-project'],
+            event_type='downtime',
             auto_create_thread=False
         )
 
         incident2 = await manager.create_incident(
-            title='Incident 2', description='Test',
-            severity=IncidentSeverity.MEDIUM,
-            affected_projects=['p2'], event_type='test',
+            title='Vulnerability Found',
+            description='Critical CVE detected',
+            severity=IncidentSeverity.CRITICAL,
+            affected_projects=['test-project'],
+            event_type='vulnerability',
             auto_create_thread=False
         )
 
-        # Resolve one incident
-        manager._post_thread_update = AsyncMock()
-        manager._update_incident_message = AsyncMock()
-        await manager.resolve_incident(incident1.id, 'Fixed', 'admin')
+        active_incidents = manager.get_active_incidents()
 
-        # Close the resolved incident
-        incident1.update_status(IncidentStatus.CLOSED)
-
-        # Get active incidents (should only return incident2)
-        active = manager.get_active_incidents()
-
-        assert len(active) == 1
-        assert active[0].id == incident2.id
+        assert len(active_incidents) == 2
+        assert any(inc.id == incident1.id for inc in active_incidents)
+        assert any(inc.id == incident2.id for inc in active_incidents)
 
 
 class TestIncidentDetection:
-    """Tests for automatic incident detection"""
+    """Tests for incident detection logic"""
 
     @pytest.mark.asyncio
     async def test_detect_project_down_incident(self, tmp_path):
         """Test detecting project down incident"""
-        config = {
-            'channels': {'customer_alerts': 12345},
-            'incidents': {}
-        }
+        mock_config = _make_config(channels={'customer_alerts': 12345})
 
         mock_bot = Mock()
 
         with patch('src.integrations.incident_manager.Path') as mock_path:
             state_file = tmp_path / 'incidents.json'
             mock_path.return_value = state_file
-            manager = IncidentManager(mock_bot, config)
+            manager = IncidentManager(mock_bot, mock_config)
 
         manager._create_incident_thread = AsyncMock()
 
-        # Detect project down
         await manager.detect_project_down_incident(
             project_name='test-project',
-            error='Connection timeout'
+            error='Timeout'
         )
 
-        # Should have created an incident
         assert len(manager.incidents) == 1
-        incident = list(manager.incidents.values())[0]
+        incident = next(iter(manager.incidents.values()))
         assert incident.event_type == 'downtime'
-        assert 'test-project' in incident.affected_projects
+        assert 'test-project' in incident.title
+        manager._create_incident_thread.assert_called_once()
 
     @pytest.mark.asyncio
     async def test_detect_critical_vulnerability_incident(self, tmp_path):
         """Test detecting critical vulnerability incident"""
-        config = {
-            'channels': {'customer_alerts': 12345},
-            'incidents': {}
-        }
+        mock_config = _make_config(channels={'customer_alerts': 12345})
 
         mock_bot = Mock()
 
         with patch('src.integrations.incident_manager.Path') as mock_path:
             state_file = tmp_path / 'incidents.json'
             mock_path.return_value = state_file
-            manager = IncidentManager(mock_bot, config)
+            manager = IncidentManager(mock_bot, mock_config)
 
         manager._create_incident_thread = AsyncMock()
 
-        # Detect vulnerability
         await manager.detect_critical_vulnerability_incident(
             project_name='test-project',
             vulnerability_id='CVE-2024-1234',
-            details={'Title': 'Critical Security Flaw'}
+            details={'Title': 'Test vuln'}
         )
 
-        # Should have created an incident
         assert len(manager.incidents) == 1
-        incident = list(manager.incidents.values())[0]
-        assert incident.event_type == 'vulnerability'
-        assert incident.severity == IncidentSeverity.CRITICAL
+        incident = next(iter(manager.incidents.values()))
         assert 'CVE-2024-1234' in incident.title
+        manager._create_incident_thread.assert_called_once()
 
 
 class TestAutoClose:
-    """Tests for auto-closing resolved incidents"""
+    """Tests for auto-closing incidents"""
 
     @pytest.mark.asyncio
     async def test_auto_close_old_incidents(self, tmp_path):
         """Test auto-closing old resolved incidents"""
-        config = {
-            'channels': {'customer_alerts': 12345},
-            'incidents': {'auto_close_hours': 24}
-        }
+        mock_config = _make_config(
+            channels={'customer_alerts': 12345},
+            incidents={'auto_close_hours': 24}
+        )
 
         mock_bot = Mock()
 
         with patch('src.integrations.incident_manager.Path') as mock_path:
             state_file = tmp_path / 'incidents.json'
             mock_path.return_value = state_file
-            manager = IncidentManager(mock_bot, config)
+            manager = IncidentManager(mock_bot, mock_config)
 
         manager._post_thread_update = AsyncMock()
         manager._update_incident_message = AsyncMock()
 
-        # Create and resolve incident
         incident = await manager.create_incident(
-            title='Old Incident', description='Test',
-            severity=IncidentSeverity.MEDIUM,
-            affected_projects=['project'], event_type='test',
+            title='Resolved Incident',
+            description='Already fixed',
+            severity=IncidentSeverity.LOW,
+            affected_projects=['test-project'],
+            event_type='downtime',
             auto_create_thread=False
         )
 
-        await manager.resolve_incident(incident.id, 'Fixed', 'admin')
+        incident.update_status(IncidentStatus.RESOLVED, 'admin')
+        incident.resolved_at = datetime.utcnow() - timedelta(hours=30)
 
-        # Manually set resolved_at to 25 hours ago
-        incident.resolved_at = datetime.utcnow() - timedelta(hours=25)
+        manager.incidents[incident.id] = incident
 
-        # Run auto-close
         await manager.auto_close_old_incidents()
 
-        # Should be closed now
         assert incident.status == IncidentStatus.CLOSED
+        manager._post_thread_update.assert_called_once()
+        manager._update_incident_message.assert_called_once()

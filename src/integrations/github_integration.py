@@ -39,23 +39,35 @@ class GitHubIntegration:
         self.config = config
         self.logger = logger
 
+        def _get_section(name: str, default=None):
+            """Safely fetch config sections from dicts or Config objects."""
+            if default is None:
+                default = {}
+            if isinstance(config, dict):
+                return config.get(name, default)
+            section = getattr(config, name, None)
+            if section is not None:
+                return section
+            base_config = getattr(config, '_config', None)
+            if isinstance(base_config, dict):
+                return base_config.get(name, default)
+            return default
+
         # GitHub webhook settings
-        github_config = getattr(config, 'github', {})
-        if isinstance(github_config, dict):
-            self.webhook_secret = github_config.get('webhook_secret', '')
-            self.webhook_port = github_config.get('webhook_port', 8080)
-            self.enabled = github_config.get('enabled', False)
-            self.auto_deploy_enabled = github_config.get('auto_deploy', False)
-            self.deploy_branches = github_config.get('deploy_branches', ['main', 'master'])
-        else:
-            self.webhook_secret = getattr(github_config, 'webhook_secret', '')
-            self.webhook_port = getattr(github_config, 'webhook_port', 8080)
-            self.enabled = getattr(github_config, 'enabled', False)
-            self.auto_deploy_enabled = getattr(github_config, 'auto_deploy', False)
-            self.deploy_branches = getattr(github_config, 'deploy_branches', ['main', 'master'])
+        github_config = _get_section('github', {})
+        self.webhook_secret = github_config.get('webhook_secret', '')
+        self.webhook_port = github_config.get('webhook_port', 8080)
+        self.enabled = github_config.get('enabled', False)
+        self.auto_deploy_enabled = github_config.get('auto_deploy', False)
+        self.deploy_branches = github_config.get('deploy_branches', ['main', 'master'])
 
         # Discord notification channel
-        self.deployment_channel_id = config.channels.get('deployment_log', 0)
+        channels_config = _get_section('channels', {})
+        self.deployment_channel_id = channels_config.get('deployment_log', 0)
+        self.code_fixes_channel_id = channels_config.get('code_fixes', self.deployment_channel_id)
+
+        # Placeholder for GitHub app client if configured later
+        self.github_api = None
 
         # Webhook server
         self.app = None
@@ -169,6 +181,10 @@ class GitHubIntegration:
 
         return hmac.compare_digest(calculated_signature, expected_signature)
 
+    def verify_signature(self, body: bytes, signature: str) -> bool:
+        """Public wrapper for webhook signature verification."""
+        return self._verify_signature(body, signature)
+
     async def handle_push_event(self, payload: Dict):
         """
         Handle push events from GitHub
@@ -250,6 +266,16 @@ class GitHubIntegration:
 
         except Exception as e:
             self.logger.error(f"❌ Error handling PR event: {e}", exc_info=True)
+
+    async def handle_pull_request_event(self, payload: Dict):
+        """
+        Compatibility wrapper for handling pull request events.
+
+        GitHub sends the event type as `pull_request`, which is routed to
+        `handle_pr_event`. This wrapper keeps the name explicit for tests and
+        future callers.
+        """
+        await self.handle_pr_event(payload)
 
     async def handle_release_event(self, payload: Dict):
         """Handle release events from GitHub"""
@@ -353,7 +379,8 @@ class GitHubIntegration:
         author: str, source: str, target: str, url: str
     ):
         """Send Discord notification for PR event"""
-        channel = self.bot.get_channel(self.deployment_channel_id)
+        channel_id = self.code_fixes_channel_id or self.deployment_channel_id
+        channel = self.bot.get_channel(channel_id)
         if not channel:
             return
 

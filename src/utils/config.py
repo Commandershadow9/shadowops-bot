@@ -43,6 +43,14 @@ class Config:
         return self._config.get('channels', {})
 
     @property
+    def github(self) -> Dict[str, Any]:
+        return self._config.get('github', {})
+
+    @property
+    def incidents(self) -> Dict[str, Any]:
+        return self._config.get('incidents', {})
+
+    @property
     def ai(self) -> Dict[str, Any]:
         return self._config.get('ai', {})
 
