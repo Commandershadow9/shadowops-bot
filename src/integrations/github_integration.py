@@ -99,17 +99,25 @@ class GitHubIntegration:
         self.runner = web.AppRunner(self.app)
         await self.runner.setup()
 
-        try:
-            self.site = web.TCPSite(self.runner, '0.0.0.0', self.webhook_port)
-            await self.site.start()
-        except OSError as e:
-            # Port already in use or binding failed – log and continue without crashing the bot
-            self.logger.error(f"❌ GitHub webhook server konnte Port {self.webhook_port} nicht binden: {e}")
+        # Try binding to configured port; on conflict, fall back to 9090
+        ports_to_try = [self.webhook_port]
+        if self.webhook_port != 9090:
+            ports_to_try.append(9090)
+
+        for port in ports_to_try:
+            try:
+                self.site = web.TCPSite(self.runner, '0.0.0.0', port)
+                await self.site.start()
+                self.webhook_port = port
+                self.logger.info(f"🚀 GitHub webhook server started on port {port}")
+                break
+            except OSError as e:
+                self.logger.error(f"❌ GitHub webhook server konnte Port {port} nicht binden: {e}")
+                continue
+        else:
             self.logger.error("   GitHub Webhooks werden deaktiviert, bitte Port/Service prüfen.")
             self.enabled = False
             return
-
-        self.logger.info(f"🚀 GitHub webhook server started on port {self.webhook_port}")
 
     async def stop_webhook_server(self):
         """Stop the webhook HTTP server"""
