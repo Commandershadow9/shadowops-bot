@@ -159,6 +159,47 @@ class AdminCog(commands.Cog):
             self.logger.error(f"❌ Fehler in /reload-context: {e}", exc_info=True)
             await interaction.followup.send("❌ Fehler beim Neu-Laden des Context", ephemeral=True)
 
+    @app_commands.command(name="push", description="Push changes to a remote git repository.")
+    @app_commands.describe(project_name="The name of the project to push.", branch="The branch to push to.", force="Whether to use --force.")
+    @app_commands.checks.has_permissions(administrator=True)
+    async def push_command(self, interaction: discord.Interaction, project_name: str, branch: str, force: bool = False):
+        """Slash Command: /push"""
+        await interaction.response.defer()
+        
+        if not hasattr(self.bot, 'deployment_manager') or not self.bot.deployment_manager:
+            await interaction.followup.send("❌ Deployment manager is not initialized.", ephemeral=True)
+            return
+
+        try:
+            result = await self.bot.deployment_manager.push_project(project_name, branch, force)
+
+            if result['success']:
+                embed = discord.Embed(
+                    title=f"🚀 Push Successful to {project_name}",
+                    description=f"Successfully pushed to branch `{branch}`.",
+                    color=discord.Color.green()
+                )
+                stdout = result.get('stdout', '').strip()
+                stderr = result.get('stderr', '').strip()
+                if stderr: # git push often writes to stderr on success
+                    embed.add_field(name="Git Output", value=f"```{stderr}```", inline=False)
+                elif stdout:
+                    embed.add_field(name="Git Output", value=f"```{stdout}```", inline=False)
+            else:
+                embed = discord.Embed(
+                    title=f"❌ Push Failed for {project_name}",
+                    description=f"Failed to push to branch `{branch}`.",
+                    color=discord.Color.red()
+                )
+                embed.add_field(name="Error", value=f"```{result.get('error', 'Unknown error')}```", inline=False)
+
+            await interaction.followup.send(embed=embed)
+            self.logger.info(f"Git push for '{project_name}' to branch '{branch}' triggered by {interaction.user}.")
+
+        except Exception as e:
+            self.logger.error(f"❌ Error in /push command: {e}", exc_info=True)
+            await interaction.followup.send(f"An unexpected error occurred: {e}", ephemeral=True)
+
 
 async def setup(bot):
     await bot.add_cog(AdminCog(bot))

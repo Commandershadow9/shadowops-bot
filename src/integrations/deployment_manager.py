@@ -279,6 +279,63 @@ class DeploymentManager:
             # Mark deployment as complete
             self.active_deployments[project_name] = False
 
+    async def push_project(self, project_name: str, branch: str, force: bool = False) -> Dict:
+        """
+        Push changes to a remote repository for a specific project.
+
+        Args:
+            project_name: The name of the project.
+            branch: The branch to push to.
+            force: Whether to use --force with the push.
+
+        Returns:
+            A dictionary with the success status and output.
+        """
+        if project_name not in self.projects:
+            error_msg = f"Project '{project_name}' not found in deployment config"
+            self.logger.error(f"❌ {error_msg}")
+            return {'success': False, 'error': error_msg}
+
+        project = self.projects[project_name]
+        self.logger.info(f"🚀 Pushing changes for {project_name} to branch {branch}")
+
+        try:
+            stdout, stderr = await self._git_push(project, branch, force)
+            return {'success': True, 'stdout': stdout, 'stderr': stderr}
+        except DeploymentError as e:
+            self.logger.error(f"❌ Git push failed for {project_name}: {e}")
+            return {'success': False, 'error': str(e)}
+
+    async def _git_push(self, project: Dict, branch: str, force: bool = False) -> Tuple[str, str]:
+        """
+        Push changes to the git remote.
+
+        Args:
+            project: Project configuration.
+            branch: The branch to push.
+            force: Whether to use --force.
+
+        Returns:
+            A tuple of (stdout, stderr).
+        """
+        push_cmd = ['git', 'push', 'origin', branch]
+        if force:
+            push_cmd.append('--force')
+
+        process = await asyncio.create_subprocess_exec(
+            *push_cmd,
+            cwd=str(project['path']),
+            stdout=asyncio.subprocess.PIPE,
+            stderr=asyncio.subprocess.PIPE
+        )
+
+        stdout, stderr = await process.communicate()
+
+        if process.returncode != 0:
+            raise DeploymentError(f"Git push failed: {stderr.decode()}")
+
+        return stdout.decode(), stderr.decode()
+
     async def _create_backup(self, project: Dict) -> Path:
         """
         Create timestamped backup of project
