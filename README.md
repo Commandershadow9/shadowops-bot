@@ -22,6 +22,7 @@
 
 ### 🌐 **Multi-Project Management (v3.1 - NEW)**
 - ✅ **GitHub Webhook Integration**: Auto-deploy on push/PR merge events
+- ✅ **Automated Patch-Notes**: Detaillierte Change-Notifications bei Git-Push für interne und Kunden-Channels.
 - ✅ **Real-Time Health Monitoring**: Continuous uptime tracking for all projects
 - ✅ **Automated Deployment**: Complete CI/CD pipeline with safety checks
 - ✅ **Incident Management**: Auto-detection, tracking, and Discord threads
@@ -100,7 +101,7 @@
 - **Docker Security Scans** - Container-Schwachstellen (Trivy)
 - **Project Health Checks** - Real-time monitoring for all services
 - **Incident Detection** - Automatic incident creation and tracking
-- **GitHub Events** - Push, PR, Release notifications
+- **GitHub Events** - Detaillierte Patch-Notes für Push, PR und Release Events
 - **Deployment Status** - Real-time deployment progress
 
 ### 🤖 Slash Commands
