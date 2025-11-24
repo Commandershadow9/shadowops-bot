@@ -151,9 +151,8 @@ class ProjectMonitor:
         self._load_projects()
 
         # Discord channels
-        channels_cfg = self._get_config_section('channels', {})
-        self.customer_status_channel_id = channels_cfg.get('customer_status', 0)
-        self.customer_alerts_channel_id = channels_cfg.get('customer_alerts', 0)
+        self.customer_status_channel_id = self.config.customer_status_channel
+        self.customer_alerts_channel_id = self.config.customer_alerts_channel
 
         # Monitoring tasks
         self.monitor_tasks: Dict[str, asyncio.Task] = {}

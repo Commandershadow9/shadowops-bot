@@ -39,8 +39,8 @@ class DiscordChannelLogger:
         self.config = config
         self.channels: Dict[str, int] = {}
 
-        # Message queue for async sending
-        self.message_queue = asyncio.Queue()
+        # Message queue for async sending with a max size to prevent memory exhaustion
+        self.message_queue = asyncio.Queue(maxsize=1000)
         self.sender_task: Optional[asyncio.Task] = None
         self.running = False
 
@@ -109,7 +109,10 @@ class DiscordChannelLogger:
 
                 # Send message
                 await self._send_to_channel(channel_key, message, embed)
+                self.message_queue.task_done()
 
+            except asyncio.CancelledError:
+                break
             except Exception as e:
                 logger.error(f"Error in message sender loop: {e}")
                 await asyncio.sleep(1)
@@ -117,8 +120,8 @@ class DiscordChannelLogger:
     async def _send_to_channel(self, channel_key: str, message: str, embed: Optional[discord.Embed] = None):
         """Send message to Discord channel"""
         try:
-            if not self.bot:
-                logger.warning(f"Bot not set, cannot send message to {channel_key}")
+            if not self.bot or self.bot.is_closed():
+                logger.warning(f"Bot not ready or closed, cannot send message to {channel_key}")
                 return
 
             channel_id = self.channels.get(channel_key)
@@ -128,13 +131,17 @@ class DiscordChannelLogger:
 
             channel = self.bot.get_channel(channel_id)
             if not channel:
-                logger.warning(f"Channel {channel_id} not found for '{channel_key}'")
-                return
-
+                # Bot cache might not be ready, try fetching
+                try:
+                    channel = await self.bot.fetch_channel(channel_id)
+                except (discord.NotFound, discord.Forbidden):
+                    logger.warning(f"Channel {channel_id} not found or no access for '{channel_key}'")
+                    return
+            
             # Send message
             if embed:
                 await channel.send(content=message if message else None, embed=embed)
-            else:
+            elif message:
                 await channel.send(message)
 
         except Exception as e:
@@ -143,7 +150,17 @@ class DiscordChannelLogger:
     # =====================================
     # PUBLIC LOGGING METHODS
     # =====================================
-    # Alle Methoden akzeptieren jetzt severity für bessere Logs
+    def _log(self, channel_key: str, message: str, embed: Optional[discord.Embed] = None, severity: Optional[str] = None):
+        """Generic internal logging method."""
+        if not self.running:
+            return
+        
+        message = self._add_severity_icon(message, severity)
+        
+        try:
+            self.message_queue.put_nowait((channel_key, message, embed))
+        except asyncio.QueueFull:
+            logger.warning(f"Discord log queue is full! Dropping message for '{channel_key}'.")
 
     def _add_severity_icon(self, message: str, severity: Optional[str] = None) -> str:
         """Fügt Severity-Icon zur Message hinzu für bessere Übersichtlichkeit"""
@@ -165,56 +182,32 @@ class DiscordChannelLogger:
 
     def log_ai_learning(self, message: str, embed: Optional[discord.Embed] = None, severity: Optional[str] = None):
         """Log AI Learning activity (Code Analyzer, Git History, etc.)"""
-        if not self.running:
-            return
-        message = self._add_severity_icon(message, severity)
-        asyncio.create_task(self.message_queue.put(('ai_learning', message, embed)))
+        self._log('ai_learning', message, embed, severity)
 
     def log_code_fix(self, message: str, embed: Optional[discord.Embed] = None, severity: Optional[str] = None):
         """Log Code Fixer activity (Vulnerability processing, fix generation)"""
-        if not self.running:
-            return
-        message = self._add_severity_icon(message, severity)
-        asyncio.create_task(self.message_queue.put(('code_fixes', message, embed)))
+        self._log('code_fixes', message, embed, severity)
 
     def log_orchestrator(self, message: str, embed: Optional[discord.Embed] = None, severity: Optional[str] = None):
         """Log Orchestrator activity (Batch processing, coordination)"""
-        if not self.running:
-            return
-        message = self._add_severity_icon(message, severity)
-        asyncio.create_task(self.message_queue.put(('orchestrator', message, embed)))
+        self._log('orchestrator', message, embed, severity)
 
     def log_performance(self, message: str, embed: Optional[discord.Embed] = None, severity: Optional[str] = None):
         """Log Performance Monitor activity (CPU, RAM anomalies)"""
-        if not self.running:
-            return
-        message = self._add_severity_icon(message, severity)
-        asyncio.create_task(self.message_queue.put(('performance', message, embed)))
+        self._log('performance', message, embed, severity)
 
     def log_alert(self, message: str, embed: Optional[discord.Embed] = None, severity: Optional[str] = None):
         """Log auto-remediation alert"""
-        if not self.running:
-            return
-        message = self._add_severity_icon(message, severity)
-        asyncio.create_task(self.message_queue.put(('alerts', message, embed)))
+        self._log('alerts', message, embed, severity)
 
     def log_approval(self, message: str, embed: Optional[discord.Embed] = None, severity: Optional[str] = None):
         """Log approval request"""
-        if not self.running:
-            return
-        message = self._add_severity_icon(message, severity)
-        asyncio.create_task(self.message_queue.put(('approvals', message, embed)))
+        self._log('approvals', message, embed, severity)
 
     def log_stats(self, message: str, embed: Optional[discord.Embed] = None, severity: Optional[str] = None):
         """Log statistics"""
-        if not self.running:
-            return
-        message = self._add_severity_icon(message, severity)
-        asyncio.create_task(self.message_queue.put(('stats', message, embed)))
+        self._log('stats', message, embed, severity)
 
     def log_bot_status(self, message: str, embed: Optional[discord.Embed] = None, severity: Optional[str] = None):
         """Log bot status (startup, health checks)"""
-        if not self.running:
-            return
-        message = self._add_severity_icon(message, severity)
-        asyncio.create_task(self.message_queue.put(('bot_status', message, embed)))
+        self._log('bot_status', message, embed, severity)

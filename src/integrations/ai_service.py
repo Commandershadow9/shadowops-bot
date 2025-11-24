@@ -232,6 +232,75 @@ class AIService:
         logger.error("❌ Alle AI Services fehlgeschlagen bei koordinierter Planung")
         return None
 
+    async def get_ai_analysis(self, prompt: str, context: str = "", use_critical_model: bool = False) -> Optional[str]:
+        """
+        Wrapper to generate raw text output (e.g., for patches), called from other services.
+        The 'context' param is unused but kept for compatibility.
+        """
+        return await self.get_raw_ai_response(prompt, use_critical_model=use_critical_model)
+
+    async def get_raw_ai_response(self, prompt: str, use_critical_model: bool = False) -> Optional[str]:
+        """
+        Generates a raw text response from the AI, intended for code or diff generation.
+        Bypasses JSON formatting and parsing.
+        """
+        await self._apply_rate_limit()
+
+        if not self.ollama_enabled:
+            logger.warning("Ollama is not enabled, cannot generate raw AI response for patch.")
+            return None
+
+        try:
+            if self.use_hybrid_models and use_critical_model:
+                selected_model = self.ollama_model_critical
+                timeout = 360.0
+                logger.info(f"🧠 Using critical model {selected_model} for raw generation.")
+            else:
+                selected_model = self.ollama_model
+                timeout = 120.0
+
+            logger.info(f"📤 Sending raw text request to Ollama ({selected_model}) for patch generation.")
+
+            content = ""
+            async with httpx.AsyncClient(timeout=timeout) as client:
+                async with client.stream(
+                    "POST",
+                    f"{self.ollama_url}/api/generate",
+                    json={
+                        "model": selected_model,
+                        "prompt": prompt,
+                        "stream": True,
+                        # NO "format": "json" here, we want raw text
+                    }
+                ) as response:
+                    if response.status_code != 200:
+                        raw_body = await response.aread()
+                        logger.error(f"Ollama raw API error: HTTP {response.status_code} - {raw_body.decode()}")
+                        response.raise_for_status()
+
+                    async for line in response.aiter_lines():
+                        if not line.strip():
+                            continue
+                        try:
+                            chunk = json.loads(line)
+                            if chunk.get('response'):
+                                content += chunk['response']
+                            if chunk.get('done'):
+                                break
+                        except json.JSONDecodeError:
+                            logger.warning(f"Failed to decode JSON chunk from Ollama stream: {line}")
+                            continue
+
+            logger.info(f"📥 Received raw response from Ollama (length: {len(content)}).")
+            return content.strip()
+
+        except httpx.HTTPStatusError as e:
+            logger.error(f"Ollama raw request failed with status {e.response.status_code}")
+            return None
+        except Exception as e:
+            logger.error(f"Ollama raw request error: {e}")
+            return None
+
     def _build_analysis_prompt(self, event: Dict, previous_attempts: list) -> str:
         """Build detailed analysis prompt with security context and RAG"""
         source = event.get('source', 'unknown')

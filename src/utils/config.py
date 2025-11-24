@@ -4,10 +4,13 @@ Provides safe dictionary and attribute style access to the YAML configuration.
 """
 
 import logging
+import os
 from pathlib import Path
 from typing import Any, Dict, List, Optional
 
 import yaml
+
+from utils.state_manager import get_state_manager
 
 logger = logging.getLogger('shadowops')
 
@@ -31,7 +34,35 @@ class Config:
         sanitized = dict(self._config)
         if 'discord' in sanitized and isinstance(sanitized['discord'], dict):
             sanitized['discord'] = {**sanitized['discord'], 'token': '***redacted***'}
+        if 'ai' in sanitized and isinstance(sanitized['ai'], dict):
+            if 'anthropic' in sanitized['ai']:
+                sanitized['ai']['anthropic'] = {**sanitized['ai'].get('anthropic', {}), 'api_key': '***redacted***'}
+            if 'openai' in sanitized['ai']:
+                sanitized['ai']['openai'] = {**sanitized['ai'].get('openai', {}), 'api_key': '***redacted***'}
         return f"Config({sanitized})"
+
+    def _get_secret(self, env_var: str, config_path: List[str], warn: bool = True) -> Optional[str]:
+        """
+        Get a secret from environment variables first, then fallback to config file.
+        """
+        secret = os.getenv(env_var)
+        if secret:
+            return secret
+
+        # Fallback to config file
+        value = self._config
+        try:
+            for key in config_path:
+                value = value[key]
+            secret = value
+        except (KeyError, TypeError):
+            secret = None
+
+        if secret and warn:
+            logger.warning(f"⚠️ Loading secret '{'.'.join(config_path)}' from config file. "
+                           f"For better security, set the {env_var} environment variable.")
+        
+        return secret
 
     # ---- Core sections -------------------------------------------------
     @property
@@ -88,10 +119,9 @@ class Config:
         """Validate minimal required fields and log warnings for optional parts."""
         missing_fields = []
 
-        discord_cfg = self.discord or {}
-        if 'token' not in discord_cfg:
-            missing_fields.append('discord.token')
-        if 'guild_id' not in discord_cfg:
+        if not self.discord_token:
+            missing_fields.append('discord.token (or DISCORD_BOT_TOKEN env var)')
+        if 'guild_id' not in self.discord:
             missing_fields.append('discord.guild_id')
 
         if missing_fields:
@@ -104,8 +134,8 @@ class Config:
 
         ai_cfg = self.ai
         ai_ollama = ai_cfg.get('ollama', {}).get('enabled', False)
-        ai_claude = ai_cfg.get('anthropic', {}).get('enabled', False) and ai_cfg.get('anthropic', {}).get('api_key')
-        ai_openai = ai_cfg.get('openai', {}).get('enabled', False) and ai_cfg.get('openai', {}).get('api_key')
+        ai_claude = ai_cfg.get('anthropic', {}).get('enabled', False) and self.anthropic_api_key
+        ai_openai = ai_cfg.get('openai', {}).get('enabled', False) and self.openai_api_key
 
         if not (ai_ollama or ai_claude or ai_openai):
             warnings.append("Keine AI-Services konfiguriert! Mindestens einer sollte aktiviert sein")
@@ -117,92 +147,137 @@ class Config:
 
     # ---- Convenience accessors ---------------------------------------
     @property
-    def discord_token(self) -> str:
-        return self.discord.get('token', '')
+    def discord_token(self) -> Optional[str]:
+        return self._get_secret('DISCORD_BOT_TOKEN', ['discord', 'token'])
+
+    @property
+    def github_token(self) -> Optional[str]:
+        return self._get_secret('GITHUB_TOKEN', ['github', 'token'], warn=False)
+
+    @property
+    def anthropic_api_key(self) -> Optional[str]:
+        return self._get_secret('ANTHROPIC_API_KEY', ['ai', 'anthropic', 'api_key'])
+
+    @property
+    def openai_api_key(self) -> Optional[str]:
+        return self._get_secret('OPENAI_API_KEY', ['ai', 'openai', 'api_key'])
 
     @property
     def guild_id(self) -> int:
         return int(self.discord.get('guild_id', 0))
 
+    def _get_channel_id(self, name: str, fallback_names: Optional[List[str]] = None) -> int:
+        """
+        Gets a channel ID, prioritizing state over config.
+        Supports multiple fallback names.
+        """
+        state_manager = get_state_manager()
+        guild_id = self.guild_id
+
+        # 1. Check state manager for the primary name
+        channel_id = state_manager.get_channel_id(guild_id, name)
+        if channel_id:
+            return channel_id
+        
+        # Check for auto-remediation channels with 'ar_' prefix in state
+        ar_name = f"ar_{name.replace('_channel', '')}"
+        channel_id = state_manager.get_channel_id(guild_id, ar_name)
+        if channel_id:
+            return channel_id
+
+        # 2. Check config for the primary name (from channels and notifications sections)
+        primary_sources = [
+            self.channels.get(name),
+            self.auto_remediation_notifications.get(f"{name}_channel")
+        ]
+        for source in primary_sources:
+            if source:
+                return int(source)
+
+        # 3. Check config for fallback names
+        if fallback_names:
+            for fallback_name in fallback_names:
+                fallback_id = self.channels.get(fallback_name)
+                if fallback_id:
+                    return int(fallback_id)
+
+        return 0 # Final fallback
+
     @property
     def critical_channel(self) -> int:
-        channel = self.channels.get('critical') or self.channels.get('security_alerts')
-        return int(channel) if channel is not None else 0
+        return self._get_channel_id('critical', fallback_names=['security_alerts'])
 
     @property
     def sicherheitsdienst_channel(self) -> int:
-        channel = self.channels.get('sicherheitsdienst')
-        return int(channel) if channel is not None else self.fallback_channel
+        return self._get_channel_id('sicherheitsdienst', fallback_names=['critical'])
 
     @property
     def nexus_channel(self) -> int:
-        channel = self.channels.get('nexus')
-        return int(channel) if channel is not None else self.fallback_channel
+        return self._get_channel_id('nexus', fallback_names=['critical'])
 
     @property
     def fail2ban_channel(self) -> int:
-        channel = self.channels.get('fail2ban')
-        return int(channel) if channel is not None else self.critical_channel
+        return self._get_channel_id('fail2ban', fallback_names=['critical'])
 
     @property
     def crowdsec_channel(self) -> int:
-        channel = self.channels.get('crowdsec')
-        return int(channel) if channel is not None else self.critical_channel
+        return self._get_channel_id('crowdsec', fallback_names=['critical'])
 
     @property
     def docker_channel(self) -> int:
-        channel = self.channels.get('docker')
-        return int(channel) if channel is not None else self.critical_channel
+        return self._get_channel_id('docker', fallback_names=['critical'])
 
     @property
     def backups_channel(self) -> int:
-        channel = self.channels.get('backups')
-        return int(channel) if channel is not None else self.fallback_channel
+        return self._get_channel_id('backups', fallback_names=['critical'])
 
     @property
     def aide_channel(self) -> int:
-        channel = self.channels.get('aide')
-        return int(channel) if channel is not None else self.critical_channel
+        return self._get_channel_id('aide', fallback_names=['critical'])
 
     @property
     def ssh_channel(self) -> int:
-        channel = self.channels.get('ssh')
-        return int(channel) if channel is not None else self.critical_channel
+        return self._get_channel_id('ssh', fallback_names=['critical'])
 
     @property
     def fallback_channel(self) -> int:
-        channel = self.channels.get('security_alerts', self.channels.get('critical', 0))
-        return int(channel) if channel is not None else 0
-
-    def _resolve_notification_channel(self, key: str, fallback_key: Optional[str] = None) -> int:
-        notifications = self.auto_remediation_notifications
-        fallback = self.channels.get(fallback_key) if fallback_key else None
-        channel = notifications.get(key, fallback)
-        return int(channel) if channel is not None else self.fallback_channel
+        return self._get_channel_id('critical', fallback_names=['security_alerts'])
 
     @property
     def alerts_channel(self) -> int:
-        return self._resolve_notification_channel('alerts_channel', 'critical')
+        return self._get_channel_id('alerts', fallback_names=['critical'])
 
     @property
     def approvals_channel(self) -> int:
-        return self._resolve_notification_channel('approvals_channel')
+        return self._get_channel_id('approvals', fallback_names=['critical'])
 
     @property
     def stats_channel(self) -> int:
-        return self._resolve_notification_channel('stats_channel', 'performance')
+        return self._get_channel_id('stats', fallback_names=['performance', 'critical'])
 
     @property
     def ai_learning_channel(self) -> int:
-        return self._resolve_notification_channel('ai_learning_channel', 'ai_learning')
+        return self._get_channel_id('ai_learning', fallback_names=['critical'])
 
     @property
     def code_fixes_channel(self) -> int:
-        return self._resolve_notification_channel('code_fixes_channel', 'code_fixes')
+        return self._get_channel_id('code_fixes', fallback_names=['critical'])
 
     @property
     def orchestrator_channel(self) -> int:
-        return self._resolve_notification_channel('orchestrator_channel', 'orchestrator')
+        return self._get_channel_id('orchestrator', fallback_names=['critical'])
+
+    @property
+    def customer_alerts_channel(self) -> int:
+        return self._get_channel_id('customer_alerts', fallback_names=['critical'])
+
+    @property
+    def customer_status_channel(self) -> int:
+        return self._get_channel_id('customer_status', fallback_names=['critical'])
+
+    @property
+    def deployment_log_channel(self) -> int:
+        return self._get_channel_id('deployment_log', fallback_names=['critical'])
 
     def get_channel_for_alert(self, alert_type: str, project: Optional[str] = None) -> int:
         """Return a channel ID for the given alert type or project."""

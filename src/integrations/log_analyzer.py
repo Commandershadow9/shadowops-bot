@@ -113,6 +113,19 @@ class LogAnalyzer:
             logger.debug(f"Log file not found: {log_file}")
             return []
 
+        # Handle cases where log_file is a directory
+        log_path_obj = Path(log_file)
+        if log_path_obj.is_dir():
+            logger.debug(f"Log path {log_file} is a directory, finding latest file.")
+            try:
+                # Find the most recent file
+                latest_file = max(log_path_obj.glob('*'), key=os.path.getmtime)
+                log_file = str(latest_file)
+                logger.debug(f"Using latest log file: {log_file}")
+            except ValueError:
+                logger.warning(f"Log directory {log_file} is empty, skipping.")
+                return []
+        
         try:
             cutoff_time = datetime.now() - timedelta(hours=max_age_hours)
             entries = []

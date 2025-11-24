@@ -1,17 +1,17 @@
 # ╔═══════════════════════════════════════════════════════════════════════════╗
 # ║                     ShadowOps Bot - Configuration                         ║
 # ║                                                                           ║
-# ║  WICHTIG: Kopiere diese Datei zu config.yaml und fülle deine Werte ein   ║
-# ║  Befehl: cp config/config.example.yaml config/config.yaml                ║
+# ║  WICHTIG: Kopiere diese Datei zu config.yaml und fülle deine Werte ein.   ║
+# ║  Secrets (Token, API Keys) sollten als Umgebungsvariablen gesetzt werden. ║
 # ╚═══════════════════════════════════════════════════════════════════════════╝
 
 # ╔═══════════════════════════════════════════════════════════════════════════╗
 # ║ DISCORD SETTINGS                                                          ║
 # ╚═══════════════════════════════════════════════════════════════════════════╝
 discord:
-  # Bot Token vom Discord Developer Portal
+  # Bot Token. Sollte als Umgebungsvariable DISCORD_BOT_TOKEN gesetzt werden.
   # https://discord.com/developers/applications
-  token: "YOUR_BOT_TOKEN_HERE"
+  token: "" # Env: DISCORD_BOT_TOKEN
 
   # Discord Server (Guild) ID
   # Rechtsklick auf Server → "ID kopieren" (Developer Mode aktivieren!)
@@ -144,13 +144,15 @@ ai:
   # === ANTHROPIC CLAUDE (Fallback #1 - wenn Ollama fehlt) ===
   anthropic:
     enabled: false
-    api_key: ""  # Dein Anthropic API Key
+    # API Key. Sollte als Umgebungsvariable ANTHROPIC_API_KEY gesetzt werden.
+    api_key: ""  # Env: ANTHROPIC_API_KEY
     model: "claude-3-5-sonnet-20241022"
 
   # === OPENAI (Fallback #2 - wenn Claude auch fehlt) ===
   openai:
     enabled: false
-    api_key: ""  # Dein OpenAI API Key
+    # API Key. Sollte als Umgebungsvariable OPENAI_API_KEY gesetzt werden.
+    api_key: ""  # Env: OPENAI_API_KEY
     model: "gpt-4o"
 
 # ╔═══════════════════════════════════════════════════════════════════════════╗
@@ -253,7 +255,7 @@ permissions:
 # ║                                                                           ║
 # ║ NÄCHSTE SCHRITTE:                                                        ║
 # ║ 1. Kopiere diese Datei: cp config/config.example.yaml config/config.yaml║
-# ║ 2. Fülle deine Werte ein (Token, Channel IDs, etc.)                     ║
-# ║ 3. Starte Bot: python3 src/bot.py                                       ║
-# ║ 4. Prüfe Status: /status in Discord                                     ║
+# ║ 2. Fülle deine Werte ein (guild_id, Channel IDs, etc.)                  ║
+# ║ 3. Setze Secrets als Umgebungsvariablen (z.B. DISCORD_BOT_TOKEN)        ║
+# ║ 4. Starte Bot: python3 src/bot.py                                       ║
 # ╚═══════════════════════════════════════════════════════════════════════════╝
