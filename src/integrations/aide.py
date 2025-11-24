@@ -83,7 +83,7 @@ class AIDEMonitor:
         Gibt Datum des letzten Checks zurück
 
         Returns:
-            Datum-String oder None
+            Datum-String, "Pending first run" oder None
         """
         try:
             result = subprocess.run(
@@ -94,7 +94,14 @@ class AIDEMonitor:
             )
 
             if result.returncode == 0 and result.stdout.strip():
-                timestamp = int(result.stdout.strip())
+                timestamp_str = result.stdout.strip()
+                if timestamp_str == 'n/a' or int(timestamp_str) == 0:
+                    if self.is_timer_active():
+                        return "Pending first run"
+                    else:
+                        return None
+
+                timestamp = int(timestamp_str)
                 if timestamp > 0:
                     dt = datetime.fromtimestamp(timestamp / 1000000)  # Mikrosekunden → Sekunden
                     return dt.strftime('%Y-%m-%d %H:%M:%S')

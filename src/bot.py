@@ -418,6 +418,9 @@ class ShadowOpsBot(commands.Bot):
         self.logger.info("✅ PHASE 1 abgeschlossen")
         self.logger.info("=" * 60)
 
+        # Validate Fail2ban permissions
+        self.fail2ban.validate_permissions()
+
         # ============================================
         # PHASE 2: AUTO-CREATE CHANNELS
         # ============================================
