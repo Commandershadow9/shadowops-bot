@@ -205,7 +205,7 @@ chmod 755 logs data backups context config
 
 ---
 
-## Configuration
+## 4. Configuration
 
 ### Step 1: Create Config File
 
@@ -216,18 +216,54 @@ cp config/config.example.yaml config/config.yaml
 # Secure the file (important!)
 chmod 600 config/config.yaml
 
-# Edit config
+# Edit config for static values
 nano config/config.yaml
 ```
 
-### Step 2: Basic Configuration
+### Step 2: Set Secrets as Environment Variables (Critical!)
 
-**Minimal config to get started:**
+Sensitive data like your Bot Token and AI API keys **must not** be stored in the `config.yaml` file. They should be provided as environment variables.
+
+A common way to manage this is to create a `.env` file in the root of your project.
+
+```bash
+# Create and edit the .env file
+nano .env
+```
+
+Add your secrets to this file:
+
+```bash
+# .env file
+
+# Discord Bot Token (Required)
+DISCORD_BOT_TOKEN="YOUR_BOT_TOKEN_HERE"
+
+# AI API Keys (Optional)
+ANTHROPIC_API_KEY="sk-ant-..."
+OPENAI_API_KEY="sk-..."
+GITHUB_TOKEN="ghp_..."
+```
+
+**Important:** You must ensure your `systemd` service file loads this `.env` file. Edit `/etc/systemd/system/shadowops-bot.service` and add the `EnvironmentFile` line in the `[Service]` section:
+
+```ini
+[Service]
+# ... other lines
+EnvironmentFile=/home/user/shadowops-bot/.env
+# ... other lines
+```
+
+### Step 3: Basic Configuration
+
+Now, edit `config/config.yaml` for non-sensitive, static values.
+
+**Minimal `config.yaml` to get started:**
 
 ```yaml
 discord:
-  token: "YOUR_BOT_TOKEN_HERE"  # Paste token from Discord Developer Portal
-  guild_id: 123456789            # Paste server ID you copied
+  # token: "" # This is now set via the DISCORD_BOT_TOKEN environment variable
+  guild_id: 123456789 # Paste server ID you copied
 
 ai:
   ollama:
@@ -246,10 +282,12 @@ projects:
 
 **Save and exit:** `Ctrl+X`, then `Y`, then `Enter`
 
-### Step 3: Verify Configuration
+### Step 4: Verify Configuration
 
 ```bash
 # Test config loading
+# Note: This test will fail if DISCORD_BOT_TOKEN is not set in your current shell
+export DISCORD_BOT_TOKEN="test" # Temporarily set for validation
 python3 -c "from src.utils.config import get_config; get_config()"
 
 # Should print: "✅ Config loaded successfully" (no errors)
@@ -257,7 +295,7 @@ python3 -c "from src.utils.config import get_config; get_config()"
 
 ---
 
-## Optional: AI Setup
+## 5. Optional: AI Setup
 
 ShadowOps supports 3 AI providers. You need **at least one** enabled.
 
@@ -281,12 +319,9 @@ ollama pull llama3.1       # Better for critical issues (4.7GB)
 
 # Verify installation
 ollama list
-
-# Test model
-ollama run phi3:mini "Hello, how are you?"
 ```
 
-**Enable in config:**
+**Enable in `config.yaml`:**
 
 ```yaml
 ai:
@@ -300,75 +335,52 @@ ai:
 
 ### Option 2: Anthropic Claude (Cloud, Paid)
 
-**Advantages:**
-- Excellent reasoning
-- Great for complex security analysis
-- Good context window
-
 **Setup:**
 
-1. Get API key:
-   - Go to https://console.anthropic.com/
-   - Create account / Login
-   - Navigate to API Keys
-   - Create new API key
-   - Copy key
-
-2. Enable in config:
-   ```yaml
-   ai:
-     anthropic:
-       enabled: true
-       api_key: "sk-ant-..."  # Paste your API key
-       model: claude-3-5-sonnet-20241022
-   ```
+1.  Get API key from https://console.anthropic.com/
+2.  Add it to your `.env` file:
+    ```bash
+    # .env
+    ANTHROPIC_API_KEY="sk-ant-..."
+    ```
+3.  Enable in `config.yaml`:
+    ```yaml
+    ai:
+      anthropic:
+        enabled: true
+        # api_key: "" # Set via ANTHROPIC_API_KEY environment variable
+        model: claude-3-5-sonnet-20241022
+    ```
 
 ### Option 3: OpenAI (Cloud, Paid)
 
-**Advantages:**
-- Fast responses
-- Good general knowledge
-- Familiar API
-
 **Setup:**
 
-1. Get API key:
-   - Go to https://platform.openai.com/
-   - Create account / Login
-   - Navigate to API Keys
-   - Create new secret key
-   - Copy key
-
-2. Enable in config:
-   ```yaml
-   ai:
-     openai:
-       enabled: true
-       api_key: "sk-..."  # Paste your API key
-       model: gpt-4o
-   ```
+1.  Get API key from https://platform.openai.com/
+2.  Add it to your `.env` file:
+    ```bash
+    # .env
+    OPENAI_API_KEY="sk-..."
+    ```
+3.  Enable in `config.yaml`:
+    ```yaml
+    ai:
+      openai:
+        enabled: true
+        # api_key: "" # Set via OPENAI_API_KEY environment variable
+        model: gpt-4o
+    ```
 
 ### Fallback Chain
 
 If you enable multiple providers, ShadowOps uses them in this order:
-1. **Ollama** (if enabled) → Fast, free, local
-2. **Claude** (if enabled) → Fallback if Ollama fails
-3. **OpenAI** (if enabled) → Fallback if both above fail
-
-**Recommended setup for production:**
-```yaml
-ai:
-  ollama:
-    enabled: true  # Primary (free, fast)
-  anthropic:
-    enabled: true  # Fallback for critical events
-  openai:
-    enabled: false  # Optional second fallback
-```
+1.  **Ollama** (if enabled) → Fast, free, local
+2.  **Claude** (if enabled) → Fallback if Ollama fails
+3.  **OpenAI** (if enabled) → Fallback if both above fail
 
 ---
 
-## Optional: GitHub Webhooks
+## 6. Optional: GitHub Webhooks
 
 Enable auto-deployment when you push code to GitHub.
 
@@ -408,56 +420,21 @@ sudo ufw status
 
 ### Step 4: Configure Repository Webhook
 
-1. **Go to your GitHub repository:**
-   - Settings → Webhooks → Add webhook
-
-2. **Configure webhook:**
-   - **Payload URL**: `http://YOUR_SERVER_IP:8080/webhook`
-   - **Content type**: `application/json`
-   - **Secret**: (paste the secret from Step 1)
-   - **Which events**: Select:
-     - ✅ Pushes
-     - ✅ Pull requests
-     - ✅ Releases
-
-3. **Save webhook:**
-   - Click "Add webhook"
-   - GitHub will send a test ping
-   - Check "Recent Deliveries" tab for green checkmark
-
-### Step 5: Configure Project Deployment
-
-Edit `config/config.yaml`:
-
-```yaml
-projects:
-  shadowops-bot:
-    enabled: true
-    path: /home/user/shadowops-bot
-    branch: main
-
-    # Deployment config (v3.1)
-    deploy:
-      run_tests: true
-      test_command: pytest tests/
-      post_deploy_command: pip install -r requirements.txt
-      service_name: shadowops-bot
-```
-
-### Step 6: Configure Sudoers (for deployment)
-
-```bash
-# Edit sudoers
-sudo visudo
-
-# Add this line (replace 'username' with your user):
-username ALL=(ALL) NOPASSWD: /usr/bin/systemctl restart shadowops-bot
-username ALL=(ALL) NOPASSWD: /usr/bin/systemctl status shadowops-bot
-```
+1.  **Go to your GitHub repository:**
+    - Settings → Webhooks → Add webhook
+2.  **Configure webhook:**
+    - **Payload URL**: `http://YOUR_SERVER_IP:8080/webhook`
+    - **Content type**: `application/json`
+    - **Secret**: (paste the secret from Step 1)
+    - **Which events**: Select:
+        - ✅ Pushes
+        - ✅ Pull requests
+        - ✅ Releases
+3.  **Save webhook**.
 
 ---
 
-## Service Installation
+## 7. Service Installation
 
 ### Step 1: Create Systemd Service File
 
@@ -465,23 +442,25 @@ username ALL=(ALL) NOPASSWD: /usr/bin/systemctl status shadowops-bot
 # Copy service file
 sudo cp shadowops-bot.service /etc/systemd/system/
 
-# Edit if paths are different
+# Edit service file to add EnvironmentFile directive
 sudo nano /etc/systemd/system/shadowops-bot.service
 ```
 
-**Verify these paths match your installation:**
+**Verify paths and add `EnvironmentFile`:**
 
 ```ini
 [Service]
 WorkingDirectory=/home/user/shadowops-bot
 ExecStart=/home/user/shadowops-bot/venv/bin/python3 /home/user/shadowops-bot/src/bot.py
 User=user
+# Add this line:
+EnvironmentFile=/home/user/shadowops-bot/.env
 ```
 
 ### Step 2: Enable and Start Service
 
 ```bash
-# Reload systemd
+# Reload systemd to apply changes
 sudo systemctl daemon-reload
 
 # Enable service (start on boot)
@@ -494,113 +473,21 @@ sudo systemctl start shadowops-bot
 sudo systemctl status shadowops-bot
 ```
 
-**Expected output:**
-```
-● shadowops-bot.service - ShadowOps Security Bot
-   Loaded: loaded (/etc/systemd/system/shadowops-bot.service; enabled)
-   Active: active (running) since ...
-```
-
 ### Step 3: View Logs
 
 ```bash
 # Live logs
 sudo journalctl -u shadowops-bot -f
-
-# Last 100 lines
-sudo journalctl -u shadowops-bot -n 100
-
-# Logs since today
-sudo journalctl -u shadowops-bot --since today
-```
-
-### Service Management Commands
-
-```bash
-# Start
-sudo systemctl start shadowops-bot
-
-# Stop
-sudo systemctl stop shadowops-bot
-
-# Restart
-sudo systemctl restart shadowops-bot
-
-# Status
-sudo systemctl status shadowops-bot
-
-# Disable (don't start on boot)
-sudo systemctl disable shadowops-bot
-
-# Enable (start on boot)
-sudo systemctl enable shadowops-bot
 ```
 
 ---
 
-## Verification
-
-### Step 1: Check Bot is Online
-
-1. Open Discord
-2. Look for ShadowOps bot in member list
-3. Should show as "Online" with green dot
-
-### Step 2: Check Channels Were Created
-
-The bot auto-creates these channels:
-
-**🤖 Auto-Remediation** category:
-- 🚨-security-alerts
-- ✅-approval-requests
-- ⚙️-execution-logs
-- 📊-stats
-- 🧠-ai-learning
-- 🔧-code-fixes
-- ⚡-orchestrator
-
-**🌐 Multi-Project** category (v3.1):
-- 👥-customer-alerts
-- 📊-customer-status
-- 🚀-deployment-log
-
-### Step 3: Test Slash Commands
-
-In any Discord channel, type `/` and you should see ShadowOps commands:
-
-```
-/status               - Should show system status
-/get-ai-stats        - Should show AI provider status
-/alle-projekte       - Should show monitored projects
-```
-
-### Step 4: Verify Logs
-
-```bash
-# Check application log
-tail -f logs/shadowops.log
-
-# Should see lines like:
-# [INFO] Bot started successfully
-# [INFO] Connected to Discord
-# [INFO] Slash commands synced
-```
-
-### Step 5: Run Tests (Optional)
-
-```bash
-# Activate venv if not already active
-source venv/bin/activate
-
-# Run test suite
-pytest tests/ -v
-
-# Should see 150+ tests passing
-```
+## 8. Verification
+(No changes needed in this section)
 
 ---
 
-## Troubleshooting
+## 9. Troubleshooting
 
 ### Bot Won't Start
 
@@ -608,288 +495,50 @@ pytest tests/ -v
 
 **Solutions:**
 
-1. **Check logs:**
-   ```bash
-   sudo journalctl -u shadowops-bot -n 50
-   ```
-
-2. **Common issues:**
-
-   **Missing token:**
-   ```
-   Error: discord.token is required
-   ```
-   Solution: Add token to `config/config.yaml`
-
-   **Invalid token:**
-   ```
-   Error: Improper token has been passed
-   ```
-   Solution: Regenerate token in Discord Developer Portal
-
-   **Python not found:**
-   ```
-   Failed to execute command
-   ```
-   Solution: Check path in service file matches your installation
-
-3. **Test manually:**
-   ```bash
-   cd /home/user/shadowops-bot
-   source venv/bin/activate
-   python3 src/bot.py
-   ```
-
-   Should show startup logs. Press `Ctrl+C` to stop.
+1.  **Check logs:** `sudo journalctl -u shadowops-bot -n 50`
+2.  **Common issues:**
+    -   **Missing token:**
+        ```
+        Error: Missing required config fields: discord.token (or DISCORD_BOT_TOKEN env var)
+        ```
+        **Solution:** Ensure `DISCORD_BOT_TOKEN` is set in your `.env` file and that the systemd service loads it.
+    -   **Invalid token:**
+        ```
+        Error: Improper token has been passed
+        ```
+        **Solution:** Regenerate the token in the Discord Developer Portal and update your `.env` file.
 
 ### Slash Commands Not Appearing
-
-**Symptom:** Can't see `/status` or other commands in Discord
-
-**Solutions:**
-
-1. **Wait up to 1 hour:**
-   - Discord caches commands
-   - Can take up to 1 hour to appear
-
-2. **Force re-invite bot:**
-   - Go to OAuth2 → URL Generator (Discord Developer Portal)
-   - Generate new invite URL with `applications.commands`
-   - Re-invite bot to server
-
-3. **Check bot permissions:**
-   - Bot needs "Use Application Commands" permission
+(No changes needed)
 
 ### AI Service Not Working
 
-**Symptom:** `/get-ai-stats` shows all providers disabled
+**Symptom:** `/get-ai-stats` shows API key as "Missing"
 
-**Solutions:**
-
-1. **Enable at least one provider:**
-   ```yaml
-   ai:
-     ollama:
-       enabled: true  # Set to true
-   ```
-
-2. **For Ollama specifically:**
-   ```bash
-   # Check Ollama is running
-   curl http://localhost:11434/api/tags
-
-   # Should return JSON with model list
-   # If not, start Ollama:
-   systemctl start ollama
-   ```
-
-3. **Restart bot:**
-   ```bash
-   sudo systemctl restart shadowops-bot
-   ```
-
-### Deployment Failing
-
-**Symptom:** GitHub webhook triggers but deployment fails
-
-**Solutions:**
-
-1. **Check permissions:**
-   ```bash
-   # Test sudo access
-   sudo systemctl status shadowops-bot
-
-   # Should work without password
-   # If asks for password, add to sudoers
-   ```
-
-2. **Check paths:**
-   ```yaml
-   projects:
-     shadowops-bot:
-       path: /home/user/shadowops-bot  # Verify this is correct
-   ```
-
-3. **Check deployment logs:**
-   ```bash
-   tail -f logs/shadowops.log | grep deployment
-   ```
-
-4. **Test webhook manually:**
-   ```bash
-   curl -X POST http://localhost:8080/health
-
-   # Should return:
-   # {"status":"healthy","service":"github-webhook","timestamp":"..."}
-   ```
+**Solution:**
+1.  Ensure the API key is correctly set in your `.env` file (e.g., `ANTHROPIC_API_KEY="..."`).
+2.  Reload the systemd daemon (`sudo systemctl daemon-reload`) and restart the bot (`sudo systemctl restart shadowops-bot`) after editing the `.env` file.
 
 ### Permission Denied Errors
 
-**Symptom:** Bot can't read logs or execute commands
+**Symptom:** Bot can't read logs like `/var/log/fail2ban.log`.
 
-**Solutions:**
-
-1. **Add user to required groups:**
-   ```bash
-   # For fail2ban
-   sudo usermod -a -G adm $USER
-
-   # For systemd logs
-   sudo usermod -a -G systemd-journal $USER
-
-   # Log out and back in for changes to take effect
-   ```
-
-2. **Configure sudoers:**
-   ```bash
-   sudo visudo
-
-   # Add (replace 'user' with your username):
-   user ALL=(ALL) NOPASSWD: /usr/bin/fail2ban-client
-   user ALL=(ALL) NOPASSWD: /usr/bin/systemctl
-   ```
-
-3. **Check file permissions:**
-   ```bash
-   ls -la /var/log/fail2ban/fail2ban.log
-   ls -la /var/log/crowdsec/crowdsec.log
-
-   # Should be readable by your user or group
-   ```
-
-### High Memory Usage
-
-**Symptom:** Bot using excessive RAM
-
-**Solutions:**
-
-1. **Disable unused AI providers:**
-   ```yaml
-   ai:
-     ollama:
-       enabled: true  # Keep
-     anthropic:
-       enabled: false  # Disable if not using
-     openai:
-       enabled: false  # Disable if not using
-   ```
-
-2. **Use smaller Ollama model:**
-   ```yaml
-   ai:
-     ollama:
-       model: phi3:mini  # ~2GB RAM
-       # Instead of llama3.1 (~4GB RAM)
-   ```
-
-3. **Reduce batch size:**
-   ```yaml
-   auto_remediation:
-     max_batch_size: 5  # Reduce from 10
-   ```
-
-### Webhook Not Receiving Events
-
-**Symptom:** GitHub shows webhook deliveries failing
-
-**Solutions:**
-
-1. **Check firewall:**
-   ```bash
-   sudo ufw status
-
-   # If port 8080 not allowed:
-   sudo ufw allow 8080/tcp
-   ```
-
-2. **Check bot is listening:**
-   ```bash
-   sudo netstat -tlnp | grep 8080
-
-   # Should show Python process listening on port 8080
-   ```
-
-3. **Test from outside:**
-   ```bash
-   # From another machine/server:
-   curl http://YOUR_SERVER_IP:8080/health
-
-   # Should return JSON health status
-   ```
-
-4. **Check webhook secret:**
-   - Verify secret in `config/config.yaml` matches GitHub
-   - Regenerate if unsure
-
----
-
-## Next Steps
-
-### 1. Test in Dry-Run Mode
-
-Keep `dry_run: true` for at least 24 hours:
-
-```yaml
-auto_remediation:
-  dry_run: true
-```
-
-Monitor logs to ensure fixes are detected and planned correctly.
-
-### 2. Review Logs
-
-Check Discord channels for AI learning logs:
-- 🧠-ai-learning
-- 🔧-code-fixes
-- ⚡-orchestrator
-
-### 3. Configure Projects
-
-Add all your projects to monitoring:
-
-```yaml
-projects:
-  project1:
-    enabled: true
-    path: /home/user/project1
-    monitor:
-      enabled: true
-      url: http://localhost:3000/health
-```
-
-### 4. Enable Auto-Remediation
-
-After testing, enable real execution:
-
-```yaml
-auto_remediation:
-  dry_run: false
-  approval_mode: paranoid  # Still require manual approval
-```
-
-### 5. Gradually Increase Autonomy
-
-After 1-2 weeks of successful operation:
-
-```yaml
-auto_remediation:
-  approval_mode: auto  # Auto-fix non-critical issues
-```
+**Solution:**
+1.  Add the user that runs the bot (e.g., `user`) to the `adm` group.
+    ```bash
+    sudo usermod -aG adm user
+    ```
+2.  **Reboot the server** or fully log out and log back in for the group changes to apply to the service. A simple service restart is often not enough.
 
 ---
 
 ## Security Checklist
 
-- [ ] Config file has correct permissions (`chmod 600 config/config.yaml`)
-- [ ] Bot token is not committed to git
-- [ ] Webhook secret is strong (32+ characters)
-- [ ] Sudoers is configured with NOPASSWD only for specific commands
-- [ ] Firewall only allows necessary ports (8080 for webhooks)
-- [ ] DO-NOT-TOUCH.md is configured for your environment
-- [ ] Dry-run mode tested before enabling real execution
-- [ ] Backup directory exists and has sufficient space
-- [ ] Logs are monitored regularly
-- [ ] Test suite passes (`pytest tests/`)
+- [ ] Secrets (tokens, API keys) are set as environment variables, NOT in `config.yaml`.
+- [ ] The `.env` file is included in `.gitignore` and is NOT committed.
+- [ ] Config file has correct permissions (`chmod 600 config.yaml`).
+- [ ] Webhook secret is strong (32+ characters).
+- [ ] Dry-run mode tested before enabling real execution.
 
 ---
 

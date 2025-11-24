@@ -169,7 +169,14 @@ pip3 install -r requirements.txt
 
 # Config erstellen
 cp config/config.example.yaml config/config.yaml
-nano config/config.yaml  # Token + Channel IDs eintragen
+nano config/config.yaml  # guild_id und andere statische IDs eintragen
+
+# Secrets als Umgebungsvariablen setzen
+# (z.B. in ~/.bashrc, ~/.zshrc oder einer .env Datei, die vom Service geladen wird)
+export DISCORD_BOT_TOKEN="DEIN_BOT_TOKEN_HIER"
+# Optional:
+# export ANTHROPIC_API_KEY="DEIN_ANTHROPIC_KEY"
+# export OPENAI_API_KEY="DEIN_OPENAI_KEY"
 ```
 
 ### 3. Systemd Service aktivieren
@@ -217,7 +224,7 @@ Basis-Config in `config/config.yaml`:
 
 ```yaml
 discord:
-  token: "YOUR_BOT_TOKEN_HERE"
+  # token: "" # WIRD JETZT ÜBER ENV VAR: DISCORD_BOT_TOKEN GESETZT
   guild_id: 123456789
 
 ai:
@@ -230,11 +237,11 @@ ai:
 
   anthropic:
     enabled: false
-    api_key: null
+    # api_key: "" # WIRD JETZT ÜBER ENV VAR: ANTHROPIC_API_KEY GESETZT
 
   openai:
     enabled: false
-    api_key: null
+    # api_key: "" # WIRD JETZT ÜBER ENV VAR: OPENAI_API_KEY GESETZT
 
 auto_remediation:
   enabled: true
@@ -337,6 +344,10 @@ sudo systemctl restart shadowops-bot
 shadowops-bot/
 ├── src/
 │   ├── bot.py                          # Haupt-Bot-Logik
+│   ├── cogs/                           # NEU: Modulare Slash Commands
+│   │   ├── admin.py
+│   │   ├── inspector.py
+│   │   └── monitoring.py
 │   ├── integrations/
 │   │   ├── ai_service.py               # AI Service (Ollama/Claude/OpenAI)
 │   │   ├── orchestrator.py             # Remediation Orchestrator
@@ -355,6 +366,7 @@ shadowops-bot/
 │   │   └── docker.py                   # Docker Scan Integration
 │   └── utils/
 │       ├── config.py                   # Config-Loader
+│       ├── state_manager.py            # NEU: State-Management
 │       ├── logger.py                   # Logging
 │       ├── embeds.py                   # Discord Embed-Builder
 │       └── discord_logger.py           # Discord Channel Logger
@@ -381,6 +393,7 @@ shadowops-bot/
 │   ├── git_history/                    # Git History Analysis
 │   └── logs/                           # Log Learning Files
 ├── data/                               # Persistent Data
+│   ├── state.json                      # NEU: Dynamic State File
 │   ├── knowledge_base.db               # SQL Learning Database
 │   ├── project_monitor_state.json      # Project Monitor State
 │   └── incidents.json                  # Incident Tracking
@@ -402,7 +415,8 @@ shadowops-bot/
 
 ## 🛡️ Security
 
-- **Token-Schutz**: Niemals `config.yaml` committen!
+- **Secrets Management**: Secrets (Token, API Keys) **müssen** als Umgebungsvariablen gesetzt werden.
+- **Config-Schutz**: Niemals die `config.yaml` oder `.env`-Dateien committen!
 - **File Permissions**: `chmod 600 config/config.yaml`
 - **Service-User**: Bot läuft als nicht-root user
 - **Rate Limiting**: Eingebaut gegen Spam
