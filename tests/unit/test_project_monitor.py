@@ -118,29 +118,28 @@ class TestProjectMonitorInit:
 
     def test_init_with_projects(self):
         """Test initialization with project configurations"""
-        config = {
-            'projects': {
-                'project1': {
+        config = MagicMock()
+        config.projects = {
+            'project1': {
+                'enabled': True,
+                'monitor': {
                     'enabled': True,
-                    'monitor': {
-                        'enabled': True,
-                        'url': 'https://project1.com/health',
-                        'expected_status': 200,
-                        'check_interval': 60
-                    }
-                },
-                'project2': {
-                    'enabled': True,
-                    'monitor': {
-                        'enabled': False  # Monitoring disabled
-                    }
-                },
-                'project3': {
-                    'enabled': False  # Project disabled
+                    'url': 'https://project1.com/health',
+                    'expected_status': 200,
+                    'check_interval': 60
                 }
             },
-            'channels': {}
+            'project2': {
+                'enabled': True,
+                'monitor': {
+                    'enabled': False  # Monitoring disabled
+                }
+            },
+            'project3': {
+                'enabled': False  # Project disabled
+            }
         }
+        config.customer_status_channel = 12345
 
         mock_bot = Mock()
         monitor = ProjectMonitor(mock_bot, config)
@@ -156,21 +155,20 @@ class TestHealthChecks:
     @pytest.mark.asyncio
     async def test_check_project_health_success(self):
         """Test successful health check"""
-        config = {
-            'projects': {
-                'test-project': {
+        config = MagicMock()
+        config.projects = {
+            'test-project': {
+                'enabled': True,
+                'monitor': {
                     'enabled': True,
-                    'monitor': {
-                        'enabled': True,
-                        'url': 'https://example.com/health',
-                        'expected_status': 200,
-                        'check_interval': 60,
-                        'timeout': 10
-                    }
+                    'url': 'https://example.com/health',
+                    'expected_status': 200,
+                    'check_interval': 60,
+                    'timeout': 10
                 }
-            },
-            'channels': {}
+            }
         }
+        config.customer_status_channel = 12345
 
         mock_bot = Mock()
         monitor = ProjectMonitor(mock_bot, config)
@@ -197,21 +195,20 @@ class TestHealthChecks:
     @pytest.mark.asyncio
     async def test_check_project_health_failure(self):
         """Test failed health check"""
-        config = {
-            'projects': {
-                'test-project': {
+        config = MagicMock()
+        config.projects = {
+            'test-project': {
+                'enabled': True,
+                'monitor': {
                     'enabled': True,
-                    'monitor': {
-                        'enabled': True,
-                        'url': 'https://example.com/health',
-                        'expected_status': 200,
-                        'check_interval': 60,
-                        'timeout': 10
-                    }
+                    'url': 'https://example.com/health',
+                    'expected_status': 200,
+                    'check_interval': 60,
+                    'timeout': 10
                 }
-            },
-            'channels': {}
+            }
         }
+        config.customer_status_channel = 12345
 
         mock_bot = Mock()
         monitor = ProjectMonitor(mock_bot, config)
@@ -239,21 +236,20 @@ class TestHealthChecks:
     @pytest.mark.asyncio
     async def test_check_project_health_timeout(self):
         """Test health check timeout"""
-        config = {
-            'projects': {
-                'test-project': {
+        config = MagicMock()
+        config.projects = {
+            'test-project': {
+                'enabled': True,
+                'monitor': {
                     'enabled': True,
-                    'monitor': {
-                        'enabled': True,
-                        'url': 'https://example.com/health',
-                        'expected_status': 200,
-                        'check_interval': 60,
-                        'timeout': 1  # Short timeout
-                    }
+                    'url': 'https://example.com/health',
+                    'expected_status': 200,
+                    'check_interval': 60,
+                    'timeout': 1  # Short timeout
                 }
-            },
-            'channels': {}
+            }
         }
+        config.customer_status_channel = 12345
 
         mock_bot = Mock()
         monitor = ProjectMonitor(mock_bot, config)
@@ -282,10 +278,9 @@ class TestAlerts:
     @pytest.mark.asyncio
     async def test_send_incident_alert(self):
         """Test sending incident alert to Discord"""
-        config = {
-            'projects': {},
-            'channels': {'customer_alerts': 12345}
-        }
+        config = MagicMock()
+        config.projects = {}
+        config.customer_alerts_channel = 12345
 
         mock_bot = Mock()
         mock_channel = AsyncMock()
@@ -307,11 +302,10 @@ class TestAlerts:
     @pytest.mark.asyncio
     async def test_send_recovery_alert(self):
         """Test sending recovery alert to Discord"""
-        config = {
-            'projects': {},
-            'channels': {'customer_alerts': 12345}
-        }
-
+        config = MagicMock()
+        config.projects = {}
+        config.customer_alerts_channel = 12345
+        
         mock_bot = Mock()
         mock_channel = AsyncMock()
         mock_bot.get_channel.return_value = mock_channel
@@ -332,18 +326,17 @@ class TestStatusRetrieval:
 
     def test_get_project_status(self):
         """Test getting status for specific project"""
-        config = {
-            'projects': {
-                'test-project': {
+        config = MagicMock()
+        config.projects = {
+            'test-project': {
+                'enabled': True,
+                'monitor': {
                     'enabled': True,
-                    'monitor': {
-                        'enabled': True,
-                        'url': 'https://example.com/health'
-                    }
+                    'url': 'https://example.com/health'
                 }
-            },
-            'channels': {}
+            }
         }
+        config.customer_status_channel = 12345
 
         mock_bot = Mock()
         monitor = ProjectMonitor(mock_bot, config)
@@ -361,25 +354,24 @@ class TestStatusRetrieval:
 
     def test_get_all_projects_status(self):
         """Test getting status for all projects"""
-        config = {
-            'projects': {
-                'project1': {
+        config = MagicMock()
+        config.projects = {
+            'project1': {
+                'enabled': True,
+                'monitor': {
                     'enabled': True,
-                    'monitor': {
-                        'enabled': True,
-                        'url': 'https://project1.com'
-                    }
-                },
-                'project2': {
-                    'enabled': True,
-                    'monitor': {
-                        'enabled': True,
-                        'url': 'https://project2.com'
-                    }
+                    'url': 'https://project1.com'
                 }
             },
-            'channels': {}
+            'project2': {
+                'enabled': True,
+                'monitor': {
+                    'enabled': True,
+                    'url': 'https://project2.com'
+                }
+            }
         }
+        config.customer_status_channel = 12345
 
         mock_bot = Mock()
         monitor = ProjectMonitor(mock_bot, config)

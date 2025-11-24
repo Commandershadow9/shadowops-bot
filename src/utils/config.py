@@ -10,7 +10,7 @@ from typing import Any, Dict, List, Optional
 
 import yaml
 
-from utils.state_manager import get_state_manager
+from .state_manager import get_state_manager
 
 logger = logging.getLogger('shadowops')
 
