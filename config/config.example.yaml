@@ -178,6 +178,7 @@ projects:
     services:
       - "guildscout"
     critical: false
+    update_channel_name: "guildscout-updates" # Optional: Channel name for customer-facing patch notes. Wird auto. erstellt.
 
   # === NEXUS ===
   nexus:

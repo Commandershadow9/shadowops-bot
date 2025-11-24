@@ -137,203 +137,87 @@ class ShadowOpsBot(commands.Bot):
         try:
             self.logger.info("🔧 Prüfe und erstelle Discord Channels...")
 
-            # Hole Guild
             guild = self.get_guild(self.config.guild_id)
             if not guild:
                 self.logger.error(f"❌ Guild {self.config.guild_id} nicht gefunden!")
                 return
 
-            # Prüfe Bot Permissions
             bot_member = guild.get_member(self.user.id)
-            if not bot_member:
-                self.logger.error("❌ Bot-Member nicht gefunden!")
-                return
-
-            if not bot_member.guild_permissions.manage_channels:
-                self.logger.error("❌ Bot hat keine 'Manage Channels' Permission!")
-                self.logger.error("   Bitte gebe dem Bot die 'Manage Channels' Berechtigung in Discord!")
+            if not bot_member or not bot_member.guild_permissions.manage_channels:
+                self.logger.error("❌ Bot hat keine 'Manage Channels' Permission! Channel-Erstellung wird übersprungen.")
                 return
 
             self.logger.info("✅ Bot hat 'Manage Channels' Permission")
 
-            # ============================================
-            # KATEGORIEN ERSTELLEN/FINDEN
-            # ============================================
+            # Categories
             security_category = await self._get_or_create_category(guild, "🔐 Security Monitoring")
             auto_remediation_category = await self._get_or_create_category(guild, "🤖 Auto-Remediation")
             system_category = await self._get_or_create_category(guild, "⚙️ System Status")
-
-            # ============================================
-            # TEIL 1: ALLE STANDARD CHANNELS PRÜFEN
-            # ============================================
-            standard_channels = {
-                'critical': ('🔴-critical', 'Kritische Security Alerts - Sofortige Reaktion erforderlich', security_category),
-                'sicherheitsdienst': ('🛡️-security', 'Sicherheitsdienst Project Alerts', security_category),
-                'nexus': ('⚡-nexus', 'Nexus Project Alerts', security_category),
-                'fail2ban': ('🚫-fail2ban', 'Fail2ban Bans und Aktivitäten', security_category),
-                'docker': ('🐳-docker', 'Docker Security Scans (Trivy)', security_category),
-                'backups': ('💾-backups', 'Backup Status und Logs', security_category),
-                'bot_status': ('🤖-bot-status', '⚙️ Bot Startup, Health-Checks und System-Status', system_category),
-                'performance': ('📊-performance', '📊 Performance Monitor: CPU, RAM, Resource Anomalies', system_category),
-            }
+            multi_project_category = await self._get_or_create_category(guild, "🌐 Multi-Project")
+            project_updates_category = await self._get_or_create_category(guild, "📢 Project Updates")
 
             channels_created = False
             updated_channel_ids = {}
 
-            for channel_key, (channel_name, description, target_category) in standard_channels.items():
-                current_id = self.config.channels.get(channel_key)
+            # Helper to find/create channels
+            async def find_or_create_channel(key, name, topic, category):
+                nonlocal channels_created
+                # Check by ID from state
+                state_id = self.state_manager.get_channel_id(guild.id, key)
+                if state_id and guild.get_channel(state_id):
+                    self.logger.info(f"✅ Channel '{name}' existiert (ID aus State: {state_id})")
+                    return state_id
 
-                # Prüfe ob Channel existiert (by ID)
-                if current_id:
-                    existing_channel = guild.get_channel(current_id)
-                    if existing_channel:
-                        # Verschiebe Channel in richtige Kategorie (falls nicht bereits dort)
-                        if existing_channel.category_id != target_category.id:
-                            self.logger.info(f"📦 Verschiebe '{channel_name}' → {target_category.name}")
-                            await existing_channel.edit(category=target_category)
-                        self.logger.info(f"✅ Channel '{channel_name}' existiert (ID: {current_id})")
-                        continue
-
-                # Prüfe ob Channel existiert (by name)
-                existing_channel = discord.utils.get(guild.text_channels, name=channel_name)
+                # Check by name
+                existing_channel = discord.utils.get(guild.text_channels, name=name)
                 if existing_channel:
-                    # Verschiebe Channel in richtige Kategorie
-                    if existing_channel.category_id != target_category.id:
-                        self.logger.info(f"📦 Verschiebe '{channel_name}' → {target_category.name}")
-                        await existing_channel.edit(category=target_category)
-                    self.logger.info(f"✅ Channel '{channel_name}' gefunden (ID: {existing_channel.id})")
-                    updated_channel_ids[channel_key] = existing_channel.id
+                    if existing_channel.category_id != category.id:
+                        self.logger.info(f"📦 Verschiebe '{name}' → {category.name}")
+                        await existing_channel.edit(category=category)
+                    self.logger.info(f"✅ Channel '{name}' gefunden (ID: {existing_channel.id})")
+                    updated_channel_ids[key] = existing_channel.id
                     channels_created = True
-                    continue
-
-                # Channel existiert nicht → erstellen
-                self.logger.info(f"📝 Erstelle Standard-Channel: {channel_name}")
-
+                    return existing_channel.id
+                
+                # Create new channel
+                self.logger.info(f"📝 Erstelle Channel: {name}")
                 new_channel = await guild.create_text_channel(
-                    name=channel_name,
-                    topic=description,
-                    category=target_category,
-                    reason="ShadowOps Bot Setup - Standard Channels"
+                    name=name, topic=topic, category=category, reason="ShadowOps Bot Setup"
                 )
-
-                self.logger.info(f"✅ Channel '{channel_name}' erstellt (ID: {new_channel.id})")
-                updated_channel_ids[channel_key] = new_channel.id
+                self.logger.info(f"✅ Channel '{name}' erstellt (ID: {new_channel.id})")
+                updated_channel_ids[key] = new_channel.id
                 channels_created = True
+                return new_channel.id
 
-            # ============================================
-            # TEIL 2: AUTO-REMEDIATION CHANNELS
-            # ============================================
-            channel_names = self.config.auto_remediation.get('channel_names', {})
-            alerts_name = channel_names.get('alerts', '🤖-auto-remediation-alerts')
-            approvals_name = channel_names.get('approvals', '✋-auto-remediation-approvals')
-            stats_name = channel_names.get('stats', '📊-auto-remediation-stats')
+            # Standard Channels
+            standard_channels = {
+                'critical': ('🔴-critical', 'Kritische Security Alerts', security_category),
+                'bot_status': ('🤖-bot-status', 'Bot Startup, Health-Checks', system_category),
+                'deployment_log': ('🚀-deployment-log', 'Deployment-Benachrichtigungen', multi_project_category),
+            }
+            for key, (name, topic, cat) in standard_channels.items():
+                await find_or_create_channel(key, name, topic, cat)
 
-            notifications = self.config.auto_remediation.get('notifications', {})
+            # Project Update Channels (New)
+            if self.config.projects:
+                for proj_name, proj_config in self.config.projects.items():
+                    channel_name = proj_config.get("update_channel_name")
+                    if channel_name:
+                        self.logger.info(f"Prüfe Update-Channel für Projekt: {proj_name}")
+                        channel_id = await find_or_create_channel(
+                            f"project_{proj_name}_updates", 
+                            channel_name, 
+                            f"Updates & Patch-Notes für das Projekt {proj_name}", 
+                            project_updates_category
+                        )
+                        # Wichtig: Speichere die ID zur Laufzeit in der Config, damit andere Module sie finden
+                        self.config.projects[proj_name]['update_channel_id'] = channel_id
+                        self.logger.info(f"✅ Laufzeit-Config für '{proj_name}' aktualisiert mit Channel-ID: {channel_id}")
 
-            auto_remediation_channels = [
-                ('alerts', alerts_name, '🤖 Live-Updates aller Auto-Remediation Fixes'),
-                ('approvals', approvals_name, '✋ Human-Approval Requests für kritische Fixes'),
-                ('stats', stats_name, '📊 Tägliche Auto-Remediation Statistiken'),
-                ('ai_learning', '🧠-ai-learning', '🧠 AI Learning Logs: Code Analyzer, Git History, Knowledge Base'),
-                ('code_fixes', '🔧-code-fixes', '🔧 Code Fixer: Vulnerability Processing & Fix Generation'),
-                ('orchestrator', '⚡-orchestrator', '⚡ Orchestrator: Batch Event Coordination & Planning'),
-                ('ai_code_scans', '🔎-ai-code-scans', '🔎 Auto-Fix Vorschläge & Status (Reaction-basiert)')
-            ]
 
-            for channel_type, channel_name, description in auto_remediation_channels:
-                current_id = notifications.get(f'{channel_type}_channel')
-
-                # Prüfe ob Channel existiert (by ID)
-                if current_id:
-                    existing_channel = guild.get_channel(current_id)
-                    if existing_channel:
-                        # Verschiebe Channel in richtige Kategorie (falls nicht bereits dort)
-                        if existing_channel.category_id != auto_remediation_category.id:
-                            self.logger.info(f"📦 Verschiebe '{channel_name}' → 🤖 Auto-Remediation")
-                            await existing_channel.edit(category=auto_remediation_category)
-                        self.logger.info(f"✅ Channel '{channel_name}' existiert (ID: {current_id})")
-                        continue
-
-                # Prüfe ob Channel existiert (by name)
-                existing_channel = discord.utils.get(guild.text_channels, name=channel_name)
-                if existing_channel:
-                    # Verschiebe Channel in richtige Kategorie
-                    if existing_channel.category_id != auto_remediation_category.id:
-                        self.logger.info(f"📦 Verschiebe '{channel_name}' → 🤖 Auto-Remediation")
-                        await existing_channel.edit(category=auto_remediation_category)
-                    self.logger.info(f"✅ Channel '{channel_name}' gefunden (ID: {existing_channel.id})")
-                    updated_channel_ids[f'auto_remediation_{channel_type}'] = existing_channel.id
-                    channels_created = True
-                    continue
-
-                # Channel existiert nicht → erstellen
-                self.logger.info(f"📝 Erstelle Auto-Remediation-Channel: {channel_name}")
-
-                new_channel = await guild.create_text_channel(
-                    name=channel_name,
-                    topic=description,
-                    category=auto_remediation_category,
-                    reason="Auto-Remediation System Setup"
-                )
-
-                self.logger.info(f"✅ Channel '{channel_name}' erstellt (ID: {new_channel.id})")
-                updated_channel_ids[f'auto_remediation_{channel_type}'] = new_channel.id
-                channels_created = True
-
-            # ============================================
-            # TEIL 3: MULTI-PROJECT CHANNELS (v3.1)
-            # ============================================
-            multi_project_category = await self._get_or_create_category(guild, "🌐 Multi-Project")
-
-            multi_project_channels = [
-                ('customer_alerts', '👥-customer-alerts', '👥 Kunden-sichtbare Alerts und Incidents'),
-                ('customer_status', '📊-customer-status', '📊 Projekt-Status Updates und Dashboards'),
-                ('deployment_log', '🚀-deployment-log', '🚀 Deployment-Benachrichtigungen und Auto-Deploy Logs'),
-            ]
-
-            for channel_key, channel_name, description in multi_project_channels:
-                current_id = self.config.channels.get(channel_key)
-
-                # Prüfe ob Channel existiert (by ID)
-                if current_id:
-                    existing_channel = guild.get_channel(current_id)
-                    if existing_channel:
-                        # Verschiebe Channel in richtige Kategorie (falls nicht bereits dort)
-                        if existing_channel.category_id != multi_project_category.id:
-                            self.logger.info(f"📦 Verschiebe '{channel_name}' → 🌐 Multi-Project")
-                            await existing_channel.edit(category=multi_project_category)
-                        self.logger.info(f"✅ Channel '{channel_name}' existiert (ID: {current_id})")
-                        continue
-
-                # Prüfe ob Channel existiert (by name)
-                existing_channel = discord.utils.get(guild.text_channels, name=channel_name)
-                if existing_channel:
-                    # Verschiebe Channel in richtige Kategorie
-                    if existing_channel.category_id != multi_project_category.id:
-                        self.logger.info(f"📦 Verschiebe '{channel_name}' → 🌐 Multi-Project")
-                        await existing_channel.edit(category=multi_project_category)
-                    self.logger.info(f"✅ Channel '{channel_name}' gefunden (ID: {existing_channel.id})")
-                    updated_channel_ids[channel_key] = existing_channel.id
-                    channels_created = True
-                    continue
-
-                # Channel existiert nicht → erstellen
-                self.logger.info(f"📝 Erstelle Multi-Project-Channel: {channel_name}")
-
-                new_channel = await guild.create_text_channel(
-                    name=channel_name,
-                    topic=description,
-                    category=multi_project_category,
-                    reason="Multi-Project Management Setup (v3.1)"
-                )
-
-                self.logger.info(f"✅ Channel '{channel_name}' erstellt (ID: {new_channel.id})")
-                updated_channel_ids[channel_key] = new_channel.id
-                channels_created = True
-
-            # Update Config mit Channel-IDs
+            # Update StateManager with all found/created IDs
             if channels_created:
-                self.logger.info("💾 Speichere Channel-IDs in Config...")
+                self.logger.info("💾 Speichere neue Channel-IDs in State...")
                 await self._update_all_channel_ids(updated_channel_ids)
                 self.logger.info("✅ Channel-Setup komplett!")
             else:
@@ -341,22 +225,15 @@ class ShadowOpsBot(commands.Bot):
 
         except discord.Forbidden:
             self.logger.error("❌ FEHLER: Bot hat keine Berechtigung Channels zu erstellen!")
-            self.logger.error("   Lösung: Gehe zu Discord Server Settings → Roles → ShadowOps")
-            self.logger.error("   Aktiviere: 'Manage Channels' Permission")
         except Exception as e:
             self.logger.error(f"❌ Fehler beim Setup der Channels: {e}", exc_info=True)
-        # Initialisiere Discord Channel Logger
+        
+        # Finalize initializations that depend on channels
         self.logger.info("🔄 Initialisiere Discord Channel Logger...")
         self.discord_logger.set_bot(self)
         await self.discord_logger.start()
         self.logger.info("✅ Discord Channel Logger bereit")
 
-        # Initialisiere Auto-Fix Manager Channels
-        try:
-            await self.auto_fix_manager.ensure_channels(self)
-            self.auto_fix_manager.register_persistent_view(self)
-        except Exception as e:
-            self.logger.warning(f"Auto-Fix Channel Setup fehlgeschlagen: {e}")
 
     async def _update_all_channel_ids(self, channel_ids: dict):
         """

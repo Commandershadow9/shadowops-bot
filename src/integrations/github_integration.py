@@ -202,42 +202,38 @@ class GitHubIntegration:
 
     async def handle_push_event(self, payload: Dict):
         """
-        Handle push events from GitHub
-
-        Triggers auto-deployment if push is to a deployment branch
+        Handle push events from GitHub, creating detailed patch notes.
         """
         try:
             repo_name = payload['repository']['name']
-            repo_full_name = payload['repository']['full_name']
-            ref = payload['ref']  # refs/heads/main
+            repo_url = payload['repository']['html_url']
+            ref = payload['ref']
             branch = ref.split('/')[-1]
-
-            # Get commit info
+            pusher = payload['pusher']['name']
+            
+            # Don't process pushes with no commits (e.g., branch creation)
             commits = payload.get('commits', [])
-            commit_count = len(commits)
-
-            if commits:
-                latest_commit = commits[-1]
-                commit_message = latest_commit['message']
-                commit_author = latest_commit['author']['name']
-                commit_sha = latest_commit['id'][:7]
-            else:
-                commit_message = "No commits"
-                commit_author = "Unknown"
-                commit_sha = "unknown"
+            if not commits or payload.get('created', False) and payload.get('head_commit') is None:
+                self.logger.info(f"Skipping push event for {repo_name}/{branch} (no commits).")
+                return
 
             self.logger.info(
                 f"📌 Push to {repo_name}/{branch}: "
-                f"{commit_count} commit(s) by {commit_author}"
+                f"{len(commits)} commit(s) by {pusher}"
             )
 
-            # Send Discord notification
+            # Send detailed patch notes notification
             await self._send_push_notification(
-                repo_full_name, branch, commit_count,
-                commit_author, commit_message, commit_sha
+                repo_name=repo_name,
+                repo_url=repo_url,
+                branch=branch,
+                pusher=pusher,
+                commits=commits
             )
 
-            # Auto-deploy if enabled and on deployment branch
+            # Auto-deploy if enabled and on a deployment branch
+            # Assuming 'head_commit' is present if there are commits
+            commit_sha = payload.get('head_commit', {}).get('id', 'unknown')[:7]
             if self.auto_deploy_enabled and branch in self.deploy_branches:
                 self.logger.info(f"🚀 Triggering auto-deploy for {repo_name}/{branch}")
                 await self._trigger_deployment(repo_name, branch, commit_sha)
@@ -363,31 +359,55 @@ class GitHubIntegration:
             await self._send_deployment_error(repo_name, branch, commit_sha, str(e))
 
     async def _send_push_notification(
-        self, repo: str, branch: str, commit_count: int,
-        author: str, message: str, sha: str
+        self, repo_name: str, repo_url: str, branch: str, pusher: str, commits: list
     ):
-        """Send Discord notification for push event"""
-        channel = self.bot.get_channel(self.deployment_channel_id)
-        if not channel:
-            return
+        """Send detailed Discord notification for a push event."""
+        # Find project config to get color and potential customer channel
+        project_config = self.config.projects.get(repo_name, {})
+        project_color = project_config.get('color', 0x3498DB) # Default blue
 
         embed = discord.Embed(
-            title=f"📌 New Push to {repo}",
-            description=f"**{commit_count}** commit(s) pushed to `{branch}`",
-            color=discord.Color.green(),
+            title=f"🚀 Code Update: {repo_name}",
+            url=f"{repo_url}/commits/{branch}",
+            color=project_color,
             timestamp=datetime.utcnow()
         )
+        embed.set_author(name=pusher)
 
-        embed.add_field(name="Branch", value=f"`{branch}`", inline=True)
-        embed.add_field(name="Commits", value=str(commit_count), inline=True)
-        embed.add_field(name="Author", value=author, inline=True)
+        commit_details = []
+        for commit in commits:
+            sha = commit['id'][:7]
+            author = commit['author']['name']
+            message = commit['message'].split('\n')[0] # First line of commit message
+            url = commit['url']
+            commit_details.append(f"[`{sha}`]({url}) {message} - *{author}*")
 
-        # Truncate commit message if too long
-        if len(message) > 200:
-            message = message[:197] + "..."
-        embed.add_field(name="Latest Commit", value=f"`{sha}` {message}", inline=False)
+        if commit_details:
+            embed.description = "\n".join(commit_details)
+        else:
+            embed.description = "No new commits in this push."
 
-        await channel.send(embed=embed)
+        # 1. Send to internal channel
+        internal_channel = self.bot.get_channel(self.deployment_channel_id)
+        if internal_channel:
+            try:
+                await internal_channel.send(embed=embed)
+                self.logger.info(f"📢 Sent patch notes for {repo_name} to internal channel.")
+            except Exception as e:
+                self.logger.error(f"❌ Failed to send push notification to internal channel: {e}")
+
+        # 2. Send to customer-facing channel if configured
+        customer_channel_id = project_config.get('update_channel_id')
+        if customer_channel_id:
+            customer_channel = self.bot.get_channel(customer_channel_id)
+            if customer_channel:
+                try:
+                    await customer_channel.send(embed=embed)
+                    self.logger.info(f"📢 Sent patch notes for {repo_name} to customer channel {customer_channel_id}.")
+                except Exception as e:
+                    self.logger.error(f"❌ Failed to send push notification to customer channel {customer_channel_id}: {e}")
+            else:
+                self.logger.warning(f"⚠️ Customer update channel {customer_channel_id} for {repo_name} not found.")
 
     async def _send_pr_notification(
         self, action: str, repo: str, pr_number: int, title: str,
