@@ -622,7 +622,7 @@ class SecurityEventWatcher:
                 country = details.get('country', 'Unknown')
 
                 embed = EmbedBuilder.crowdsec_alert(ip, scenario, country)
-                channel_id = self.bot.config.get_channel_for_alert('critical')
+                channel_id = self.bot.config.get_channel_for_alert('crowdsec')
                 mention = self.bot.config.mention_role_critical
 
             elif event.source == 'aide':

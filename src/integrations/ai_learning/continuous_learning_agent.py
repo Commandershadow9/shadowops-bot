@@ -517,8 +517,8 @@ Identifiziere Muster oder wichtige Erkenntnisse. Antworte in 1-2 Sätzen auf Deu
 
     async def _log_analysis_loop(self):
         """Periodically analyze logs and send summaries"""
-        # Wait 15 minutes before first run to avoid startup noise
-        await asyncio.sleep(900)
+        # Wait a short period before first run to allow other components to initialize
+        await asyncio.sleep(60) # Reduced from 900 to 60 seconds
 
         while self.is_running:
             try:

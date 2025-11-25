@@ -43,6 +43,7 @@ from integrations.project_monitor import ProjectMonitor
 from integrations.deployment_manager import DeploymentManager
 from integrations.incident_manager import IncidentManager
 from integrations.customer_notifications import CustomerNotificationManager
+from integrations.customer_server_setup import CustomerServerSetup
 
 # AI Learning System
 from integrations.ai_learning import ContinuousLearningAgent
@@ -85,6 +86,7 @@ class ShadowOpsBot(commands.Bot):
         self.deployment_manager = None
         self.incident_manager = None
         self.customer_notifications = None
+        self.customer_server_setup = None
 
         # AI Learning System
         self.continuous_learning = None
@@ -418,6 +420,9 @@ class ShadowOpsBot(commands.Bot):
         self.logger.info("✅ PHASE 1 abgeschlossen")
         self.logger.info("=" * 60)
 
+        # Validate Fail2ban permissions
+        self.fail2ban.validate_permissions()
+
         # ============================================
         # PHASE 2: AUTO-CREATE CHANNELS
         # ============================================
@@ -576,15 +581,23 @@ class ShadowOpsBot(commands.Bot):
             self.logger.info("✅ [4/5] Project Monitor gestartet (mit Incident-Tracking)")
 
             # Initialisiere GitHub Integration
-            self.logger.info("🔄 [5/5] Initialisiere GitHub Integration...")
+            self.logger.info("🔄 [5/6] Initialisiere GitHub Integration...")
             self.github_integration = GitHubIntegration(self, self.config)
-            # Link Deployment Manager to GitHub Integration
+            # Link Deployment Manager and AI Service to GitHub Integration
             if self.github_integration.enabled:
                 self.github_integration.deployment_manager = self.deployment_manager
+                self.github_integration.ai_service = self.ai_service  # For KI patch notes
                 await self.github_integration.start_webhook_server()
-                self.logger.info("✅ [5/5] GitHub Integration gestartet (Webhook Server läuft)")
+                self.logger.info("✅ [5/6] GitHub Integration gestartet (Webhook Server läuft)")
             else:
-                self.logger.info("ℹ️ [5/5] GitHub Integration deaktiviert (config: github.enabled=false)")
+                self.logger.info("ℹ️ [5/6] GitHub Integration deaktiviert (config: github.enabled=false)")
+
+            # Initialisiere Customer Server Setup (Auto-Channel Creation)
+            self.logger.info("🔄 [6/6] Initialisiere Customer Server Setup...")
+            self.customer_server_setup = CustomerServerSetup(self, self.config)
+            # Check all guilds and setup missing channels
+            await self.customer_server_setup.check_and_setup_all_guilds()
+            self.logger.info("✅ [6/6] Customer Server Setup bereit (Auto-Channel Creation)")
 
             self.logger.info("=" * 60)
             self.logger.info("✅ PHASE 5 abgeschlossen - Multi-Project Management aktiv")
@@ -706,6 +719,13 @@ class ShadowOpsBot(commands.Bot):
     async def on_guild_join(self, guild: discord.Guild):
         """Bot wurde zu Server hinzugefügt"""
         self.logger.info(f"➕ Bot zu Server hinzugefügt: {guild.name} ({guild.id})")
+
+        # Automatic channel setup for customer servers
+        if self.customer_server_setup:
+            try:
+                await self.customer_server_setup.on_guild_join(guild)
+            except Exception as e:
+                self.logger.error(f"❌ Failed to setup customer server {guild.name}: {e}", exc_info=True)
 
     async def on_error(self, event: str, *args, **kwargs):
         """Error Handler"""
