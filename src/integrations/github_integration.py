@@ -456,8 +456,28 @@ class GitHubIntegration:
         internal_channel = self.bot.get_channel(self.deployment_channel_id)
         if internal_channel:
             try:
-                await internal_channel.send(embed=internal_embed)
-                self.logger.info(f"📢 Sent technical patch notes for {repo_name} to internal channel.")
+                # Check if description is too long and split if needed
+                description_chunks = self._split_embed_description(internal_embed.description or "")
+
+                if len(description_chunks) <= 1:
+                    # Single embed - send as is
+                    await internal_channel.send(embed=internal_embed)
+                    self.logger.info(f"📢 Sent technical patch notes for {repo_name} to internal channel.")
+                else:
+                    # Multiple embeds needed - split across messages
+                    for i, chunk in enumerate(description_chunks):
+                        embed_copy = discord.Embed(
+                            title=f"{internal_embed.title} (Teil {i+1}/{len(description_chunks)})" if i > 0 else internal_embed.title,
+                            url=internal_embed.url,
+                            color=internal_embed.color,
+                            description=chunk,
+                            timestamp=internal_embed.timestamp
+                        )
+                        if i == 0:
+                            embed_copy.set_author(name=internal_embed.author.name)
+                        await internal_channel.send(embed=embed_copy)
+
+                    self.logger.info(f"📢 Sent technical patch notes for {repo_name} to internal channel ({len(description_chunks)} parts).")
             except Exception as e:
                 self.logger.error(f"❌ Failed to send push notification to internal channel: {e}")
 
@@ -467,12 +487,80 @@ class GitHubIntegration:
             customer_channel = self.bot.get_channel(customer_channel_id)
             if customer_channel:
                 try:
-                    await customer_channel.send(embed=customer_embed)
-                    self.logger.info(f"📢 Sent user-friendly patch notes for {repo_name} to customer channel {customer_channel_id}.")
+                    # Check if description is too long and split if needed
+                    description_chunks = self._split_embed_description(customer_embed.description or "")
+
+                    if len(description_chunks) <= 1:
+                        # Single embed - send as is
+                        await customer_channel.send(embed=customer_embed)
+                        self.logger.info(f"📢 Sent user-friendly patch notes for {repo_name} to customer channel {customer_channel_id}.")
+                    else:
+                        # Multiple embeds needed - split across messages
+                        for i, chunk in enumerate(description_chunks):
+                            embed_copy = discord.Embed(
+                                title=f"{customer_embed.title} (Teil {i+1}/{len(description_chunks)})" if i > 0 else customer_embed.title,
+                                url=customer_embed.url,
+                                color=customer_embed.color,
+                                description=chunk,
+                                timestamp=customer_embed.timestamp
+                            )
+                            if i == len(description_chunks) - 1:  # Add footer only to last embed
+                                embed_copy.set_footer(text=customer_embed.footer.text)
+                            await customer_channel.send(embed=embed_copy)
+
+                        self.logger.info(f"📢 Sent user-friendly patch notes for {repo_name} to customer channel {customer_channel_id} ({len(description_chunks)} parts).")
                 except Exception as e:
                     self.logger.error(f"❌ Failed to send push notification to customer channel {customer_channel_id}: {e}")
             else:
                 self.logger.warning(f"⚠️ Customer update channel {customer_channel_id} for {repo_name} not found.")
+
+    def _split_embed_description(self, description: str, max_length: int = 4096) -> list[str]:
+        """
+        Split a long description into multiple chunks that fit Discord's limits.
+
+        Args:
+            description: The full description text
+            max_length: Maximum length per chunk (Discord limit: 4096)
+
+        Returns:
+            List of description chunks
+        """
+        if len(description) <= max_length:
+            return [description]
+
+        chunks = []
+        current_chunk = ""
+
+        # Split by paragraphs first (double newline)
+        paragraphs = description.split('\n\n')
+
+        for paragraph in paragraphs:
+            # If adding this paragraph would exceed limit, save current chunk
+            if len(current_chunk) + len(paragraph) + 2 > max_length:
+                if current_chunk:
+                    chunks.append(current_chunk.strip())
+                    current_chunk = ""
+
+                # If single paragraph is too long, split by lines
+                if len(paragraph) > max_length:
+                    lines = paragraph.split('\n')
+                    for line in lines:
+                        if len(current_chunk) + len(line) + 1 > max_length:
+                            if current_chunk:
+                                chunks.append(current_chunk.strip())
+                            current_chunk = line + "\n"
+                        else:
+                            current_chunk += line + "\n"
+                else:
+                    current_chunk = paragraph + "\n\n"
+            else:
+                current_chunk += paragraph + "\n\n"
+
+        # Add remaining chunk
+        if current_chunk.strip():
+            chunks.append(current_chunk.strip())
+
+        return chunks
 
     def _format_user_friendly_commit(self, message: str) -> str:
         """Convert technical commit message to user-friendly text."""
@@ -539,6 +627,7 @@ Fasse diese Commits zu professionellen, verständlichen Patch Notes zusammen:
 4. Entferne Jargon, Issue-Nummern, und technische Präfixe
 5. Schreibe zusammenhängend, nicht als rohe Liste
 6. Maximal 3-4 Sätze pro Kategorie
+7. WICHTIG: Halte die Antwort KURZ - maximal 3000 Zeichen!
 
 FORMAT:
 Verwende Markdown mit ** für Kategorien und • für Bulletpoints.
@@ -573,6 +662,7 @@ Summarize these commits into professional, accessible patch notes:
 4. Remove jargon, issue numbers, and technical prefixes
 5. Write cohesively, not as raw list
 6. Maximum 3-4 sentences per category
+7. IMPORTANT: Keep response SHORT - maximum 3000 characters!
 
 FORMAT:
 Use Markdown with ** for categories and • for bulletpoints.
