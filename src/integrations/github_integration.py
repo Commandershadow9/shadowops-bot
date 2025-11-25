@@ -539,6 +539,9 @@ class GitHubIntegration:
             else:
                 self.logger.warning(f"⚠️ Kunden-Update Channel {customer_channel_id} für {repo_name} nicht gefunden.")
 
+        # 3. Send to external notification channels (customer servers)
+        await self._send_external_git_notifications(repo_name, customer_embed, project_config)
+
     def _split_embed_description(self, description: str, max_length: int = 4096) -> list[str]:
         """
         Split a long description into multiple chunks that fit Discord's limits.
@@ -896,3 +899,64 @@ Create the patch notes NOW (only categories + bulletpoints, no introduction):"""
         embed.add_field(name="Exception", value=f"```{error}```", inline=False)
 
         await channel.send(embed=embed)
+
+    async def _send_external_git_notifications(self, repo_name: str, embed: discord.Embed, project_config: Dict):
+        """
+        Send Git push notifications to external servers (customer guilds)
+
+        Args:
+            repo_name: Repository name
+            embed: The embed to send (customer-friendly patch notes)
+            project_config: Project configuration dictionary
+        """
+        # Get external notifications config
+        external_notifs = project_config.get('external_notifications', [])
+        if not external_notifs:
+            return
+
+        for notif_config in external_notifs:
+            if not notif_config.get('enabled', False):
+                continue
+
+            # Check if git_push notifications are enabled
+            notify_on = notif_config.get('notify_on', {})
+            if not notify_on.get('git_push', True):
+                continue
+
+            # Get channel
+            channel_id = notif_config.get('channel_id')
+            if not channel_id:
+                continue
+
+            try:
+                channel = self.bot.get_channel(int(channel_id))
+                if not channel:
+                    self.logger.warning(f"⚠️ External channel {channel_id} not found for {repo_name}")
+                    continue
+
+                # Check if description is too long and split if needed
+                description_chunks = self._split_embed_description(embed.description or "")
+
+                if len(description_chunks) <= 1:
+                    # Single embed - send as is
+                    await channel.send(embed=embed)
+                    self.logger.info(f"📤 Sent git update for {repo_name} to external server")
+                else:
+                    # Multiple embeds needed - split across messages
+                    for i, chunk in enumerate(description_chunks):
+                        embed_copy = discord.Embed(
+                            title=f"{embed.title} (Teil {i+1}/{len(description_chunks)})" if i > 0 else embed.title,
+                            url=embed.url,
+                            color=embed.color,
+                            description=chunk,
+                            timestamp=embed.timestamp
+                        )
+                        if i == len(description_chunks) - 1:  # Add footer only to last embed
+                            if embed.footer:
+                                embed_copy.set_footer(text=embed.footer.text)
+                        await channel.send(embed=embed_copy)
+
+                    self.logger.info(f"📤 Sent git update for {repo_name} to external server ({len(description_chunks)} parts)")
+
+            except Exception as e:
+                self.logger.error(f"❌ Failed to send external git notification for {repo_name}: {e}")

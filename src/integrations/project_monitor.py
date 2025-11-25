@@ -415,19 +415,37 @@ class ProjectMonitor:
                 self.logger.info(
                     f"🚨 Created incident for {project.name} via IncidentManager"
                 )
-                return
+                # Continue to send external notifications even if incident was created
             except Exception as e:
                 self.logger.error(
                     f"❌ Failed to create incident via IncidentManager: {e}",
                     exc_info=True
                 )
-                # Fall through to send simple alert
 
-        # Fallback: Send simple alert if IncidentManager not available
+        # Send alert to internal channel (fallback if IncidentManager failed)
+        if not self.incident_manager:
+            channel = self.bot.get_channel(self.customer_alerts_channel_id)
+            if channel:
+                embed = self._create_incident_embed(project, error)
+                await channel.send(embed=embed)
+                self.logger.info(f"🚨 Sent incident alert for {project.name} (fallback mode)")
+
+        # Send to external notification channels (customer servers)
+        await self._send_external_notifications(project, "offline", error=error)
+
+    async def _send_recovery_alert(self, project: ProjectStatus):
+        """Send Discord alert when project recovers"""
         channel = self.bot.get_channel(self.customer_alerts_channel_id)
-        if not channel:
-            return
+        if channel:
+            embed = self._create_recovery_embed(project)
+            await channel.send(embed=embed)
+            self.logger.info(f"✅ Sent recovery alert for {project.name}")
 
+        # Send to external notification channels (customer servers)
+        await self._send_external_notifications(project, "online")
+
+    def _create_incident_embed(self, project: ProjectStatus, error: str) -> discord.Embed:
+        """Create embed for incident alert"""
         embed = discord.Embed(
             title=f"🔴 {project.name} is DOWN",
             description=f"Health check failed for **{project.name}**",
@@ -450,15 +468,10 @@ class ProjectMonitor:
             inline=True
         )
 
-        await channel.send(embed=embed)
-        self.logger.info(f"🚨 Sent incident alert for {project.name} (fallback mode)")
+        return embed
 
-    async def _send_recovery_alert(self, project: ProjectStatus):
-        """Send Discord alert when project recovers"""
-        channel = self.bot.get_channel(self.customer_alerts_channel_id)
-        if not channel:
-            return
-
+    def _create_recovery_embed(self, project: ProjectStatus) -> discord.Embed:
+        """Create embed for recovery alert"""
         embed = discord.Embed(
             title=f"✅ {project.name} is BACK ONLINE",
             description=f"**{project.name}** has recovered",
@@ -480,8 +493,67 @@ class ProjectMonitor:
             inline=True
         )
 
-        await channel.send(embed=embed)
-        self.logger.info(f"✅ Sent recovery alert for {project.name}")
+        return embed
+
+    async def _send_external_notifications(self, project: ProjectStatus, event_type: str, error: str = None):
+        """
+        Send notifications to external servers (customer guilds)
+
+        Args:
+            project: ProjectStatus instance
+            event_type: "online", "offline", or "error"
+            error: Error message (if applicable)
+        """
+        # Get project config
+        project_config = None
+        for proj_name, proj_cfg in self.config.projects.items():
+            if proj_name == project.name:
+                project_config = proj_cfg
+                break
+
+        if not project_config:
+            return
+
+        # Get external notifications config
+        external_notifs = project_config.get('external_notifications', [])
+        if not external_notifs:
+            return
+
+        for notif_config in external_notifs:
+            if not notif_config.get('enabled', False):
+                continue
+
+            # Check if this event type should be notified
+            notify_on = notif_config.get('notify_on', {})
+            if event_type == "offline" and not notify_on.get('offline', True):
+                continue
+            if event_type == "online" and not notify_on.get('online', True):
+                continue
+
+            # Get channel
+            channel_id = notif_config.get('channel_id')
+            if not channel_id:
+                continue
+
+            try:
+                channel = self.bot.get_channel(int(channel_id))
+                if not channel:
+                    self.logger.warning(f"⚠️ External channel {channel_id} not found for {project.name}")
+                    continue
+
+                # Create and send embed
+                if event_type == "offline":
+                    embed = self._create_incident_embed(project, error or "Unknown error")
+                elif event_type == "online":
+                    embed = self._create_recovery_embed(project)
+                else:
+                    continue
+
+                await channel.send(embed=embed)
+                self.logger.info(f"📤 Sent {event_type} notification for {project.name} to external server")
+
+            except Exception as e:
+                self.logger.error(f"❌ Failed to send external notification for {project.name}: {e}")
 
     async def _update_dashboard_loop(self):
         """Periodically update the dashboard message"""
