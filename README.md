@@ -1,6 +1,6 @@
-# 🗡️ ShadowOps - Active Security Guardian v3.1 🚀
+# 🗡️ ShadowOps - Active Security Guardian v3.2 🚀
 
-**Status:** ✅ **LIVE & PRODUKTIV** | **Version:** 3.1.0 | **Letzte Aktualisierung:** 21.11.2025
+**Status:** ✅ **LIVE & PRODUKTIV** | **Version:** 3.2.0 | **Letzte Aktualisierung:** 25.11.2025
 
 **ShadowOps** ist ein **vollständig autonomer Security Guardian** mit KI-gesteuerter Auto-Remediation, persistentem Lernsystem und Multi-Projekt-Management, der Sicherheitsbedrohungen nicht nur erkennt und analysiert, sondern **eigenständig behebt und aus Erfahrungen lernt**.
 
@@ -8,6 +8,24 @@
 > 📚 **Dokumentations-Übersicht:** [DOCS_OVERVIEW.md](./DOCS_OVERVIEW.md)
 > 🔧 **API Dokumentation:** [docs/API.md](./docs/API.md)
 > 🚀 **Setup Guide:** [docs/SETUP_GUIDE.md](./docs/SETUP_GUIDE.md)
+
+## ⚡ Highlights v3.2
+
+### 🌐 **Multi-Guild Customer Notifications (v3.2 - NEW)**
+- ✅ **Automatic Channel Setup**: Bot auto-creates monitoring channels on customer servers
+- ✅ **External Notifications**: Send Git updates and status alerts to customer Discord servers
+- ✅ **AI-Generated Patch Notes**: Professional, user-friendly updates with Ollama llama3.1
+- ✅ **Dual-Channel System**: Technical logs (internal) + friendly updates (customers)
+- ✅ **Per-Project Configuration**: Configurable language (DE/EN) and notification types
+- ✅ **Message Splitting**: Automatic handling of Discord's 4096 character limit
+- ✅ **Centralized Monitoring**: ShadowOps handles all notifications (Option B)
+- ✅ **Manual Setup Command**: `/setup-customer-server` for existing guilds
+
+### 🔧 **Security Integration Fixes (v3.2 - NEW)**
+- ✅ **CrowdSec Integration Fixed**: Corrected JSON parsing, now shows "🟢 Aktiv"
+- ✅ **Fail2ban Integration Fixed**: Resolved systemd restrictions, now shows "🟢 Aktiv"
+- ✅ **GitHub Webhook Logging**: Fixed logger connection for full webhook visibility
+- ✅ **Firewall Configuration**: Port 9090 opened with HMAC security
 
 ## ⚡ Highlights v3.1
 
@@ -441,7 +459,28 @@ shadowops-bot/
 
 See [CHANGELOG.md](./CHANGELOG.md) for detailed version history.
 
-### Version 3.1.0 (2025-11-21) - Current
+### Version 3.2.0 (2025-11-25) - Current
+**🌐 Multi-Guild Customer Notifications:**
+- Automatic channel setup on customer servers
+- AI-generated patch notes (Ollama llama3.1)
+- Dual-channel system (internal technical + customer friendly)
+- Per-project language configuration (DE/EN)
+- Message splitting for long patch notes
+- Manual setup command `/setup-customer-server`
+
+**🔧 Security Integration Fixes:**
+- Fixed CrowdSec integration (JSON parsing)
+- Fixed Fail2ban integration (systemd restrictions)
+- Fixed GitHub webhook logging
+- Opened port 9090 with HMAC security
+
+**📚 Documentation:**
+- Complete multi-guild setup guide
+- Customer onboarding instructions
+- GitHub webhook configuration guide
+- Security integration fixes documentation
+
+### Version 3.1.0 (2025-11-21)
 **🧠 Persistent Learning System:**
 - SQL Knowledge Base for permanent learning
 - Git history analysis for codebase understanding

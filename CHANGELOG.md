@@ -1,5 +1,363 @@
 # ShadowOps Bot - Changelog
 
+## [3.2.0] - 2025-11-25
+
+### 🚀 Major Release: Multi-Guild Customer Notifications & AI Patch Notes
+
+#### ✨ Added
+
+**Multi-Guild Customer Notification System:**
+- **Automatic Channel Setup** (`customer_server_setup.py`) - Bot auto-creates monitoring channels on customer servers
+  - Creates admin-only category "🚨 | ADMIN AREA" if not exists
+  - Auto-setup on guild join with proper permissions
+  - Manual setup command `/setup-customer-server` for existing guilds
+  - Startup check for missing channels on all guilds
+  - Permissions: Admin-only access, bot send/embed permissions
+- **External Notifications** - Send Git updates and status alerts to customer Discord servers
+  - Per-project configuration in `config.yaml` (`external_notifications`)
+  - Configurable per channel: `git_push`, `offline`, `online`, `errors`
+  - Multi-channel support per customer guild
+  - Example: GuildScout Bot notifications on JustMemplex Community Discord
+- **Centralized Monitoring Architecture** - ShadowOps Bot handles all notifications
+  - Option B implementation: Customer bots (e.g., GuildScout) made silent
+  - Central bot manages all push notifications and status monitoring
+  - Prevents duplicate status messages
+  - Reduces notification spam on customer servers
+
+**AI-Generated Patch Notes:**
+- **Dual-Channel System** - Different notifications for internal vs. customer channels
+  - **Internal Embeds** (German): Technical details for developers
+    - Full commit list with file changes
+    - Branch information and pusher
+    - Direct links to commits
+  - **Customer Embeds** (Configurable Language): User-friendly updates
+    - Categorized changes: 🆕 New Features, 🐛 Bug Fixes, ⚡ Improvements
+    - AI-generated professional summaries
+    - Per-project language setting (German/English)
+    - Smart detail level based on commit count
+- **Ollama AI Integration** - Professional patch note generation
+  - Uses `llama3.1` model for critical analysis
+  - Configurable per-project: `patch_notes.use_ai: true/false`
+  - Configurable language: `patch_notes.language: de/en`
+  - Smart scaling: High-level overview for 30+ commits, detailed for fewer
+  - Respects 8000 character limit with safety margin
+- **Automatic Message Splitting** - Handles Discord's 4096 character limit
+  - Intelligent splitting by paragraphs then lines
+  - Multi-part messages labeled "Teil 1/3", etc.
+  - Preserves formatting and structure
+  - Works for both AI-generated and categorized content
+- **Case-Insensitive Project Lookup** - Flexible repository name matching
+  - Handles GitHub repo names (GuildScout) vs. config keys (guildscout)
+  - Backward compatible with existing configurations
+
+**German Deployment Logs:**
+- Internal deployment logs now in German for developer clarity
+- Customer-facing logs remain configurable per-project
+- Consistent language across all internal communications
+
+**Customer Setup Commands:**
+- **`/setup-customer-server`** - Manual channel setup (admin-only)
+  - Creates monitoring channels on current server
+  - Shows config snippet for `config.yaml`
+  - Ephemeral responses for security
+  - Full error handling and logging
+
+#### 🔧 Changed
+
+**GitHub Integration Enhancements:**
+- Extended from single-server to multi-server notifications
+- Added external notification support to `github_integration.py`
+- Case-insensitive project configuration lookup
+- Improved error handling for missing projects
+
+**Project Monitor Updates:**
+- Added external notification support for status events
+- Sends offline/online/error alerts to customer guilds
+- Respects per-channel notification preferences
+- Coordinated with GitHub integration for consistent messaging
+
+**Configuration Structure:**
+- New `external_notifications` section per project:
+  ```yaml
+  projects:
+    guildscout:
+      external_notifications:
+        - guild_id: 1390695394777890897
+          channel_id: 1442887630034440426
+          enabled: true
+          notify_on:
+            git_push: true
+            offline: false
+            online: false
+            errors: false
+  ```
+- New `patch_notes` section per project:
+  ```yaml
+  projects:
+    guildscout:
+      patch_notes:
+        language: en
+        use_ai: true
+  ```
+
+**GuildScout Bot Configuration:**
+- Disabled self-reporting: `discord_service_logs_enabled: false`
+- ShadowOps Bot now handles all GuildScout monitoring centrally
+- Prevents duplicate status messages
+
+#### 🐛 Bug Fixes
+
+**Security Integration Fixes (GitHub Issue #5):**
+- **CrowdSec Integration** - Fixed "Inaktiv" status in Discord
+  - Fixed JSON parsing for nested `alert.decisions[]` structure
+  - Previously treated top-level alerts as decisions (incorrect)
+  - Now correctly extracts IP, scenario, duration from nested structure
+  - Test verified: `'ip': '161.118.206.188', 'scenario': 'crowdsecurity/http-cve-2021-41773'`
+- **Fail2ban Integration** - Fixed "Inaktiv" status in Discord
+  - Both integrations failing due to systemd security restrictions
+  - Fixed sudo execution blocked by `NoNewPrivileges=true` flag
+  - Solution: Commented out flag in `/etc/systemd/system/shadowops-bot.service`
+  - Balanced security: Kept strict sudoers rules, only disabled blocking flag
+  - Both services now report as "🟢 Aktiv"
+- **CrowdSec Channel Routing** - Fixed alert routing
+  - Changed from 'critical' to 'crowdsec' channel
+  - Alerts now appear in correct Discord channel
+  - Line 625 in `event_watcher.py`
+
+**GitHub Webhook Fixes:**
+- **Logger Connection** - Fixed missing webhook event logs
+  - Changed from `logging.getLogger(__name__)` to `logging.getLogger('shadowops')`
+  - Webhook processing now fully logged
+  - Verification: "📥 Received GitHub event: push" now visible
+- **Firewall Configuration** - Opened port 9090 for webhooks
+  - Added UFW rule: `sudo ufw allow 9090/tcp comment 'GitHub Webhook (secured with HMAC)'`
+  - Webhook server now accessible from GitHub
+  - HMAC signature verification active
+
+**AI Service Fixes:**
+- Fixed method name: `generate_raw_ai_response()` → `get_raw_ai_response()`
+- AI patch note generation now working correctly
+- Proper error handling for AI service failures
+
+**External Notification Fixes:**
+- Resolved category ID mismatch on customer servers
+  - Added auto-create category if not found
+  - Fallback to creating "🚨 | ADMIN AREA" with proper permissions
+  - Handles edge case where bot joins before category exists
+- Fixed startup check for missing channels
+  - Bot now automatically sets up channels on first run
+  - Manual command available for edge cases
+  - Skips dev server (ID: 1438065435496157267)
+
+#### 📁 New Files
+
+**Customer Server Integration:**
+- `src/integrations/customer_server_setup.py` (353 lines) - Automatic channel setup system
+  - Category and channel creation
+  - Permission management (admin-only)
+  - Startup checks for all guilds
+  - Guild join handler
+  - Config snippet generation
+- `src/cogs/customer_setup_commands.py` (120 lines) - Manual setup command
+  - `/setup-customer-server` command implementation
+  - Ephemeral responses for security
+  - Error handling and user feedback
+
+**Documentation:**
+- `MULTI_GUILD_SETUP.md` - Complete multi-server setup guide
+- `CUSTOMER_SERVER_SETUP.md` - Customer onboarding instructions
+- `GITHUB_PUSH_NOTIFICATIONS_SETUP.md` - Webhook configuration guide
+- `FIXES_2025-11-25.md` - Security integration fixes documentation
+- `get_bot_invite.py` - Helper script for bot invitation URL generation
+
+#### 🔐 Security Improvements
+
+**Systemd Security:**
+- Balanced security approach: Disabled `NoNewPrivileges` for sudo access
+- Maintained strict sudoers rules for Fail2ban and CrowdSec
+- Only allows specific commands with NOPASSWD
+- Security monitoring tools now functional
+
+**Webhook Security:**
+- HMAC SHA-256 signature verification for all GitHub webhooks
+- Secret: `nBeQY8tdw6o5prdXBfc2DbCZ60eB_KLbuCq8OCdRiIw`
+- Port 9090 opened with security comment in firewall
+- Only processes verified webhook payloads
+
+**Discord Permissions:**
+- Customer channels created with admin-only permissions
+- Bot has minimal required permissions (send messages, embed links)
+- Ephemeral responses for setup commands (security)
+- @everyone denied by default on monitoring channels
+
+#### 📊 Technical Details
+
+**Channel Setup:**
+```python
+# Auto-created on customer servers
+Category: "🚨 | ADMIN AREA" (ID: 1398982574923321494)
+├── 📢guildscout-updates (Git push notifications)
+└── 🔴guildscout-status (Status monitoring)
+
+Permissions:
+- @everyone: Deny all
+- Admin Role: Full access
+- Bot: Send messages + embeds
+```
+
+**External Notification Flow:**
+```
+1. GitHub Push Event → Webhook received
+2. AI generates patch notes (Ollama llama3.1)
+3. Internal embed sent (German, technical)
+4. Customer embeds sent (English, user-friendly)
+5. Project Monitor detects status change
+6. Status notifications sent to customer channels
+```
+
+**AI Prompt Engineering:**
+```python
+# German Prompt (60+ commits):
+"Es gibt 60 Commits! Erstelle eine HIGH-LEVEL Übersicht"
+
+# English Prompt (5 commits):
+"Categorize into: 🆕 New Features, 🐛 Bug Fixes, ⚡ Improvements
+Be detailed but precise - max 8000 characters"
+```
+
+**Case-Insensitive Lookup:**
+```python
+# Handles: GitHub "GuildScout" vs. config "guildscout"
+for key in self.config.projects.keys():
+    if key.lower() == repo_name.lower():
+        project_config = self.config.projects[key]
+        break
+```
+
+#### 🚀 Deployment
+
+**Server Information:**
+- Webhook Server: `http://37.114.53.56:9090/webhook`
+- Webhook Port: 9090 (TCP)
+- Webhook Secret: `nBeQY8tdw6o5prdXBfc2DbCZ60eB_KLbuCq8OCdRiIw`
+
+**Customer Servers:**
+- JustMemplex Community Discord (ID: 1390695394777890897)
+  - Updates Channel: 1442887630034440426
+  - Status Channel: 1442887632869789797
+  - Category: 1398982574923321494
+
+**Bot Permissions Required:**
+- View Channels (read category)
+- Send Messages (post notifications)
+- Manage Channels (create channels)
+- Embed Links (rich notifications)
+- Create Public Threads (future: incident management)
+
+#### 🎯 Migration Guide
+
+**From v3.1 to v3.2:**
+
+1. **Update Code:**
+   ```bash
+   git pull origin main
+   ```
+
+2. **Add External Notifications to Config:**
+   ```yaml
+   projects:
+     your-project:
+       patch_notes:
+         language: en  # or 'de'
+         use_ai: true
+       external_notifications:
+         - guild_id: CUSTOMER_GUILD_ID
+           channel_id: UPDATES_CHANNEL_ID
+           enabled: true
+           notify_on:
+             git_push: true
+             offline: false
+             online: false
+             errors: false
+   ```
+
+3. **Setup GitHub Webhook:**
+   - Repository Settings → Webhooks → Add webhook
+   - URL: `http://your-server:9090/webhook`
+   - Content type: `application/json`
+   - Secret: (from config.yaml `github.webhook_secret`)
+   - Events: Push events only
+
+4. **Invite Bot to Customer Server:**
+   ```bash
+   python3 get_bot_invite.py
+   # Follow generated URL
+   ```
+
+5. **Restart Bot:**
+   ```bash
+   sudo systemctl restart shadowops-bot
+   # Bot auto-creates channels on customer server
+   ```
+
+6. **Update Customer Bot Config (if applicable):**
+   ```yaml
+   # Example: GuildScout config
+   discord:
+     discord_service_logs_enabled: false
+   ```
+
+7. **Verify Setup:**
+   - Check logs: `sudo journalctl -u shadowops-bot -f`
+   - Trigger test push to GitHub
+   - Verify notifications appear in customer channels
+
+#### 🎉 Impact
+
+**For Customers:**
+- Professional, user-friendly update notifications
+- No technical jargon or commit hashes
+- Clear categorization of changes (Features/Fixes/Improvements)
+- Multi-language support
+- Real-time status monitoring
+- No configuration required (automatic setup)
+
+**For Developers:**
+- Centralized monitoring for all projects
+- Technical logs remain detailed (internal channels)
+- Automatic channel creation saves setup time
+- Manual override available (`/setup-customer-server`)
+- Case-insensitive configuration (fewer errors)
+- Message splitting handles long patch notes automatically
+
+**System Reliability:**
+- Fixed critical security integrations (CrowdSec/Fail2ban)
+- Proper webhook logging for debugging
+- Firewall configured correctly
+- Auto-recovery if channels don't exist
+
+#### 📝 Known Limitations
+
+**Multi-Guild System:**
+- Requires bot invitation to customer servers
+- Category ID must match or bot will create new one
+- Admin permissions required for channel creation
+- Config snippet must be manually added to `config.yaml`
+
+**AI Patch Notes:**
+- Requires Ollama with llama3.1 model installed
+- Falls back to categorized commits if AI fails
+- 8000 character limit (safety margin for Discord's 4096 limit)
+- Works best with 5-50 commits (very detailed for few, high-level for many)
+
+**GitHub Webhooks:**
+- Requires public IP or port forwarding
+- Port 9090 must be open in firewall
+- HMAC secret must match in GitHub and config
+- Only processes push events (PRs/releases future enhancement)
+
+---
+
 ## [3.1.0] - 2025-11-21
 
 ### 🚀 Major Release: Persistent Learning, Multi-Project Management & Enterprise Testing
