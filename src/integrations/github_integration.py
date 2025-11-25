@@ -363,8 +363,20 @@ class GitHubIntegration:
         self, repo_name: str, repo_url: str, branch: str, pusher: str, commits: list
     ):
         """Send detailed Discord notification for a push event."""
-        # Find project config to get color and potential customer channel
-        project_config = self.config.projects.get(repo_name, {})
+        # Find project config to get color and potential customer channel (case-insensitive)
+        project_config = {}
+        project_config_key = repo_name
+
+        # Try case-insensitive lookup for project config
+        for key in self.config.projects.keys():
+            if key.lower() == repo_name.lower():
+                project_config = self.config.projects[key]
+                project_config_key = key
+                break
+
+        if not project_config:
+            project_config = self.config.projects.get(repo_name, {})
+
         project_color = project_config.get('color', 0x3498DB) # Default blue
 
         # === INTERNAL EMBED (Technical, for developers) - DEUTSCH ===
