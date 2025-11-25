@@ -78,11 +78,56 @@ class CustomerServerSetup:
         setup_config = self.project_channels[project_name]
         category_id = setup_config['category_id']
 
-        # Get category
+        # Get category - or create it if not found
         category = guild.get_channel(category_id)
+
         if not category or not isinstance(category, discord.CategoryChannel):
-            self.logger.error(f"❌ Category {category_id} not found on {guild.name}")
-            return {}
+            self.logger.warning(f"⚠️ Category {category_id} not found on {guild.name}, creating new one...")
+
+            try:
+                # Find admin role for permissions
+                admin_role = None
+                everyone_role = guild.default_role
+
+                for role in sorted(guild.roles, key=lambda r: r.position, reverse=True):
+                    if role.permissions.administrator and not role.is_bot_managed():
+                        admin_role = role
+                        break
+
+                # Create category with admin-only permissions
+                overwrites = {
+                    everyone_role: discord.PermissionOverwrite(
+                        read_messages=False,
+                        send_messages=False
+                    ),
+                    guild.me: discord.PermissionOverwrite(
+                        read_messages=True,
+                        send_messages=True,
+                        manage_channels=True
+                    )
+                }
+
+                if admin_role:
+                    overwrites[admin_role] = discord.PermissionOverwrite(
+                        read_messages=True,
+                        send_messages=True,
+                        manage_channels=True
+                    )
+
+                category = await guild.create_category(
+                    name="🚨 | ADMIN AREA",
+                    overwrites=overwrites,
+                    reason=f"ShadowOps Bot: Auto-setup for {project_name}"
+                )
+
+                self.logger.info(f"✅ Created category: 🚨 | ADMIN AREA (ID: {category.id})")
+
+            except discord.Forbidden:
+                self.logger.error(f"❌ Missing permissions to create category on {guild.name}")
+                return {}
+            except Exception as e:
+                self.logger.error(f"❌ Failed to create category: {e}", exc_info=True)
+                return {}
 
         self.logger.info(f"🔧 Setting up channels for {project_name} on {guild.name}")
 
