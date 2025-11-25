@@ -38,6 +38,7 @@ class GitHubIntegration:
         self.bot = bot
         self.config = config
         self.logger = logger
+        self.ai_service = None  # Will be set by bot after AI Service is initialized
 
         def _get_section(name: str, default=None):
             """Safely fetch config sections from dicts or Config objects."""
@@ -435,6 +436,22 @@ class GitHubIntegration:
 
         customer_embed.set_footer(text=f"{len(commits)} Commit(s) von {pusher}")
 
+        # === AI-GENERATED PATCH NOTES (if enabled) ===
+        patch_config = project_config.get('patch_notes', {})
+        use_ai = patch_config.get('use_ai', False)
+        language = patch_config.get('language', 'de')
+
+        if use_ai and self.ai_service:
+            try:
+                self.logger.info(f"🤖 Generating AI patch notes for {repo_name} (language: {language})...")
+                ai_description = await self._generate_ai_patch_notes(commits, language, repo_name)
+                if ai_description:
+                    customer_embed.description = ai_description
+                    self.logger.info(f"✅ AI patch notes generated successfully")
+            except Exception as e:
+                self.logger.warning(f"⚠️ AI patch notes generation failed, using fallback: {e}")
+                # Keep the categorized version as fallback
+
         # 1. Send to internal channel (technical embed)
         internal_channel = self.bot.get_channel(self.deployment_channel_id)
         if internal_channel:
@@ -481,6 +498,128 @@ class GitHubIntegration:
             message = message[0].upper() + message[1:]
 
         return message
+
+    async def _generate_ai_patch_notes(self, commits: list, language: str, repo_name: str) -> Optional[str]:
+        """
+        Generate professional, user-friendly patch notes using AI (Ollama llama3.1)
+
+        Args:
+            commits: List of commit dictionaries
+            language: 'de' or 'en'
+            repo_name: Repository name for context
+
+        Returns:
+            AI-generated patch notes string or None if failed
+        """
+        if not self.ai_service or not commits:
+            return None
+
+        # Build commit summary for AI
+        commit_summaries = []
+        for commit in commits:
+            msg = commit.get('message', '').split('\n')[0]  # First line
+            author = commit.get('author', {}).get('name', 'Unknown')
+            commit_summaries.append(f"- {msg} (by {author})")
+
+        commits_text = "\n".join(commit_summaries)
+
+        # Build prompt based on language
+        if language == 'de':
+            prompt = f"""Du bist ein professioneller Technical Writer. Erstelle benutzerfreundliche Patch Notes für das Projekt "{repo_name}".
+
+COMMITS:
+{commits_text}
+
+AUFGABE:
+Fasse diese Commits zu professionellen, verständlichen Patch Notes zusammen:
+
+1. Kategorisiere in: 🆕 Neue Features, 🐛 Bugfixes, ⚡ Verbesserungen
+2. Verwende einfache, klare Sprache (nicht-technisch)
+3. Fokussiere auf NUTZEN für den User, nicht auf technische Details
+4. Entferne Jargon, Issue-Nummern, und technische Präfixe
+5. Schreibe zusammenhängend, nicht als rohe Liste
+6. Maximal 3-4 Sätze pro Kategorie
+
+FORMAT:
+Verwende Markdown mit ** für Kategorien und • für Bulletpoints.
+Keine Code-Blöcke, keine SHA Hashes, keine URLs.
+
+BEISPIEL:
+**🆕 Neue Features:**
+• Dark Mode wurde hinzugefügt für bessere Nutzung bei Nacht
+• Nutzerprofile zeigen jetzt Aktivitätsstatistiken
+
+**🐛 Bugfixes:**
+• Login-Probleme auf mobilen Geräten wurden behoben
+• Datenbank-Timeouts treten nicht mehr auf
+
+**⚡ Verbesserungen:**
+• Ladezeiten wurden um 40% reduziert
+• Die Benutzeroberfläche reagiert jetzt schneller
+
+Erstelle JETZT die Patch Notes (nur die Kategorien + Bulletpoints, keine Einleitung):"""
+        else:  # English
+            prompt = f"""You are a professional Technical Writer. Create user-friendly patch notes for the project "{repo_name}".
+
+COMMITS:
+{commits_text}
+
+TASK:
+Summarize these commits into professional, accessible patch notes:
+
+1. Categorize into: 🆕 New Features, 🐛 Bug Fixes, ⚡ Improvements
+2. Use simple, clear language (non-technical)
+3. Focus on USER BENEFIT, not technical details
+4. Remove jargon, issue numbers, and technical prefixes
+5. Write cohesively, not as raw list
+6. Maximum 3-4 sentences per category
+
+FORMAT:
+Use Markdown with ** for categories and • for bulletpoints.
+No code blocks, no SHA hashes, no URLs.
+
+EXAMPLE:
+**🆕 New Features:**
+• Dark mode added for better night-time usage
+• User profiles now show activity statistics
+
+**🐛 Bug Fixes:**
+• Login issues on mobile devices resolved
+• Database timeouts no longer occur
+
+**⚡ Improvements:**
+• Loading times reduced by 40%
+• Interface now responds faster
+
+Create the patch notes NOW (only categories + bulletpoints, no introduction):"""
+
+        # Call AI Service (uses llama3.1 for critical/important tasks)
+        try:
+            ai_response = await self.ai_service.generate_raw_ai_response(
+                prompt=prompt,
+                use_critical_model=True  # Use llama3.1 for best quality
+            )
+
+            if ai_response:
+                # Clean up response (remove any extra text AI might add)
+                response = ai_response.strip()
+
+                # Ensure it starts with a category
+                if not response.startswith('**'):
+                    # Try to extract just the categorized part
+                    lines = response.split('\n')
+                    start_idx = 0
+                    for i, line in enumerate(lines):
+                        if line.startswith('**'):
+                            start_idx = i
+                            break
+                    response = '\n'.join(lines[start_idx:])
+
+                return response if response else None
+
+        except Exception as e:
+            self.logger.error(f"AI patch notes generation failed: {e}")
+            return None
 
     async def _send_pr_notification(
         self, action: str, repo: str, pr_number: int, title: str,

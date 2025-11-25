@@ -581,9 +581,10 @@ class ShadowOpsBot(commands.Bot):
             # Initialisiere GitHub Integration
             self.logger.info("🔄 [5/5] Initialisiere GitHub Integration...")
             self.github_integration = GitHubIntegration(self, self.config)
-            # Link Deployment Manager to GitHub Integration
+            # Link Deployment Manager and AI Service to GitHub Integration
             if self.github_integration.enabled:
                 self.github_integration.deployment_manager = self.deployment_manager
+                self.github_integration.ai_service = self.ai_service  # For KI patch notes
                 await self.github_integration.start_webhook_server()
                 self.logger.info("✅ [5/5] GitHub Integration gestartet (Webhook Server läuft)")
             else:
