@@ -672,8 +672,13 @@ class GitHubIntegration:
         if language == 'de':
             prompt = f"""Du bist ein professioneller Technical Writer. Erstelle benutzerfreundliche Patch Notes für das Projekt "{repo_name}".
 
-COMMITS:
+COMMITS (VOLLSTÄNDIGE LISTE):
 {commits_text}
+
+KRITISCHE REGEL:
+⚠️ BESCHREIBE NUR ÄNDERUNGEN DIE WIRKLICH IN DEN COMMITS OBEN STEHEN!
+⚠️ ERFINDE KEINE FEATURES ODER FIXES DIE NICHT IN DER COMMIT-LISTE SIND!
+⚠️ Wenn ein Commit unklar ist, überspringe ihn lieber als zu raten!
 
 AUFGABE:
 Fasse diese Commits zu professionellen, verständlichen Patch Notes zusammen:{detail_instruction}
@@ -684,30 +689,33 @@ Fasse diese Commits zu professionellen, verständlichen Patch Notes zusammen:{de
 4. Entferne Jargon, Issue-Nummern, und technische Präfixe
 5. Schreibe zusammenhängend, nicht als rohe Liste
 6. Sei detailliert aber präzise - maximal 8000 Zeichen
+7. NUR ECHTE ÄNDERUNGEN - keine erfundenen Features!
 
 FORMAT:
 Verwende Markdown mit ** für Kategorien und • für Bulletpoints.
 Keine Code-Blöcke, keine SHA Hashes, keine URLs.
 
-BEISPIEL:
+FORMAT-BEISPIEL (NICHT DEN INHALT VERWENDEN!):
 **🆕 Neue Features:**
-• Dark Mode wurde hinzugefügt für bessere Nutzung bei Nacht
-• Nutzerprofile zeigen jetzt Aktivitätsstatistiken
+• [Beschreibe echte Features aus den Commits oben]
 
 **🐛 Bugfixes:**
-• Login-Probleme auf mobilen Geräten wurden behoben
-• Datenbank-Timeouts treten nicht mehr auf
+• [Beschreibe echte Fixes aus den Commits oben]
 
 **⚡ Verbesserungen:**
-• Ladezeiten wurden um 40% reduziert
-• Die Benutzeroberfläche reagiert jetzt schneller
+• [Beschreibe echte Verbesserungen aus den Commits oben]
 
-Erstelle JETZT die Patch Notes (nur die Kategorien + Bulletpoints, keine Einleitung):"""
+Erstelle JETZT die Patch Notes basierend auf den ECHTEN Commits oben (nur die Kategorien + Bulletpoints, keine Einleitung):"""
         else:  # English
             prompt = f"""You are a professional Technical Writer. Create user-friendly patch notes for the project "{repo_name}".
 
-COMMITS:
+COMMITS (COMPLETE LIST):
 {commits_text}
+
+CRITICAL RULE:
+⚠️ ONLY DESCRIBE CHANGES THAT ARE ACTUALLY IN THE COMMITS ABOVE!
+⚠️ NEVER INVENT FEATURES OR FIXES THAT ARE NOT IN THE COMMIT LIST!
+⚠️ If a commit is unclear, skip it rather than guessing!
 
 TASK:
 Summarize these commits into professional, accessible patch notes:{detail_instruction}
@@ -718,28 +726,34 @@ Summarize these commits into professional, accessible patch notes:{detail_instru
 4. Remove jargon, issue numbers, and technical prefixes
 5. Write cohesively, not as raw list
 6. Be detailed but precise - maximum 8000 characters
+7. ONLY REAL CHANGES - no invented features!
 
 FORMAT:
 Use Markdown with ** for categories and • for bulletpoints.
 No code blocks, no SHA hashes, no URLs.
 
-EXAMPLE:
+FORMAT EXAMPLE (DO NOT USE THE CONTENT!):
 **🆕 New Features:**
-• Dark mode added for better night-time usage
-• User profiles now show activity statistics
+• [Describe real features from the commits above]
 
 **🐛 Bug Fixes:**
-• Login issues on mobile devices resolved
-• Database timeouts no longer occur
+• [Describe real fixes from the commits above]
 
 **⚡ Improvements:**
-• Loading times reduced by 40%
-• Interface now responds faster
+• [Describe real improvements from the commits above]
 
-Create the patch notes NOW (only categories + bulletpoints, no introduction):"""
+Create the patch notes NOW based on the REAL commits above (only categories + bulletpoints, no introduction):"""
 
         # Call AI Service (uses llama3.1 for critical/important tasks)
         try:
+            # Log the commits being processed for verification
+            self.logger.info(f"🔍 AI Processing {num_commits} commit(s) for {repo_name}:")
+            for i, commit in enumerate(commits[:5], 1):  # Log first 5 for verification
+                msg = commit.get('message', '').split('\n')[0]
+                self.logger.info(f"   {i}. {msg}")
+            if num_commits > 5:
+                self.logger.info(f"   ... and {num_commits - 5} more commits")
+
             ai_response = await self.ai_service.get_raw_ai_response(
                 prompt=prompt,
                 use_critical_model=True  # Use llama3.1 for best quality
@@ -759,6 +773,10 @@ Create the patch notes NOW (only categories + bulletpoints, no introduction):"""
                             start_idx = i
                             break
                     response = '\n'.join(lines[start_idx:])
+
+                # Log AI-generated patch notes for verification
+                self.logger.info(f"✅ AI generated patch notes for {repo_name} ({len(response)} chars)")
+                self.logger.debug(f"AI Response preview: {response[:200]}...")
 
                 return response if response else None
 
