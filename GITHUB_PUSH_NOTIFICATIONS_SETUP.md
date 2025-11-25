@@ -1,6 +1,6 @@
 # GitHub Push Notifications Setup Guide
 **Date:** 2025-11-25
-**Status:** ✅ WORKING
+**Status:** ✅ WORKING (with AI-generated patch notes)
 
 ## Zusammenfassung
 
@@ -244,6 +244,10 @@ Dann in GitHub: `https://webhook.yourdomain.com/webhook`
 - Commits werden automatisch in Discord gepostet
 - Formatierung: `[commit-hash](url) message - *author*`
 - Projekt-spezifische Farben (aus config)
+- **AI-generierte Zusammenfassungen:** Optional mit Ollama llama3.1
+  - Per-Projekt konfigurierbare Sprache (Deutsch/Englisch)
+  - Automatische Kategorisierung: Features, Bugfixes, Verbesserungen
+  - Professionelle, benutzerfreundliche Formulierungen
 
 ### Multi-Channel Support ✅
 - **Internal Channel:** `deployment_log` für Dev-Team
