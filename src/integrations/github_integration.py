@@ -367,14 +367,16 @@ class GitHubIntegration:
         project_config = self.config.projects.get(repo_name, {})
         project_color = project_config.get('color', 0x3498DB) # Default blue
 
-        # === INTERNAL EMBED (Technical, for developers) ===
+        # === INTERNAL EMBED (Technical, for developers) - DEUTSCH ===
         internal_embed = discord.Embed(
-            title=f"🚀 Code Update: {repo_name}",
+            title=f"🚀 Code-Update: {repo_name}",
             url=f"{repo_url}/commits/{branch}",
             color=project_color,
             timestamp=datetime.utcnow()
         )
         internal_embed.set_author(name=pusher)
+        internal_embed.add_field(name="Branch", value=branch, inline=True)
+        internal_embed.add_field(name="Commits", value=str(len(commits)), inline=True)
 
         commit_details = []
         for commit in commits:
@@ -387,11 +389,32 @@ class GitHubIntegration:
         if commit_details:
             internal_embed.description = "\n".join(commit_details)
         else:
-            internal_embed.description = "No new commits in this push."
+            internal_embed.description = "Keine neuen Commits in diesem Push."
 
-        # === CUSTOMER EMBED (User-friendly, categorized) ===
+        # === CUSTOMER EMBED (User-friendly, categorized) - Language from config ===
+        patch_config = project_config.get('patch_notes', {})
+        language = patch_config.get('language', 'de')  # Default: Deutsch
+
+        # Language-specific texts
+        if language == 'en':
+            title_text = f"✨ Updates for {repo_name}"
+            footer_text = f"{len(commits)} commit(s) by {pusher}"
+            feature_header = "**🆕 New Features:**"
+            bugfix_header = "**🐛 Bug Fixes:**"
+            improvement_header = "**⚡ Improvements:**"
+            other_header = "**📝 Other Changes:**"
+            default_desc = "Various updates and improvements"
+        else:  # Deutsch
+            title_text = f"✨ Updates für {repo_name}"
+            footer_text = f"{len(commits)} Commit(s) von {pusher}"
+            feature_header = "**🆕 Neue Features:**"
+            bugfix_header = "**🐛 Bugfixes:**"
+            improvement_header = "**⚡ Verbesserungen:**"
+            other_header = "**📝 Weitere Änderungen:**"
+            default_desc = "Diverse Updates und Verbesserungen"
+
         customer_embed = discord.Embed(
-            title=f"✨ Updates für {repo_name}",
+            title=title_text,
             url=f"{repo_url}/commits/{branch}",
             color=project_color,
             timestamp=datetime.utcnow()
@@ -421,35 +444,34 @@ class GitHubIntegration:
         description_parts = []
 
         if features:
-            description_parts.append("**🆕 Neue Features:**\n" + "\n".join(f"• {f}" for f in features))
+            description_parts.append(feature_header + "\n" + "\n".join(f"• {f}" for f in features))
 
         if fixes:
-            description_parts.append("**🐛 Bugfixes:**\n" + "\n".join(f"• {f}" for f in fixes))
+            description_parts.append(bugfix_header + "\n" + "\n".join(f"• {f}" for f in fixes))
 
         if improvements:
-            description_parts.append("**⚡ Verbesserungen:**\n" + "\n".join(f"• {i}" for i in improvements))
+            description_parts.append(improvement_header + "\n" + "\n".join(f"• {i}" for i in improvements))
 
         if other:
-            description_parts.append("**📝 Weitere Änderungen:**\n" + "\n".join(f"• {o}" for o in other))
+            description_parts.append(other_header + "\n" + "\n".join(f"• {o}" for o in other))
 
-        customer_embed.description = "\n\n".join(description_parts) if description_parts else "Diverse Updates und Verbesserungen"
+        customer_embed.description = "\n\n".join(description_parts) if description_parts else default_desc
 
-        customer_embed.set_footer(text=f"{len(commits)} Commit(s) von {pusher}")
+        customer_embed.set_footer(text=footer_text)
 
         # === AI-GENERATED PATCH NOTES (if enabled) ===
-        patch_config = project_config.get('patch_notes', {})
         use_ai = patch_config.get('use_ai', False)
         language = patch_config.get('language', 'de')
 
         if use_ai and self.ai_service:
             try:
-                self.logger.info(f"🤖 Generating AI patch notes for {repo_name} (language: {language})...")
+                self.logger.info(f"🤖 Generiere KI Patch Notes für {repo_name} (Sprache: {language})...")
                 ai_description = await self._generate_ai_patch_notes(commits, language, repo_name)
                 if ai_description:
                     customer_embed.description = ai_description
-                    self.logger.info(f"✅ AI patch notes generated successfully")
+                    self.logger.info(f"✅ KI Patch Notes erfolgreich generiert")
             except Exception as e:
-                self.logger.warning(f"⚠️ AI patch notes generation failed, using fallback: {e}")
+                self.logger.warning(f"⚠️ KI Patch Notes Generierung fehlgeschlagen, verwende Fallback: {e}")
                 # Keep the categorized version as fallback
 
         # 1. Send to internal channel (technical embed)
@@ -462,7 +484,7 @@ class GitHubIntegration:
                 if len(description_chunks) <= 1:
                     # Single embed - send as is
                     await internal_channel.send(embed=internal_embed)
-                    self.logger.info(f"📢 Sent technical patch notes for {repo_name} to internal channel.")
+                    self.logger.info(f"📢 Technische Patch Notes für {repo_name} im internen Channel gesendet.")
                 else:
                     # Multiple embeds needed - split across messages
                     for i, chunk in enumerate(description_chunks):
@@ -475,11 +497,14 @@ class GitHubIntegration:
                         )
                         if i == 0:
                             embed_copy.set_author(name=internal_embed.author.name)
+                            # Copy fields for first embed
+                            for field in internal_embed.fields:
+                                embed_copy.add_field(name=field.name, value=field.value, inline=field.inline)
                         await internal_channel.send(embed=embed_copy)
 
-                    self.logger.info(f"📢 Sent technical patch notes for {repo_name} to internal channel ({len(description_chunks)} parts).")
+                    self.logger.info(f"📢 Technische Patch Notes für {repo_name} im internen Channel gesendet ({len(description_chunks)} Teile).")
             except Exception as e:
-                self.logger.error(f"❌ Failed to send push notification to internal channel: {e}")
+                self.logger.error(f"❌ Fehler beim Senden der Push-Benachrichtigung im internen Channel: {e}")
 
         # 2. Send to customer-facing channel (user-friendly embed)
         customer_channel_id = project_config.get('update_channel_id')
@@ -493,7 +518,7 @@ class GitHubIntegration:
                     if len(description_chunks) <= 1:
                         # Single embed - send as is
                         await customer_channel.send(embed=customer_embed)
-                        self.logger.info(f"📢 Sent user-friendly patch notes for {repo_name} to customer channel {customer_channel_id}.")
+                        self.logger.info(f"📢 Benutzerfreundliche Patch Notes für {repo_name} im Kunden-Channel {customer_channel_id} gesendet.")
                     else:
                         # Multiple embeds needed - split across messages
                         for i, chunk in enumerate(description_chunks):
@@ -508,11 +533,11 @@ class GitHubIntegration:
                                 embed_copy.set_footer(text=customer_embed.footer.text)
                             await customer_channel.send(embed=embed_copy)
 
-                        self.logger.info(f"📢 Sent user-friendly patch notes for {repo_name} to customer channel {customer_channel_id} ({len(description_chunks)} parts).")
+                        self.logger.info(f"📢 Benutzerfreundliche Patch Notes für {repo_name} im Kunden-Channel {customer_channel_id} gesendet ({len(description_chunks)} Teile).")
                 except Exception as e:
-                    self.logger.error(f"❌ Failed to send push notification to customer channel {customer_channel_id}: {e}")
+                    self.logger.error(f"❌ Fehler beim Senden der Push-Benachrichtigung im Kunden-Channel {customer_channel_id}: {e}")
             else:
-                self.logger.warning(f"⚠️ Customer update channel {customer_channel_id} for {repo_name} not found.")
+                self.logger.warning(f"⚠️ Kunden-Update Channel {customer_channel_id} für {repo_name} nicht gefunden.")
 
     def _split_embed_description(self, description: str, max_length: int = 4096) -> list[str]:
         """
