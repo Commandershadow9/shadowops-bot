@@ -595,6 +595,8 @@ class ShadowOpsBot(commands.Bot):
             # Initialisiere Customer Server Setup (Auto-Channel Creation)
             self.logger.info("🔄 [6/6] Initialisiere Customer Server Setup...")
             self.customer_server_setup = CustomerServerSetup(self, self.config)
+            # Check all guilds and setup missing channels
+            await self.customer_server_setup.check_and_setup_all_guilds()
             self.logger.info("✅ [6/6] Customer Server Setup bereit (Auto-Channel Creation)")
 
             self.logger.info("=" * 60)

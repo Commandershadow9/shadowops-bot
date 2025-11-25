@@ -271,29 +271,48 @@ class CustomerServerSetup:
 
         self.logger.info("=" * 60)
 
+    async def check_and_setup_all_guilds(self):
+        """
+        Check all guilds bot is in and setup missing channels
+        Called on startup
+        """
+        self.logger.info("🔍 Checking all guilds for missing channel setups...")
+
+        dev_server_ids = [1438065435496157267]  # Your dev server
+
+        for guild in self.bot.guilds:
+            if guild.id in dev_server_ids:
+                continue
+
+            # Check if GuildScout channels exist
+            guild_has_updates = any('guildscout-updates' in c.name.lower() for c in guild.text_channels)
+            guild_has_status = any('guildscout-status' in c.name.lower() for c in guild.text_channels)
+
+            if not guild_has_updates or not guild_has_status:
+                self.logger.info(f"🔧 Missing channels on {guild.name}, running setup...")
+                await self.on_guild_join(guild)
+            else:
+                self.logger.info(f"✅ Channels already exist on {guild.name}, skipping")
+
     async def on_guild_join(self, guild: discord.Guild):
         """
-        Called when bot joins a new guild
+        Called when bot joins a new guild or when setup is needed
 
         Args:
             guild: Discord guild that was joined
         """
-        self.logger.info(f"🎉 Joined new guild: {guild.name} (ID: {guild.id})")
+        self.logger.info(f"🎉 Setting up guild: {guild.name} (ID: {guild.id})")
 
         # Check if this is a customer server (not your dev server)
-        # You can configure your dev server ID to skip auto-setup
-        dev_server_ids = []  # Add your dev server ID here if needed
+        dev_server_ids = [1438065435496157267]  # Your dev server
 
         if guild.id in dev_server_ids:
             self.logger.info(f"ℹ️ Skipping auto-setup for dev server: {guild.name}")
             return
 
-        # For now, we'll setup GuildScout channels automatically
-        # You can expand this to detect which project based on guild name, etc.
-
+        # Setup GuildScout channels
         self.logger.info(f"🔧 Starting automatic channel setup for {guild.name}")
 
-        # Setup GuildScout channels (can be made configurable)
         channels = await self.setup_customer_server(guild, 'guildscout')
 
         if channels:
