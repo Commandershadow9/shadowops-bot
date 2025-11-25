@@ -366,13 +366,14 @@ class GitHubIntegration:
         project_config = self.config.projects.get(repo_name, {})
         project_color = project_config.get('color', 0x3498DB) # Default blue
 
-        embed = discord.Embed(
+        # === INTERNAL EMBED (Technical, for developers) ===
+        internal_embed = discord.Embed(
             title=f"🚀 Code Update: {repo_name}",
             url=f"{repo_url}/commits/{branch}",
             color=project_color,
             timestamp=datetime.utcnow()
         )
-        embed.set_author(name=pusher)
+        internal_embed.set_author(name=pusher)
 
         commit_details = []
         for commit in commits:
@@ -383,31 +384,103 @@ class GitHubIntegration:
             commit_details.append(f"[`{sha}`]({url}) {message} - *{author}*")
 
         if commit_details:
-            embed.description = "\n".join(commit_details)
+            internal_embed.description = "\n".join(commit_details)
         else:
-            embed.description = "No new commits in this push."
+            internal_embed.description = "No new commits in this push."
 
-        # 1. Send to internal channel
+        # === CUSTOMER EMBED (User-friendly, categorized) ===
+        customer_embed = discord.Embed(
+            title=f"✨ Updates für {repo_name}",
+            url=f"{repo_url}/commits/{branch}",
+            color=project_color,
+            timestamp=datetime.utcnow()
+        )
+
+        # Categorize commits by type
+        features = []
+        fixes = []
+        improvements = []
+        other = []
+
+        for commit in commits:
+            message = commit['message'].split('\n')[0]
+            message_lower = message.lower()
+
+            # Simple categorization based on commit message
+            if message_lower.startswith('feat') or 'feature' in message_lower or 'add' in message_lower:
+                features.append(self._format_user_friendly_commit(message))
+            elif message_lower.startswith('fix') or 'bug' in message_lower or 'issue' in message_lower:
+                fixes.append(self._format_user_friendly_commit(message))
+            elif message_lower.startswith('improve') or 'optimize' in message_lower or 'enhance' in message_lower or 'update' in message_lower:
+                improvements.append(self._format_user_friendly_commit(message))
+            else:
+                other.append(self._format_user_friendly_commit(message))
+
+        # Build customer-friendly description
+        description_parts = []
+
+        if features:
+            description_parts.append("**🆕 Neue Features:**\n" + "\n".join(f"• {f}" for f in features))
+
+        if fixes:
+            description_parts.append("**🐛 Bugfixes:**\n" + "\n".join(f"• {f}" for f in fixes))
+
+        if improvements:
+            description_parts.append("**⚡ Verbesserungen:**\n" + "\n".join(f"• {i}" for i in improvements))
+
+        if other:
+            description_parts.append("**📝 Weitere Änderungen:**\n" + "\n".join(f"• {o}" for o in other))
+
+        customer_embed.description = "\n\n".join(description_parts) if description_parts else "Diverse Updates und Verbesserungen"
+
+        customer_embed.set_footer(text=f"{len(commits)} Commit(s) von {pusher}")
+
+        # 1. Send to internal channel (technical embed)
         internal_channel = self.bot.get_channel(self.deployment_channel_id)
         if internal_channel:
             try:
-                await internal_channel.send(embed=embed)
-                self.logger.info(f"📢 Sent patch notes for {repo_name} to internal channel.")
+                await internal_channel.send(embed=internal_embed)
+                self.logger.info(f"📢 Sent technical patch notes for {repo_name} to internal channel.")
             except Exception as e:
                 self.logger.error(f"❌ Failed to send push notification to internal channel: {e}")
 
-        # 2. Send to customer-facing channel if configured
+        # 2. Send to customer-facing channel (user-friendly embed)
         customer_channel_id = project_config.get('update_channel_id')
         if customer_channel_id:
             customer_channel = self.bot.get_channel(customer_channel_id)
             if customer_channel:
                 try:
-                    await customer_channel.send(embed=embed)
-                    self.logger.info(f"📢 Sent patch notes for {repo_name} to customer channel {customer_channel_id}.")
+                    await customer_channel.send(embed=customer_embed)
+                    self.logger.info(f"📢 Sent user-friendly patch notes for {repo_name} to customer channel {customer_channel_id}.")
                 except Exception as e:
                     self.logger.error(f"❌ Failed to send push notification to customer channel {customer_channel_id}: {e}")
             else:
                 self.logger.warning(f"⚠️ Customer update channel {customer_channel_id} for {repo_name} not found.")
+
+    def _format_user_friendly_commit(self, message: str) -> str:
+        """Convert technical commit message to user-friendly text."""
+        # Remove conventional commit prefixes
+        message = message.replace('feat:', '').replace('fix:', '').replace('chore:', '')
+        message = message.replace('docs:', '').replace('style:', '').replace('refactor:', '')
+        message = message.replace('perf:', '').replace('test:', '').replace('build:', '')
+        message = message.replace('ci:', '').replace('improve:', '').replace('update:', '')
+
+        # Remove issue references for cleaner look (keep in internal)
+        import re
+        message = re.sub(r'\(#\d+\)', '', message)
+        message = re.sub(r'#\d+', '', message)
+        message = re.sub(r'Fixes? #\d+', '', message, flags=re.IGNORECASE)
+        message = re.sub(r'Closes? #\d+', '', message, flags=re.IGNORECASE)
+
+        # Clean up whitespace
+        message = ' '.join(message.split())
+        message = message.strip().strip(':').strip()
+
+        # Capitalize first letter
+        if message:
+            message = message[0].upper() + message[1:]
+
+        return message
 
     async def _send_pr_notification(
         self, action: str, repo: str, pr_number: int, title: str,
