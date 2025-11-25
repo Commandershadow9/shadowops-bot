@@ -13,7 +13,7 @@ from datetime import datetime
 from aiohttp import web
 import discord
 
-logger = logging.getLogger(__name__)
+logger = logging.getLogger('shadowops')
 
 
 class GitHubIntegration:

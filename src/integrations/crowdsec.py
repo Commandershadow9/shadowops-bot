@@ -34,7 +34,9 @@ class CrowdSecMonitor:
                 # If subprocess timed out or failed, retry
                 if result.returncode != 0 and attempt < max_retries:
                     delay = 2 ** (attempt - 1)  # Exponential: 1s, 2s, 4s
-                    print(f"⚠️ CrowdSec call failed (attempt {attempt}/{max_retries}), retrying in {delay}s...")
+                    print(f"⚠️ CrowdSec call failed (attempt {attempt}/{max_retries}), return code: {result.returncode}, retrying in {delay}s...")
+                    if result.stderr:
+                        print(f"   Error: {result.stderr[:200]}")
                     time.sleep(delay)
                     continue
 
@@ -82,16 +84,25 @@ class CrowdSecMonitor:
             # Parse JSON Output
             data = json.loads(result.stdout)
 
-            for decision in data[:limit]:
-                decisions.append({
-                    "ip": decision.get("value", "Unknown"),
-                    "reason": decision.get("reason", "Unknown"),
-                    "scenario": decision.get("scenario", "Unknown"),
-                    "duration": decision.get("duration", "Unknown"),
-                    "scope": decision.get("scope", "Unknown"),
-                    "type": decision.get("type", "ban"),
-                    "origin": decision.get("origin", "Unknown"),
-                })
+            # CrowdSec returns alerts/events with nested decisions
+            for alert in data:
+                # Each alert can have multiple decisions
+                for decision in alert.get("decisions", []):
+                    if len(decisions) >= limit:
+                        break
+
+                    decisions.append({
+                        "ip": decision.get("value", "Unknown"),
+                        "reason": alert.get("message", "Unknown"),
+                        "scenario": decision.get("scenario", "Unknown"),
+                        "duration": decision.get("duration", "Unknown"),
+                        "scope": decision.get("scope", "Unknown"),
+                        "type": decision.get("type", "ban"),
+                        "origin": decision.get("origin", "Unknown"),
+                    })
+
+                if len(decisions) >= limit:
+                    break
 
         except (subprocess.TimeoutExpired, FileNotFoundError, PermissionError, json.JSONDecodeError):
             pass
