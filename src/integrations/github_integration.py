@@ -595,7 +595,7 @@ Create the patch notes NOW (only categories + bulletpoints, no introduction):"""
 
         # Call AI Service (uses llama3.1 for critical/important tasks)
         try:
-            ai_response = await self.ai_service.generate_raw_ai_response(
+            ai_response = await self.ai_service.get_raw_ai_response(
                 prompt=prompt,
                 use_critical_model=True  # Use llama3.1 for best quality
             )
