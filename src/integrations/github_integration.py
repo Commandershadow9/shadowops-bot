@@ -611,6 +611,23 @@ class GitHubIntegration:
 
         commits_text = "\n".join(commit_summaries)
 
+        # Determine detail level based on number of commits
+        num_commits = len(commits)
+        detail_instruction = ""
+
+        if num_commits > 30:
+            # Many commits - ask for high-level overview
+            if language == 'de':
+                detail_instruction = f"\n\n⚠️ WICHTIG: Es gibt {num_commits} Commits! Erstelle eine HIGH-LEVEL Übersicht statt einzelner Details. Fasse ähnliche Änderungen zusammen."
+            else:
+                detail_instruction = f"\n\n⚠️ IMPORTANT: There are {num_commits} commits! Create a HIGH-LEVEL overview instead of individual details. Summarize similar changes together."
+        elif num_commits > 15:
+            # Medium amount - balanced approach
+            if language == 'de':
+                detail_instruction = f"\n\n⚠️ Es gibt {num_commits} Commits. Halte die Beschreibung kompakt und fasse ähnliche Änderungen zusammen."
+            else:
+                detail_instruction = f"\n\n⚠️ There are {num_commits} commits. Keep the description compact and summarize similar changes together."
+
         # Build prompt based on language
         if language == 'de':
             prompt = f"""Du bist ein professioneller Technical Writer. Erstelle benutzerfreundliche Patch Notes für das Projekt "{repo_name}".
@@ -619,15 +636,14 @@ COMMITS:
 {commits_text}
 
 AUFGABE:
-Fasse diese Commits zu professionellen, verständlichen Patch Notes zusammen:
+Fasse diese Commits zu professionellen, verständlichen Patch Notes zusammen:{detail_instruction}
 
 1. Kategorisiere in: 🆕 Neue Features, 🐛 Bugfixes, ⚡ Verbesserungen
 2. Verwende einfache, klare Sprache (nicht-technisch)
 3. Fokussiere auf NUTZEN für den User, nicht auf technische Details
 4. Entferne Jargon, Issue-Nummern, und technische Präfixe
 5. Schreibe zusammenhängend, nicht als rohe Liste
-6. Maximal 3-4 Sätze pro Kategorie
-7. WICHTIG: Halte die Antwort KURZ - maximal 3000 Zeichen!
+6. Sei detailliert aber präzise - maximal 8000 Zeichen
 
 FORMAT:
 Verwende Markdown mit ** für Kategorien und • für Bulletpoints.
@@ -654,15 +670,14 @@ COMMITS:
 {commits_text}
 
 TASK:
-Summarize these commits into professional, accessible patch notes:
+Summarize these commits into professional, accessible patch notes:{detail_instruction}
 
 1. Categorize into: 🆕 New Features, 🐛 Bug Fixes, ⚡ Improvements
 2. Use simple, clear language (non-technical)
 3. Focus on USER BENEFIT, not technical details
 4. Remove jargon, issue numbers, and technical prefixes
 5. Write cohesively, not as raw list
-6. Maximum 3-4 sentences per category
-7. IMPORTANT: Keep response SHORT - maximum 3000 characters!
+6. Be detailed but precise - maximum 8000 characters
 
 FORMAT:
 Use Markdown with ** for categories and • for bulletpoints.
