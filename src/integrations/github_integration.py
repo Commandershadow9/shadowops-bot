@@ -686,33 +686,55 @@ WICHTIG - ZUSAMMENHÄNGENDE FEATURES ERKENNEN:
 🔍 Commit-Serien wie "Delta Import", "Backup System", "Status Manager" sind EINZELNE Features, nicht getrennte Punkte!
 🔍 Bei großen Refactorings: Erkenne die GESAMTBEDEUTUNG, nicht nur Einzelschritte!
 
-AUFGABE:
-Fasse diese Commits zu professionellen, verständlichen Patch Notes zusammen:{detail_instruction}
+BEISPIEL FÜR GRUPPIERUNG:
+Wenn du diese Commits siehst:
+- feat: Implement delta import to catch missed messages during downtime
+- fix: Handle timezone-aware datetimes in delta import
+- fix: Import asyncio in delta import function
+- fix: Enable delta import on bot restart instead of force reimport
+- feat: Track last message timestamp for reliable delta imports
 
-1. GRUPPIERE verwandte Commits zu EINEM Bulletpoint (z.B. 6 Delta-Import Commits = 1 Feature-Beschreibung)
+Dann NICHT schreiben:
+• Delta Import implementiert
+• Timezone-Fehler behoben
+
+Sondern STATTDESSEN schreiben:
+• **Intelligenter Delta-Import**: Der Bot erkennt jetzt automatisch wenn er offline war und importiert nur die Nachrichten die während der Downtime verpasst wurden. Das bedeutet:
+  - Keine verlorenen Nachrichten mehr bei Bot-Neustarts
+  - Deutlich schnellerer Start (nur neue Nachrichten statt komplett neu importieren)
+  - Automatische Erkennung von Downtime über 1 Minute
+  - Fortschrittsanzeige im Dashboard während des Imports
+
+AUFGABE:
+Fasse diese Commits zu professionellen, DETAILLIERTEN Patch Notes zusammen:{detail_instruction}
+
+1. GRUPPIERE verwandte Commits zu EINEM ausführlichen Bulletpoint
 2. Kategorisiere in: 🆕 Neue Features, 🐛 Bugfixes, ⚡ Verbesserungen
-3. Verwende einfache, klare Sprache (nicht-technisch)
-4. Fokussiere auf NUTZEN für den User, nicht auf technische Details
-5. Entferne Jargon, Issue-Nummern, und technische Präfixe
-6. Bei großen Features: Beschreibe DETAILLIERT was es macht und warum es wichtig ist
-7. Sei detailliert aber präzise - maximal 8000 Zeichen
-8. NUR ECHTE ÄNDERUNGEN - keine erfundenen Features!
+3. Verwende einfache, klare Sprache aber sei AUSFÜHRLICH
+4. Beschreibe WAS das Feature macht UND WARUM es wichtig ist
+5. Bei großen Features: 3-5 Sätze oder Sub-Bulletpoints mit Details
+6. Entferne Jargon und technische Präfixe
+7. Zielgruppe: Endkunden die verstehen wollen was sich verbessert hat
+8. Maximal 8000 Zeichen - nutze den Platz aus!
 
 FORMAT:
-Verwende Markdown mit ** für Kategorien und • für Bulletpoints.
-Keine Code-Blöcke, keine SHA Hashes, keine URLs.
+Verwende Markdown mit ** für Kategorien und • für Hauptpunkte.
+Bei komplexen Features: Nutze Sub-Bulletpoints (Einrückung mit 2 Leerzeichen).
 
-FORMAT-BEISPIEL (NICHT DEN INHALT VERWENDEN!):
+FORMAT-BEISPIEL:
 **🆕 Neue Features:**
-• [Beschreibe echte Features aus den Commits oben]
+• **Feature-Name**: Detaillierte Beschreibung was das Feature macht und warum es wichtig ist.
+  - Erster Nutzen oder technisches Detail
+  - Zweiter Nutzen oder technisches Detail
+  - Dritter Nutzen oder technisches Detail
 
 **🐛 Bugfixes:**
-• [Beschreibe echte Fixes aus den Commits oben]
+• **Bug-Kategorie**: Was wurde gefixt und welches Problem hatte es verursacht
 
 **⚡ Verbesserungen:**
-• [Beschreibe echte Verbesserungen aus den Commits oben]
+• **Verbesserung**: Detaillierte Beschreibung der Verbesserung
 
-Erstelle JETZT die Patch Notes basierend auf den ECHTEN Commits oben (nur die Kategorien + Bulletpoints, keine Einleitung):"""
+Erstelle JETZT die DETAILLIERTEN Patch Notes basierend auf den ECHTEN Commits oben (nur die Kategorien + Bulletpoints, keine Einleitung):"""
         else:  # English
             prompt = f"""You are a professional Technical Writer. Create user-friendly patch notes for the project "{repo_name}".
 
@@ -730,33 +752,55 @@ IMPORTANT - RECOGNIZE RELATED FEATURES:
 🔍 Commit series like "Delta Import", "Backup System", "Status Manager" are SINGLE features, not separate items!
 🔍 For large refactorings: Recognize the OVERALL SIGNIFICANCE, not just individual steps!
 
-TASK:
-Summarize these commits into professional, accessible patch notes:{detail_instruction}
+GROUPING EXAMPLE:
+If you see these commits:
+- feat: Implement delta import to catch missed messages during downtime
+- fix: Handle timezone-aware datetimes in delta import
+- fix: Import asyncio in delta import function
+- fix: Enable delta import on bot restart instead of force reimport
+- feat: Track last message timestamp for reliable delta imports
 
-1. GROUP related commits into ONE bulletpoint (e.g., 6 Delta Import commits = 1 feature description)
+Then DO NOT write:
+• Delta import implemented
+• Timezone error fixed
+
+Instead write:
+• **Smart Delta Import**: The bot now automatically detects when it was offline and imports only the messages that were missed during downtime. This means:
+  - No more lost messages during bot restarts
+  - Much faster startup (only new messages instead of full reimport)
+  - Automatic detection of downtime over 1 minute
+  - Progress display in dashboard during import
+
+TASK:
+Summarize these commits into professional, DETAILED patch notes:{detail_instruction}
+
+1. GROUP related commits into ONE comprehensive bulletpoint
 2. Categorize into: 🆕 New Features, 🐛 Bug Fixes, ⚡ Improvements
-3. Use simple, clear language (non-technical)
-4. Focus on USER BENEFIT, not technical details
-5. Remove jargon, issue numbers, and technical prefixes
-6. For major features: Describe in DETAIL what it does and why it matters
-7. Be detailed but precise - maximum 8000 characters
-8. ONLY REAL CHANGES - no invented features!
+3. Use simple, clear language but be COMPREHENSIVE
+4. Describe WHAT the feature does AND WHY it matters
+5. For major features: 3-5 sentences or sub-bulletpoints with details
+6. Remove jargon and technical prefixes
+7. Target audience: End customers who want to understand what improved
+8. Maximum 8000 characters - use the space!
 
 FORMAT:
-Use Markdown with ** for categories and • for bulletpoints.
-No code blocks, no SHA hashes, no URLs.
+Use Markdown with ** for categories and • for main points.
+For complex features: Use sub-bulletpoints (indented with 2 spaces).
 
-FORMAT EXAMPLE (DO NOT USE THE CONTENT!):
+FORMAT EXAMPLE:
 **🆕 New Features:**
-• [Describe real features from the commits above]
+• **Feature Name**: Detailed description of what the feature does and why it's important.
+  - First benefit or technical detail
+  - Second benefit or technical detail
+  - Third benefit or technical detail
 
 **🐛 Bug Fixes:**
-• [Describe real fixes from the commits above]
+• **Bug Category**: What was fixed and what problem it caused
 
 **⚡ Improvements:**
-• [Describe real improvements from the commits above]
+• **Improvement**: Detailed description of the improvement
 
-Create the patch notes NOW based on the REAL commits above (only categories + bulletpoints, no introduction):"""
+Create the DETAILED patch notes NOW based on the REAL commits above (only categories + bulletpoints, no introduction):"""
 
         # Call AI Service (uses llama3.1 for critical/important tasks)
         try:
