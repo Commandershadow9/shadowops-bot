@@ -658,15 +658,15 @@ class GitHubIntegration:
         if num_commits > 30:
             # Many commits - ask for high-level overview
             if language == 'de':
-                detail_instruction = f"\n\n⚠️ WICHTIG: Es gibt {num_commits} Commits! Erstelle eine HIGH-LEVEL Übersicht statt einzelner Details. Fasse ähnliche Änderungen zusammen."
+                detail_instruction = f"\n\n⚠️ WICHTIG: Es gibt {num_commits} Commits! Erstelle eine HIGH-LEVEL Übersicht. Gruppiere ähnliche Commits und beschreibe große Features detailliert, aber fasse Kleinigkeiten zusammen."
             else:
-                detail_instruction = f"\n\n⚠️ IMPORTANT: There are {num_commits} commits! Create a HIGH-LEVEL overview instead of individual details. Summarize similar changes together."
+                detail_instruction = f"\n\n⚠️ IMPORTANT: There are {num_commits} commits! Create a HIGH-LEVEL overview. Group similar commits and describe major features in detail, but summarize minor changes."
         elif num_commits > 15:
-            # Medium amount - balanced approach
+            # Medium amount - balanced approach, but RECOGNIZE major features
             if language == 'de':
-                detail_instruction = f"\n\n⚠️ Es gibt {num_commits} Commits. Halte die Beschreibung kompakt und fasse ähnliche Änderungen zusammen."
+                detail_instruction = f"\n\n⚠️ Es gibt {num_commits} Commits. Gruppiere verwandte Commits (z.B. alle zu 'Delta Import') zu EINEM detaillierten Feature-Punkt. Release-Features sind GROSS und benötigen detaillierte Erklärung!"
             else:
-                detail_instruction = f"\n\n⚠️ There are {num_commits} commits. Keep the description compact and summarize similar changes together."
+                detail_instruction = f"\n\n⚠️ There are {num_commits} commits. Group related commits (e.g., all 'Delta Import' commits) into ONE detailed feature point. Release features are MAJOR and need detailed explanation!"
 
         # Build prompt based on language
         if language == 'de':
@@ -675,21 +675,28 @@ class GitHubIntegration:
 COMMITS (VOLLSTÄNDIGE LISTE):
 {commits_text}
 
-KRITISCHE REGEL:
+KRITISCHE REGELN:
 ⚠️ BESCHREIBE NUR ÄNDERUNGEN DIE WIRKLICH IN DEN COMMITS OBEN STEHEN!
 ⚠️ ERFINDE KEINE FEATURES ODER FIXES DIE NICHT IN DER COMMIT-LISTE SIND!
 ⚠️ Wenn ein Commit unklar ist, überspringe ihn lieber als zu raten!
 
+WICHTIG - ZUSAMMENHÄNGENDE FEATURES ERKENNEN:
+🔍 Suche nach VERWANDTEN Commits die zusammengehören (z.B. mehrere "fix:" oder "feat:" Commits für das gleiche Feature)
+🔍 Release-Commits (feat: Release v...) enthalten oft GROSSE Änderungen - beschreibe diese DETAILLIERT!
+🔍 Commit-Serien wie "Delta Import", "Backup System", "Status Manager" sind EINZELNE Features, nicht getrennte Punkte!
+🔍 Bei großen Refactorings: Erkenne die GESAMTBEDEUTUNG, nicht nur Einzelschritte!
+
 AUFGABE:
 Fasse diese Commits zu professionellen, verständlichen Patch Notes zusammen:{detail_instruction}
 
-1. Kategorisiere in: 🆕 Neue Features, 🐛 Bugfixes, ⚡ Verbesserungen
-2. Verwende einfache, klare Sprache (nicht-technisch)
-3. Fokussiere auf NUTZEN für den User, nicht auf technische Details
-4. Entferne Jargon, Issue-Nummern, und technische Präfixe
-5. Schreibe zusammenhängend, nicht als rohe Liste
-6. Sei detailliert aber präzise - maximal 8000 Zeichen
-7. NUR ECHTE ÄNDERUNGEN - keine erfundenen Features!
+1. GRUPPIERE verwandte Commits zu EINEM Bulletpoint (z.B. 6 Delta-Import Commits = 1 Feature-Beschreibung)
+2. Kategorisiere in: 🆕 Neue Features, 🐛 Bugfixes, ⚡ Verbesserungen
+3. Verwende einfache, klare Sprache (nicht-technisch)
+4. Fokussiere auf NUTZEN für den User, nicht auf technische Details
+5. Entferne Jargon, Issue-Nummern, und technische Präfixe
+6. Bei großen Features: Beschreibe DETAILLIERT was es macht und warum es wichtig ist
+7. Sei detailliert aber präzise - maximal 8000 Zeichen
+8. NUR ECHTE ÄNDERUNGEN - keine erfundenen Features!
 
 FORMAT:
 Verwende Markdown mit ** für Kategorien und • für Bulletpoints.
@@ -712,21 +719,28 @@ Erstelle JETZT die Patch Notes basierend auf den ECHTEN Commits oben (nur die Ka
 COMMITS (COMPLETE LIST):
 {commits_text}
 
-CRITICAL RULE:
+CRITICAL RULES:
 ⚠️ ONLY DESCRIBE CHANGES THAT ARE ACTUALLY IN THE COMMITS ABOVE!
 ⚠️ NEVER INVENT FEATURES OR FIXES THAT ARE NOT IN THE COMMIT LIST!
 ⚠️ If a commit is unclear, skip it rather than guessing!
 
+IMPORTANT - RECOGNIZE RELATED FEATURES:
+🔍 Look for RELATED commits that belong together (e.g., multiple "fix:" or "feat:" commits for the same feature)
+🔍 Release commits (feat: Release v...) often contain MAJOR changes - describe these in DETAIL!
+🔍 Commit series like "Delta Import", "Backup System", "Status Manager" are SINGLE features, not separate items!
+🔍 For large refactorings: Recognize the OVERALL SIGNIFICANCE, not just individual steps!
+
 TASK:
 Summarize these commits into professional, accessible patch notes:{detail_instruction}
 
-1. Categorize into: 🆕 New Features, 🐛 Bug Fixes, ⚡ Improvements
-2. Use simple, clear language (non-technical)
-3. Focus on USER BENEFIT, not technical details
-4. Remove jargon, issue numbers, and technical prefixes
-5. Write cohesively, not as raw list
-6. Be detailed but precise - maximum 8000 characters
-7. ONLY REAL CHANGES - no invented features!
+1. GROUP related commits into ONE bulletpoint (e.g., 6 Delta Import commits = 1 feature description)
+2. Categorize into: 🆕 New Features, 🐛 Bug Fixes, ⚡ Improvements
+3. Use simple, clear language (non-technical)
+4. Focus on USER BENEFIT, not technical details
+5. Remove jargon, issue numbers, and technical prefixes
+6. For major features: Describe in DETAIL what it does and why it matters
+7. Be detailed but precise - maximum 8000 characters
+8. ONLY REAL CHANGES - no invented features!
 
 FORMAT:
 Use Markdown with ** for categories and • for bulletpoints.
