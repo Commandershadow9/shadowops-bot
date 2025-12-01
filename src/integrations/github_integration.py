@@ -645,9 +645,27 @@ class GitHubIntegration:
         # Build commit summary for AI
         commit_summaries = []
         for commit in commits:
-            msg = commit.get('message', '').split('\n')[0]  # First line
+            full_msg = commit.get('message', '')
+
+            # Split into title and body
+            lines = full_msg.split('\n')
+            title = lines[0]
+
+            # Get body (skip empty lines after title)
+            body_lines = []
+            for line in lines[1:]:
+                if line.strip():  # Skip empty lines
+                    body_lines.append(line)
+
             author = commit.get('author', {}).get('name', 'Unknown')
-            commit_summaries.append(f"- {msg} (by {author})")
+
+            # Include full message if it has substantial body
+            if len(body_lines) > 2:  # Has meaningful body
+                # Limit body to first 30 lines to avoid overwhelming AI
+                body = '\n'.join(body_lines[:30])
+                commit_summaries.append(f"- {title}\n  {body}\n  (by {author})")
+            else:
+                commit_summaries.append(f"- {title} (by {author})")
 
         commits_text = "\n".join(commit_summaries)
 
