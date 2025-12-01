@@ -1,5 +1,50 @@
 # ShadowOps Bot - Changelog
 
+## [3.3.0] - 2025-12-01
+
+### 🔐 Security: Webhook Signature Verification
+
+#### ✨ Added
+
+**GuildScout Webhook Security:**
+- **HMAC-SHA256 Signature Verification** for GuildScout alerts
+  - Protects against spoofed/fake alerts
+  - Validates webhook authenticity using shared secret
+  - Constant-time comparison prevents timing attacks
+  - Configurable per-project: `webhook_secret` in config
+- **Automatic Request Validation**
+  - Validates `X-Webhook-Signature` header format
+  - Rejects invalid signatures with HTTP 403
+  - Backward compatible (legacy mode when no secret configured)
+  - Detailed logging for security auditing
+- **Enhanced GuildScout Integration**
+  - Supports all new GuildScout v2.3.0 alerts:
+    - Health Monitoring alerts
+    - Performance profiling events
+    - Weekly report summaries
+    - Database monitoring warnings
+
+#### 🔧 Modified
+
+**Files Changed:**
+- `src/integrations/guildscout_alerts.py`:
+  - Added `_verify_signature()` method
+  - Enhanced `webhook_handler()` with signature validation
+  - Raw body reading for signature verification
+  - Security logging for rejected requests
+- `config/config.yaml`:
+  - Added `webhook_secret` to `guildscout` project config
+  - Example: `webhook_secret: guildscout_shadowops_secure_key_2024`
+
+#### 📚 Documentation
+
+**New Documentation:**
+- Enhanced CHANGELOG with security features
+- README updated with webhook security section
+- Security best practices in comments
+
+---
+
 ## [3.2.0] - 2025-11-25
 
 ### 🚀 Major Release: Multi-Guild Customer Notifications & AI Patch Notes

@@ -44,6 +44,7 @@ from integrations.deployment_manager import DeploymentManager
 from integrations.incident_manager import IncidentManager
 from integrations.customer_notifications import CustomerNotificationManager
 from integrations.customer_server_setup import CustomerServerSetup
+from integrations.guildscout_alerts import GuildScoutAlertsHandler
 
 # AI Learning System
 from integrations.ai_learning import ContinuousLearningAgent
@@ -82,6 +83,7 @@ class ShadowOpsBot(commands.Bot):
 
         # Phase 5: Multi-Project Management (v3.1)
         self.github_integration = None
+        self.guildscout_alerts = None
         self.project_monitor = None
         self.deployment_manager = None
         self.incident_manager = None
@@ -591,6 +593,15 @@ class ShadowOpsBot(commands.Bot):
                 self.logger.info("✅ [5/6] GitHub Integration gestartet (Webhook Server läuft)")
             else:
                 self.logger.info("ℹ️ [5/6] GitHub Integration deaktiviert (config: github.enabled=false)")
+
+            # Initialisiere GuildScout Alerts Handler
+            self.logger.info("🔄 [5.5/6] Initialisiere GuildScout Alerts Handler...")
+            try:
+                from integrations.guildscout_alerts import setup as setup_guildscout_alerts
+                self.guildscout_alerts = await setup_guildscout_alerts(self, self.config)
+                self.logger.info("✅ [5.5/6] GuildScout Alerts Handler gestartet (Port 9091)")
+            except Exception as e:
+                self.logger.warning(f"⚠️ GuildScout Alerts Handler konnte nicht gestartet werden: {e}")
 
             # Initialisiere Customer Server Setup (Auto-Channel Creation)
             self.logger.info("🔄 [6/6] Initialisiere Customer Server Setup...")

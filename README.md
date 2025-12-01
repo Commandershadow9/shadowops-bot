@@ -1,6 +1,6 @@
-# 🗡️ ShadowOps - Active Security Guardian v3.2 🚀
+# 🗡️ ShadowOps - Active Security Guardian v3.3 🚀
 
-**Status:** ✅ **LIVE & PRODUKTIV** | **Version:** 3.2.0 | **Letzte Aktualisierung:** 25.11.2025
+**Status:** ✅ **LIVE & PRODUKTIV** | **Version:** 3.3.0 | **Letzte Aktualisierung:** 01.12.2025
 
 **ShadowOps** ist ein **vollständig autonomer Security Guardian** mit KI-gesteuerter Auto-Remediation, persistentem Lernsystem und Multi-Projekt-Management, der Sicherheitsbedrohungen nicht nur erkennt und analysiert, sondern **eigenständig behebt und aus Erfahrungen lernt**.
 
@@ -8,6 +8,40 @@
 > 📚 **Dokumentations-Übersicht:** [DOCS_OVERVIEW.md](./DOCS_OVERVIEW.md)
 > 🔧 **API Dokumentation:** [docs/API.md](./docs/API.md)
 > 🚀 **Setup Guide:** [docs/SETUP_GUIDE.md](./docs/SETUP_GUIDE.md)
+
+## ⚡ Highlights v3.3
+
+### 🔐 **Webhook Security (v3.3 - NEW)**
+- ✅ **HMAC-SHA256 Signature Verification**: Sichere GuildScout ↔ ShadowOps Kommunikation
+  - Schützt vor gefälschten/gespooften Alerts
+  - Validiert Webhook-Authentizität mit Shared Secret
+  - Constant-time Signatur-Vergleich verhindert Timing-Attacks
+  - Konfigurierbar per Projekt: `webhook_secret` in Config
+- ✅ **Automatische Request-Validierung**
+  - Validiert `X-Webhook-Signature` Header Format
+  - Lehnt ungültige Signaturen mit HTTP 403 ab
+  - Abwärtskompatibel (Legacy-Modus ohne Secret)
+  - Detailliertes Security-Logging für Audits
+- ✅ **Erweiterte GuildScout Integration**
+  - Unterstützt alle neuen GuildScout v2.3.0 Alerts:
+    - Health Monitoring Alerts
+    - Performance Profiling Events
+    - Weekly Report Summaries
+    - Database Monitoring Warnings
+
+**Konfiguration:**
+```yaml
+projects:
+  guildscout:
+    webhook_secret: guildscout_shadowops_secure_key_2024
+    # Muss identisch mit GuildScout Config sein!
+```
+
+**Security Best Practices:**
+- Verwende starke, zufällige Secrets (min. 32 Zeichen)
+- Rotiere Secrets regelmäßig (alle 90 Tage)
+- Verwende HTTPS für Produktions-Webhooks
+- Überwache abgelehnte Requests (403 Errors)
 
 ## ⚡ Highlights v3.2
 
