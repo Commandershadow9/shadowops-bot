@@ -590,14 +590,30 @@ class ShadowOpsBot(commands.Bot):
                 self.github_integration.deployment_manager = self.deployment_manager
                 self.github_integration.ai_service = self.ai_service  # For KI patch notes
 
-                # Initialize Advanced Patch Notes Manager
+                # Initialize AI Training System for Patch Notes
+                try:
+                    from integrations.patch_notes_trainer import get_patch_notes_trainer
+                    self.patch_notes_trainer = get_patch_notes_trainer()
+                    self.github_integration.patch_notes_trainer = self.patch_notes_trainer
+
+                    # Log training stats
+                    stats = self.patch_notes_trainer.get_statistics()
+                    self.logger.info(f"✅ AI Patch Notes Trainer initialisiert:")
+                    self.logger.info(f"   - Training Examples: {stats['total_examples']}")
+                    self.logger.info(f"   - Good Examples: {stats['good_examples']}")
+                    self.logger.info(f"   - Avg Quality Score: {stats['avg_quality_score']:.1f}/100")
+                except Exception as e:
+                    self.logger.warning(f"⚠️ AI Patch Notes Trainer konnte nicht initialisiert werden: {e}")
+                    self.patch_notes_trainer = None
+
+                # Initialize Advanced Patch Notes Manager (optional, for approval system)
                 try:
                     from integrations.patch_notes_manager import get_patch_notes_manager
                     self.patch_notes_manager = get_patch_notes_manager(self, self.ai_service)
                     self.github_integration.patch_notes_manager = self.patch_notes_manager
-                    self.logger.info("✅ Advanced Patch Notes Manager initialisiert")
+                    self.logger.info("✅ Advanced Patch Notes Manager initialisiert (optional)")
                 except Exception as e:
-                    self.logger.warning(f"⚠️ Advanced Patch Notes Manager konnte nicht initialisiert werden: {e}")
+                    self.logger.debug(f"Advanced Patch Notes Manager nicht verfügbar: {e}")
                     self.patch_notes_manager = None
 
                 await self.github_integration.start_webhook_server()

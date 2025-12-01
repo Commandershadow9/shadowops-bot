@@ -88,6 +88,9 @@ class GitHubIntegration:
         # Advanced Patch Notes Manager (will be set by bot)
         self.patch_notes_manager = None
 
+        # AI Training System (will be set by bot)
+        self.patch_notes_trainer = None
+
         self.logger.info(f"🔧 GitHub Integration initialized (enabled: {self.enabled})")
 
     async def start_webhook_server(self):
@@ -497,7 +500,7 @@ class GitHubIntegration:
         if use_ai and self.ai_service:
             try:
                 self.logger.info(f"🤖 Generiere KI Patch Notes für {repo_name} (Sprache: {language})...")
-                ai_description = await self._generate_ai_patch_notes(commits, language, repo_name)
+                ai_description = await self._generate_ai_patch_notes(commits, language, repo_name, project_config)
                 if ai_description:
                     customer_embed.description = ai_description
                     self.logger.info(f"✅ KI Patch Notes erfolgreich generiert")
@@ -646,14 +649,25 @@ class GitHubIntegration:
 
         return message
 
-    async def _generate_ai_patch_notes(self, commits: list, language: str, repo_name: str) -> Optional[str]:
+    async def _generate_ai_patch_notes(self, commits: list, language: str, repo_name: str,
+                                       project_config: Optional[Dict] = None) -> Optional[str]:
         """
-        Generate professional, user-friendly patch notes using AI (Ollama llama3.1)
+        Generate professional, user-friendly patch notes using AI with training system.
+
+        NEW: Uses CHANGELOG.md + AI Training System for better quality!
+
+        Process:
+        1. Load CHANGELOG.md if available (fullest information source)
+        2. Use PatchNotesTrainer to build enhanced prompt with examples
+        3. Generate patch notes with AI
+        4. Calculate quality score
+        5. Save high-quality examples for future training
 
         Args:
             commits: List of commit dictionaries
             language: 'de' or 'en'
             repo_name: Repository name for context
+            project_config: Optional project configuration
 
         Returns:
             AI-generated patch notes string or None if failed
@@ -661,34 +675,146 @@ class GitHubIntegration:
         if not self.ai_service or not commits:
             return None
 
+        # Try to get CHANGELOG content
+        changelog_content = ""
+        version = None
+
+        if project_config and self.patch_notes_trainer:
+            project_path = Path(project_config.get('path', ''))
+            changelog_path = project_path / 'CHANGELOG.md'
+
+            if changelog_path.exists():
+                try:
+                    # Detect version from commits
+                    import re
+                    for commit in commits:
+                        msg = commit.get('message', '')
+                        match = re.search(r'v?(?:ersion|elease)?\s*([0-9]+\.[0-9]+\.[0-9]+)', msg, re.IGNORECASE)
+                        if match:
+                            version = match.group(1)
+                            break
+
+                    # Get CHANGELOG section if version found
+                    if version:
+                        from src.utils.changelog_parser import get_changelog_parser
+                        parser = get_changelog_parser(project_path)
+                        version_data = parser.get_version_section(version)
+
+                        if version_data:
+                            changelog_content = version_data['content']
+                            self.logger.info(f"📖 Using CHANGELOG.md section for v{version} ({len(changelog_content)} chars)")
+                        else:
+                            self.logger.info(f"⚠️ Version {version} not found in CHANGELOG, using commits only")
+                    else:
+                        self.logger.info("⚠️ No version detected in commits, using commits only")
+
+                except Exception as e:
+                    self.logger.warning(f"⚠️ Could not parse CHANGELOG: {e}")
+
+        # Build enhanced prompt with training system
+        if self.patch_notes_trainer and (changelog_content or project_config):
+            try:
+                prompt = self.patch_notes_trainer.build_enhanced_prompt(
+                    changelog_content=changelog_content,
+                    commits=commits,
+                    language=language,
+                    project=repo_name
+                )
+                self.logger.info(f"🎯 Using enhanced AI prompt with training examples")
+            except Exception as e:
+                self.logger.warning(f"⚠️ Enhanced prompt failed, using fallback: {e}")
+                prompt = self._build_fallback_prompt(commits, language, repo_name)
+        else:
+            # Fallback to original prompt if no trainer available
+            prompt = self._build_fallback_prompt(commits, language, repo_name)
+
+        # Log commits being processed
+        num_commits = len(commits)
+        self.logger.info(f"🔍 AI Processing {num_commits} commit(s) for {repo_name}:")
+        for i, commit in enumerate(commits[:5], 1):
+            msg = commit.get('message', '').split('\n')[0]
+            self.logger.info(f"   {i}. {msg}")
+        if num_commits > 5:
+            self.logger.info(f"   ... and {num_commits - 5} more commits")
+
+        # Call AI Service
+        try:
+            ai_response = await self.ai_service.get_raw_ai_response(
+                prompt=prompt,
+                use_critical_model=True  # Use llama3.1 for best quality
+            )
+
+            if not ai_response:
+                return None
+
+            # Clean up response
+            response = ai_response.strip()
+
+            # Ensure it starts with a category
+            if not response.startswith('**'):
+                lines = response.split('\n')
+                start_idx = 0
+                for i, line in enumerate(lines):
+                    if line.startswith('**'):
+                        start_idx = i
+                        break
+                response = '\n'.join(lines[start_idx:])
+
+            # Calculate quality score if trainer available
+            if self.patch_notes_trainer and changelog_content and version:
+                try:
+                    quality_score = self.patch_notes_trainer.calculate_quality_score(
+                        generated_notes=response,
+                        changelog_content=changelog_content
+                    )
+                    self.logger.info(f"📊 Patch Notes Quality Score: {quality_score:.1f}/100")
+
+                    # Save as training example
+                    self.patch_notes_trainer.save_example(
+                        version=version,
+                        changelog_content=changelog_content,
+                        generated_notes=response,
+                        quality_score=quality_score,
+                        project=repo_name
+                    )
+
+                    if quality_score >= 80:
+                        self.logger.info(f"🌟 High-quality patch notes! Saved as training example.")
+                except Exception as e:
+                    self.logger.warning(f"⚠️ Quality scoring failed: {e}")
+
+            self.logger.info(f"✅ AI generated patch notes for {repo_name} ({len(response)} chars)")
+            return response if response else None
+
+        except Exception as e:
+            self.logger.error(f"AI patch notes generation failed: {e}")
+            return None
+
+    def _build_fallback_prompt(self, commits: list, language: str, repo_name: str) -> str:
+        """Build fallback prompt when trainer is not available."""
         # Build commit summary for AI
         commit_summaries = []
         for commit in commits:
             full_msg = commit.get('message', '')
-
-            # Split into title and body
             lines = full_msg.split('\n')
             title = lines[0]
 
             # Get body (skip empty lines after title)
             body_lines = []
             for line in lines[1:]:
-                if line.strip():  # Skip empty lines
+                if line.strip():
                     body_lines.append(line)
 
             author = commit.get('author', {}).get('name', 'Unknown')
 
             # Include full message if it has substantial body
-            if len(body_lines) > 2:  # Has meaningful body
-                # Limit body to first 30 lines to avoid overwhelming AI
+            if len(body_lines) > 2:
                 body = '\n'.join(body_lines[:30])
                 commit_summaries.append(f"- {title}\n  {body}\n  (by {author})")
             else:
                 commit_summaries.append(f"- {title} (by {author})")
 
         commits_text = "\n".join(commit_summaries)
-
-        # Determine detail level based on number of commits
         num_commits = len(commits)
         detail_instruction = ""
 
@@ -839,45 +965,7 @@ FORMAT EXAMPLE:
 
 Create the DETAILED patch notes NOW based on the REAL commits above (only categories + bulletpoints, no introduction):"""
 
-        # Call AI Service (uses llama3.1 for critical/important tasks)
-        try:
-            # Log the commits being processed for verification
-            self.logger.info(f"🔍 AI Processing {num_commits} commit(s) for {repo_name}:")
-            for i, commit in enumerate(commits[:5], 1):  # Log first 5 for verification
-                msg = commit.get('message', '').split('\n')[0]
-                self.logger.info(f"   {i}. {msg}")
-            if num_commits > 5:
-                self.logger.info(f"   ... and {num_commits - 5} more commits")
-
-            ai_response = await self.ai_service.get_raw_ai_response(
-                prompt=prompt,
-                use_critical_model=True  # Use llama3.1 for best quality
-            )
-
-            if ai_response:
-                # Clean up response (remove any extra text AI might add)
-                response = ai_response.strip()
-
-                # Ensure it starts with a category
-                if not response.startswith('**'):
-                    # Try to extract just the categorized part
-                    lines = response.split('\n')
-                    start_idx = 0
-                    for i, line in enumerate(lines):
-                        if line.startswith('**'):
-                            start_idx = i
-                            break
-                    response = '\n'.join(lines[start_idx:])
-
-                # Log AI-generated patch notes for verification
-                self.logger.info(f"✅ AI generated patch notes for {repo_name} ({len(response)} chars)")
-                self.logger.debug(f"AI Response preview: {response[:200]}...")
-
-                return response if response else None
-
-        except Exception as e:
-            self.logger.error(f"AI patch notes generation failed: {e}")
-            return None
+        return prompt
 
     async def _send_pr_notification(
         self, action: str, repo: str, pr_number: int, title: str,
