@@ -589,6 +589,17 @@ class ShadowOpsBot(commands.Bot):
             if self.github_integration.enabled:
                 self.github_integration.deployment_manager = self.deployment_manager
                 self.github_integration.ai_service = self.ai_service  # For KI patch notes
+
+                # Initialize Advanced Patch Notes Manager
+                try:
+                    from integrations.patch_notes_manager import get_patch_notes_manager
+                    self.patch_notes_manager = get_patch_notes_manager(self, self.ai_service)
+                    self.github_integration.patch_notes_manager = self.patch_notes_manager
+                    self.logger.info("✅ Advanced Patch Notes Manager initialisiert")
+                except Exception as e:
+                    self.logger.warning(f"⚠️ Advanced Patch Notes Manager konnte nicht initialisiert werden: {e}")
+                    self.patch_notes_manager = None
+
                 await self.github_integration.start_webhook_server()
                 self.logger.info("✅ [5/6] GitHub Integration gestartet (Webhook Server läuft)")
             else:

@@ -85,6 +85,9 @@ class GitHubIntegration:
         # Deployment manager (will be set by bot)
         self.deployment_manager = None
 
+        # Advanced Patch Notes Manager (will be set by bot)
+        self.patch_notes_manager = None
+
         self.logger.info(f"🔧 GitHub Integration initialized (enabled: {self.enabled})")
 
     async def start_webhook_server(self):
@@ -471,7 +474,23 @@ class GitHubIntegration:
 
         customer_embed.set_footer(text=footer_text)
 
-        # === AI-GENERATED PATCH NOTES (if enabled) ===
+        # === ADVANCED PATCH NOTES SYSTEM (if available) ===
+        # Try advanced system first (CHANGELOG-based, review system)
+        if self.patch_notes_manager and patch_config.get('use_advanced_system', False):
+            try:
+                self.logger.info(f"🎯 Using advanced patch notes system for {repo_name}")
+                await self.patch_notes_manager.handle_git_push(
+                    project_name=repo_name,
+                    project_config=project_config,
+                    commits=commits,
+                    repo_name=repo_name
+                )
+                # Advanced system handles everything - skip old logic
+                return
+            except Exception as e:
+                self.logger.warning(f"⚠️ Advanced system failed, falling back to legacy: {e}", exc_info=True)
+
+        # === AI-GENERATED PATCH NOTES (legacy system) ===
         use_ai = patch_config.get('use_ai', False)
         language = patch_config.get('language', 'de')
 
