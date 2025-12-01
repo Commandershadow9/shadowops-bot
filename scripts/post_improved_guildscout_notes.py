@@ -32,7 +32,12 @@ async def post_improved_notes():
         print(f"✅ Logged in as {bot.user}")
 
         # Get GuildScout project config
-        guildscout_config = config.get('projects.guildscout', {})
+        guildscout_config = config.get_project_config('guildscout')
+        if not guildscout_config:
+            print("❌ GuildScout project not found in config")
+            await bot.close()
+            return
+
         external_notifications = guildscout_config.get('external_notifications', [])
 
         # Find the Updates channel (git_push: true)
@@ -73,8 +78,8 @@ async def post_improved_notes():
             timestamp=datetime.utcnow()
         )
 
-        # New Features
-        new_features = """**🆕 New Features:**
+        # New Features - Part 1
+        features_1 = """**🆕 New Features:**
 
 • **Health Monitoring System**: Comprehensive automated monitoring every 5 minutes:
   - Monitors verification health (detects failures, checks accuracy ≥95%)
@@ -88,10 +93,16 @@ async def post_improved_notes():
   - Identifies slowest operations with average execution times
   - Shows most frequently called functions
   - Automatic bottleneck analysis (finds slow + frequently used operations)
-  - Real-time system resource monitoring (CPU, RAM, threads)
-  - Tracks error rates per operation
+  - Real-time system resource monitoring (CPU, RAM, threads)"""
 
-• **Enhanced System Status** (`/status` command for all users):
+        embed.add_field(
+            name="",
+            value=features_1,
+            inline=False
+        )
+
+        # New Features - Part 2
+        features_2 = """• **Enhanced System Status** (`/status` command for all users):
   - Bot uptime and memory usage
   - Database size and health indicators
   - Current Discord API rate limit status
@@ -103,37 +114,33 @@ async def post_improved_notes():
   - Weekly activity summary (total messages, active users, daily averages)
   - Top 5 most active users with message counts
   - Top 5 most active channels
-  - Verification statistics summary
-  - System performance metrics
-  - Automatically sent to status channel + ShadowOps
+  - Verification statistics summary"""
 
-• **Webhook Security** (HMAC-SHA256 signature verification):
+        embed.add_field(
+            name="",
+            value=features_2,
+            inline=False
+        )
+
+        # New Features - Part 3
+        features_3 = """• **Webhook Security** (HMAC-SHA256 signature verification):
   - All alerts to ShadowOps are now cryptographically signed
   - Prevents spoofed or fake alerts from malicious actors
   - Uses constant-time comparison to prevent timing attacks
-  - Configurable shared secret between bots
 
 • **Git Auto-Commit for Config Changes**:
   - Automatically detects config.yaml changes every 60 seconds
   - Creates Git commits with intelligent messages showing changed keys
   - Enables easy rollback: `git checkout HEAD~1 config/config.yaml`
-  - Maintains complete version history of all configuration changes
 
 • **Database Monitoring**:
   - Daily automated size checks
   - Discord alerts when database exceeds 100 MB
-  - Weekly automated VACUUM for optimization (Mondays at 04:00 UTC)
-  - Database integrity checks to detect corruption early
-
-• **Message Deduplication Statistics**:
-  - Real-time tracking of total messages seen
-  - Counts and displays blocked duplicate messages
-  - Shows deduplication effectiveness rate
-  - Integrated into /status command and weekly reports"""
+  - Weekly automated VACUUM for optimization (Mondays at 04:00 UTC)"""
 
         embed.add_field(
             name="",
-            value=new_features,
+            value=features_3,
             inline=False
         )
 
