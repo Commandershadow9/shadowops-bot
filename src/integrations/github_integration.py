@@ -758,10 +758,14 @@ class GitHubIntegration:
                 )
                 variant_id = selected_variant.id
 
-                self.logger.info(f"🧪 A/B Test: Using variant '{selected_variant.name}' (ID: {variant_id})")
+                self.logger.info(f"🧪 A/B Test: Using variant '{selected_variant.name}' (ID: {variant_id}) with language '{language}'")
 
-                # Build prompt from variant template
-                prompt = selected_variant.template.format(
+                # Build prompt from variant template (language-specific)
+                variant_template = self.prompt_ab_testing.get_variant_template(
+                    variant_id=variant_id,
+                    language=language
+                )
+                prompt = variant_template.format(
                     project=repo_name,
                     changelog=changelog_content or "No CHANGELOG available",
                     commits='\n'.join([f"- {c.get('message', '')}" for c in commits[:10]])

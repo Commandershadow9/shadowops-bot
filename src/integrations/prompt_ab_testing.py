@@ -81,13 +81,17 @@ class PromptABTesting:
             logger.error(f"Failed to save prompt variants: {e}")
 
     def _create_default_variants(self) -> None:
-        """Create default prompt variants."""
+        """Create default prompt variants.
+
+        Note: Templates are stored with default language (de).
+        Use get_variant_template() to get language-specific version.
+        """
         variants = [
             PromptVariant(
                 id='detailed_v1',
                 name='Detailed Grouping',
                 description='Emphasizes grouping related commits into detailed feature descriptions',
-                template=self._get_detailed_template(),
+                template=self._get_detailed_template('de'),  # Default German
                 created_at=datetime.utcnow().isoformat(),
                 active=True
             ),
@@ -95,7 +99,7 @@ class PromptABTesting:
                 id='concise_v1',
                 name='Concise Overview',
                 description='Focuses on concise, high-level overview with key points',
-                template=self._get_concise_template(),
+                template=self._get_concise_template('de'),  # Default German
                 created_at=datetime.utcnow().isoformat(),
                 active=True
             ),
@@ -103,7 +107,7 @@ class PromptABTesting:
                 id='benefit_focused_v1',
                 name='Benefit-Focused',
                 description='Emphasizes user benefits and impact rather than technical details',
-                template=self._get_benefit_focused_template(),
+                template=self._get_benefit_focused_template('de'),  # Default German
                 created_at=datetime.utcnow().isoformat(),
                 active=True
             ),
@@ -115,9 +119,14 @@ class PromptABTesting:
         self._save_variants()
         logger.info(f"Created {len(variants)} default prompt variants")
 
-    def _get_detailed_template(self) -> str:
-        """Get detailed grouping template."""
-        return """You are an expert technical writer creating patch notes for {project}.
+    def _get_detailed_template(self, language: str = 'de') -> str:
+        """Get detailed grouping template.
+
+        Args:
+            language: 'de' for German, 'en' for English
+        """
+        if language == 'en':
+            return """You are an expert technical writer creating patch notes for {project}.
 
 IMPORTANT: Group related commits into comprehensive feature descriptions!
 
@@ -142,10 +151,41 @@ FORMAT:
   - Key benefit 1
   - Key benefit 2
   - Technical detail"""
+        else:  # German
+            return """Du bist ein professioneller Technical Writer und erstellst Patch Notes für {project}.
 
-    def _get_concise_template(self) -> str:
-        """Get concise overview template."""
-        return """You are an expert technical writer creating patch notes for {project}.
+WICHTIG: Gruppiere verwandte Commits in umfassende Feature-Beschreibungen!
+
+# CHANGELOG INFORMATIONEN
+{changelog}
+
+# COMMIT NACHRICHTEN
+{commits}
+
+ANWEISUNGEN:
+1. GRUPPIERE verwandte Commits in einzelne, detaillierte Stichpunkte
+2. Für jedes große Feature, schreibe 3-5 Unterpunkte die erklären:
+   - Was es tut
+   - Warum es wichtig ist
+   - Technische Details
+3. Verwende Kategorien: 🆕 Neue Features, 🐛 Bugfixes, ⚡ Verbesserungen
+4. Maximales Detail bei unter 3900 Zeichen
+
+FORMAT:
+**🆕 Neue Features:**
+• **Feature Name**: Umfassende Beschreibung
+  - Wichtiger Vorteil 1
+  - Wichtiger Vorteil 2
+  - Technisches Detail"""
+
+    def _get_concise_template(self, language: str = 'de') -> str:
+        """Get concise overview template.
+
+        Args:
+            language: 'de' for German, 'en' for English
+        """
+        if language == 'en':
+            return """You are an expert technical writer creating patch notes for {project}.
 
 IMPORTANT: Be concise but informative!
 
@@ -164,10 +204,35 @@ INSTRUCTIONS:
 FORMAT:
 **🆕 New Features:**
 • **Feature Name**: Brief description of what it does"""
+        else:  # German
+            return """Du bist ein professioneller Technical Writer und erstellst Patch Notes für {project}.
 
-    def _get_benefit_focused_template(self) -> str:
-        """Get benefit-focused template."""
-        return """You are an expert technical writer creating patch notes for {project}.
+WICHTIG: Sei prägnant aber informativ!
+
+# CHANGELOG INFORMATIONEN
+{changelog}
+
+# COMMIT NACHRICHTEN
+{commits}
+
+ANWEISUNGEN:
+1. EINE ZEILE pro Feature/Fix (keine Unterpunkte außer kritisch)
+2. Fokus auf WAS sich geändert hat, nicht WARUM
+3. Verwende Kategorien: 🆕 Neue Features, 🐛 Bugfixes, ⚡ Verbesserungen
+4. Maximum 2500 Zeichen
+
+FORMAT:
+**🆕 Neue Features:**
+• **Feature Name**: Kurze Beschreibung was es tut"""
+
+    def _get_benefit_focused_template(self, language: str = 'de') -> str:
+        """Get benefit-focused template.
+
+        Args:
+            language: 'de' for German, 'en' for English
+        """
+        if language == 'en':
+            return """You are an expert technical writer creating patch notes for {project}.
 
 IMPORTANT: Focus on USER BENEFITS and IMPACT!
 
@@ -186,6 +251,50 @@ INSTRUCTIONS:
 FORMAT:
 **🆕 New Features:**
 • **Feature Name**: [Benefit statement]. This means [user impact]. Technical: [how it works]"""
+        else:  # German
+            return """Du bist ein professioneller Technical Writer und erstellst Patch Notes für {project}.
+
+WICHTIG: Fokussiere auf NUTZERVORTEILE und AUSWIRKUNGEN!
+
+# CHANGELOG INFORMATIONEN
+{changelog}
+
+# COMMIT NACHRICHTEN
+{commits}
+
+ANWEISUNGEN:
+1. Erkläre für jede Änderung WIE ES NUTZERN HILFT
+2. Beginne mit Vorteilen, gefolgt von technischen Details
+3. Verwende Kategorien: 🆕 Neue Features, 🐛 Bugfixes, ⚡ Verbesserungen
+4. Maximum 3500 Zeichen
+
+FORMAT:
+**🆕 Neue Features:**
+• **Feature Name**: [Vorteil]. Das bedeutet [Nutzerauswirkung]. Technisch: [wie es funktioniert]"""
+
+    def get_variant_template(self, variant_id: str, language: str = 'de') -> str:
+        """Get the template for a specific variant in the requested language.
+
+        Args:
+            variant_id: ID of the variant (e.g., 'detailed_v1')
+            language: 'de' for German, 'en' for English
+
+        Returns:
+            Template string in the requested language
+        """
+        if variant_id == 'detailed_v1':
+            return self._get_detailed_template(language)
+        elif variant_id == 'concise_v1':
+            return self._get_concise_template(language)
+        elif variant_id == 'benefit_focused_v1':
+            return self._get_benefit_focused_template(language)
+        else:
+            # For custom variants, return stored template (may not have language support)
+            variant = self.variants.get(variant_id)
+            if variant:
+                return variant.template
+            else:
+                raise ValueError(f"Unknown variant ID: {variant_id}")
 
     def select_variant(self, project: str, strategy: str = 'weighted_random') -> PromptVariant:
         """
