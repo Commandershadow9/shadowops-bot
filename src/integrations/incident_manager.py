@@ -509,7 +509,7 @@ class IncidentManager:
         # Post resolution to thread
         await self._post_thread_update(
             incident,
-            f"✅ **RESOLVED** by {author}: {resolution_notes}"
+            f"✅ **GELÖST** von {author}: {resolution_notes}"
         )
 
         # Update message
@@ -530,7 +530,7 @@ class IncidentManager:
                     incident.update_status(IncidentStatus.CLOSED)
                     await self._post_thread_update(
                         incident,
-                        f"⚫ Incident automatically closed after {self.auto_close_after_hours}h"
+                        f"⚫ Vorfall automatisch geschlossen nach {self.auto_close_after_hours}h"
                     )
                     await self._update_incident_message(incident)
 
@@ -567,6 +567,36 @@ class IncidentManager:
             affected_projects=[project_name],
             event_type="downtime"
         )
+
+    async def auto_resolve_project_recovery(self, project_name: str, downtime_duration: str):
+        """
+        Automatically resolve downtime incidents when project recovers.
+
+        Args:
+            project_name: Name of the recovered project
+            downtime_duration: How long the service was down (for logging)
+        """
+        # Find all open downtime incidents for this project
+        open_downtime_incidents = [
+            incident for incident in self.incidents.values()
+            if incident.event_type == "downtime"
+            and project_name in incident.affected_projects
+            and incident.status in [IncidentStatus.OPEN, IncidentStatus.IN_PROGRESS]
+        ]
+
+        if not open_downtime_incidents:
+            self.logger.debug(f"Keine offenen Downtime-Incidents für {project_name}")
+            return
+
+        # Resolve all found incidents
+        for incident in open_downtime_incidents:
+            resolution_notes = f"Dienst wieder erreichbar. Ausfallzeit: {downtime_duration}. Health-Check erfolgreich."
+            await self.resolve_incident(
+                incident_id=incident.id,
+                resolution_notes=resolution_notes,
+                author="Auto-Resolve"
+            )
+            self.logger.info(f"✅ Auto-resolved incident {incident.id} für {project_name}")
 
     async def detect_critical_vulnerability_incident(
         self, project_name: str, vulnerability_id: str, details: Dict

@@ -435,6 +435,33 @@ class ProjectMonitor:
 
     async def _send_recovery_alert(self, project: ProjectStatus):
         """Send Discord alert when project recovers"""
+        # Auto-resolve any open downtime incidents
+        if self.incident_manager:
+            try:
+                # Calculate downtime duration
+                if project.last_offline_time:
+                    downtime = datetime.utcnow() - project.last_offline_time
+                    hours = int(downtime.total_seconds() // 3600)
+                    minutes = int((downtime.total_seconds() % 3600) // 60)
+
+                    if hours > 0:
+                        downtime_str = f"{hours}h {minutes}m"
+                    else:
+                        downtime_str = f"{minutes}m"
+                else:
+                    downtime_str = "unbekannt"
+
+                await self.incident_manager.auto_resolve_project_recovery(
+                    project_name=project.name,
+                    downtime_duration=downtime_str
+                )
+            except Exception as e:
+                self.logger.error(
+                    f"❌ Failed to auto-resolve incident for {project.name}: {e}",
+                    exc_info=True
+                )
+
+        # Send recovery alert to channel
         channel = self.bot.get_channel(self.customer_alerts_channel_id)
         if channel:
             embed = self._create_recovery_embed(project)
