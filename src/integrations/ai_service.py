@@ -250,56 +250,130 @@ class AIService:
             logger.warning("Ollama is not enabled, cannot generate raw AI response for patch.")
             return None
 
-        try:
-            if self.use_hybrid_models and use_critical_model:
-                selected_model = self.ollama_model_critical
-                timeout = 360.0
-                logger.info(f"🧠 Using critical model {selected_model} for raw generation.")
-            else:
-                selected_model = self.ollama_model
-                timeout = 120.0
+        # RAM Management: Try to free RAM and retry instead of using smaller models
+        if self.use_hybrid_models and use_critical_model:
+            selected_model = self.ollama_model_critical
+            timeout = 360.0
+        else:
+            selected_model = self.ollama_model
+            timeout = 120.0
 
-            logger.info(f"📤 Sending raw text request to Ollama ({selected_model}) for patch generation.")
+        max_retries = 3
+        for attempt in range(1, max_retries + 1):
+            try:
+                if attempt == 1:
+                    logger.info(f"🧠 Using critical model {selected_model} for raw generation.")
+                else:
+                    logger.info(f"🔄 RAM Management: Retry attempt {attempt}/{max_retries} with {selected_model}")
 
-            content = ""
-            async with httpx.AsyncClient(timeout=timeout) as client:
-                async with client.stream(
-                    "POST",
-                    f"{self.ollama_url}/api/generate",
-                    json={
-                        "model": selected_model,
-                        "prompt": prompt,
-                        "stream": True,
-                        # NO "format": "json" here, we want raw text
-                    }
-                ) as response:
-                    if response.status_code != 200:
-                        raw_body = await response.aread()
-                        logger.error(f"Ollama raw API error: HTTP {response.status_code} - {raw_body.decode()}")
-                        response.raise_for_status()
+                logger.info(f"📤 Sending raw text request to Ollama ({selected_model}) for patch generation.")
 
-                    async for line in response.aiter_lines():
-                        if not line.strip():
-                            continue
-                        try:
-                            chunk = json.loads(line)
-                            if chunk.get('response'):
-                                content += chunk['response']
-                            if chunk.get('done'):
-                                break
-                        except json.JSONDecodeError:
-                            logger.warning(f"Failed to decode JSON chunk from Ollama stream: {line}")
-                            continue
+                content = ""
+                async with httpx.AsyncClient(timeout=timeout) as client:
+                    async with client.stream(
+                        "POST",
+                        f"{self.ollama_url}/api/generate",
+                        json={
+                            "model": selected_model,
+                            "prompt": prompt,
+                            "stream": True,
+                            # NO "format": "json" here, we want raw text
+                        }
+                    ) as response:
+                        if response.status_code != 200:
+                            raw_body = await response.aread()
+                            error_message = raw_body.decode()
+                            logger.error(f"Ollama raw API error: HTTP {response.status_code} - {error_message}")
 
-            logger.info(f"📥 Received raw response from Ollama (length: {len(content)}).")
-            return content.strip()
+                            # Intelligent RAM error detection and recovery
+                            if response.status_code == 500 and "system memory" in error_message.lower():
+                                logger.warning(f"⚠️ RAM shortage detected for {selected_model}")
 
-        except httpx.HTTPStatusError as e:
-            logger.error(f"Ollama raw request failed with status {e.response.status_code}")
-            return None
-        except Exception as e:
-            logger.error(f"Ollama raw request error: {e}")
-            return None
+                                if attempt < max_retries:
+                                    logger.info(f"🔧 Attempting to free RAM...")
+
+                                    try:
+                                        # Method 1: Restart Ollama to free RAM
+                                        import subprocess
+                                        logger.info("🔄 Restarting Ollama service to free RAM...")
+                                        restart_result = subprocess.run(
+                                            ['systemctl', '--user', 'restart', 'ollama.service'],
+                                            capture_output=True,
+                                            text=True,
+                                            timeout=10
+                                        )
+
+                                        if restart_result.returncode == 0:
+                                            logger.info("✅ Ollama restarted successfully")
+                                            # Wait for Ollama to be ready
+                                            await asyncio.sleep(5)
+                                            logger.info(f"🔄 Retrying with {selected_model} after RAM cleanup...")
+                                            continue
+                                        else:
+                                            logger.warning(f"⚠️ Ollama restart failed: {restart_result.stderr}")
+
+                                    except Exception as restart_error:
+                                        logger.error(f"❌ Failed to restart Ollama: {restart_error}")
+
+                                    # Method 2: Clear system cache (as fallback)
+                                    try:
+                                        logger.info("🧹 Attempting to clear system cache...")
+                                        cache_result = subprocess.run(
+                                            ['sync'],  # Flush file system buffers
+                                            capture_output=True,
+                                            timeout=5
+                                        )
+                                        logger.info("✅ System cache flushed")
+                                        await asyncio.sleep(2)
+                                        continue
+
+                                    except Exception as cache_error:
+                                        logger.error(f"❌ Failed to clear cache: {cache_error}")
+
+                                else:
+                                    logger.error("❌ RAM Management: All retry attempts exhausted")
+                                    return None
+
+                            response.raise_for_status()
+
+                        async for line in response.aiter_lines():
+                            if not line.strip():
+                                continue
+                            try:
+                                chunk = json.loads(line)
+                                if chunk.get('response'):
+                                    content += chunk['response']
+                                if chunk.get('done'):
+                                    break
+                            except json.JSONDecodeError:
+                                logger.warning(f"Failed to decode JSON chunk from Ollama stream: {line}")
+                                continue
+
+                logger.info(f"✅ Received raw response from Ollama using {selected_model} (length: {len(content)}).")
+
+                # Log success after recovery
+                if attempt > 1:
+                    logger.info(f"✅ RAM Management SUCCESS: Generated patch notes after {attempt} attempts")
+
+                return content.strip()
+
+            except httpx.HTTPStatusError as e:
+                logger.error(f"Ollama raw request failed with status {e.response.status_code}")
+                if attempt < max_retries:
+                    logger.info(f"🔄 Retrying...")
+                    await asyncio.sleep(3)
+                    continue
+                return None
+            except Exception as e:
+                logger.error(f"Ollama raw request error: {e}")
+                if attempt < max_retries:
+                    logger.info(f"🔄 Retrying...")
+                    await asyncio.sleep(3)
+                    continue
+                return None
+
+        logger.error("❌ RAM Management: All retry attempts failed")
+        return None
 
     def _build_analysis_prompt(self, event: Dict, previous_attempts: list) -> str:
         """Build detailed analysis prompt with security context and RAG"""

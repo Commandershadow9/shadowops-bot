@@ -710,7 +710,7 @@ class GitHubIntegration:
 
                     # Get CHANGELOG section if version found
                     if version:
-                        from src.utils.changelog_parser import get_changelog_parser
+                        from utils.changelog_parser import get_changelog_parser
                         parser = get_changelog_parser(project_path)
                         version_data = parser.get_version_section(version)
 
