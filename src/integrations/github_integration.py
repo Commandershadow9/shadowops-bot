@@ -545,6 +545,17 @@ class GitHubIntegration:
                 self.logger.error(f"❌ Fehler beim Senden der Push-Benachrichtigung im internen Channel: {e}")
 
         # 2. Send to customer-facing channel (user-friendly embed)
+        # Extract version from commits for feedback tracking (do this BEFORE sending messages)
+        version = None
+        import re
+        for commit in commits:
+            msg = commit.get('message', '')
+            match = re.search(r'v?(?:ersion|elease)?\s*([0-9]+\.[0-9]+\.[0-9]+)', msg, re.IGNORECASE)
+            if match:
+                version = match.group(1)
+                self.logger.info(f"📌 Version detected from commits: v{version}")
+                break
+
         customer_channel_id = project_config.get('update_channel_id')
         if customer_channel_id:
             customer_channel = self.bot.get_channel(customer_channel_id)
@@ -553,9 +564,11 @@ class GitHubIntegration:
                     # Check if description is too long and split if needed
                     description_chunks = self._split_embed_description(customer_embed.description or "")
 
+                    sent_message = None
+
                     if len(description_chunks) <= 1:
                         # Single embed - send as is
-                        await customer_channel.send(embed=customer_embed)
+                        sent_message = await customer_channel.send(embed=customer_embed)
                         self.logger.info(f"📢 Benutzerfreundliche Patch Notes für {repo_name} im Kunden-Channel {customer_channel_id} gesendet.")
                     else:
                         # Multiple embeds needed - split across messages
@@ -569,25 +582,32 @@ class GitHubIntegration:
                             )
                             if i == len(description_chunks) - 1:  # Add footer only to last embed
                                 embed_copy.set_footer(text=customer_embed.footer.text)
-                            await customer_channel.send(embed=embed_copy)
+                            message = await customer_channel.send(embed=embed_copy)
+
+                            # Track the first message for feedback (main content)
+                            if i == 0:
+                                sent_message = message
 
                         self.logger.info(f"📢 Benutzerfreundliche Patch Notes für {repo_name} im Kunden-Channel {customer_channel_id} gesendet ({len(description_chunks)} Teile).")
+
+                    # 🎯 ACTIVATE FEEDBACK COLLECTION for internal channel message
+                    if sent_message and self.feedback_collector and version:
+                        try:
+                            await self.feedback_collector.track_patch_notes_message(
+                                message=sent_message,
+                                project=repo_name,
+                                version=version
+                            )
+                            self.logger.info(f"👍 Feedback collection activated for {repo_name} v{version} (internal channel)")
+                        except Exception as e:
+                            self.logger.warning(f"⚠️ Could not activate feedback collection for internal channel: {e}")
+
                 except Exception as e:
                     self.logger.error(f"❌ Fehler beim Senden der Push-Benachrichtigung im Kunden-Channel {customer_channel_id}: {e}")
             else:
                 self.logger.warning(f"⚠️ Kunden-Update Channel {customer_channel_id} für {repo_name} nicht gefunden.")
 
         # 3. Send to external notification channels (customer servers) WITH feedback collection
-        # Extract version from commits for feedback tracking
-        version = None
-        import re
-        for commit in commits:
-            msg = commit.get('message', '')
-            match = re.search(r'v?(?:ersion|elease)?\s*([0-9]+\.[0-9]+\.[0-9]+)', msg, re.IGNORECASE)
-            if match:
-                version = match.group(1)
-                break
-
         await self._send_external_git_notifications(repo_name, customer_embed, project_config, version)
 
     def _split_embed_description(self, description: str, max_length: int = 4096) -> list[str]:
