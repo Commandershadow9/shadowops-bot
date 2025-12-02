@@ -292,9 +292,81 @@ class AIService:
                                 if attempt < max_retries:
                                     logger.info(f"🔧 Attempting to free RAM...")
 
+                                    # Method 1: Kill unnecessary processes that consume RAM
                                     try:
-                                        # Method 1: Restart Ollama to free RAM
                                         import subprocess
+                                        logger.info("🧹 Identifying and terminating unnecessary RAM-consuming processes...")
+
+                                        # Get list of processes sorted by memory usage
+                                        ps_result = subprocess.run(
+                                            ['ps', 'aux', '--sort=-rss'],
+                                            capture_output=True,
+                                            text=True,
+                                            timeout=5
+                                        )
+
+                                        if ps_result.returncode == 0:
+                                            lines = ps_result.stdout.strip().split('\n')[1:]  # Skip header
+
+                                            # Define processes we can safely kill (non-critical)
+                                            killable_patterns = [
+                                                'chrome', 'chromium', 'firefox',  # Browsers (if running)
+                                                'code', 'vscode',  # VS Code instances
+                                                'node --inspect',  # Debug node processes
+                                                'npm run dev',  # Dev servers
+                                                'webpack', 'parcel',  # Build tools
+                                                'jest', 'mocha',  # Test runners
+                                            ]
+
+                                            killed_processes = []
+                                            freed_mb = 0
+
+                                            for line in lines[:20]:  # Check top 20 memory consumers
+                                                parts = line.split()
+                                                if len(parts) < 11:
+                                                    continue
+
+                                                pid = parts[1]
+                                                rss_kb = int(parts[5])  # RSS in KB
+                                                command = ' '.join(parts[10:])
+
+                                                # Skip critical processes
+                                                if any(critical in command.lower() for critical in [
+                                                    'systemd', 'sshd', 'shadowops-bot', 'postgres',
+                                                    'redis', 'nginx', 'ollama', 'docker'
+                                                ]):
+                                                    continue
+
+                                                # Kill if matches killable patterns
+                                                for pattern in killable_patterns:
+                                                    if pattern in command.lower() and rss_kb > 100000:  # > 100MB
+                                                        try:
+                                                            subprocess.run(
+                                                                ['kill', '-9', pid],
+                                                                capture_output=True,
+                                                                timeout=2
+                                                            )
+                                                            killed_processes.append(command[:50])
+                                                            freed_mb += rss_kb / 1024
+                                                            logger.info(f"  ✅ Killed: {command[:50]} (PID: {pid}, {rss_kb/1024:.1f}MB)")
+                                                        except Exception as kill_error:
+                                                            logger.debug(f"  ⚠️ Could not kill {pid}: {kill_error}")
+                                                        break
+
+                                                # Stop after freeing ~500MB
+                                                if freed_mb > 500:
+                                                    break
+
+                                            if killed_processes:
+                                                logger.info(f"✅ Freed approximately {freed_mb:.1f}MB by killing {len(killed_processes)} processes")
+                                            else:
+                                                logger.info("ℹ️ No unnecessary processes found to kill")
+
+                                    except Exception as kill_error:
+                                        logger.warning(f"⚠️ Process cleanup failed: {kill_error}")
+
+                                    # Method 2: Restart Ollama to free RAM
+                                    try:
                                         logger.info("🔄 Restarting Ollama service to free RAM...")
                                         restart_result = subprocess.run(
                                             ['systemctl', '--user', 'restart', 'ollama.service'],
@@ -315,9 +387,9 @@ class AIService:
                                     except Exception as restart_error:
                                         logger.error(f"❌ Failed to restart Ollama: {restart_error}")
 
-                                    # Method 2: Clear system cache (as fallback)
+                                    # Method 3: Clear system cache (as final fallback)
                                     try:
-                                        logger.info("🧹 Attempting to clear system cache...")
+                                        logger.info("🧹 Flushing system cache...")
                                         cache_result = subprocess.run(
                                             ['sync'],  # Flush file system buffers
                                             capture_output=True,
