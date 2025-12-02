@@ -1,5 +1,7 @@
 # AI Learning System - Multi-Project Configuration
 
+**Version:** 3.4.0 | **Status:** ✅ AKTIV
+
 ## 🎯 Overview
 
 The AI Learning System works **automatically for ALL projects** managed by ShadowOps.
