@@ -314,10 +314,10 @@ class IncidentManager:
 
             # Send initial thread message
             await thread.send(
-                f"**Incident Tracking Thread**\n\n"
-                f"This thread tracks incident `{incident.id}`.\n"
-                f"Updates will be posted here automatically.\n\n"
-                f"**Timeline:**"
+                f"**Vorfalls-Tracking Thread**\n\n"
+                f"Dieser Thread verfolgt Vorfall `{incident.id}`.\n"
+                f"Updates werden hier automatisch gepostet.\n\n"
+                f"**Zeitleiste:**"
             )
 
             # Save updated incident
@@ -351,7 +351,7 @@ class IncidentManager:
         status_emoji = status_emojis.get(incident.status, '🔴')
 
         embed = discord.Embed(
-            title=f"🚨 Incident: {incident.title}",
+            title=f"🚨 Vorfall: {incident.title}",
             description=incident.description,
             color=color,
             timestamp=incident.created_at
@@ -364,13 +364,13 @@ class IncidentManager:
         )
 
         embed.add_field(
-            name="⚠️ Severity",
+            name="⚠️ Schweregrad",
             value=incident.severity.value.upper(),
             inline=True
         )
 
         embed.add_field(
-            name="🔖 Incident ID",
+            name="🔖 Vorfalls-ID",
             value=f"`{incident.id}`",
             inline=True
         )
@@ -378,7 +378,7 @@ class IncidentManager:
         # Affected projects
         projects_str = ", ".join(incident.affected_projects) if incident.affected_projects else "N/A"
         embed.add_field(
-            name="🎯 Affected Projects",
+            name="🎯 Betroffene Projekte",
             value=projects_str,
             inline=False
         )
@@ -395,7 +395,7 @@ class IncidentManager:
                 duration_str = f"{minutes}m"
 
             embed.add_field(
-                name="⏱️ Duration",
+                name="⏱️ Dauer",
                 value=duration_str,
                 inline=True
             )
@@ -403,12 +403,12 @@ class IncidentManager:
         # Resolution (if resolved)
         if incident.status == IncidentStatus.RESOLVED and incident.resolution_notes:
             embed.add_field(
-                name="✅ Resolution",
+                name="✅ Lösung",
                 value=incident.resolution_notes,
                 inline=False
             )
 
-        embed.set_footer(text=f"Created at")
+        embed.set_footer(text=f"Erstellt am")
 
         return embed
 
@@ -557,8 +557,8 @@ class IncidentManager:
             project_name: Name of the down project
             error: Error message
         """
-        title = f"{project_name} Service Unavailable"
-        description = f"Health check failed for {project_name}"
+        title = f"{project_name} Dienst nicht erreichbar"
+        description = f"Health-Check fehlgeschlagen für {project_name}"
 
         await self.create_incident(
             title=title,
@@ -579,8 +579,8 @@ class IncidentManager:
             vulnerability_id: CVE or vulnerability ID
             details: Vulnerability details
         """
-        title = f"Critical Vulnerability: {vulnerability_id}"
-        description = f"Critical vulnerability detected in {project_name}: {details.get('Title', 'Unknown')}"
+        title = f"Kritische Schwachstelle: {vulnerability_id}"
+        description = f"Kritische Schwachstelle erkannt in {project_name}: {details.get('Title', 'Unbekannt')}"
 
         await self.create_incident(
             title=title,
@@ -600,8 +600,8 @@ class IncidentManager:
             project_name: Project that failed to deploy
             error: Deployment error message
         """
-        title = f"Deployment Failed: {project_name}"
-        description = f"Deployment to {project_name} failed"
+        title = f"Deployment fehlgeschlagen: {project_name}"
+        description = f"Deployment zu {project_name} fehlgeschlagen"
 
         await self.create_incident(
             title=title,
