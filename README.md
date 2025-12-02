@@ -1,14 +1,49 @@
-# 🗡️ ShadowOps - Active Security Guardian v3.4 🚀
+# 🗡️ ShadowOps - Active Security Guardian v3.5 🚀
 
-**Status:** ✅ **LIVE & PRODUKTIV** | **Version:** 3.4.0 | **Letzte Aktualisierung:** 02.12.2025 | **Test:** Feedback-System
+**Status:** ✅ **LIVE & PRODUKTIV** | **Version:** 3.5.0 | **Letzte Aktualisierung:** 02.12.2025
 
-**ShadowOps** ist ein **vollständig autonomer Security Guardian** mit KI-gesteuerter Auto-Remediation, persistentem Lernsystem und Multi-Projekt-Management, der Sicherheitsbedrohungen nicht nur erkennt und analysiert, sondern **eigenständig behebt und aus Erfahrungen lernt**.
+**ShadowOps** ist ein **vollständig autonomer Security Guardian** mit KI-gesteuerter Auto-Remediation, intelligenter Request-Queue, persistentem Lernsystem und Multi-Projekt-Management, der Sicherheitsbedrohungen nicht nur erkennt und analysiert, sondern **eigenständig behebt und aus Erfahrungen lernt**.
 
 > 📖 **Vollständige v3.1 Dokumentation:** [ACTIVE_SECURITY_GUARDIAN.md](./ACTIVE_SECURITY_GUARDIAN.md)
 > 📚 **Dokumentations-Übersicht:** [DOCS_OVERVIEW.md](./DOCS_OVERVIEW.md)
 > 🧠 **KI-Lernsystem Dokumentation:** [AI_LEARNING_MULTI_PROJECT.md](./AI_LEARNING_MULTI_PROJECT.md)
 > 🔧 **API Dokumentation:** [docs/API.md](./docs/API.md)
 > 🚀 **Setup Guide:** [docs/SETUP_GUIDE.md](./docs/SETUP_GUIDE.md)
+
+## ⚡ Highlights v3.5
+
+### 🔄 **Ollama Queue Management & Auto-Resolve (v3.5 - NEW)**
+- ✅ **Intelligentes Request-Queuing**
+  - Priority-basierte AsyncIO Queue (verhindert Ollama Überlastung)
+  - 4 Prioritätsstufen: CRITICAL > HIGH > NORMAL > LOW
+  - **Security-First**: Security-Events erhalten IMMER Vorrang
+  - Single Worker Pattern (max 1 Ollama Request gleichzeitig)
+  - State Persistence & Performance-Statistiken
+- ✅ **Live Dashboard in Discord**
+  - Channel: `🔄-ollama-queue`
+  - Updates alle 30 Sekunden
+  - Zeigt: Aktueller Request, Queue Size, Statistiken, Priority-Verteilung
+  - Worker-Status (Running/Stopped)
+- ✅ **Admin Commands**
+  - `/queue-status` - Detaillierter Status
+  - `/queue-stats` - Performance-Statistiken
+  - `/queue-clear` - Queue leeren (ADMIN)
+  - `/queue-pause` / `/queue-resume` - Worker steuern (ADMIN)
+- ✅ **Auto-Resolve für Service-Recovery**
+  - Incidents werden automatisch geschlossen wenn Service wieder online
+  - Berechnet Ausfallzeit (Xh Ym)
+  - Thread-Update: "✅ GELÖST von Auto-Resolve: Dienst wieder erreichbar..."
+  - Komplette Timeline in Incident-Thread
+- ✅ **Deutsche Incident-Meldungen**
+  - Alle Embeds und Threads auf Deutsch
+  - "Vorfall", "Schweregrad", "Betroffene Projekte", etc.
+  - Konsistente Übersetzung im gesamten System
+
+**Vorteile:**
+- 🚫 Keine Ollama-Überlastung mehr (450% CPU, 5.6GB RAM → gelöst)
+- 🔒 Security-First Prinzip garantiert
+- 📊 Volle Transparenz durch Dashboard
+- 🇩🇪 Deutschsprachige Benutzeroberfläche
 
 ## ⚡ Highlights v3.4
 

@@ -1,5 +1,129 @@
 # ShadowOps Bot - Changelog
 
+## [3.5.0] - 2025-12-02
+
+### 🔄 Ollama Queue Management & Incident Auto-Resolve
+
+#### ✨ Hinzugefügt
+
+**Intelligentes Ollama Request-Queuing:**
+- **Queue Manager** (`src/integrations/ollama_queue_manager.py`)
+  - Priority-basierte AsyncIO Queue (verhindert Resource Exhaustion)
+  - 4 Prioritätsstufen:
+    - 🔴 **CRITICAL (1)**: Security monitoring, Angriffserkennung, Schwachstellenreaktion
+    - 🟠 **HIGH (2)**: Code-Fixes, Fehleranalyse
+    - 🟡 **NORMAL (3)**: Allgemeines Monitoring, Routine-Checks
+    - 🟢 **LOW (4)**: Patch Notes, unkritische KI-Generierung
+  - Single Worker Pattern (nur 1 Ollama Request gleichzeitig)
+  - Timeout-Handling (default 5 min, konfigurierbar)
+  - State Persistence (`~/.shadowops/queue/queue_state.json`)
+  - Performance-Statistiken (Total processed, Failed, Avg Zeit)
+  - Async Callback-Support für Ergebnis-Verarbeitung
+
+**Discord Queue Dashboard:**
+- **Live Dashboard** (`src/integrations/queue_dashboard.py`)
+  - Automatischer Discord-Channel: `🔄-ollama-queue`
+  - Live-Updates alle 30 Sekunden
+  - Zeigt:
+    - ⚙️ Aktueller Request (Task-Typ, Projekt, seit wann)
+    - 📊 Queue Summary (Anzahl pending, processing, completed, failed)
+    - 📈 Lifetime-Statistiken (Total, Failed, Avg Zeit)
+    - 🎯 Priority-Verteilung (Anzahl pro Priorität)
+    - 📋 Nächste 5 Requests in Queue
+  - Worker-Status (🟢 Running / 🔴 Stopped)
+
+**Queue Admin Commands:**
+- **Slash Commands** (`src/commands/queue_admin.py`)
+  - `/queue-status` - Detaillierter Queue-Status (alle User)
+  - `/queue-stats` - Detaillierte Statistiken mit Erfolgsrate (alle User)
+  - `/queue-clear` - Alle pending Requests löschen (ADMIN only)
+  - `/queue-pause` - Queue Worker pausieren (ADMIN only)
+  - `/queue-resume` - Queue Worker fortsetzen (ADMIN only)
+  - Permissions über `config.permissions.admins`
+
+**Auto-Resolve für Service-Recovery:**
+- **Automatisches Incident-Schließen** (`src/integrations/incident_manager.py`)
+  - Neue Funktion: `auto_resolve_project_recovery()`
+  - Findet alle offenen Downtime-Incidents für Projekt
+  - Berechnet Ausfallzeit (Xh Ym Format)
+  - Schließt Incidents automatisch mit Auflösungstext:
+    - "Dienst wieder erreichbar. Ausfallzeit: Xh Ym. Health-Check erfolgreich."
+  - Thread-Update: "✅ **GELÖST** von Auto-Resolve: ..."
+  - Integration in `ProjectMonitor._send_recovery_alert()`
+
+**Deutschsprachige Incident-Meldungen:**
+- Alle Incident-Embeds jetzt auf Deutsch:
+  - 🚨 "Vorfall:" statt "Incident:"
+  - ⚠️ "Schweregrad" statt "Severity"
+  - 🔖 "Vorfalls-ID" statt "Incident ID"
+  - 🎯 "Betroffene Projekte" statt "Affected Projects"
+  - ⏱️ "Dauer" statt "Duration"
+  - ✅ "Lösung" statt "Resolution"
+  - "Erstellt am" statt "Created at"
+- Thread-Nachrichten auf Deutsch:
+  - "Vorfalls-Tracking Thread"
+  - "Dieser Thread verfolgt Vorfall..."
+  - "Updates werden hier automatisch gepostet"
+  - "Zeitleiste:"
+- Incident-Typen:
+  - "Dienst nicht erreichbar" statt "Service Unavailable"
+  - "Health-Check fehlgeschlagen für" statt "Health check failed for"
+  - "Kritische Schwachstelle" statt "Critical Vulnerability"
+  - "Deployment fehlgeschlagen" statt "Deployment Failed"
+
+#### 🔧 Geändert
+
+**Geänderte Dateien:**
+- `src/bot.py`:
+  - Queue Manager in Phase 2.5 initialisiert (nach AI Service)
+  - Queue Dashboard in Phase 5.5 gestartet
+  - Queue Admin Commands automatisch geladen
+  - Queue Channel `🔄-ollama-queue` automatisch erstellt
+- `src/integrations/github_integration.py`:
+  - Queue Manager Integration für AI-Requests
+- `src/integrations/project_monitor.py`:
+  - Auto-Resolve bei Service-Recovery
+  - Downtime-Berechnung für Incident-Auflösung
+- `src/integrations/prompt_ab_testing.py`:
+  - Sprachunterstützung für alle 3 Prompt-Varianten
+  - `get_variant_template(variant_id, language)` Methode
+  - Deutsche und englische Templates für:
+    - Detailed Grouping
+    - Concise Overview
+    - Benefit-Focused
+
+#### 🐛 Behoben
+
+**Problembehebungen:**
+- **Ollama Resource Exhaustion**: Queue verhindert gleichzeitige Requests (450% CPU, 5.6GB RAM)
+- **Security-First Prinzip**: Security-Tasks erhalten höchste Priorität
+- **Spracheinstellung**: A/B Testing Prompts respektieren jetzt `config.yaml` Spracheinstellung
+- **Incident-Management**: Services werden automatisch als "gelöst" markiert bei Recovery
+
+#### 📊 Performance
+
+**Vorteile des Queue-Systems:**
+- ✅ Keine Ollama-Überlastung mehr (max 1 Request gleichzeitig)
+- ✅ Security-Tasks werden sofort bearbeitet (Prio 1)
+- ✅ Patch Notes warten in Queue (Prio 4 - ist ok)
+- ✅ Transparenz durch Dashboard (User sieht Bot-Fortschritt)
+- ✅ Vollständige Admin-Kontrolle über Queue
+
+**Auto-Resolve Workflow:**
+1. Service geht down → Incident wird erstellt (HIGH Severity)
+2. Service kommt online → Incident wird AUTO-RESOLVED
+3. Nach X Stunden → Incident wird AUTO-CLOSED
+4. Thread zeigt komplette Timeline
+
+#### 🔒 Sicherheit
+
+**Security-First Queuing:**
+- Kritische Security-Events haben IMMER Vorrang
+- Patch Notes und andere Low-Priority Tasks warten
+- Monitoring bleibt reaktionsfähig auch bei hoher Last
+
+---
+
 ## [3.4.0] - 2025-12-02
 
 ### 🧠 Erweitertes KI-Lernsystem für Patch Notes
