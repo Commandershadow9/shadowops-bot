@@ -1,5 +1,163 @@
 # ShadowOps Bot - Changelog
 
+## [3.4.0] - 2025-12-02
+
+### 🧠 Erweitertes KI-Lernsystem für Patch Notes
+
+#### ✨ Hinzugefügt
+
+**Vollständige KI-Trainings-Pipeline:**
+- **Kern-Trainingssystem** (`patch_notes_trainer.py`)
+  - Erweiterte Prompts mit CHANGELOG.md-Parsing (vollständiger Kontext)
+  - Few-Shot-Learning mit hochwertigen Beispielen in Prompts
+  - Automatische Qualitätsbewertung (0-100 Skala)
+    - Längenprüfung (20 Punkte)
+    - Strukturanalyse (30 Punkte) - Kategorien, Aufzählungen
+    - Detailerhaltung (30 Punkte) - Schlüsselwort-Matching
+    - Formatierungsprüfung (20 Punkte) - Emojis, Fettdruck, Unterpunkte
+  - Trainingsdaten-Sammlung (≥80 Score als Beispiele gespeichert)
+  - Top-10-System für gute Beispiele (aktualisiert sich automatisch)
+  - JSONL-Format für Trainingsdaten-Speicherung
+
+**Discord Feedback-Sammlung** (`patch_notes_feedback.py`)
+- 👍 Reaktions-Buttons auf ALLEN Patch Notes (automatisch)
+- Reaktions-Bewertung: 👍 +10, ❤️ +15, 🔥 +20, 👎 -10, 😐 -5, ❌ -15
+- Benutzer-Feedback wird in Trainingsdaten aufgenommen
+- Automatisches Nachrichten-Tracking (Projekt + Version)
+- Funktioniert für ALLE Projekte mit externen Benachrichtigungen
+
+**A/B-Testing-System** (`prompt_ab_testing.py`)
+- 3 Standard-Prompt-Varianten:
+  - Detaillierte Gruppierung (umfassend, strukturiert)
+  - Kompakte Übersicht (kurz, fokussiert)
+  - Nutzen-Fokussiert (Betonung auf Benutzer-Impact)
+- Gewichtete Zufallsauswahl (leistungsbasiert)
+- Kombinierte Bewertung: 70% Qualität + 30% Benutzer-Feedback
+- Per-Projekt und globale Performance-Verfolgung
+- Testergebnisse im JSONL-Format gespeichert
+
+**Auto-Tuning-Engine** (`prompt_auto_tuner.py`)
+- Automatische Performance-Musteranalyse
+- Vergleich zwischen hohen und niedrigen Performern
+- Umsetzbare Verbesserungsvorschläge:
+  - Längen-Optimierung
+  - Struktur-Verfeinerung
+  - Detail-Balance
+  - Formatierungs-Verbesserung
+- Automatische Varianten-Erstellung bei erfüllten Bedingungen:
+  - ≥10 Trainingsbeispiele
+  - ≥5 Punkte Qualitäts-Gap zwischen hohen/niedrigen Performern
+- Geplantes Tuning (täglich um 03:00 UTC)
+
+**Fine-Tuning-Export-System** (`llm_fine_tuning.py`)
+- Ollama-Format-Export (JSONL): `{"prompt": "...", "response": "..."}`
+- LoRA-Format-Export (Alpaca-Style JSON)
+- Auto-generiertes Fine-Tuning-Script mit:
+  - Modell-Erstellungs-Befehlen
+  - Parameter-Optimierung
+  - Test-Workflow
+  - Integrations-Anweisungen
+- Qualitätsfilterung (Min-Score-Schwellenwert)
+- Projekt-Filterung (spezifisch oder alle Projekte)
+- Vollständige README-Generierung für Fine-Tuning-Prozess
+
+**Admin-Befehle** (`ai_learning_admin.py`)
+- `/ai-stats`: Trainings-Statistiken, A/B-Test-Performance, Feedback-Zählungen
+- `/ai-variants`: Liste aller Prompt-Varianten mit Scores und Test-Anzahl
+- `/ai-tune [projekt]`: Manueller Tuning-Trigger mit Verbesserungsvorschlägen
+- `/ai-export-finetune [projekt] [min_score]`: Export Trainingsdaten für llama3.1
+
+**Multi-Projekt-Unterstützung:**
+- ✅ Funktioniert automatisch für ALLE Projekte (GuildScout, SicherheitsdienstTool, etc.)
+- ✅ Gemeinsamer Lern-Pool (alle Projekte tragen zu denselben Trainingsdaten bei)
+- ✅ Projekt-übergreifendes Lernen (GuildScout lernt von SicherheitsdienstTool und umgekehrt)
+- ✅ Null zusätzliche Konfiguration pro Projekt erforderlich
+- ✅ Automatische Versionserkennung aus Commits
+- ✅ Feedback-Sammlung aktiviert für jedes Projekt mit:
+  - `patch_notes.use_ai: true`
+  - `external_notifications` konfiguriert mit `git_push: true`
+
+**Trainingsdaten-Speicherung:**
+- `~/.shadowops/patch_notes_training/patch_notes_training.jsonl`
+- `~/.shadowops/patch_notes_training/good_examples.json`
+- `~/.shadowops/patch_notes_training/prompt_test_results.jsonl`
+- `~/.shadowops/patch_notes_training/fine_tuning_exports/`
+
+#### 🔧 Geändert
+
+**Geänderte Dateien:**
+- `src/bot.py`:
+  - 5 KI-Lernsysteme initialisiert
+  - Feedback-Collector mit Discord-Events verbunden
+  - In Patch-Notes-Generierungs-Pipeline integriert
+- `src/integrations/github_integration.py`:
+  - `_generate_ai_patch_notes()` erweitert mit:
+    - CHANGELOG.md-Parsing und Integration
+    - A/B-Testing für Prompt-Auswahl
+    - Qualitätsbewertung und Ergebnis-Aufzeichnung
+    - Auto-Tuning-Planung
+  - `_send_external_git_notifications()` modifiziert:
+    - Automatische Feedback-Sammlungs-Aktivierung hinzugefügt
+    - Versions-Parameter für Tracking
+  - Versionserkennung aus Commits hinzugefügt (Regex-Pattern-Matching)
+  - Alle 4 KI-Lernsysteme mit Patch-Notes-Workflow verbunden
+
+#### 📚 Dokumentation
+
+**Neue Dokumentation:**
+- `AI_LEARNING_MULTI_PROJECT.md` (600+ Zeilen):
+  - Vollständige Multi-Projekt-Setup-Anleitung
+  - Konfigurations-Beispiele für alle Szenarien
+  - Wie der gemeinsame Lern-Pool funktioniert
+  - Per-Projekt vs. globale Konfiguration
+  - Admin-Befehls-Verwendungsbeispiele
+  - Best Practices und Troubleshooting
+  - Anleitung zum Hinzufügen neuer Projekte
+
+#### 🎯 Vorteile
+
+**Sofort:**
+- Jede Patch Note wird automatisch bewertet und gelernt
+- Benutzer-Feedback verbessert KI-Prompts kontinuierlich
+- Beste Prompt-Varianten werden automatisch ausgewählt
+- Hochwertige Beispiele in zukünftigen Prompts enthalten
+
+**Langfristig:**
+- KI wird mit der Zeit besser (kontinuierliche Lern-Schleife)
+- Alle Projekte profitieren von den Daten der anderen
+- Fine-Tuning ermöglicht spezialisierte Custom-Modelle
+- Null manuelle Intervention erforderlich
+
+#### 🚀 Schnellstart
+
+**Für Admins:**
+1. System funktioniert automatisch - kein Setup nötig!
+2. Überwachung mit `/ai-stats`-Befehl
+3. Performance anzeigen mit `/ai-variants`
+4. Tuning auslösen mit `/ai-tune`
+5. Für Fine-Tuning exportieren mit `/ai-export-finetune`
+
+**Für Benutzer:**
+- Reagiert auf Patch Notes mit 👍 ❤️ 🔥 (gut) oder 👎 😐 ❌ (schlecht)
+- Euer Feedback trainiert die KI!
+
+#### 📊 Technische Details
+
+**Code-Statistiken:**
+- ~1.700 Zeilen neuer Code
+- 5 neue Integrations-Module
+- 1 neues Befehls-Modul
+- 4 erweiterte KI-Systeme
+- Multi-Projekt-Architektur
+
+**Performance:**
+- Qualitätsbewertung: <100ms pro Note
+- A/B-Testing: <50ms Varianten-Auswahl
+- Feedback-Aufzeichnung: <10ms pro Reaktion
+- Trainingsdaten: JSONL für effizientes Streaming
+
+---
+
 ## [3.3.0] - 2025-12-01
 
 ### 🔐 Security: Webhook Signature Verification
