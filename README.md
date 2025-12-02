@@ -1,13 +1,48 @@
-# 🗡️ ShadowOps - Active Security Guardian v3.3 🚀
+# 🗡️ ShadowOps - Active Security Guardian v3.4 🚀
 
-**Status:** ✅ **LIVE & PRODUKTIV** | **Version:** 3.3.0 | **Letzte Aktualisierung:** 01.12.2025
+**Status:** ✅ **LIVE & PRODUKTIV** | **Version:** 3.4.0 | **Letzte Aktualisierung:** 02.12.2025
 
 **ShadowOps** ist ein **vollständig autonomer Security Guardian** mit KI-gesteuerter Auto-Remediation, persistentem Lernsystem und Multi-Projekt-Management, der Sicherheitsbedrohungen nicht nur erkennt und analysiert, sondern **eigenständig behebt und aus Erfahrungen lernt**.
 
 > 📖 **Vollständige v3.1 Dokumentation:** [ACTIVE_SECURITY_GUARDIAN.md](./ACTIVE_SECURITY_GUARDIAN.md)
 > 📚 **Dokumentations-Übersicht:** [DOCS_OVERVIEW.md](./DOCS_OVERVIEW.md)
+> 🧠 **KI-Lernsystem Dokumentation:** [AI_LEARNING_MULTI_PROJECT.md](./AI_LEARNING_MULTI_PROJECT.md)
 > 🔧 **API Dokumentation:** [docs/API.md](./docs/API.md)
 > 🚀 **Setup Guide:** [docs/SETUP_GUIDE.md](./docs/SETUP_GUIDE.md)
+
+## ⚡ Highlights v3.4
+
+### 🧠 **Advanced AI Learning System (v3.4 - NEW)**
+- ✅ **Vollständige KI-Trainings-Pipeline**: Kontinuierliches Lernen für bessere Patch Notes
+  - CHANGELOG.md-Parsing für vollständigen Kontext
+  - Automatische Qualitätsbewertung (0-100 Skala)
+  - Few-Shot-Learning mit Top-10 Beispielen
+  - Trainingsdaten-Sammlung (≥80 Score)
+- ✅ **Discord Feedback-Sammlung**
+  - Automatische Reaktions-Buttons (👍 ❤️ 🔥 👎 😐 ❌)
+  - Benutzer-Feedback trainiert die KI
+  - Funktioniert für ALLE Projekte automatisch
+- ✅ **A/B Testing System**
+  - 3 Prompt-Varianten mit Performance-Tracking
+  - Gewichtete Auswahl basierend auf Erfolg
+  - Kombinierte Bewertung (70% Qualität + 30% Feedback)
+- ✅ **Auto-Tuning Engine**
+  - Automatische Performance-Analyse
+  - Verbesserungsvorschläge
+  - Automatische Varianten-Erstellung
+- ✅ **Fine-Tuning Export**
+  - Ollama-Format (JSONL) für llama3.1
+  - LoRA-Format (Alpaca-Style)
+  - Auto-generiertes Fine-Tuning-Script
+- ✅ **Admin-Befehle**
+  - `/ai-stats` - Trainings-Statistiken
+  - `/ai-variants` - Varianten-Übersicht
+  - `/ai-tune` - Tuning-Vorschläge
+  - `/ai-export-finetune` - Export für Training
+- ✅ **Multi-Projekt-Unterstützung**
+  - Gemeinsamer Lern-Pool (alle profitieren voneinander)
+  - Zero-Config (automatisch für `use_ai: true`)
+  - Projekt-übergreifendes Lernen
 
 ## ⚡ Highlights v3.3
 
