@@ -590,21 +590,58 @@ class ShadowOpsBot(commands.Bot):
                 self.github_integration.deployment_manager = self.deployment_manager
                 self.github_integration.ai_service = self.ai_service  # For KI patch notes
 
-                # Initialize AI Training System for Patch Notes
+                # Initialize Complete AI Learning System for Patch Notes
                 try:
                     from integrations.patch_notes_trainer import get_patch_notes_trainer
+                    from integrations.patch_notes_feedback import get_feedback_collector
+                    from integrations.prompt_ab_testing import get_prompt_ab_testing
+                    from integrations.prompt_auto_tuner import get_prompt_auto_tuner
+                    from integrations.llm_fine_tuning import get_llm_fine_tuning
+
+                    # 1. Core Trainer
                     self.patch_notes_trainer = get_patch_notes_trainer()
                     self.github_integration.patch_notes_trainer = self.patch_notes_trainer
 
+                    # 2. Feedback Collector (Discord Reactions)
+                    self.feedback_collector = get_feedback_collector(self, self.patch_notes_trainer)
+                    self.github_integration.feedback_collector = self.feedback_collector
+
+                    # 3. A/B Testing System
+                    self.prompt_ab_testing = get_prompt_ab_testing()
+                    self.github_integration.prompt_ab_testing = self.prompt_ab_testing
+
+                    # 4. Auto-Tuner
+                    self.prompt_auto_tuner = get_prompt_auto_tuner(
+                        self.patch_notes_trainer.data_dir,
+                        self.prompt_ab_testing,
+                        self.patch_notes_trainer
+                    )
+                    self.github_integration.prompt_auto_tuner = self.prompt_auto_tuner
+
+                    # 5. Fine-Tuning System
+                    self.llm_fine_tuning = get_llm_fine_tuning(
+                        self.patch_notes_trainer.data_dir,
+                        self.patch_notes_trainer
+                    )
+
                     # Log training stats
                     stats = self.patch_notes_trainer.get_statistics()
-                    self.logger.info(f"✅ AI Patch Notes Trainer initialisiert:")
-                    self.logger.info(f"   - Training Examples: {stats['total_examples']}")
-                    self.logger.info(f"   - Good Examples: {stats['good_examples']}")
-                    self.logger.info(f"   - Avg Quality Score: {stats['avg_quality_score']:.1f}/100")
+                    ab_stats = self.prompt_ab_testing.get_variant_statistics()
+
+                    self.logger.info(f"✅ Complete AI Learning System initialized:")
+                    self.logger.info(f"   📊 Training Examples: {stats['total_examples']}")
+                    self.logger.info(f"   🌟 Good Examples: {stats['good_examples']}")
+                    self.logger.info(f"   📈 Avg Quality Score: {stats['avg_quality_score']:.1f}/100")
+                    self.logger.info(f"   🧪 A/B Test Variants: {len(self.prompt_ab_testing.variants)}")
+                    self.logger.info(f"   🎯 Total A/B Tests Run: {sum(s['count'] for s in ab_stats.values())}")
+
                 except Exception as e:
-                    self.logger.warning(f"⚠️ AI Patch Notes Trainer konnte nicht initialisiert werden: {e}")
+                    self.logger.warning(f"⚠️ AI Learning System konnte nicht vollständig initialisiert werden: {e}", exc_info=True)
                     self.patch_notes_trainer = None
+                    self.feedback_collector = None
+                    self.prompt_ab_testing = None
+                    self.prompt_auto_tuner = None
+                    self.llm_fine_tuning = None
 
                 # Initialize Advanced Patch Notes Manager (optional, for approval system)
                 try:

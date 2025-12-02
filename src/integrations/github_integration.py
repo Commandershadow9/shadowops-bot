@@ -88,8 +88,11 @@ class GitHubIntegration:
         # Advanced Patch Notes Manager (will be set by bot)
         self.patch_notes_manager = None
 
-        # AI Training System (will be set by bot)
+        # AI Learning System (will be set by bot)
         self.patch_notes_trainer = None
+        self.feedback_collector = None
+        self.prompt_ab_testing = None
+        self.prompt_auto_tuner = None
 
         self.logger.info(f"🔧 GitHub Integration initialized (enabled: {self.enabled})")
 
@@ -711,19 +714,48 @@ class GitHubIntegration:
                 except Exception as e:
                     self.logger.warning(f"⚠️ Could not parse CHANGELOG: {e}")
 
-        # Build enhanced prompt with training system
-        if self.patch_notes_trainer and (changelog_content or project_config):
+        # Build enhanced prompt with A/B Testing
+        selected_variant = None
+        variant_id = None
+
+        if self.patch_notes_trainer and self.prompt_ab_testing and (changelog_content or project_config):
             try:
-                prompt = self.patch_notes_trainer.build_enhanced_prompt(
-                    changelog_content=changelog_content,
-                    commits=commits,
-                    language=language,
-                    project=repo_name
+                # Select prompt variant using A/B testing (weighted by performance)
+                selected_variant = self.prompt_ab_testing.select_variant(
+                    project=repo_name,
+                    strategy='weighted_random'
                 )
-                self.logger.info(f"🎯 Using enhanced AI prompt with training examples")
+                variant_id = selected_variant.id
+
+                self.logger.info(f"🧪 A/B Test: Using variant '{selected_variant.name}' (ID: {variant_id})")
+
+                # Build prompt from variant template
+                prompt = selected_variant.template.format(
+                    project=repo_name,
+                    changelog=changelog_content or "No CHANGELOG available",
+                    commits='\n'.join([f"- {c.get('message', '')}" for c in commits[:10]])
+                )
+
+                # Add examples from trainer
+                if self.patch_notes_trainer.good_examples:
+                    prompt += "\n\n# EXAMPLES OF HIGH-QUALITY PATCH NOTES\n\n"
+                    for i, example in enumerate(self.patch_notes_trainer.good_examples[:2], 1):
+                        prompt += f"## Example {i} ({example['project']} v{example['version']}):\n"
+                        prompt += f"```\n{example['generated_notes'][:400]}...\n```\n\n"
+
             except Exception as e:
-                self.logger.warning(f"⚠️ Enhanced prompt failed, using fallback: {e}")
-                prompt = self._build_fallback_prompt(commits, language, repo_name)
+                self.logger.warning(f"⚠️ A/B Testing failed, using enhanced prompt: {e}")
+                try:
+                    prompt = self.patch_notes_trainer.build_enhanced_prompt(
+                        changelog_content=changelog_content,
+                        commits=commits,
+                        language=language,
+                        project=repo_name
+                    )
+                    self.logger.info(f"🎯 Using enhanced AI prompt with training examples")
+                except Exception as e2:
+                    self.logger.warning(f"⚠️ Enhanced prompt failed, using fallback: {e2}")
+                    prompt = self._build_fallback_prompt(commits, language, repo_name)
         else:
             # Fallback to original prompt if no trainer available
             prompt = self._build_fallback_prompt(commits, language, repo_name)
@@ -760,7 +792,7 @@ class GitHubIntegration:
                         break
                 response = '\n'.join(lines[start_idx:])
 
-            # Calculate quality score if trainer available
+            # Calculate quality score and record A/B test result
             if self.patch_notes_trainer and changelog_content and version:
                 try:
                     quality_score = self.patch_notes_trainer.calculate_quality_score(
@@ -768,6 +800,28 @@ class GitHubIntegration:
                         changelog_content=changelog_content
                     )
                     self.logger.info(f"📊 Patch Notes Quality Score: {quality_score:.1f}/100")
+
+                    # Record A/B test result if variant was used
+                    if self.prompt_ab_testing and variant_id:
+                        self.prompt_ab_testing.record_result(
+                            variant_id=variant_id,
+                            project=repo_name,
+                            version=version,
+                            quality_score=quality_score,
+                            user_feedback_score=0.0  # Will be updated from reactions
+                        )
+                        self.logger.info(f"🧪 A/B Test result recorded for variant {variant_id}")
+
+                        # Schedule auto-tuning check (runs if conditions met)
+                        if self.prompt_auto_tuner:
+                            try:
+                                self.prompt_auto_tuner.schedule_auto_tuning(
+                                    project=repo_name,
+                                    min_samples=10,
+                                    improvement_threshold=5.0
+                                )
+                            except Exception as e:
+                                self.logger.debug(f"Auto-tuning check skipped: {e}")
 
                     # Save as training example
                     self.patch_notes_trainer.save_example(
