@@ -50,6 +50,10 @@ from integrations.guildscout_alerts import GuildScoutAlertsHandler
 from integrations.ai_learning import ContinuousLearningAgent
 from integrations.research_fetcher import ResearchFetcher
 
+# Queue Management
+from integrations.ollama_queue_manager import OllamaQueueManager
+from integrations.queue_dashboard import QueueDashboard
+
 
 class ShadowOpsBot(commands.Bot):
     """ShadowOps Security Bot"""
@@ -92,6 +96,10 @@ class ShadowOpsBot(commands.Bot):
 
         # AI Learning System
         self.continuous_learning = None
+
+        # Queue Management
+        self.queue_manager = None
+        self.queue_dashboard = None
 
         # Health Check HTTP Server
         self.health_server = HealthCheckServer(bot=self, port=8766)
@@ -233,6 +241,7 @@ class ShadowOpsBot(commands.Bot):
                 ('aide', '📁-aide', 'AIDE File Integrity Monitoring', security_category),
                 ('ssh', '🔑-ssh', 'SSH Anomalien', security_category),
                 ('performance', '📊-performance', 'Performance Monitoring', system_category),
+                ('ollama_queue', '🔄-ollama-queue', 'Ollama Request Queue Status Dashboard', system_category),
                 ('customer_alerts', '👥-customer-alerts', 'Kunden-sichtbare Alerts und Incidents', multi_project_category),
                 ('customer_status', '📊-customer-status', 'Projekt-Status Updates und Dashboards', multi_project_category),
             ]
@@ -474,6 +483,12 @@ class ShadowOpsBot(commands.Bot):
             self.auto_fix_manager.ai_service = self.ai_service
             self.logger.info("✅ [2/5] AI Service bereit")
 
+            # Initialisiere Ollama Queue Manager (verhindert Resource Exhaustion)
+            self.logger.info("🔄 [2.5/5] Initialisiere Ollama Queue Manager...")
+            self.queue_manager = OllamaQueueManager(ai_service=self.ai_service)
+            await self.queue_manager.start_worker()
+            self.logger.info("✅ [2.5/5] Ollama Queue Manager bereit (Security-First Queuing aktiv)")
+
             # Initialisiere Self-Healing
             self.logger.info("🔄 [3/5] Initialisiere Self-Healing Coordinator...")
             self.self_healing = SelfHealingCoordinator(self, self.config, discord_logger=self.discord_logger)
@@ -655,8 +670,35 @@ class ShadowOpsBot(commands.Bot):
 
                 await self.github_integration.start_webhook_server()
                 self.logger.info("✅ [5/6] GitHub Integration gestartet (Webhook Server läuft)")
+
+                # Link Queue Manager to GitHub Integration for AI requests
+                if self.queue_manager:
+                    self.github_integration.queue_manager = self.queue_manager
+                    self.logger.info("✅ Queue Manager mit GitHub Integration verknüpft")
             else:
                 self.logger.info("ℹ️ [5/6] GitHub Integration deaktiviert (config: github.enabled=false)")
+
+            # Initialize Queue Dashboard
+            if self.queue_manager:
+                self.logger.info("🔄 [5.5/6] Initialisiere Queue Dashboard...")
+                queue_channel_id = self.config.channels.get('ollama_queue')
+                if queue_channel_id:
+                    self.queue_dashboard = QueueDashboard(
+                        bot=self,
+                        queue_manager=self.queue_manager,
+                        channel_id=queue_channel_id
+                    )
+                    self.logger.info("✅ [5.5/6] Queue Dashboard gestartet")
+                else:
+                    self.logger.warning("⚠️ Queue Dashboard Channel nicht gefunden - Dashboard deaktiviert")
+
+                # Load Queue Admin Commands
+                try:
+                    from commands.queue_admin import setup as setup_queue_admin
+                    await setup_queue_admin(self, self.queue_manager, self.queue_dashboard, self.config)
+                    self.logger.info("✅ Queue Admin Commands geladen")
+                except Exception as e:
+                    self.logger.error(f"❌ Fehler beim Laden der Queue Admin Commands: {e}", exc_info=True)
 
             # Initialisiere GuildScout Alerts Handler
             self.logger.info("🔄 [5.5/6] Initialisiere GuildScout Alerts Handler...")
