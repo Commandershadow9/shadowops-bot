@@ -43,6 +43,12 @@
   - Gemeinsamer Lern-Pool (alle profitieren voneinander)
   - Zero-Config (automatisch für `use_ai: true`)
   - Projekt-übergreifendes Lernen
+- ✅ **Intelligentes RAM-Management (3-Stufen)**
+  - Automatische Prozess-Bereinigung (unnötige Prozesse beenden)
+  - Ollama-Neustart zur RAM-Freigabe
+  - System-Cache-Flush als Fallback
+  - Bis zu 3 Retry-Versuche mit gleichem Modell
+  - Schützt kritische Services (PostgreSQL, Redis, Nginx, etc.)
 
 ## ⚡ Highlights v3.3
 
