@@ -576,8 +576,18 @@ class GitHubIntegration:
             else:
                 self.logger.warning(f"⚠️ Kunden-Update Channel {customer_channel_id} für {repo_name} nicht gefunden.")
 
-        # 3. Send to external notification channels (customer servers)
-        await self._send_external_git_notifications(repo_name, customer_embed, project_config)
+        # 3. Send to external notification channels (customer servers) WITH feedback collection
+        # Extract version from commits for feedback tracking
+        version = None
+        import re
+        for commit in commits:
+            msg = commit.get('message', '')
+            match = re.search(r'v?(?:ersion|elease)?\s*([0-9]+\.[0-9]+\.[0-9]+)', msg, re.IGNORECASE)
+            if match:
+                version = match.group(1)
+                break
+
+        await self._send_external_git_notifications(repo_name, customer_embed, project_config, version)
 
     def _split_embed_description(self, description: str, max_length: int = 4096) -> list[str]:
         """
@@ -1167,14 +1177,17 @@ Create the DETAILED patch notes NOW based on the REAL commits above (only catego
 
         await channel.send(embed=embed)
 
-    async def _send_external_git_notifications(self, repo_name: str, embed: discord.Embed, project_config: Dict):
+    async def _send_external_git_notifications(self, repo_name: str, embed: discord.Embed,
+                                                project_config: Dict, version: str = None):
         """
         Send Git push notifications to external servers (customer guilds)
+        AND activate feedback collection for AI learning.
 
         Args:
             repo_name: Repository name
             embed: The embed to send (customer-friendly patch notes)
             project_config: Project configuration dictionary
+            version: Version number (for feedback tracking)
         """
         # Get external notifications config
         external_notifs = project_config.get('external_notifications', [])
@@ -1204,9 +1217,11 @@ Create the DETAILED patch notes NOW based on the REAL commits above (only catego
                 # Check if description is too long and split if needed
                 description_chunks = self._split_embed_description(embed.description or "")
 
+                sent_message = None
+
                 if len(description_chunks) <= 1:
                     # Single embed - send as is
-                    await channel.send(embed=embed)
+                    sent_message = await channel.send(embed=embed)
                     self.logger.info(f"📤 Sent git update for {repo_name} to external server")
                 else:
                     # Multiple embeds needed - split across messages
@@ -1221,9 +1236,26 @@ Create the DETAILED patch notes NOW based on the REAL commits above (only catego
                         if i == len(description_chunks) - 1:  # Add footer only to last embed
                             if embed.footer:
                                 embed_copy.set_footer(text=embed.footer.text)
-                        await channel.send(embed=embed_copy)
+
+                        message = await channel.send(embed=embed_copy)
+
+                        # Track the first message for feedback (main content)
+                        if i == 0:
+                            sent_message = message
 
                     self.logger.info(f"📤 Sent git update for {repo_name} to external server ({len(description_chunks)} parts)")
+
+                # 🎯 ACTIVATE FEEDBACK COLLECTION for this message
+                if sent_message and self.feedback_collector and version:
+                    try:
+                        await self.feedback_collector.track_patch_notes_message(
+                            message=sent_message,
+                            project=repo_name,
+                            version=version
+                        )
+                        self.logger.info(f"👍 Feedback collection activated for {repo_name} v{version}")
+                    except Exception as e:
+                        self.logger.warning(f"⚠️ Could not activate feedback collection: {e}")
 
             except Exception as e:
                 self.logger.error(f"❌ Failed to send external git notification for {repo_name}: {e}")
