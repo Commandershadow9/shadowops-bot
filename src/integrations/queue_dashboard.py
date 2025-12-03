@@ -62,6 +62,37 @@ class QueueDashboard:
         """Wait for bot to be ready before starting updates."""
         await self.bot.wait_until_ready()
 
+        # Clean up old dashboard messages
+        await self._cleanup_old_messages()
+
+    async def _cleanup_old_messages(self):
+        """Delete all old messages in the dashboard channel to keep it clean."""
+        try:
+            channel = self.bot.get_channel(self.channel_id)
+            if not channel:
+                logger.warning(f"⚠️ Dashboard channel {self.channel_id} not found for cleanup")
+                return
+
+            # Delete all messages in the channel
+            deleted_count = 0
+            async for message in channel.history(limit=100):
+                try:
+                    await message.delete()
+                    deleted_count += 1
+                except discord.Forbidden:
+                    logger.warning(f"⚠️ Missing permissions to delete messages in {channel.name}")
+                    break
+                except discord.NotFound:
+                    # Message already deleted
+                    pass
+                except Exception as e:
+                    logger.debug(f"Could not delete message: {e}")
+
+            if deleted_count > 0:
+                logger.info(f"🧹 Cleaned up {deleted_count} old dashboard messages in {channel.name}")
+        except Exception as e:
+            logger.error(f"❌ Failed to cleanup old messages: {e}", exc_info=True)
+
     async def update_dashboard(self):
         """Update the dashboard with current queue status."""
         channel = self.bot.get_channel(self.channel_id)
