@@ -95,6 +95,10 @@ class GitHubIntegration:
         self.prompt_ab_testing = None
         self.prompt_auto_tuner = None
 
+        # Pending webhooks queue (for when bot is not ready yet)
+        self.pending_webhooks = []
+        self.bot_ready = False
+
         self.logger.info(f"🔧 GitHub Integration initialized (enabled: {self.enabled})")
 
     async def start_webhook_server(self):
@@ -129,6 +133,50 @@ class GitHubIntegration:
             self.logger.error("   GitHub Webhooks werden deaktiviert, bitte Port/Service prüfen.")
             self.enabled = False
             return
+
+    async def mark_bot_ready_and_process_queue(self):
+        """
+        Mark bot as ready and process any pending webhooks that arrived during startup.
+        Should be called by the bot after it's fully initialized.
+        """
+        self.bot_ready = True
+
+        if not self.pending_webhooks:
+            self.logger.info("✅ Bot marked as ready - no pending webhooks")
+            return
+
+        pending_count = len(self.pending_webhooks)
+        self.logger.info(f"🔄 Bot ready - processing {pending_count} pending webhook(s)...")
+
+        # Process all pending webhooks
+        processed = 0
+        failed = 0
+
+        for webhook in self.pending_webhooks:
+            try:
+                event_type = webhook['event_type']
+                payload = webhook['payload']
+                received_at = webhook['received_at']
+
+                self.logger.info(f"📋 Processing queued {event_type} webhook (received at {received_at})")
+
+                # Route to appropriate handler
+                handler = self.event_handlers.get(event_type)
+                if handler:
+                    await handler(payload)
+                    processed += 1
+                else:
+                    self.logger.debug(f"ℹ️ No handler for queued event type: {event_type}")
+                    processed += 1
+
+            except Exception as e:
+                self.logger.error(f"❌ Error processing queued webhook: {e}", exc_info=True)
+                failed += 1
+
+        # Clear the queue
+        self.pending_webhooks.clear()
+
+        self.logger.info(f"✅ Processed {processed} pending webhooks ({failed} failed)")
 
     async def stop_webhook_server(self):
         """Stop the webhook HTTP server"""
@@ -168,6 +216,16 @@ class GitHubIntegration:
             event_type = request.headers.get('X-GitHub-Event', 'unknown')
 
             self.logger.info(f"📥 Received GitHub event: {event_type}")
+
+            # If bot is not ready yet, queue the webhook for later processing
+            if not self.bot_ready:
+                self.pending_webhooks.append({
+                    'event_type': event_type,
+                    'payload': payload,
+                    'received_at': datetime.now().isoformat()
+                })
+                self.logger.info(f"📋 Bot not ready yet - queued {event_type} webhook ({len(self.pending_webhooks)} pending)")
+                return web.Response(status=202, text="Accepted - queued for processing")
 
             # Route to appropriate handler
             handler = self.event_handlers.get(event_type)

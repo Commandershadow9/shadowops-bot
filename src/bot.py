@@ -814,6 +814,13 @@ class ShadowOpsBot(commands.Bot):
         self._ready_initialized = True
         self.logger.info("🚀 ShadowOps Bot vollständig einsatzbereit!")
 
+        # Process any pending GitHub webhooks that arrived during startup
+        if self.github_integration:
+            try:
+                await self.github_integration.mark_bot_ready_and_process_queue()
+            except Exception as e:
+                self.logger.error(f"❌ Error processing pending webhooks: {e}")
+
         # Finale Status-Nachricht
         await self._send_status_message(
             "🚀 **ShadowOps Bot vollständig einsatzbereit!**\n"

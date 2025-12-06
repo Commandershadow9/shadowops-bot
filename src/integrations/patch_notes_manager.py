@@ -16,8 +16,8 @@ from datetime import datetime, timedelta
 from pathlib import Path
 from typing import Optional, Dict, Any
 
-from src.utils.changelog_parser import get_changelog_parser
-from src.integrations.ai_service import AIService
+from utils.changelog_parser import get_changelog_parser
+from integrations.ai_service import AIService
 
 logger = logging.getLogger('shadowops')
 
