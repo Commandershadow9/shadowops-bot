@@ -365,27 +365,39 @@ class AIService:
                                     except Exception as kill_error:
                                         logger.warning(f"⚠️ Process cleanup failed: {kill_error}")
 
-                                    # Method 2: Restart Ollama to free RAM
+                                    # Method 2: Kill Ollama runner process to free RAM
                                     try:
-                                        logger.info("🔄 Restarting Ollama service to free RAM...")
-                                        restart_result = subprocess.run(
-                                            ['systemctl', '--user', 'restart', 'ollama.service'],
+                                        logger.info("🔄 Killing Ollama runner to free RAM...")
+                                        # Find and kill the ollama runner process that holds the model in RAM
+                                        ps_result = subprocess.run(
+                                            ['pgrep', '-f', 'ollama runner'],
                                             capture_output=True,
                                             text=True,
-                                            timeout=10
+                                            timeout=5
                                         )
 
-                                        if restart_result.returncode == 0:
-                                            logger.info("✅ Ollama restarted successfully")
-                                            # Wait for Ollama to be ready
-                                            await asyncio.sleep(5)
-                                            logger.info(f"🔄 Retrying with {selected_model} after RAM cleanup...")
-                                            continue
-                                        else:
-                                            logger.warning(f"⚠️ Ollama restart failed: {restart_result.stderr}")
+                                        if ps_result.returncode == 0 and ps_result.stdout.strip():
+                                            pids = ps_result.stdout.strip().split('\n')
+                                            killed_count = 0
+                                            for pid in pids:
+                                                try:
+                                                    subprocess.run(['kill', pid], timeout=2)
+                                                    killed_count += 1
+                                                    logger.info(f"  ✅ Killed ollama runner (PID: {pid})")
+                                                except Exception:
+                                                    pass
 
-                                    except Exception as restart_error:
-                                        logger.error(f"❌ Failed to restart Ollama: {restart_error}")
+                                            if killed_count > 0:
+                                                logger.info(f"✅ Killed {killed_count} ollama runner(s) to free RAM")
+                                                # Wait a moment for RAM to be released
+                                                await asyncio.sleep(3)
+                                                logger.info(f"🔄 Retrying with {selected_model} after RAM cleanup...")
+                                                continue
+                                        else:
+                                            logger.info("ℹ️ No ollama runner process found to kill")
+
+                                    except Exception as kill_error:
+                                        logger.warning(f"⚠️ Failed to kill ollama runner: {kill_error}")
 
                                     # Method 3: Clear system cache (as final fallback)
                                     try:
