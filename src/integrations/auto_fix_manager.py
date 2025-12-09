@@ -881,16 +881,50 @@ class AutoFixManager:
         except Exception as e:
             return False, str(e)
 
+    def _get_project_owner(self, project_path: Path) -> Optional[str]:
+        """
+        🤖 KI-Intelligenz: Ermittelt den Owner eines Projekts für sudo-Operationen.
+
+        Returns:
+            Username des Owners oder None wenn aktueller User Owner ist
+        """
+        try:
+            import pwd
+            stat_info = project_path.stat()
+            owner_uid = stat_info.st_uid
+            current_uid = os.getuid()
+
+            if owner_uid == current_uid:
+                # Aktueller User ist Owner - kein sudo nötig
+                return None
+
+            # Hole Username für UID
+            owner_name = pwd.getpwuid(owner_uid).pw_name
+            logger.info(f"🔍 Project {project_path.name} gehört User '{owner_name}' (UID {owner_uid})")
+            return owner_name
+        except Exception as e:
+            logger.warning(f"Could not determine project owner: {e}")
+            return None
+
     async def _auto_stash(self, project_path: Path) -> Tuple[bool, str]:
         """
         🤖 KI-Intelligenz: Automatisch Git Stash erstellen bei unclean working tree.
+        Erkennt automatisch den Project-Owner und verwendet sudo falls nötig.
 
         Returns:
             (success, message)
         """
         try:
+            owner = self._get_project_owner(project_path)
+            git_cmd = ["git", "stash", "push", "-u", "-m", "🤖 Auto-stash by ShadowOps before AI fix"]
+
+            if owner:
+                # Projekt gehört anderem User - verwende sudo
+                git_cmd = ["sudo", "-u", owner] + git_cmd
+                logger.info(f"🔐 Using sudo -u {owner} for git stash")
+
             result = subprocess.run(
-                ["git", "stash", "push", "-u", "-m", "🤖 Auto-stash by ShadowOps before AI fix"],
+                git_cmd,
                 cwd=project_path,
                 capture_output=True,
                 text=True,
@@ -911,13 +945,22 @@ class AutoFixManager:
     async def _restore_stash(self, project_path: Path) -> Tuple[bool, str]:
         """
         🔄 Restore previously created git stash.
+        Erkennt automatisch den Project-Owner und verwendet sudo falls nötig.
 
         Returns:
             (success, message)
         """
         try:
+            owner = self._get_project_owner(project_path)
+            git_cmd = ["git", "stash", "pop"]
+
+            if owner:
+                # Projekt gehört anderem User - verwende sudo
+                git_cmd = ["sudo", "-u", owner] + git_cmd
+                logger.info(f"🔐 Using sudo -u {owner} for git stash pop")
+
             result = subprocess.run(
-                ["git", "stash", "pop"],
+                git_cmd,
                 cwd=project_path,
                 capture_output=True,
                 text=True,
@@ -936,6 +979,7 @@ class AutoFixManager:
     def _auto_create_npm_test_script(self, project_path: Path, package_json_path: Path, pkg_data: dict) -> bool:
         """
         🤖 KI-Intelligenz: Automatisch sinnvolles npm test script erstellen.
+        Erkennt automatisch den Project-Owner und verwendet sudo falls nötig.
 
         Analyzed the project and creates a smart test script based on what's available.
 
@@ -972,11 +1016,40 @@ class AutoFixManager:
 
             pkg_data["scripts"]["test"] = test_cmd
 
-            # Write updated package.json
-            package_json_path.write_text(
-                json.dumps(pkg_data, indent=2, ensure_ascii=False) + "\n",
-                encoding="utf-8"
-            )
+            # Write updated package.json (mit Owner-Detection für Permissions)
+            owner = self._get_project_owner(project_path)
+            new_content = json.dumps(pkg_data, indent=2, ensure_ascii=False) + "\n"
+
+            if owner:
+                # Projekt gehört anderem User - verwende sudo
+                logger.info(f"🔐 Using sudo -u {owner} to write package.json")
+                try:
+                    # Write to temp file first
+                    import tempfile
+                    with tempfile.NamedTemporaryFile(mode='w', delete=False, suffix='.json') as tmp:
+                        tmp.write(new_content)
+                        tmp_path = tmp.name
+
+                    # Copy with sudo
+                    result = subprocess.run(
+                        ["sudo", "-u", owner, "cp", tmp_path, str(package_json_path)],
+                        capture_output=True,
+                        text=True,
+                        timeout=10
+                    )
+
+                    # Clean up temp file
+                    os.unlink(tmp_path)
+
+                    if result.returncode != 0:
+                        logger.error(f"Failed to copy package.json with sudo: {result.stderr}")
+                        return False
+                except Exception as e:
+                    logger.error(f"Failed to write package.json with sudo: {e}")
+                    return False
+            else:
+                # Normaler Write (kein sudo nötig)
+                package_json_path.write_text(new_content, encoding="utf-8")
 
             logger.info(f"✅ Created npm test script: {test_cmd}")
             return True
