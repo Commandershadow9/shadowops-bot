@@ -408,17 +408,31 @@ class AutoFixManager:
 
         stash_created = False
         if apply_changes:
-            clean = await self._check_git_clean(project_path)
-            if not clean:
-                # 🤖 KI-Intelligenz: Automatisch stashen statt aufgeben!
-                await channel.send("⚙️ Working Tree nicht clean → erstelle automatisch Git Stash...")
-                stash_success, stash_msg = await self._auto_stash(project_path)
-                if stash_success:
-                    stash_created = True
-                    await channel.send(f"✅ Git Stash erstellt: `{stash_msg}`")
-                else:
-                    await channel.send(f"⚠️ Konnte Stash nicht erstellen: {stash_msg}\nFühre nur Tests aus, keine Auto-Patches.")
-                    apply_changes = False
+            # 🤖 KI-Intelligenz: Permission-Check BEVOR wir versuchen zu schreiben
+            has_permissions, perm_msg = self._check_git_write_permissions(project_path)
+            if not has_permissions:
+                await channel.send(
+                    f"🔒 **Keine Git-Schreibrechte für dieses Projekt**\n"
+                    f"Grund: {perm_msg}\n\n"
+                    f"ℹ️ Führe stattdessen **Nur-Analyse-Modus** aus:\n"
+                    f"• Teste den Code in aktuellem Zustand\n"
+                    f"• Zeige welche Änderungen nötig wären\n"
+                    f"• Keine Auto-Patches (manuelle Umsetzung erforderlich)"
+                )
+                apply_changes = False
+
+            if apply_changes:
+                clean = await self._check_git_clean(project_path)
+                if not clean:
+                    # 🤖 KI-Intelligenz: Automatisch stashen statt aufgeben!
+                    await channel.send("⚙️ Working Tree nicht clean → erstelle automatisch Git Stash...")
+                    stash_success, stash_msg = await self._auto_stash(project_path)
+                    if stash_success:
+                        stash_created = True
+                        await channel.send(f"✅ Git Stash erstellt: `{stash_msg}`")
+                    else:
+                        await channel.send(f"⚠️ Konnte Stash nicht erstellen: {stash_msg}\nFühre nur Tests aus, keine Auto-Patches.")
+                        apply_changes = False
 
             if apply_changes:
                 branch_name = self._make_branch_name(proposal)
@@ -905,6 +919,49 @@ class AutoFixManager:
         except Exception as e:
             logger.warning(f"Could not determine project owner: {e}")
             return None
+
+    def _check_git_write_permissions(self, project_path: Path) -> Tuple[bool, str]:
+        """
+        🤖 KI-Intelligenz: Prüft ob wir Git-Schreibrechte haben BEVOR wir versuchen zu schreiben.
+
+        Testet ob wir .git/index.lock erstellen können (der kritische Test).
+
+        Returns:
+            (has_permissions, message)
+        """
+        try:
+            git_dir = project_path / ".git"
+            if not git_dir.exists():
+                return False, "Kein Git-Repository gefunden"
+
+            # Test 1: Können wir eine Test-Datei in .git/ erstellen?
+            test_file = git_dir / ".shadowops_permission_test"
+            try:
+                test_file.write_text("test")
+                test_file.unlink()
+            except PermissionError:
+                owner = self._get_project_owner(project_path)
+                if owner:
+                    return False, f"Projekt gehört User '{owner}' - keine Schreibrechte trotz sudo (Git-Lock-Problem)"
+                else:
+                    return False, "Keine Schreibrechte im .git/ Verzeichnis"
+            except Exception as e:
+                return False, f"Unerwarteter Fehler beim Permission-Test: {str(e)}"
+
+            # Test 2: Können wir Git-Befehle ausführen?
+            owner = self._get_project_owner(project_path)
+            git_cmd = ["git", "status"]
+            if owner:
+                # Bei fremdem Owner: sudo funktioniert nicht gut mit Git
+                # Grund: Git erstellt lockfiles die dem aktuellen User gehören würden
+                return False, f"Projekt gehört User '{owner}' - Git-Operationen mit sudo sind problematisch (Lock-File-Konflikte)"
+
+            # Wenn wir hier ankommen: Wir sind Owner UND haben Schreibrechte
+            return True, "Schreibrechte vorhanden"
+
+        except Exception as e:
+            logger.error(f"Permission check failed: {e}", exc_info=True)
+            return False, f"Permission-Check fehlgeschlagen: {str(e)}"
 
     async def _auto_stash(self, project_path: Path) -> Tuple[bool, str]:
         """
