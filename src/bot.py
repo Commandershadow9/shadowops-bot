@@ -778,6 +778,19 @@ class ShadowOpsBot(commands.Bot):
                 )
                 await self.continuous_learning.start()
                 self.logger.info("✅ Continuous Learning System gestartet")
+
+                # Load Knowledge Stats Commands
+                try:
+                    from commands.knowledge_stats import setup as setup_knowledge_stats
+                    await setup_knowledge_stats(
+                        self,
+                        self.continuous_learning.knowledge_synthesizer,
+                        self.config
+                    )
+                    self.logger.info("✅ Knowledge Stats Commands geladen")
+                except Exception as e:
+                    self.logger.error(f"❌ Fehler beim Laden der Knowledge Stats Commands: {e}", exc_info=True)
+
             except Exception as e:
                 self.logger.error(f"❌ Continuous Learning System konnte nicht gestartet werden: {e}", exc_info=True)
 

@@ -26,6 +26,7 @@ from typing import Dict, List, Optional, Any, Tuple
 import discord
 import httpx
 
+from integrations.ai_learning.knowledge_synthesizer import KnowledgeSynthesizer
 
 logger = logging.getLogger("shadowops.auto_fix")
 
@@ -56,6 +57,9 @@ class AutoFixManager:
         self._load_state()
         self.max_patch_size = 12000  # chars safeguard
         self._pytest_install_attempted = False
+
+        # 🤖 KI-Learning: Knowledge Synthesizer für gelernte Empfehlungen
+        self.knowledge_synthesizer = KnowledgeSynthesizer(ai_service=ai_service)
         # Per-Project Profile (Tests/Lint)
         self.project_profiles = {
             "shadowops-bot": {
@@ -862,6 +866,50 @@ class AutoFixManager:
             logger.debug(f"PR request error: {e}")
         return None
 
+    def _get_learned_context(self, project: str) -> str:
+        """
+        🤖 KI-Learning: Lädt gelernte Empfehlungen für ein Projekt.
+
+        Args:
+            project: Projektname
+
+        Returns:
+            Formatierter Context-String mit gelernten Best Practices
+        """
+        recommendations = self.knowledge_synthesizer.get_fix_recommendations(project)
+
+        if not recommendations["has_data"]:
+            return ""
+
+        # Confidence Level
+        confidence = recommendations["confidence"]
+        confidence_emoji = "🟢" if confidence == "high" else "🟡" if confidence == "medium" else "🔴"
+
+        # Strategy basierend auf Success Rate
+        success_rate = recommendations["success_rate"]
+        if success_rate >= 0.8:
+            strategy = "Aggressive (high success rate - be confident)"
+        elif success_rate >= 0.5:
+            strategy = "Standard (moderate success rate)"
+        else:
+            strategy = "Careful (low success rate - validate thoroughly)"
+
+        # Formatiere Best Practices
+        best_practices = recommendations["best_practices"]
+        practices_text = "\n".join(f"  • {practice}" for practice in best_practices) if best_practices else "  • No specific patterns identified yet"
+
+        context = f"""
+📊 Learned Knowledge for '{project}':
+{confidence_emoji} Confidence: {confidence.upper()} (based on {recommendations["sample_size"]} historical fixes)
+✅ Success Rate: {success_rate*100:.1f}%
+🎯 Strategy: {strategy}
+
+Best Practices from successful fixes:
+{practices_text}
+"""
+        logger.info(f"🧠 Applied learned context for {project}: {success_rate*100:.1f}% success rate")
+        return context
+
     async def _generate_patch(self, bot, proposal: FixProposal, project_path: Path) -> Optional[str]:
         """Erzeugt einen Patch (Unified Diff) via AI, falls ai_service verfügbar."""
         if not self.ai_service:
@@ -879,11 +927,21 @@ class AutoFixManager:
         except Exception:
             status_text = ""
 
+        # 🤖 KI-Learning: Lade gelernte Empfehlungen für dieses Projekt
+        learned_context = self._get_learned_context(proposal.project)
+
         tests_hint = ", ".join(proposal.tests or self._default_tests_for_project(proposal.project, project_path)) or "keine Tests erkannt"
         prompt = (
             "Du bist ein Code-Fix-Assistent. Erzeuge einen Unified Diff (git apply kompatibel) für das folgende Projekt.\n"
             f"Projekt: {proposal.project}\n"
             f"Status:\n{status_text}\n\n"
+        )
+
+        # Füge gelernte Best Practices hinzu falls vorhanden
+        if learned_context:
+            prompt += learned_context + "\n"
+
+        prompt += (
             f"Problem/Ziel: {proposal.summary}\n"
             f"Actions: {', '.join(proposal.actions) if proposal.actions else 'keine'}\n"
             f"Geplante Tests: {tests_hint}\n"

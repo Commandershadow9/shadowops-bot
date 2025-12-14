@@ -12,6 +12,8 @@ import subprocess
 from pathlib import Path
 from datetime import datetime
 
+from integrations.ai_learning.knowledge_synthesizer import KnowledgeSynthesizer
+
 logger = logging.getLogger('shadowops')
 
 # RAM tracking file for learning system
@@ -65,6 +67,9 @@ class AIService:
 
         if self.anthropic_enabled and self.anthropic_api_key:
             logger.info(f"✅ Anthropic Claude konfiguriert ({self.anthropic_model})")
+
+        # 🤖 KI-Learning: Knowledge Synthesizer für RAM-Empfehlungen
+        self.knowledge_synthesizer = KnowledgeSynthesizer(ai_service=self)
 
     async def generate_fix_strategy(self, context: Dict) -> Optional[Dict]:
         """
@@ -238,6 +243,111 @@ class AIService:
         logger.error("❌ Alle AI Services fehlgeschlagen bei koordinierter Planung")
         return None
 
+    async def _check_ram_proactively(self, model: str) -> bool:
+        """
+        🤖 KI-Learning: Proaktive RAM-Prüfung basierend auf gelernten Patterns.
+
+        Prüft vor Ollama-Call ob genug RAM verfügbar ist und führt
+        bei Bedarf proaktiven Cleanup durch.
+
+        Args:
+            model: Modellname (z.B. "llama3.1")
+
+        Returns:
+            True wenn genug RAM verfügbar (nach eventuellem Cleanup)
+        """
+        # Lade gelernte RAM-Empfehlungen für dieses Modell
+        recommendations = self.knowledge_synthesizer.get_ram_recommendations(model)
+
+        if not recommendations["has_data"]:
+            # Keine gelernten Daten - Standard-Verhalten
+            return True
+
+        # Erwarteter RAM-Bedarf aus Knowledge Base
+        required_gb = recommendations.get("avg_ram_required_gb")
+        best_cleanup_method = recommendations.get("best_cleanup_method")
+
+        if not required_gb:
+            return True
+
+        # Aktuellen RAM-Status prüfen
+        ram_info = self._get_system_ram_info()
+        available_gb = ram_info.get("available_gb", 0)
+
+        logger.info(f"🧠 RAM Check: {model} needs ~{required_gb:.1f}GB (learned from {recommendations['total_failures_tracked']} events)")
+        logger.info(f"   Available: {available_gb:.1f}GB")
+
+        # Wenn genug RAM verfügbar, alles gut
+        if available_gb >= required_gb:
+            logger.info(f"   ✅ Sufficient RAM available")
+            return True
+
+        # Nicht genug RAM - proaktiver Cleanup
+        logger.warning(f"   ⚠️ Insufficient RAM! Running proactive cleanup...")
+
+        # Nutze beste Cleanup-Methode aus Knowledge Base
+        if best_cleanup_method == "kill_ollama_runner":
+            try:
+                # Kill ollama runner processes
+                pgrep_result = subprocess.run(
+                    ['pgrep', '-f', 'ollama runner'],
+                    capture_output=True,
+                    text=True,
+                    timeout=5
+                )
+
+                if pgrep_result.returncode == 0:
+                    pids = pgrep_result.stdout.strip().split('\n')
+                    killed_count = 0
+
+                    for pid in pids:
+                        if pid.strip():
+                            try:
+                                subprocess.run(
+                                    ['kill', '-9', pid.strip()],
+                                    capture_output=True,
+                                    timeout=2
+                                )
+                                killed_count += 1
+                                logger.info(f"  ✅ Killed ollama runner (PID: {pid})")
+                            except Exception as e:
+                                logger.debug(f"Failed to kill PID {pid}: {e}")
+
+                    if killed_count > 0:
+                        logger.info(f"✅ Proactive cleanup successful: Killed {killed_count} ollama runner(s) using learned method '{best_cleanup_method}'")
+                        # Track successful proactive cleanup
+                        self._track_ram_event(model, f"Proactive cleanup before call (predicted: {required_gb:.1f}GB needed)",
+                                             method_used=best_cleanup_method, success=True)
+                        # Wait a bit for RAM to be freed
+                        await asyncio.sleep(2)
+                        return True
+                else:
+                    logger.info("ℹ️ No ollama runner process found")
+
+            except Exception as e:
+                logger.warning(f"⚠️ Proactive cleanup failed: {e}")
+
+        elif best_cleanup_method == "systemctl_restart":
+            # Alternative cleanup method (falls gelernt)
+            try:
+                result = subprocess.run(
+                    ['systemctl', 'restart', 'ollama'],
+                    capture_output=True,
+                    timeout=10
+                )
+                if result.returncode == 0:
+                    logger.info(f"✅ Proactive cleanup successful using systemctl restart")
+                    self._track_ram_event(model, f"Proactive cleanup before call (predicted: {required_gb:.1f}GB needed)",
+                                         method_used=best_cleanup_method, success=True)
+                    await asyncio.sleep(3)
+                    return True
+            except Exception as e:
+                logger.warning(f"⚠️ Systemctl restart failed: {e}")
+
+        # Cleanup fehlgeschlagen oder keine Methode verfügbar
+        logger.warning(f"⚠️ Proactive cleanup did not succeed - call may fail")
+        return False
+
     async def get_ai_analysis(self, prompt: str, context: str = "", use_critical_model: bool = False) -> Optional[str]:
         """
         Wrapper to generate raw text output (e.g., for patches), called from other services.
@@ -263,6 +373,9 @@ class AIService:
         else:
             selected_model = self.ollama_model
             timeout = 120.0
+
+        # 🤖 KI-Learning: Proaktive RAM-Prüfung vor dem Call
+        await self._check_ram_proactively(selected_model)
 
         max_retries = 3
         for attempt in range(1, max_retries + 1):
