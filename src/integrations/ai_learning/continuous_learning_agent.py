@@ -940,14 +940,19 @@ Liefer konkrete Hinweise für Stabilität, Wartbarkeit oder Security (keine Flos
 
         return insights
 
+    async def _get_learning_channel(self):
+        """Get the AI learning channel"""
+        channel = self.bot.get_channel(self.learning_channel_id)
+        if not channel and self._learning_channel_fallback:
+            channel = self.bot.get_channel(self._learning_channel_fallback)
+            if channel:
+                self.learning_channel_id = self._learning_channel_fallback
+        return channel
+
     async def _send_learning_message(self, message: str, color: int = 0x3498DB, pin: bool = False):
         """Send a message to the AI learning channel"""
         try:
-            channel = self.bot.get_channel(self.learning_channel_id)
-            if not channel and self._learning_channel_fallback:
-                channel = self.bot.get_channel(self._learning_channel_fallback)
-                if channel:
-                    self.learning_channel_id = self._learning_channel_fallback
+            channel = await self._get_learning_channel()
             if not channel:
                 self.logger.warning("⚠️ AI learning channel not found")
                 return
@@ -973,11 +978,7 @@ Liefer konkrete Hinweise für Stabilität, Wartbarkeit oder Security (keine Flos
     async def _send_insight_notification(self, insight: LearningInsight):
         """Send immediate notification for high-confidence insights"""
         try:
-            channel = self.bot.get_channel(self.learning_channel_id)
-            if not channel and self._learning_channel_fallback:
-                channel = self.bot.get_channel(self._learning_channel_fallback)
-                if channel:
-                    self.learning_channel_id = self._learning_channel_fallback
+            channel = await self._get_learning_channel()
             if not channel:
                 return
 
@@ -1003,11 +1004,7 @@ Liefer konkrete Hinweise für Stabilität, Wartbarkeit oder Security (keine Flos
     async def _send_learning_report(self, pin: bool = False):
         """Send periodic learning report to Discord"""
         try:
-            channel = self.bot.get_channel(self.learning_channel_id)
-            if not channel and self._learning_channel_fallback:
-                channel = self.bot.get_channel(self._learning_channel_fallback)
-                if channel:
-                    self.learning_channel_id = self._learning_channel_fallback
+            channel = await self._get_learning_channel()
             if not channel:
                 return
 
