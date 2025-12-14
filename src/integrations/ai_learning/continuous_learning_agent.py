@@ -384,10 +384,150 @@ class ContinuousLearningAgent:
             self.logger.error(f"Error analyzing system behavior: {e}", exc_info=True)
 
     async def _analyze_recent_security_events(self, session: LearningSession):
-        """Analyze recent security events for patterns"""
-        # This would integrate with the knowledge base
-        # For now, placeholder
-        pass
+        """
+        🤖 KI-Learning: Analyze recent security events for attack patterns.
+
+        Analyzes:
+        - Fail2ban bans (SSH brute force, web attacks)
+        - CrowdSec decisions (distributed attack detection)
+        - IP geolocation patterns
+        - Attack frequency and severity
+
+        Generates insights about:
+        - Coordinated attacks
+        - Persistent attackers
+        - Geographic attack patterns
+        - Attack type trends
+        """
+        try:
+            from collections import Counter
+            from datetime import datetime, timedelta
+
+            # Get security logs from log analyzer
+            if not hasattr(self.bot, 'log_analyzer'):
+                return
+
+            log_analyzer = self.bot.log_analyzer
+            insights = []
+
+            # Analyze fail2ban events (last 24 hours)
+            fail2ban_events = []
+            try:
+                fail2ban_log = log_analyzer.get_latest_log_entries('fail2ban', hours=24)
+                if fail2ban_log:
+                    # Parse ban events
+                    for entry in fail2ban_log:
+                        if 'Ban' in entry.get('message', ''):
+                            # Extract IP from message like "Ban 1.2.3.4"
+                            parts = entry['message'].split()
+                            if len(parts) >= 2:
+                                ip = parts[1]
+                                fail2ban_events.append({
+                                    'ip': ip,
+                                    'timestamp': entry.get('timestamp'),
+                                    'service': entry.get('jail', 'unknown')
+                                })
+            except Exception as e:
+                self.logger.debug(f"Could not parse fail2ban logs: {e}")
+
+            # Analyze CrowdSec events (last 24 hours)
+            crowdsec_events = []
+            try:
+                crowdsec_log = log_analyzer.get_latest_log_entries('crowdsec', hours=24)
+                if crowdsec_log:
+                    for entry in crowdsec_log:
+                        if 'decision' in entry.get('message', '').lower():
+                            # CrowdSec decision events
+                            crowdsec_events.append({
+                                'timestamp': entry.get('timestamp'),
+                                'message': entry.get('message')
+                            })
+            except Exception as e:
+                self.logger.debug(f"Could not parse crowdsec logs: {e}")
+
+            session.items_analyzed += len(fail2ban_events) + len(crowdsec_events)
+
+            if not fail2ban_events and not crowdsec_events:
+                return  # No events to analyze
+
+            # Pattern 1: Identify repeat offenders (IPs banned multiple times)
+            if fail2ban_events:
+                ip_counts = Counter(e['ip'] for e in fail2ban_events)
+                repeat_offenders = {ip: count for ip, count in ip_counts.items() if count >= 3}
+
+                if repeat_offenders:
+                    top_offender = max(repeat_offenders.items(), key=lambda x: x[1])
+                    insight = LearningInsight(
+                        insight_id=f"security_repeat_{int(datetime.utcnow().timestamp())}",
+                        category="security_trend",
+                        title="Persistent Attacker Detected",
+                        description=f"IP {top_offender[0]} has been banned {top_offender[1]} times in 24h. "
+                                  f"Total repeat offenders: {len(repeat_offenders)}. "
+                                  f"Consider adding permanent blocks for persistent attackers.",
+                        confidence=0.9,
+                        data={"repeat_offenders": repeat_offenders}
+                    )
+                    insights.append(insight)
+                    self.insights_queue.append(insight)
+                    session.insights_generated += 1
+
+            # Pattern 2: High attack volume (>20 bans in 24h)
+            total_bans = len(fail2ban_events)
+            if total_bans >= 20:
+                services_targeted = Counter(e['service'] for e in fail2ban_events)
+                most_targeted = max(services_targeted.items(), key=lambda x: x[1]) if services_targeted else ('unknown', 0)
+
+                insight = LearningInsight(
+                    insight_id=f"security_volume_{int(datetime.utcnow().timestamp())}",
+                    category="security_trend",
+                    title="High Attack Volume Detected",
+                    description=f"{total_bans} attacks blocked in 24h. "
+                              f"Most targeted: {most_targeted[0]} ({most_targeted[1]} attacks). "
+                              f"Consider enabling additional protection or rate limiting.",
+                    confidence=0.85,
+                    data={"total_bans": total_bans, "services": dict(services_targeted)}
+                )
+                insights.append(insight)
+                self.insights_queue.append(insight)
+                session.insights_generated += 1
+
+            # Pattern 3: Coordinated attack (multiple IPs in short time)
+            if len(fail2ban_events) >= 10:
+                # Group by hour to detect bursts
+                hourly_counts = {}
+                for event in fail2ban_events:
+                    try:
+                        ts = datetime.fromisoformat(event['timestamp'])
+                        hour_key = ts.strftime('%Y-%m-%d %H:00')
+                        hourly_counts[hour_key] = hourly_counts.get(hour_key, 0) + 1
+                    except:
+                        continue
+
+                max_hourly = max(hourly_counts.values()) if hourly_counts else 0
+                if max_hourly >= 10:
+                    peak_hour = max(hourly_counts.items(), key=lambda x: x[1])[0]
+                    unique_ips = len(set(e['ip'] for e in fail2ban_events))
+
+                    insight = LearningInsight(
+                        insight_id=f"security_coordinated_{int(datetime.utcnow().timestamp())}",
+                        category="security_trend",
+                        title="Coordinated Attack Pattern",
+                        description=f"{max_hourly} attacks in single hour ({peak_hour}). "
+                                  f"{unique_ips} unique IPs involved. "
+                                  f"This suggests a coordinated or distributed attack.",
+                        confidence=0.75,
+                        data={"peak_hour": peak_hour, "peak_count": max_hourly, "unique_ips": unique_ips}
+                    )
+                    insights.append(insight)
+                    self.insights_queue.append(insight)
+                    session.insights_generated += 1
+
+            # Send insights to Discord immediately
+            for insight in insights:
+                await self._send_insight_notification(insight)
+
+        except Exception as e:
+            self.logger.error(f"Error analyzing security events: {e}", exc_info=True)
 
     async def _analyze_project_health_trends(self, session: LearningSession):
         """Analyze trends in project health over time"""

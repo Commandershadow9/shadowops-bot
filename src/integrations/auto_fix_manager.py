@@ -31,6 +31,7 @@ logger = logging.getLogger("shadowops.auto_fix")
 
 
 PROPOSAL_FILE = Path(__file__).parent.parent / "data" / "auto_fix_proposals.json"
+TRACKING_FILE = Path(__file__).parent.parent / "data" / "auto_fix_tracking.json"
 
 
 @dataclass
@@ -537,6 +538,10 @@ class AutoFixManager:
             embed.add_field(name="Draft PR", value=pr_link, inline=False)
         embed.set_footer(text="Auto-Fix Pipeline (sicherer Modus)")
         await channel.send(embed=embed)
+
+        # 📊 Track result for learning system
+        mode = "read_only" if not apply_changes else "full"
+        self._track_fix_result(proposal, all_passed, results, patch_applied, mode)
 
         # 🔄 Restore stash if we created one
         if stash_created:
@@ -1178,3 +1183,104 @@ class AutoFixManager:
         except Exception as e:
             logger.error(f"Failed to create npm test script: {e}", exc_info=True)
             return False
+
+    def _track_fix_result(self, proposal: FixProposal, success: bool, test_results: List[Tuple],
+                          patch_applied: bool, mode: str) -> None:
+        """
+        🤖 KI-Learning: Track Auto-Fix results for learning and improvement.
+
+        This enables the learning system to:
+        - Identify which fix patterns work best
+        - Learn from failures
+        - Improve future fix suggestions
+        - Track success rates per project
+
+        Thread-safe implementation with atomic file writes.
+
+        Args:
+            proposal: The fix proposal that was executed
+            success: Whether all tests passed
+            test_results: List of (cmd, result) tuples from test execution
+            patch_applied: Whether patch was successfully applied
+            mode: "full" (with patches) or "read_only" (tests only)
+        """
+        try:
+            import tempfile
+            from datetime import datetime
+
+            # Build tracking entry
+            entry = {
+                "timestamp": datetime.utcnow().isoformat(),
+                "project": proposal.project,
+                "severity": proposal.severity,
+                "success": success,
+                "patch_applied": patch_applied,
+                "mode": mode,
+                "tests_run": len([r for _, r in test_results if not r.get("skipped")]),
+                "tests_passed": len([r for _, r in test_results if r.get("returncode") == 0 and not r.get("skipped")]),
+                "tests_skipped": len([r for _, r in test_results if r.get("skipped")]),
+                "summary": proposal.summary[:200],  # Truncate for storage
+                "actions": proposal.actions[:5] if proposal.actions else [],  # Limit for storage
+            }
+
+            # Load existing tracking data (thread-safe)
+            tracking_data = {"fix_history": [], "stats": {}}
+            if TRACKING_FILE.exists():
+                try:
+                    tracking_data = json.loads(TRACKING_FILE.read_text(encoding="utf-8"))
+                except json.JSONDecodeError:
+                    logger.warning("⚠️ Corrupted tracking file - starting fresh")
+                    tracking_data = {"fix_history": [], "stats": {}}
+
+            # Append new entry
+            tracking_data["fix_history"].append(entry)
+
+            # Update stats (for quick access by learning system)
+            project_key = proposal.project
+            if project_key not in tracking_data["stats"]:
+                tracking_data["stats"][project_key] = {
+                    "total_fixes": 0,
+                    "successful_fixes": 0,
+                    "failed_fixes": 0,
+                    "patches_applied": 0,
+                    "success_rate": 0.0
+                }
+
+            stats = tracking_data["stats"][project_key]
+            stats["total_fixes"] += 1
+            if success:
+                stats["successful_fixes"] += 1
+            else:
+                stats["failed_fixes"] += 1
+            if patch_applied:
+                stats["patches_applied"] += 1
+
+            # Calculate success rate
+            if stats["total_fixes"] > 0:
+                stats["success_rate"] = stats["successful_fixes"] / stats["total_fixes"]
+
+            # Keep only last 1000 entries to prevent file bloat
+            if len(tracking_data["fix_history"]) > 1000:
+                tracking_data["fix_history"] = tracking_data["fix_history"][-1000:]
+
+            # Atomic write (write to temp file, then rename)
+            TRACKING_FILE.parent.mkdir(parents=True, exist_ok=True)
+            with tempfile.NamedTemporaryFile(mode='w', delete=False,
+                                            dir=TRACKING_FILE.parent,
+                                            suffix='.tmp') as tmp:
+                json.dump(tracking_data, tmp, indent=2, ensure_ascii=False)
+                tmp_path = tmp.name
+
+            # Atomic rename (works even on Windows with Python 3.3+)
+            import os
+            os.replace(tmp_path, str(TRACKING_FILE))
+
+            logger.info(
+                f"📊 Tracked fix result: {proposal.project} - "
+                f"{'✅ Success' if success else '❌ Failed'} "
+                f"(Success rate: {stats['success_rate']*100:.1f}%)"
+            )
+
+        except Exception as e:
+            # Don't crash the pipeline if tracking fails
+            logger.error(f"❌ Failed to track fix result: {e}", exc_info=True)

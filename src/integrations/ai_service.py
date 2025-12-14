@@ -8,8 +8,14 @@ from typing import Dict, Optional
 import logging
 import json
 import httpx
+import subprocess
+from pathlib import Path
+from datetime import datetime
 
 logger = logging.getLogger('shadowops')
+
+# RAM tracking file for learning system
+RAM_TRACKING_FILE = Path(__file__).parent.parent / "data" / "ram_tracking.json"
 
 
 class AIService:
@@ -289,6 +295,9 @@ class AIService:
                             if response.status_code == 500 and "system memory" in error_message.lower():
                                 logger.warning(f"⚠️ RAM shortage detected for {selected_model}")
 
+                                # Track RAM event for learning system
+                                self._track_ram_event(selected_model, error_message, method_used=None, success=False)
+
                                 if attempt < max_retries:
                                     logger.info(f"🔧 Attempting to free RAM...")
 
@@ -389,6 +398,9 @@ class AIService:
 
                                             if killed_count > 0:
                                                 logger.info(f"✅ Killed {killed_count} ollama runner(s) to free RAM")
+                                                # Track successful RAM cleanup
+                                                self._track_ram_event(selected_model, error_message,
+                                                                     method_used="kill_ollama_runner", success=True)
                                                 # Wait a moment for RAM to be released
                                                 await asyncio.sleep(3)
                                                 logger.info(f"🔄 Retrying with {selected_model} after RAM cleanup...")
@@ -1069,3 +1081,129 @@ For external images (from Docker Hub) without security updates on current versio
             logger.error(f"Failed to parse AI JSON response: {e}")
             logger.debug(f"Response content: {content[:500]}")
             return None
+
+    def _track_ram_event(self, model: str, error_message: str, method_used: str = None,
+                        success: bool = False) -> None:
+        """
+        🤖 KI-Learning: Track RAM-related events for proactive monitoring.
+
+        This enables the learning system to:
+        - Predict when RAM shortages will occur
+        - Identify which models cause problems
+        - Learn which cleanup methods work best
+        - Generate proactive warnings before failures
+
+        Thread-safe implementation with atomic writes.
+
+        Args:
+            model: Model name that triggered RAM issue
+            error_message: Full error message from Ollama
+            method_used: Which RAM cleanup method was used (kill_runner, flush_cache, etc.)
+            success: Whether the cleanup resolved the issue
+        """
+        try:
+            import tempfile
+
+            # Get current system RAM status
+            ram_info = self._get_system_ram_info()
+
+            # Build tracking entry
+            entry = {
+                "timestamp": datetime.utcnow().isoformat(),
+                "model": model,
+                "error_message": error_message[:500],  # Truncate for storage
+                "method_used": method_used,
+                "success": success,
+                "ram_total_gb": ram_info.get("total_gb"),
+                "ram_available_gb": ram_info.get("available_gb"),
+                "ram_used_percent": ram_info.get("used_percent"),
+            }
+
+            # Load existing tracking data (thread-safe)
+            tracking_data = {"ram_events": [], "stats": {}}
+            if RAM_TRACKING_FILE.exists():
+                try:
+                    tracking_data = json.loads(RAM_TRACKING_FILE.read_text(encoding="utf-8"))
+                except json.JSONDecodeError:
+                    logger.warning("⚠️ Corrupted RAM tracking file - starting fresh")
+                    tracking_data = {"ram_events": [], "stats": {}}
+
+            # Append new entry
+            tracking_data["ram_events"].append(entry)
+
+            # Update stats per model
+            model_key = model
+            if model_key not in tracking_data["stats"]:
+                tracking_data["stats"][model_key] = {
+                    "total_failures": 0,
+                    "successful_cleanups": 0,
+                    "failed_cleanups": 0,
+                    "methods_used": {}
+                }
+
+            stats = tracking_data["stats"][model_key]
+            stats["total_failures"] += 1
+
+            if method_used:
+                if method_used not in stats["methods_used"]:
+                    stats["methods_used"][method_used] = {"attempts": 0, "successes": 0}
+                stats["methods_used"][method_used]["attempts"] += 1
+                if success:
+                    stats["methods_used"][method_used]["successes"] += 1
+                    stats["successful_cleanups"] += 1
+                else:
+                    stats["failed_cleanups"] += 1
+
+            # Keep only last 500 entries to prevent file bloat
+            if len(tracking_data["ram_events"]) > 500:
+                tracking_data["ram_events"] = tracking_data["ram_events"][-500:]
+
+            # Atomic write
+            RAM_TRACKING_FILE.parent.mkdir(parents=True, exist_ok=True)
+            with tempfile.NamedTemporaryFile(mode='w', delete=False,
+                                            dir=RAM_TRACKING_FILE.parent,
+                                            suffix='.tmp') as tmp:
+                json.dump(tracking_data, tmp, indent=2, ensure_ascii=False)
+                tmp_path = tmp.name
+
+            import os
+            os.replace(tmp_path, str(RAM_TRACKING_FILE))
+
+            logger.info(
+                f"📊 Tracked RAM event: {model} - "
+                f"Available: {ram_info.get('available_gb', '?')}GB "
+                f"(Total failures: {stats['total_failures']})"
+            )
+
+        except Exception as e:
+            # Don't crash AI service if tracking fails
+            logger.error(f"❌ Failed to track RAM event: {e}", exc_info=True)
+
+    def _get_system_ram_info(self) -> Dict[str, float]:
+        """
+        Get current system RAM information.
+
+        Returns:
+            Dict with total_gb, available_gb, used_percent
+        """
+        try:
+            # Read /proc/meminfo for accurate Linux memory stats
+            with open('/proc/meminfo', 'r') as f:
+                meminfo = f.read()
+
+            total_kb = int([line for line in meminfo.split('\n') if line.startswith('MemTotal:')][0].split()[1])
+            available_kb = int([line for line in meminfo.split('\n') if line.startswith('MemAvailable:')][0].split()[1])
+
+            total_gb = total_kb / (1024 * 1024)
+            available_gb = available_kb / (1024 * 1024)
+            used_percent = ((total_kb - available_kb) / total_kb) * 100
+
+            return {
+                "total_gb": round(total_gb, 2),
+                "available_gb": round(available_gb, 2),
+                "used_percent": round(used_percent, 1)
+            }
+
+        except Exception as e:
+            logger.warning(f"Could not read RAM info: {e}")
+            return {}
