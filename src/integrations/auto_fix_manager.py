@@ -467,6 +467,21 @@ class AutoFixManager:
                 break
 
             result = await self._run_command(resolved_cmd, cwd=project_path)
+
+            # 🤖 KI-Intelligenz: Detect wenn npm test ohne script läuft (zu schnell + keine Ausgabe)
+            if cmd.startswith("npm test") and result["returncode"] == 0:
+                # Verdächtig schnell? npm test ohne script returniert sofort
+                if result["duration"] < 0.5 and ("no test specified" in result["stdout"].lower() or
+                                                   "no test specified" in result["stderr"].lower() or
+                                                   len(result["stdout"]) < 50):
+                    logger.warning(f"🤖 Detected npm test without script - attempting Read-Only fallback")
+                    fallback = self._get_readonly_test_fallback(project_path)
+                    if fallback:
+                        logger.info(f"🔄 Re-running with fallback: {fallback}")
+                        result = await self._run_command(fallback, cwd=project_path)
+                        # Update cmd to show we used fallback
+                        cmd = f"{cmd} (auto-switched to: {fallback[:50]}...)"
+
             results.append((cmd, result))
             # If a command fails, stop further commands
             if result["returncode"] != 0:
@@ -1062,7 +1077,7 @@ class AutoFixManager:
                 # TypeScript project
                 if (project_path / "tsconfig.json").exists():
                     logger.info(f"🤖 TypeScript project detected - using tsc for type checking")
-                    return f"cd {project_path} && npx tsc --noEmit || echo '✅ Type checking completed (some errors expected in Read-Only mode)'"
+                    return f"npx tsc --noEmit || echo '✅ Type checking completed (some errors expected in Read-Only mode)'"
                 else:
                     logger.info(f"TypeScript files found but no tsconfig.json")
                     return None
@@ -1072,7 +1087,7 @@ class AutoFixManager:
                 logger.info(f"🤖 JavaScript project detected - using node --check for syntax validation")
                 # Build command to check all JS files
                 files_to_check = " ".join([f'"{f.relative_to(project_path)}"' for f in js_files[:20]])  # Limit to first 20
-                return f"cd {project_path} && node --check {files_to_check} && echo '✅ Syntax check passed for {len(js_files)} file(s)'"
+                return f"node --check {files_to_check} && echo '✅ Syntax check passed for {len(js_files)} file(s)'"
 
             else:
                 logger.info(f"No JS/TS files found in {project_path.name}/src")
