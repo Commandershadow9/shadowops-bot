@@ -23,6 +23,7 @@ import json
 from dataclasses import dataclass, field
 
 from integrations.auto_fix_manager import FixProposal
+from integrations.ai_learning.knowledge_synthesizer import KnowledgeSynthesizer
 
 logger = logging.getLogger('shadowops.learning')
 
@@ -102,6 +103,10 @@ class ContinuousLearningAgent:
         self.report_interval = 21600  # 6 hours (4x per day)
         self.log_analysis_interval = 7200  # 2 hours
         self.trend_report_interval = 86400  # 24 hours
+        self.synthesis_interval = 21600  # 6 hours (4x per day for knowledge synthesis)
+
+        # Knowledge Synthesizer for long-term learning
+        self.knowledge_synthesizer = KnowledgeSynthesizer(ai_service=ai_service)
 
         # Discord channel
         self.learning_channel_id = config.channels.get('ai_learning', 0)
@@ -117,6 +122,7 @@ class ContinuousLearningAgent:
         self.log_task: Optional[asyncio.Task] = None
         self.report_task: Optional[asyncio.Task] = None
         self.trend_task: Optional[asyncio.Task] = None
+        self.synthesis_task: Optional[asyncio.Task] = None
 
         # State caches
         self.last_git_hashes: Dict[str, set] = {}
@@ -147,6 +153,7 @@ class ContinuousLearningAgent:
         self.log_task = asyncio.create_task(self._log_analysis_loop())
         self.report_task = asyncio.create_task(self._reporting_loop())
         self.trend_task = asyncio.create_task(self._trend_report_loop())
+        self.synthesis_task = asyncio.create_task(self._knowledge_synthesis_loop())
 
         # Send startup message
         await self._send_learning_message(
@@ -186,6 +193,12 @@ class ContinuousLearningAgent:
             self.trend_task.cancel()
             try:
                 await self.trend_task
+            except asyncio.CancelledError:
+                pass
+        if self.synthesis_task:
+            self.synthesis_task.cancel()
+            try:
+                await self.synthesis_task
             except asyncio.CancelledError:
                 pass
 
@@ -1062,3 +1075,125 @@ Liefer konkrete Hinweise für Stabilität, Wartbarkeit oder Security (keine Flos
 
         except Exception as e:
             self.logger.error(f"Error sending learning report: {e}", exc_info=True)
+
+    async def _knowledge_synthesis_loop(self):
+        """
+        🧠 Knowledge Synthesis Loop - Extracts long-term patterns from tracking data.
+
+        This is the key to continuous improvement over months/years:
+        - Runs every 6 hours (4x per day)
+        - Extracts patterns from Auto-Fix, RAM, and Security tracking
+        - Stores compressed knowledge in persistent knowledge base
+        - Enables meta-learning (learning about learning)
+
+        The knowledge base grows indefinitely while raw data is pruned.
+        """
+        # Wait 1 hour after startup before first synthesis
+        await asyncio.sleep(3600)
+
+        while self.is_running:
+            try:
+                self.logger.info("🧠 Starting knowledge synthesis...")
+
+                # Run synthesis
+                stats = await self.knowledge_synthesizer.synthesize_knowledge()
+
+                # Send Discord notification about synthesis
+                if stats["fix_patterns_extracted"] > 0 or stats["ram_patterns_extracted"] > 0:
+                    await self._send_synthesis_notification(stats)
+
+                self.logger.info(
+                    f"✅ Knowledge synthesis complete: "
+                    f"{sum(stats.values())} total patterns extracted"
+                )
+
+                # Wait for next synthesis
+                await asyncio.sleep(self.synthesis_interval)
+
+            except asyncio.CancelledError:
+                break
+            except Exception as e:
+                self.logger.error(f"❌ Error in knowledge synthesis loop: {e}", exc_info=True)
+                await asyncio.sleep(3600)  # Wait 1 hour on error
+
+    async def _send_synthesis_notification(self, stats: Dict):
+        """
+        Send Discord notification about knowledge synthesis.
+
+        Args:
+            stats: Synthesis statistics
+        """
+        try:
+            channel = await self._get_learning_channel()
+            if not channel:
+                return
+
+            embed = discord.Embed(
+                title="🧠 Knowledge Synthesis Complete",
+                description="Long-term patterns extracted from learning data",
+                color=0x9B59B6,  # Purple
+                timestamp=datetime.utcnow()
+            )
+
+            # Add stats
+            if stats["fix_patterns_extracted"] > 0:
+                embed.add_field(
+                    name="📊 Auto-Fix Patterns",
+                    value=f"**{stats['fix_patterns_extracted']}** patterns extracted\n"
+                          f"Success rates calculated per project",
+                    inline=True
+                )
+
+            if stats["ram_patterns_extracted"] > 0:
+                embed.add_field(
+                    name="🧠 RAM Management Patterns",
+                    value=f"**{stats['ram_patterns_extracted']}** patterns extracted\n"
+                          f"Best cleanup methods identified",
+                    inline=True
+                )
+
+            if stats["security_patterns_extracted"] > 0:
+                embed.add_field(
+                    name="🛡️ Security Patterns",
+                    value=f"**{stats['security_patterns_extracted']}** patterns extracted\n"
+                          f"Attack trends analyzed",
+                    inline=True
+                )
+
+            if stats["meta_insights"] > 0:
+                embed.add_field(
+                    name="🚀 Meta-Learning",
+                    value=f"**{stats['meta_insights']}** meta-insights generated\n"
+                          f"Learning velocity calculated",
+                    inline=False
+                )
+
+            # Add knowledge base stats
+            kb = self.knowledge_synthesizer.knowledge
+            total_projects = len(kb["fix_patterns"])
+            total_models = len(kb["ram_patterns"])
+
+            embed.add_field(
+                name="📚 Knowledge Base Stats",
+                value=f"**Projects tracked:** {total_projects}\n"
+                      f"**Models tracked:** {total_models}\n"
+                      f"**Total syntheses:** {kb['synthesis_count']}",
+                inline=False
+            )
+
+            # Learning velocity if available
+            if kb["meta_learning"].get("learning_velocity"):
+                velocity = kb["meta_learning"]["learning_velocity"]
+                embed.add_field(
+                    name="📈 Learning Velocity",
+                    value=f"**{velocity:.2f}** patterns per day\n"
+                          f"System is continuously improving!",
+                    inline=False
+                )
+
+            embed.set_footer(text="Knowledge Synthesizer • Long-term Learning")
+
+            await channel.send(embed=embed)
+
+        except Exception as e:
+            self.logger.error(f"Error sending synthesis notification: {e}", exc_info=True)
