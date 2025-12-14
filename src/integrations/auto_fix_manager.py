@@ -74,8 +74,20 @@ class AutoFixManager:
                 "tests": ["npm test -- --runInBand"],
                 "lint": ["npm run lint"]
             },
-            "nexus-api": {
+            "nexus": {
                 "tests": ["npm test -- --runInBand"],
+                "lint": ["npm run lint"]
+            },
+            "nexus-booking": {
+                "tests": [],  # Static HTML - no tests
+                "lint": []
+            },
+            "nexus-orders": {
+                "tests": [],  # Wix project - no test command
+                "lint": ["npm run lint"]
+            },
+            "nexus-firstpick": {
+                "tests": [],  # Wix project - no test command
                 "lint": ["npm run lint"]
             }
         }
