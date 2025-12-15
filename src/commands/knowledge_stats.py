@@ -66,14 +66,8 @@ class KnowledgeStatsCommands(commands.Cog):
     ):
         """Zeige Knowledge Base Statistiken"""
 
-        # Permission check (optional - kann entfernt werden für public access)
-        if not self._is_admin(interaction):
-            await interaction.response.send_message(
-                "❌ Nur Admins können Knowledge Stats abrufen.",
-                ephemeral=True
-            )
-            return
-
+        # Knowledge Stats sind für alle sichtbar (read-only, harmlos)
+        # Keine Admin-Prüfung nötig
         await interaction.response.defer(thinking=True)
 
         try:
