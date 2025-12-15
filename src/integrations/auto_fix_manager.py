@@ -1036,6 +1036,8 @@ Best Practices from successful fixes:
             try:
                 test_file.write_text("test")
                 test_file.unlink()
+                # ✅ Erfolgreich geschrieben - wir haben Schreibrechte!
+                logger.info(f"✅ Git write permissions OK for {project_path.name}")
             except PermissionError:
                 owner = self._get_project_owner(project_path)
                 if owner:
@@ -1046,12 +1048,8 @@ Best Practices from successful fixes:
                 return False, f"Unerwarteter Fehler beim Permission-Test: {str(e)}"
 
             # Test 2: Können wir Git-Befehle ausführen?
-            owner = self._get_project_owner(project_path)
             git_cmd = ["git", "status"]
-            if owner:
-                # Bei fremdem Owner: sudo funktioniert nicht gut mit Git
-                # Grund: Git erstellt lockfiles die dem aktuellen User gehören würden
-                return False, f"Projekt gehört User '{owner}' - Git-Operationen mit sudo sind problematisch (Lock-File-Konflikte)"
+            # Hinweis: Wir prüfen NICHT mehr den Owner - Test 1 war erfolgreich!
 
             # Wenn wir hier ankommen: Wir sind Owner UND haben Schreibrechte
             return True, "Schreibrechte vorhanden"

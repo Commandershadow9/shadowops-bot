@@ -788,6 +788,12 @@ class ShadowOpsBot(commands.Bot):
                         self.config
                     )
                     self.logger.info("✅ Knowledge Stats Commands geladen")
+
+                    # Sync commands to Discord
+                    guild = discord.Object(id=self.config.guild_id)
+                    self.tree.copy_global_to(guild=guild)
+                    await self.tree.sync(guild=guild)
+                    self.logger.info("✅ Knowledge Stats Commands synchronisiert")
                 except Exception as e:
                     self.logger.error(f"❌ Fehler beim Laden der Knowledge Stats Commands: {e}", exc_info=True)
 
