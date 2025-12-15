@@ -59,3 +59,4 @@ data/ai_knowledge.db
 
 # Runtime files
 .bot.pid
+logrotate.state

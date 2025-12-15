@@ -1,5 +1,171 @@
 # ShadowOps Bot - Changelog
 
+## [3.6.0] - 2025-12-15
+
+### 🧠 Knowledge Base Integration - Active Long-Term Learning
+
+#### ✨ Hinzugefügt
+
+**Active Knowledge Integration:**
+- **Auto-Fix Knowledge Integration** (`src/integrations/auto_fix_manager.py`)
+  - KI nutzt gelernte Patterns aktiv in Fix-Generierung
+  - `_get_learned_context()` lädt projekt-spezifische Empfehlungen
+  - Injiziert Best Practices und Success-Rates in AI-Prompts
+  - Strategy-Adaption basierend auf gelernten Success-Rates:
+    - ≥80%: "Aggressive" (hohe Erfolgsrate - sei selbstbewusst)
+    - 50-80%: "Standard" (moderate Erfolgsrate)
+    - <50%: "Careful" (niedrige Erfolgsrate - validiere gründlich)
+  - Formatiert Best Practices aus erfolgreichen Fixes
+
+**Proactive RAM Management:**
+- **RAM Knowledge Integration** (`src/integrations/ai_service.py`)
+  - `_check_ram_proactively()` prüft RAM vor Ollama-Calls
+  - Nutzt gelernte RAM-Anforderungen pro Modell
+  - Führt proaktive Cleanups durch (bevor Fehler auftreten!)
+  - Verwendet gelernte Best-Cleanup-Methods:
+    - `kill_ollama_runner` - Beendet Ollama-Runner-Prozesse
+    - `systemctl_restart` - Neustart via systemctl
+  - Trackt Cleanup-Erfolge für kontinuierliches Lernen
+
+**Discord Knowledge Stats Command:**
+- **Neue Slash Commands** (`src/commands/knowledge_stats.py`)
+  - `/knowledge-stats` - Gesamtübersicht aller gelernten Patterns
+    - Auto-Fix Patterns: Projekte, Success-Rates, Total Fixes
+    - RAM Management Patterns: Modelle, RAM-Bedarf, Cleanup-Methods
+    - Meta-Learning: Synthesis-Count, Learning-Velocity
+  - `/knowledge-stats project:<name>` - Projekt-spezifische Stats
+    - Success Rate mit Confidence-Level (high/medium/low)
+    - Recommended Strategy (Aggressive/Standard/Careful)
+    - Best Practices Liste (aus erfolgreichen Fixes)
+    - Sample-Size und Confidence-Indicator
+  - `/knowledge-stats model:<name>` - Modell-spezifische RAM-Stats
+    - Average RAM Required (~X.X GB)
+    - Best Cleanup Method
+    - Cleanup Success Rate
+    - Total Events Tracked
+  - Keine Admin-Restriction (read-only, für alle sichtbar)
+  - Schicke Discord-Embeds mit Farb-Kodierung nach Success-Rate
+  - Automatische Command-Sync nach Bot-Start
+
+**NEXUS Microservices Integration:**
+- **Neue Projekt-Profile** (`config/config.yaml`, `auto_fix_manager.py`)
+  - `nexus-booking` - Static HTML Frontend
+    - Path: `/home/nexus/projects/nexus-booking`
+    - Tests: Keine (statische Dateien)
+  - `nexus-orders` - Wix Backend Service
+    - Path: `/home/nexus/projects/nexus-orders-service`
+    - Tests: `npm run lint`
+  - `nexus-firstpick` - Wix Backend Service
+    - Path: `/home/nexus/projects/FirstPick-NEXUS-`
+    - Tests: `npm run lint`
+  - Alle mit `use_ai: true` für KI-Learning
+
+**Security Monitoring Fixes:**
+- **Fail2ban/CrowdSec Permissions** (`/etc/sudoers.d/shadowops-bot`)
+  - NOPASSWD Sudo-Rules für:
+    - `/usr/bin/fail2ban-client status`
+    - `/usr/bin/fail2ban-client status *`
+    - `/usr/bin/fail2ban-client get *`
+    - `/usr/bin/fail2ban-client ping`
+    - `/usr/bin/cscli alerts list *`
+    - `/usr/bin/cscli decisions list *`
+    - `/usr/bin/cscli metrics`
+    - `/usr/bin/cscli hub list`
+  - Alle read-only Operations für sicheres Monitoring
+
+**systemd Service Security:**
+- **Service Configuration** (`~/.config/systemd/user/shadowops-bot.service`)
+  - `NoNewPrivileges=false` - Erlaubt sudo für Security-Monitoring
+  - Kommentar: "Required for sudo fail2ban-client/cscli access"
+  - Behält andere Security-Hardening (PrivateTmp=true)
+
+**Improved Debug Output:**
+- **Fail2ban Validation** (`src/integrations/fail2ban.py`)
+  - Erweiterte Debug-Ausgabe bei Permission-Fehlern:
+    - Return Code
+    - Stdout Output
+    - Stderr Output (zeigt z.B. "no new privileges" Fehler)
+  - Besseres Troubleshooting für Permission-Probleme
+
+#### 🔧 Geändert
+
+**Geänderte Dateien:**
+- `src/integrations/auto_fix_manager.py`:
+  - KnowledgeSynthesizer Import und Initialisierung
+  - `_get_learned_context()` Methode für Knowledge-Injection
+  - Modifizierte `_generate_patch()` für Context-Injection
+  - Verbesserte `_check_git_write_permissions()`:
+    - Prüft write-access statt owner
+    - Erlaubt group-writable Projekte (NEXUS-Zugriff für Bot)
+  - NEXUS Projekt-Profiles hinzugefügt
+- `src/integrations/ai_service.py`:
+  - KnowledgeSynthesizer Import und Initialisierung
+  - `_check_ram_proactively()` für proaktives RAM-Management
+  - Integration in `get_raw_ai_response()` vor Ollama-Calls
+  - RAM-Event-Tracking für erfolgreiche Cleanups
+- `src/bot.py`:
+  - Lädt Knowledge Stats Commands nach Continuous Learning
+  - Automatische Command-Sync zu Discord nach Loading
+  - Guild-Object und Tree-Sync für Command-Sichtbarkeit
+- `src/integrations/fail2ban.py`:
+  - Erweiterte Debug-Ausgabe in `validate_permissions()`
+  - Stdout/Stderr Logging für besseres Troubleshooting
+- `config/config.yaml`:
+  - NEXUS-Projekte hinzugefügt (nexus-booking, nexus-orders, nexus-firstpick)
+  - Alle mit `use_ai: true` und korrekten Paths/Test-Commands
+
+**Relative Imports Fixes:**
+- `src/integrations/ai_service.py`:
+  - `from integrations.ai_learning.* → from .ai_learning.*`
+- `src/integrations/auto_fix_manager.py`:
+  - `from integrations.ai_learning.* → from .ai_learning.*`
+- `src/integrations/ai_learning/continuous_learning_agent.py`:
+  - `from integrations.* → from ..*` (package-relative)
+
+#### 🐛 Behoben
+
+**Problembehebungen:**
+- **Git Permission Denied für NEXUS Projects**:
+  - Group-writable Projekte werden akzeptiert (User `cmdshadow` kann auf `nexus`-Projekte zugreifen)
+  - `sudo chgrp -R users /home/nexus/projects/*`
+  - `sudo chmod -R g+w /home/nexus/projects/*`
+  - Git safe.directory Konfiguration für `/home/nexus/projects/*`
+  - `_check_git_write_permissions()` prüft nur Write-Test, nicht Owner
+- **ModuleNotFoundError in Tests**:
+  - Relative Imports statt absolute Imports
+  - Tests: 101 → 126 tests collected, 2 errors → 0 errors
+- **/knowledge-stats Command nicht sichtbar**:
+  - Command-Sync nach dynamischem Loading
+  - `self.tree.copy_global_to(guild)` + `await self.tree.sync(guild)`
+- **Admin-Restriction für /knowledge-stats**:
+  - Entfernt (read-only Command, harmlos, für alle verfügbar)
+- **sudo Permission Denied (NoNewPrivileges)**:
+  - systemd `NoNewPrivileges=false` für sudo-Zugriff
+  - `/etc/sudoers.d/shadowops-bot` mit NOPASSWD-Rules
+  - Fail2ban/CrowdSec Monitoring funktioniert wieder
+
+#### 📊 Langzeit-Learning Status
+
+**Aktueller Stand:**
+- **Fix History**: 5 Auto-Fix Versuche getrackt
+  - nexus-orders: 1 Versuch, 100% Erfolg
+  - nexus-firstpick: 3 Versuche, 0% Erfolg
+  - shadowops-bot: 1 Versuch, 0% Erfolg
+- **Knowledge Synthesis**: Läuft alle 6 Stunden automatisch
+- **Pattern Extraction**: Wartet auf Minimum-Sample-Sizes
+  - Low Confidence: ≥5 Samples
+  - Medium Confidence: ≥10 Samples
+  - High Confidence: ≥20 Samples
+- **Security Monitoring**: Läuft aktiv (fail2ban/CrowdSec)
+
+**System-Design:**
+- Kontinuierliche Daten-Sammlung über Monate/Jahre
+- Automatische Pattern-Kompression (1000 Rohdaten → 10 Patterns)
+- Meta-Learning: System lernt über eigenen Lernprozess
+- Learning-Velocity-Tracking für Performance-Optimierung
+
+---
+
 ## [3.5.0] - 2025-12-02
 
 ### 🔄 Ollama Queue Management & Incident Auto-Resolve

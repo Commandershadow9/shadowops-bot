@@ -1,8 +1,8 @@
-# 🗡️ ShadowOps - Active Security Guardian v3.5 🚀
+# 🗡️ ShadowOps - Active Security Guardian v3.6 🚀
 
-**Status:** ✅ **LIVE & PRODUKTIV** | **Version:** 3.5.0 | **Letzte Aktualisierung:** 02.12.2025
+**Status:** ✅ **LIVE & PRODUKTIV** | **Version:** 3.6.0 | **Letzte Aktualisierung:** 15.12.2025
 
-**ShadowOps** ist ein **vollständig autonomer Security Guardian** mit KI-gesteuerter Auto-Remediation, intelligenter Request-Queue, persistentem Lernsystem und Multi-Projekt-Management, der Sicherheitsbedrohungen nicht nur erkennt und analysiert, sondern **eigenständig behebt und aus Erfahrungen lernt**.
+**ShadowOps** ist ein **vollständig autonomer Security Guardian** mit KI-gesteuerter Auto-Remediation, aktivem Knowledge-Einsatz, intelligenter Request-Queue, persistentem Langzeit-Lernsystem und Multi-Projekt-Management, der Sicherheitsbedrohungen nicht nur erkennt und analysiert, sondern **eigenständig behebt, aktiv aus Erfahrungen lernt und sein Wissen kontinuierlich einsetzt**.
 
 > 📖 **Vollständige v3.1 Dokumentation:** [ACTIVE_SECURITY_GUARDIAN.md](./ACTIVE_SECURITY_GUARDIAN.md)
 > 📚 **Dokumentations-Übersicht:** [DOCS_OVERVIEW.md](./DOCS_OVERVIEW.md)
@@ -10,9 +10,44 @@
 > 🔧 **API Dokumentation:** [docs/API.md](./docs/API.md)
 > 🚀 **Setup Guide:** [docs/SETUP_GUIDE.md](./docs/SETUP_GUIDE.md)
 
+## ⚡ Highlights v3.6
+
+### 🧠 **Active Knowledge Integration - Langzeit-Learning (v3.6 - NEW)**
+- ✅ **Auto-Fix nutzt gelernte Patterns aktiv**
+  - Success-Rates und Best Practices in AI-Prompts
+  - Strategy-Adaption: Aggressive (≥80%) / Standard (50-80%) / Careful (<50%)
+  - Context-Injection für bessere Fix-Qualität
+  - Kontinuierliche Verbesserung durch Feedback-Loop
+- ✅ **Proaktives RAM-Management**
+  - Prüft RAM-Bedarf VOR Ollama-Calls (nicht erst beim Fehler!)
+  - Nutzt gelernte Best-Cleanup-Methods pro Modell
+  - Trackt Cleanup-Erfolge für kontinuierliches Lernen
+  - Vermeidet OOM-Errors durch vorausschauende Planung
+- ✅ **Discord Knowledge Stats Command**
+  - `/knowledge-stats` - Gesamtübersicht (Auto-Fix + RAM Patterns)
+  - `/knowledge-stats project:<name>` - Projekt-Details mit Success-Rates
+  - `/knowledge-stats model:<name>` - RAM-Anforderungen pro Modell
+  - Farb-kodierte Embeds, Confidence-Levels, Best Practices
+  - Für alle User verfügbar (read-only, harmlos)
+- ✅ **NEXUS Microservices Integration**
+  - nexus-booking (Static HTML)
+  - nexus-orders (Wix Backend)
+  - nexus-firstpick (Wix Backend)
+  - Alle mit KI-Learning aktiviert
+- ✅ **Security Monitoring Fixes**
+  - Fail2ban/CrowdSec sudo-Permissions korrekt konfiguriert
+  - systemd NoNewPrivileges-Fix für sudo-Zugriff
+  - Erweiterte Debug-Ausgabe für besseres Troubleshooting
+
+**Design-Philosophie:**
+- 📊 **Langzeit-Learning**: Daten-Sammlung über Monate/Jahre
+- 🔄 **Pattern-Kompression**: 1000 Rohdaten → 10 komprimierte Patterns
+- 🧠 **Meta-Learning**: System lernt über eigenen Lernprozess
+- 🚀 **Active Usage**: Gelerntes Wissen wird AKTIV in Produktions-Fixes eingesetzt
+
 ## ⚡ Highlights v3.5
 
-### 🔄 **Ollama Queue Management & Auto-Resolve (v3.5 - NEW)**
+### 🔄 **Ollama Queue Management & Auto-Resolve (v3.5)**
 - ✅ **Intelligentes Request-Queuing**
   - Priority-basierte AsyncIO Queue (verhindert Ollama Überlastung)
   - 4 Prioritätsstufen: CRITICAL > HIGH > NORMAL > LOW

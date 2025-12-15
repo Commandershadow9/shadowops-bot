@@ -35,9 +35,12 @@ class Fail2banMonitor:
             )
 
             if result.returncode != 0:
-                print("❌ No permissions for fail2ban-client.")
-                print("   Bot needs sudo access without password for fail2ban-client.")
-                print("   Add to /etc/sudoers: 'username ALL=(ALL) NOPASSWD: /usr/bin/fail2ban-client'")
+                print(f"❌ No permissions for fail2ban-client.")
+                print(f"   Return code: {result.returncode}")
+                print(f"   Stdout: {result.stdout}")
+                print(f"   Stderr: {result.stderr}")
+                print(f"   Bot needs sudo access without password for fail2ban-client.")
+                print(f"   Add to /etc/sudoers: 'username ALL=(ALL) NOPASSWD: /usr/bin/fail2ban-client'")
                 return False
 
             print("✅ Fail2ban permissions validated successfully")
