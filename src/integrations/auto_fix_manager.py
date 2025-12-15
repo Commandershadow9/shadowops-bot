@@ -26,7 +26,7 @@ from typing import Dict, List, Optional, Any, Tuple
 import discord
 import httpx
 
-from integrations.ai_learning.knowledge_synthesizer import KnowledgeSynthesizer
+from .ai_learning.knowledge_synthesizer import KnowledgeSynthesizer
 
 logger = logging.getLogger("shadowops.auto_fix")
 

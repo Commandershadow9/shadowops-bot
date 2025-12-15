@@ -12,7 +12,7 @@ import subprocess
 from pathlib import Path
 from datetime import datetime
 
-from integrations.ai_learning.knowledge_synthesizer import KnowledgeSynthesizer
+from .ai_learning.knowledge_synthesizer import KnowledgeSynthesizer
 
 logger = logging.getLogger('shadowops')
 

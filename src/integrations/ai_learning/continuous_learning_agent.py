@@ -22,8 +22,8 @@ from pathlib import Path
 import json
 from dataclasses import dataclass, field
 
-from integrations.auto_fix_manager import FixProposal
-from integrations.ai_learning.knowledge_synthesizer import KnowledgeSynthesizer
+from ..auto_fix_manager import FixProposal
+from .knowledge_synthesizer import KnowledgeSynthesizer
 
 logger = logging.getLogger('shadowops.learning')
 
