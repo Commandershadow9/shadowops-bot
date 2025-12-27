@@ -25,6 +25,11 @@ class ProjectStatus:
         self.expected_status = config.get('expected_status', 200)
         self.check_interval = config.get('check_interval', 60)
         self.timeout = config.get('timeout', 10)
+        self.remediation_command = config.get('remediation_command')
+        self.remediation_threshold = config.get('remediation_threshold', 3)
+        self.log_file = config.get('log_file')
+        self.log_pattern = config.get('log_pattern')
+        self.log_tail_bytes = config.get('log_tail_bytes', 50000)
 
         # Current status
         self.is_online = False
@@ -32,6 +37,7 @@ class ProjectStatus:
         self.last_online_time: Optional[datetime] = None
         self.last_offline_time: Optional[datetime] = None
         self.current_downtime_start: Optional[datetime] = None
+        self.remediation_triggered: bool = False
 
         # Historical data
         self.total_checks = 0
@@ -39,6 +45,7 @@ class ProjectStatus:
         self.failed_checks = 0
         self.response_times: List[float] = []  # Last 100 response times
         self.max_response_times = 100
+        self.last_log_pos: int = 0
 
         # Incident tracking
         self.consecutive_failures = 0
@@ -77,6 +84,7 @@ class ProjectStatus:
         self.successful_checks += 1
         self.consecutive_failures = 0
         self.current_downtime_start = None
+        self.remediation_triggered = False
 
         # Track response time
         self.response_times.append(response_time_ms)
@@ -311,6 +319,7 @@ class ProjectMonitor:
 
         while True:
             try:
+                await self._check_project_logs(project)
                 await self._check_project_health(project)
                 await asyncio.sleep(project.check_interval)
 
@@ -367,6 +376,7 @@ class ProjectMonitor:
                         # Alert on new incident
                         if was_new_incident:
                             await self._send_incident_alert(project, error)
+                        await self._attempt_remediation(project, error)
 
         except asyncio.TimeoutError:
             error = f"Timeout after {project.timeout}s"
@@ -376,6 +386,7 @@ class ProjectMonitor:
 
             if was_new_incident:
                 await self._send_incident_alert(project, error)
+            await self._attempt_remediation(project, error)
 
         except aiohttp.ClientError as e:
             error = f"Connection error: {str(e)}"
@@ -385,6 +396,7 @@ class ProjectMonitor:
 
             if was_new_incident:
                 await self._send_incident_alert(project, error)
+            await self._attempt_remediation(project, error)
 
         except Exception as e:
             error = f"Unexpected error: {str(e)}"
@@ -394,9 +406,80 @@ class ProjectMonitor:
 
             if was_new_incident:
                 await self._send_incident_alert(project, error)
+            await self._attempt_remediation(project, error)
 
         # Save state periodically
         self._save_state()
+
+    async def _check_project_logs(self, project: ProjectStatus):
+        """Scan recent log tail for critical patterns (e.g., DB connectivity errors)."""
+        if not project.log_file or not project.log_pattern:
+            return
+
+        log_path = Path(project.log_file)
+        if not log_path.exists():
+            self.logger.debug(f"ℹ️ Log file not found for {project.name}: {log_path}")
+            return
+
+        try:
+            size = log_path.stat().st_size
+            # Seek to last position or tail window
+            start_pos = max(0, size - project.log_tail_bytes)
+            with log_path.open('rb') as f:
+                f.seek(start_pos)
+                data = f.read().decode(errors='ignore')
+
+            if project.log_pattern in data:
+                # Only notify once per remediation window
+                self.logger.warning(
+                    f"⚠️ {project.name}: Detected log pattern '{project.log_pattern}' "
+                    f"in {log_path}"
+                )
+                if project.remediation_command and not project.remediation_triggered:
+                    await self._attempt_remediation(
+                        project,
+                        f"Log pattern detected: {project.log_pattern}"
+                    )
+        except Exception as e:
+            self.logger.error(
+                f"❌ Error reading log file for {project.name}: {e}",
+                exc_info=True
+            )
+
+    async def _attempt_remediation(self, project: ProjectStatus, error: str):
+        """Attempt automatic remediation after repeated failures."""
+        if not project.remediation_command:
+            return
+        if project.remediation_triggered:
+            return
+        if project.consecutive_failures < project.remediation_threshold:
+            return
+
+        project.remediation_triggered = True
+        self.logger.warning(
+            f"🛠️  Auto-remediation for {project.name}: "
+            f"{project.consecutive_failures} consecutive failures ({error}). "
+            f"Running: {project.remediation_command}"
+        )
+
+        try:
+            proc = await asyncio.create_subprocess_shell(
+                project.remediation_command,
+                stdout=asyncio.subprocess.PIPE,
+                stderr=asyncio.subprocess.PIPE,
+            )
+            stdout, stderr = await proc.communicate()
+            if stdout:
+                self.logger.info(f"🛠️  Remediation stdout for {project.name}: {stdout.decode().strip()}")
+            if stderr:
+                self.logger.warning(f"⚠️ Remediation stderr for {project.name}: {stderr.decode().strip()}")
+            if proc.returncode != 0:
+                self.logger.error(
+                    f"❌ Remediation command failed for {project.name} "
+                    f"(exit {proc.returncode})"
+                )
+        except Exception as e:
+            self.logger.error(f"❌ Remediation exception for {project.name}: {e}", exc_info=True)
 
     async def _send_incident_alert(self, project: ProjectStatus, error: str):
         """
