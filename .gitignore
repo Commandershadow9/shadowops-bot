@@ -60,3 +60,6 @@ data/ai_knowledge.db
 # Runtime files
 .bot.pid
 logrotate.state
+
+# Node
+node_modules/
