@@ -606,56 +606,68 @@ class ShadowOpsBot(commands.Bot):
                 self.github_integration.ai_service = self.ai_service  # For KI patch notes
 
                 # Initialize Complete AI Learning System for Patch Notes
-                try:
-                    from integrations.patch_notes_trainer import get_patch_notes_trainer
-                    from integrations.patch_notes_feedback import get_feedback_collector
-                    from integrations.prompt_ab_testing import get_prompt_ab_testing
-                    from integrations.prompt_auto_tuner import get_prompt_auto_tuner
-                    from integrations.llm_fine_tuning import get_llm_fine_tuning
+                if self.config.ai_learning_enabled:
+                    try:
+                        from integrations.patch_notes_trainer import get_patch_notes_trainer
+                        from integrations.patch_notes_feedback import get_feedback_collector
+                        from integrations.prompt_ab_testing import get_prompt_ab_testing
+                        from integrations.prompt_auto_tuner import get_prompt_auto_tuner
+                        from integrations.llm_fine_tuning import get_llm_fine_tuning
 
-                    # 1. Core Trainer
-                    self.patch_notes_trainer = get_patch_notes_trainer()
-                    self.github_integration.patch_notes_trainer = self.patch_notes_trainer
+                        # 1. Core Trainer
+                        self.patch_notes_trainer = get_patch_notes_trainer()
+                        self.github_integration.patch_notes_trainer = self.patch_notes_trainer
 
-                    # 2. Feedback Collector (Discord Reactions)
-                    self.feedback_collector = get_feedback_collector(self, self.patch_notes_trainer)
-                    self.github_integration.feedback_collector = self.feedback_collector
+                        # 2. Feedback Collector (Discord Reactions)
+                        self.feedback_collector = get_feedback_collector(self, self.patch_notes_trainer)
+                        self.github_integration.feedback_collector = self.feedback_collector
 
-                    # 3. A/B Testing System
-                    self.prompt_ab_testing = get_prompt_ab_testing()
-                    self.github_integration.prompt_ab_testing = self.prompt_ab_testing
+                        # 3. A/B Testing System
+                        self.prompt_ab_testing = get_prompt_ab_testing()
+                        self.github_integration.prompt_ab_testing = self.prompt_ab_testing
 
-                    # 4. Auto-Tuner
-                    self.prompt_auto_tuner = get_prompt_auto_tuner(
-                        self.patch_notes_trainer.data_dir,
-                        self.prompt_ab_testing,
-                        self.patch_notes_trainer
-                    )
-                    self.github_integration.prompt_auto_tuner = self.prompt_auto_tuner
+                        # 4. Auto-Tuner
+                        self.prompt_auto_tuner = get_prompt_auto_tuner(
+                            self.patch_notes_trainer.data_dir,
+                            self.prompt_ab_testing,
+                            self.patch_notes_trainer
+                        )
+                        self.github_integration.prompt_auto_tuner = self.prompt_auto_tuner
 
-                    # 5. Fine-Tuning System
-                    self.llm_fine_tuning = get_llm_fine_tuning(
-                        self.patch_notes_trainer.data_dir,
-                        self.patch_notes_trainer
-                    )
+                        # 5. Fine-Tuning System
+                        self.llm_fine_tuning = get_llm_fine_tuning(
+                            self.patch_notes_trainer.data_dir,
+                            self.patch_notes_trainer
+                        )
 
-                    # Log training stats
-                    stats = self.patch_notes_trainer.get_statistics()
-                    ab_stats = self.prompt_ab_testing.get_variant_statistics()
+                        # Log training stats
+                        stats = self.patch_notes_trainer.get_statistics()
+                        ab_stats = self.prompt_ab_testing.get_variant_statistics()
 
-                    self.logger.info(f"✅ Complete AI Learning System initialized:")
-                    self.logger.info(f"   📊 Training Examples: {stats['total_examples']}")
-                    self.logger.info(f"   🌟 Good Examples: {stats['good_examples']}")
-                    self.logger.info(f"   📈 Avg Quality Score: {stats['avg_quality_score']:.1f}/100")
-                    self.logger.info(f"   🧪 A/B Test Variants: {len(self.prompt_ab_testing.variants)}")
-                    self.logger.info(f"   🎯 Total A/B Tests Run: {sum(s['count'] for s in ab_stats.values())}")
+                        self.logger.info(f"✅ Complete AI Learning System initialized:")
+                        self.logger.info(f"   📊 Training Examples: {stats['total_examples']}")
+                        self.logger.info(f"   🌟 Good Examples: {stats['good_examples']}")
+                        self.logger.info(f"   📈 Avg Quality Score: {stats['avg_quality_score']:.1f}/100")
+                        self.logger.info(f"   🧪 A/B Test Variants: {len(self.prompt_ab_testing.variants)}")
+                        self.logger.info(f"   🎯 Total A/B Tests Run: {sum(s['count'] for s in ab_stats.values())}")
 
-                except Exception as e:
-                    self.logger.warning(f"⚠️ AI Learning System konnte nicht vollständig initialisiert werden: {e}", exc_info=True)
+                    except Exception as e:
+                        self.logger.warning(f"⚠️ AI Learning System konnte nicht vollständig initialisiert werden: {e}", exc_info=True)
+                        self.patch_notes_trainer = None
+                        self.feedback_collector = None
+                        self.prompt_ab_testing = None
+                        self.prompt_auto_tuner = None
+                        self.llm_fine_tuning = None
+                else:
+                    self.logger.info("⏸️ AI Learning deaktiviert (config.ai_learning.enabled=false) - Patch Notes laufen ohne Training/A-B-Tests")
                     self.patch_notes_trainer = None
+                    self.github_integration.patch_notes_trainer = None
                     self.feedback_collector = None
+                    self.github_integration.feedback_collector = None
                     self.prompt_ab_testing = None
+                    self.github_integration.prompt_ab_testing = None
                     self.prompt_auto_tuner = None
+                    self.github_integration.prompt_auto_tuner = None
                     self.llm_fine_tuning = None
 
                 # Initialize Advanced Patch Notes Manager (optional, for approval system)
@@ -733,72 +745,81 @@ class ShadowOpsBot(commands.Bot):
             # ============================================
             # PHASE 6: STARTE AI LEARNING (mit größerem Delay)
             # ============================================
-            self.logger.info("=" * 60)
-            self.logger.info("⏳ PHASE 6: AI Learning startet in 15 Sekunden...")
-            self.logger.info("=" * 60)
+            if self.config.ai_learning_enabled:
+                self.logger.info("=" * 60)
+                self.logger.info("⏳ PHASE 6: AI Learning startet in 15 Sekunden...")
+                self.logger.info("=" * 60)
 
-            await self._send_status_message(
-                "⏳ **Phase 6/6:** AI Learning startet in 15 Sekunden...\n"
-                "Warte bis Monitoring & Auto-Remediation stabil laufen...",
-                0x3498DB
-            )
-
-            # Warte 15 Sekunden bevor AI Learning startet
-            # Damit hat Monitoring Zeit, erste Scans durchzuführen
-            await asyncio.sleep(15)
-
-            # AI Learning wird vom Event Watcher automatisch gestartet
-            # Sende nur Status-Update
-            self.logger.info("=" * 60)
-            self.logger.info("✅ System vollständig hochgefahren - AI Learning kann starten")
-            self.logger.info("=" * 60)
-
-            await self._send_status_message(
-                "✅ **AI Learning bereit**\n"
-                "• Code Analyzer: Bereit für Vulnerability Scans\n"
-                "• Git History Learner: Bereit für Pattern Learning\n"
-                "• Knowledge Base: Aktiv",
-                0x00FF00
-            )
-
-            # ============================================
-            # START CONTINUOUS LEARNING SYSTEM
-            # ============================================
-            self.logger.info("=" * 60)
-            self.logger.info("🧠 Starting Continuous Learning System...")
-            self.logger.info("=" * 60)
-
-            try:
-                self.continuous_learning = ContinuousLearningAgent(
-                    bot=self,
-                    config=self.config,
-                    ai_service=self.ai_service,
-                    context_manager=self.context_manager,
-                    discord_logger=self.discord_logger
+                await self._send_status_message(
+                    "⏳ **Phase 6/6:** AI Learning startet in 15 Sekunden...\n"
+                    "Warte bis Monitoring & Auto-Remediation stabil laufen...",
+                    0x3498DB
                 )
-                await self.continuous_learning.start()
-                self.logger.info("✅ Continuous Learning System gestartet")
 
-                # Load Knowledge Stats Commands
+                # Warte 15 Sekunden bevor AI Learning startet
+                # Damit hat Monitoring Zeit, erste Scans durchzuführen
+                await asyncio.sleep(15)
+
+                # AI Learning wird vom Event Watcher automatisch gestartet
+                # Sende nur Status-Update
+                self.logger.info("=" * 60)
+                self.logger.info("✅ System vollständig hochgefahren - AI Learning kann starten")
+                self.logger.info("=" * 60)
+
+                await self._send_status_message(
+                    "✅ **AI Learning bereit**\n"
+                    "• Code Analyzer: Bereit für Vulnerability Scans\n"
+                    "• Git History Learner: Bereit für Pattern Learning\n"
+                    "• Knowledge Base: Aktiv",
+                    0x00FF00
+                )
+
+                # ============================================
+                # START CONTINUOUS LEARNING SYSTEM
+                # ============================================
+                self.logger.info("=" * 60)
+                self.logger.info("🧠 Starting Continuous Learning System...")
+                self.logger.info("=" * 60)
+
                 try:
-                    from commands.knowledge_stats import setup as setup_knowledge_stats
-                    await setup_knowledge_stats(
-                        self,
-                        self.continuous_learning.knowledge_synthesizer,
-                        self.config
+                    self.continuous_learning = ContinuousLearningAgent(
+                        bot=self,
+                        config=self.config,
+                        ai_service=self.ai_service,
+                        context_manager=self.context_manager,
+                        discord_logger=self.discord_logger
                     )
-                    self.logger.info("✅ Knowledge Stats Commands geladen")
+                    await self.continuous_learning.start()
+                    self.logger.info("✅ Continuous Learning System gestartet")
 
-                    # Sync commands to Discord
-                    guild = discord.Object(id=self.config.guild_id)
-                    self.tree.copy_global_to(guild=guild)
-                    await self.tree.sync(guild=guild)
-                    self.logger.info("✅ Knowledge Stats Commands synchronisiert")
+                    # Load Knowledge Stats Commands
+                    try:
+                        from commands.knowledge_stats import setup as setup_knowledge_stats
+                        await setup_knowledge_stats(
+                            self,
+                            self.continuous_learning.knowledge_synthesizer,
+                            self.config
+                        )
+                        self.logger.info("✅ Knowledge Stats Commands geladen")
+
+                        # Sync commands to Discord
+                        guild = discord.Object(id=self.config.guild_id)
+                        self.tree.copy_global_to(guild=guild)
+                        await self.tree.sync(guild=guild)
+                        self.logger.info("✅ Knowledge Stats Commands synchronisiert")
+                    except Exception as e:
+                        self.logger.error(f"❌ Fehler beim Laden der Knowledge Stats Commands: {e}", exc_info=True)
+
                 except Exception as e:
-                    self.logger.error(f"❌ Fehler beim Laden der Knowledge Stats Commands: {e}", exc_info=True)
-
-            except Exception as e:
-                self.logger.error(f"❌ Continuous Learning System konnte nicht gestartet werden: {e}", exc_info=True)
+                    self.logger.error(f"❌ Continuous Learning System konnte nicht gestartet werden: {e}", exc_info=True)
+            else:
+                self.logger.info("ℹ️ AI Learning deaktiviert (config.ai_learning.enabled=false) - überspringe Phase 6")
+                await self._send_status_message(
+                    "⏸️ **AI Learning pausiert**\n"
+                    "• Background-Learning/Knowledge-Building ist deaktiviert\n"
+                    "• Patch Notes KI bleibt aktiv",
+                    0x95A5A6
+                )
 
         else:
             self.logger.info("ℹ️ Auto-Remediation deaktiviert (config: auto_remediation.enabled=false)")

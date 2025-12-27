@@ -86,6 +86,22 @@ class Config:
         return self._config.get('ai', {})
 
     @property
+    def ai_learning(self) -> Dict[str, Any]:
+        return self._config.get('ai_learning', {})
+
+    @property
+    def ai_learning_enabled(self) -> bool:
+        """
+        Flag to pause AI learning/training features without disabling AI usage entirely.
+        Defaults to True for backward compatibility.
+        """
+        if 'enabled' in self.ai_learning:
+            return bool(self.ai_learning.get('enabled', True))
+        # Fallback: allow disabling via auto_remediation.ai_learning_enabled
+        auto_cfg = self.auto_remediation
+        return bool(auto_cfg.get('ai_learning_enabled', True))
+
+    @property
     def projects(self) -> Any:
         return self._config.get('projects', [])
 
