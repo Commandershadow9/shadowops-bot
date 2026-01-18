@@ -106,8 +106,14 @@ class DeploymentManager:
         """
         start_time = time.time()
 
-        # Check if project exists
-        if project_name not in self.projects:
+        # Check if project exists (case-insensitive fallback)
+        project_key = project_name
+        if project_key not in self.projects:
+            for key in self.projects.keys():
+                if key.lower() == project_name.lower():
+                    project_key = key
+                    break
+        if project_key not in self.projects:
             error_msg = f"Project '{project_name}' not found in deployment config"
             self.logger.error(f"❌ {error_msg}")
             return {
@@ -117,7 +123,7 @@ class DeploymentManager:
             }
 
         # Check if deployment is already in progress
-        if self.active_deployments.get(project_name, False):
+        if self.active_deployments.get(project_key, False):
             error_msg = f"Deployment already in progress for '{project_name}'"
             self.logger.warning(f"⚠️ {error_msg}")
             return {
@@ -127,10 +133,10 @@ class DeploymentManager:
             }
 
         # Mark deployment as active
-        self.active_deployments[project_name] = True
+        self.active_deployments[project_key] = True
 
         try:
-            project = self.projects[project_name]
+            project = self.projects[project_key]
             deploy_branch = branch or project['branch']
 
             self.logger.info(f"🚀 Starting deployment: {project_name} @ {deploy_branch}")
@@ -277,7 +283,7 @@ class DeploymentManager:
 
         finally:
             # Mark deployment as complete
-            self.active_deployments[project_name] = False
+            self.active_deployments[project_key] = False
 
     async def _create_backup(self, project: Dict) -> Path:
         """

@@ -392,6 +392,7 @@ discord:
   guild_id: 123456789
 
 ai:
+  enabled: true
   ollama:
     enabled: true
     url: http://localhost:11434
@@ -438,6 +439,11 @@ deployment:
   max_backups: 5
   health_check_timeout: 30
 ```
+
+**AI komplett deaktivieren (Monitoring + Patch Notes ohne KI):**
+- `ai.enabled: false`
+- `ai_learning.enabled: false`
+- `projects.*.patch_notes.use_ai: false`
 
 > ℹ️ **Config Loader**: Die Einstellungen können per Attribute **und** Dictionary-Access gelesen werden (z.B. `config.discord['token']` oder `config['discord']`). Fehlende Pflichtfelder (`discord.token`, `discord.guild_id`) lösen einen klaren `KeyError` aus, damit Fehlkonfigurationen sofort auffallen.
 
@@ -735,6 +741,9 @@ sudo -l
 
 # Backup-Verzeichnis prüfen
 ls -la backups/
+
+# Repo/Projekt-Name prüfen (Config ist case-insensitive)
+# z.B. "GuildScout" ↔ "guildscout"
 
 # Deployment-Logs
 tail -f logs/shadowops.log | grep deployment
