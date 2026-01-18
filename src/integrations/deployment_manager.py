@@ -299,28 +299,50 @@ class DeploymentManager:
         backup_name = f"{project['name']}_{timestamp}"
         backup_path = self.backup_dir / backup_name
 
-        # Create backup using rsync for efficiency
-        cmd = [
-            'rsync', '-a',
-            '--exclude=.git',
-            '--exclude=__pycache__',
-            '--exclude=*.pyc',
-            '--exclude=node_modules',
-            '--exclude=venv',
-            str(project['path']) + '/',
-            str(backup_path) + '/'
-        ]
-
-        process = await asyncio.create_subprocess_exec(
-            *cmd,
-            stdout=asyncio.subprocess.PIPE,
-            stderr=asyncio.subprocess.PIPE
+        ignore = shutil.ignore_patterns(
+            ".git",
+            "__pycache__",
+            "*.pyc",
+            "node_modules",
+            "venv",
         )
 
-        stdout, stderr = await process.communicate()
+        if shutil.which("rsync"):
+            # Create backup using rsync for efficiency
+            cmd = [
+                'rsync', '-a',
+                '--exclude=.git',
+                '--exclude=__pycache__',
+                '--exclude=*.pyc',
+                '--exclude=node_modules',
+                '--exclude=venv',
+                str(project['path']) + '/',
+                str(backup_path) + '/'
+            ]
 
-        if process.returncode != 0:
-            raise DeploymentError(f"Backup failed: {stderr.decode()}")
+            process = await asyncio.create_subprocess_exec(
+                *cmd,
+                stdout=asyncio.subprocess.PIPE,
+                stderr=asyncio.subprocess.PIPE
+            )
+
+            stdout, stderr = await process.communicate()
+
+            if process.returncode != 0:
+                raise DeploymentError(f"Backup failed: {stderr.decode()}")
+        else:
+            self.logger.warning("⚠️ rsync not found, using Python copy for backup")
+            await self._send_deployment_update(
+                project['name'],
+                "⚠️ rsync fehlt, nutze Python-Backup (langsamer).",
+            )
+            await asyncio.to_thread(
+                shutil.copytree,
+                project['path'],
+                backup_path,
+                ignore=ignore,
+                dirs_exist_ok=True,
+            )
 
         # Clean up old backups
         await self._cleanup_old_backups(project['name'])
@@ -502,23 +524,51 @@ class DeploymentManager:
         if not backup_path.exists():
             raise DeploymentError(f"Backup not found: {backup_path}")
 
-        # Restore from backup using rsync
-        cmd = [
-            'rsync', '-a', '--delete',
-            str(backup_path) + '/',
-            str(project['path']) + '/'
-        ]
+        if shutil.which("rsync"):
+            # Restore from backup using rsync
+            cmd = [
+                'rsync', '-a', '--delete',
+                str(backup_path) + '/',
+                str(project['path']) + '/'
+            ]
 
-        process = await asyncio.create_subprocess_exec(
-            *cmd,
-            stdout=asyncio.subprocess.PIPE,
-            stderr=asyncio.subprocess.PIPE
+            process = await asyncio.create_subprocess_exec(
+                *cmd,
+                stdout=asyncio.subprocess.PIPE,
+                stderr=asyncio.subprocess.PIPE
+            )
+
+            stdout, stderr = await process.communicate()
+
+            if process.returncode != 0:
+                raise DeploymentError(f"Rollback failed: {stderr.decode()}")
+            return
+
+        self.logger.warning("⚠️ rsync not found, using Python rollback (slower)")
+        await self._send_deployment_update(
+            project['name'],
+            "⚠️ rsync fehlt, nutze Python-Rollback (langsamer).",
+        )
+        await asyncio.to_thread(self._purge_project_path, project['path'])
+        await asyncio.to_thread(
+            shutil.copytree,
+            backup_path,
+            project['path'],
+            dirs_exist_ok=True,
         )
 
-        stdout, stderr = await process.communicate()
-
-        if process.returncode != 0:
-            raise DeploymentError(f"Rollback failed: {stderr.decode()}")
+    def _purge_project_path(self, path: Path) -> None:
+        """Remove project files while keeping the git directory."""
+        for entry in path.iterdir():
+            if entry.name == ".git":
+                continue
+            if entry.is_dir():
+                shutil.rmtree(entry)
+            else:
+                try:
+                    entry.unlink()
+                except FileNotFoundError:
+                    pass
 
 
     async def _send_deployment_started(self, project_name: str, branch: str):

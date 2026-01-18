@@ -745,6 +745,9 @@ ls -la backups/
 # Repo/Projekt-Name prüfen (Config ist case-insensitive)
 # z.B. "GuildScout" ↔ "guildscout"
 
+# rsync prüfen (wird für Backup/Rollback genutzt; ohne rsync gibt es einen Fallback)
+which rsync
+
 # Deployment-Logs
 tail -f logs/shadowops.log | grep deployment
 ```
