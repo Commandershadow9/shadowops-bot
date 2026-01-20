@@ -366,13 +366,18 @@ class AIService:
             logger.warning("Ollama is not enabled, cannot generate raw AI response for patch.")
             return None
 
-        # RAM Management: Try to free RAM and retry instead of using smaller models
+        # RAM Management: Prefer critical model, but allow fallback to standard if critical fails
         if self.use_hybrid_models and use_critical_model:
             selected_model = self.ollama_model_critical
             timeout = 360.0
         else:
             selected_model = self.ollama_model
             timeout = 120.0
+
+        fallback_model = None
+        used_fallback = False
+        if self.use_hybrid_models and use_critical_model and self.ollama_model != selected_model:
+            fallback_model = self.ollama_model
 
         # 🤖 KI-Learning: Proaktive RAM-Prüfung vor dem Call
         await self._check_ram_proactively(selected_model)
@@ -405,7 +410,26 @@ class AIService:
                             logger.error(f"Ollama raw API error: HTTP {response.status_code} - {error_message}")
 
                             # Intelligent RAM error detection and recovery
-                            if response.status_code == 500 and "system memory" in error_message.lower():
+                            is_memory_error = (
+                                response.status_code == 500
+                                and "system memory" in error_message.lower()
+                            )
+                            is_runner_stop = (
+                                response.status_code == 500
+                                and "runner has unexpectedly stopped" in error_message.lower()
+                            )
+
+                            if (is_memory_error or is_runner_stop) and fallback_model and not used_fallback:
+                                logger.warning(
+                                    f"⚠️ Critical model failed, falling back to {fallback_model}"
+                                )
+                                used_fallback = True
+                                selected_model = fallback_model
+                                timeout = 120.0
+                                await asyncio.sleep(2)
+                                continue
+
+                            if is_memory_error:
                                 logger.warning(f"⚠️ RAM shortage detected for {selected_model}")
 
                                 # Track RAM event for learning system
@@ -568,6 +592,15 @@ class AIService:
 
             except httpx.HTTPStatusError as e:
                 logger.error(f"Ollama raw request failed with status {e.response.status_code}")
+                if fallback_model and not used_fallback:
+                    logger.warning(
+                        f"⚠️ Raw request failed, retrying with fallback model {fallback_model}"
+                    )
+                    used_fallback = True
+                    selected_model = fallback_model
+                    timeout = 120.0
+                    await asyncio.sleep(2)
+                    continue
                 if attempt < max_retries:
                     logger.info(f"🔄 Retrying...")
                     await asyncio.sleep(3)
@@ -575,6 +608,15 @@ class AIService:
                 return None
             except Exception as e:
                 logger.error(f"Ollama raw request error: {e}")
+                if fallback_model and not used_fallback and "Server disconnected" in str(e):
+                    logger.warning(
+                        f"⚠️ Connection issue, retrying with fallback model {fallback_model}"
+                    )
+                    used_fallback = True
+                    selected_model = fallback_model
+                    timeout = 120.0
+                    await asyncio.sleep(2)
+                    continue
                 if attempt < max_retries:
                     logger.info(f"🔄 Retrying...")
                     await asyncio.sleep(3)

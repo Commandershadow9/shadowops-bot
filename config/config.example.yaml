@@ -90,6 +90,11 @@ auto_remediation:
     fail2ban: 30      # 30 Sekunden - IP-Ban Monitoring
     aide: 900         # 15 Minuten - File Integrity Checks
 
+  # === DISCORD ACTIVITY LOGS ===
+  # Sendet periodische "Scan OK" Meldungen in den Bot-Status-Channel.
+  activity_logs_enabled: true
+  activity_log_seconds: 3600
+
   # === CIRCUIT BREAKER (Verhindert Endlos-Loops) ===
   circuit_breaker_threshold: 5    # Max 5 Fehler...
   circuit_breaker_timeout: 3600   # ...dann 1h Pause
@@ -124,6 +129,8 @@ auto_remediation:
 # ║ Hierarchie: Ollama (lokal) → Claude → OpenAI (Fallback)                 ║
 # ╚═══════════════════════════════════════════════════════════════════════════╝
 ai:
+  # Globales AI-Toggle (deaktiviert alle AI-Features inkl. Remediation/Queue/Learning)
+  enabled: true
   # === OLLAMA (PRIMARY - lokal & kostenlos) ===
   ollama:
     enabled: true

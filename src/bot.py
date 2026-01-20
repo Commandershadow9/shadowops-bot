@@ -84,6 +84,8 @@ class ShadowOpsBot(commands.Bot):
         self.event_watcher = None
         self.self_healing = None
         self.orchestrator = None
+        self.ai_service = None
+        self.context_manager = None
 
         # Phase 5: Multi-Project Management (v3.1)
         self.github_integration = None
@@ -466,46 +468,56 @@ class ShadowOpsBot(commands.Bot):
                 0x3498DB
             )
 
-            # Initialisiere Context Manager (RAG System)
-            self.logger.info("🔄 [1/5] Initialisiere Context Manager (RAG)...")
-            self.context_manager = ContextManager(config=self.config)
-            self.context_manager.load_all_contexts()
-            self.logger.info("✅ [1/5] Context Manager bereit")
+            ai_enabled = self.config.ai_enabled
+            if ai_enabled:
+                # Initialisiere Context Manager (RAG System)
+                self.logger.info("🔄 [1/5] Initialisiere Context Manager (RAG)...")
+                self.context_manager = ContextManager(config=self.config)
+                self.context_manager.load_all_contexts()
+                self.logger.info("✅ [1/5] Context Manager bereit")
 
-            # Initialisiere AI Service mit Context Manager und Discord Logger
-            self.logger.info("🔄 [2/5] Initialisiere AI Service...")
-            self.ai_service = AIService(
-                self.config,
-                context_manager=self.context_manager,
-                discord_logger=self.discord_logger
-            )
-            # Set ai_service reference for Auto-Fix Manager
-            self.auto_fix_manager.ai_service = self.ai_service
-            self.logger.info("✅ [2/5] AI Service bereit")
+                # Initialisiere AI Service mit Context Manager und Discord Logger
+                self.logger.info("🔄 [2/5] Initialisiere AI Service...")
+                self.ai_service = AIService(
+                    self.config,
+                    context_manager=self.context_manager,
+                    discord_logger=self.discord_logger
+                )
+                # Set ai_service reference for Auto-Fix Manager
+                self.auto_fix_manager.ai_service = self.ai_service
+                self.logger.info("✅ [2/5] AI Service bereit")
 
-            # Initialisiere Ollama Queue Manager (verhindert Resource Exhaustion)
-            self.logger.info("🔄 [2.5/5] Initialisiere Ollama Queue Manager...")
-            self.queue_manager = OllamaQueueManager(ai_service=self.ai_service)
-            await self.queue_manager.start_worker()
-            self.logger.info("✅ [2.5/5] Ollama Queue Manager bereit (Security-First Queuing aktiv)")
+                # Initialisiere Ollama Queue Manager (verhindert Resource Exhaustion)
+                self.logger.info("🔄 [2.5/5] Initialisiere Ollama Queue Manager...")
+                self.queue_manager = OllamaQueueManager(ai_service=self.ai_service)
+                await self.queue_manager.start_worker()
+                self.logger.info("✅ [2.5/5] Ollama Queue Manager bereit (Security-First Queuing aktiv)")
 
-            # Initialisiere Self-Healing
-            self.logger.info("🔄 [3/5] Initialisiere Self-Healing Coordinator...")
-            self.self_healing = SelfHealingCoordinator(self, self.config, discord_logger=self.discord_logger)
-            await self.self_healing.initialize(ai_service=self.ai_service)
-            self.logger.info("✅ [3/5] Self-Healing Coordinator bereit")
+                # Initialisiere Self-Healing
+                self.logger.info("🔄 [3/5] Initialisiere Self-Healing Coordinator...")
+                self.self_healing = SelfHealingCoordinator(self, self.config, discord_logger=self.discord_logger)
+                await self.self_healing.initialize(ai_service=self.ai_service)
+                self.logger.info("✅ [3/5] Self-Healing Coordinator bereit")
 
-            # Initialisiere Remediation Orchestrator
-            self.logger.info("🔄 [4/5] Initialisiere Remediation Orchestrator...")
-            self.orchestrator = RemediationOrchestrator(
-                ai_service=self.ai_service,
-                self_healing_coordinator=self.self_healing,
-                approval_manager=self.self_healing.approval_manager,
-                config=self.config,
-                bot=self,
-                discord_logger=self.discord_logger
-            )
-            self.logger.info("✅ [4/5] Remediation Orchestrator bereit")
+                # Initialisiere Remediation Orchestrator
+                self.logger.info("🔄 [4/5] Initialisiere Remediation Orchestrator...")
+                self.orchestrator = RemediationOrchestrator(
+                    ai_service=self.ai_service,
+                    self_healing_coordinator=self.self_healing,
+                    approval_manager=self.self_healing.approval_manager,
+                    config=self.config,
+                    bot=self,
+                    discord_logger=self.discord_logger
+                )
+                self.logger.info("✅ [4/5] Remediation Orchestrator bereit")
+            else:
+                self.logger.info("⏸️ AI-Funktionen deaktiviert - Remediation läuft im Monitoring-Modus")
+                self.context_manager = None
+                self.ai_service = None
+                self.auto_fix_manager.ai_service = None
+                self.queue_manager = None
+                self.self_healing = None
+                self.orchestrator = None
 
             # Initialisiere Event Watcher
             self.logger.info("🔄 [5/5] Initialisiere Event Watcher...")
@@ -538,26 +550,40 @@ class ShadowOpsBot(commands.Bot):
             # Warte 5 Sekunden damit alle Core Services vollständig initialisiert sind
             await asyncio.sleep(5)
 
-            self.logger.info("🚀 Starte Self-Healing Coordinator...")
-            await self.self_healing.start()
-            self.logger.info("✅ Self-Healing Coordinator gestartet")
+            if self.self_healing:
+                self.logger.info("🚀 Starte Self-Healing Coordinator...")
+                await self.self_healing.start()
+                self.logger.info("✅ Self-Healing Coordinator gestartet")
+            else:
+                self.logger.info("⏸️ Self-Healing Coordinator deaktiviert")
 
             # Warte 3 Sekunden bevor Event Watcher startet
             await asyncio.sleep(3)
 
-            self.logger.info("🚀 Starte Event Watcher...")
-            await self.event_watcher.start()
-            self.logger.info("✅ Event Watcher gestartet")
+            if self.event_watcher:
+                self.logger.info("🚀 Starte Event Watcher...")
+                await self.event_watcher.start()
+                self.logger.info("✅ Event Watcher gestartet")
+            else:
+                self.logger.info("⏸️ Event Watcher deaktiviert")
 
             self.logger.info("=" * 60)
             self.logger.info("✅ Auto-Remediation System vollständig aktiv")
             self.logger.info("=" * 60)
 
+            status_title = "✅ **Auto-Remediation System aktiv**"
+            if not self.orchestrator and not self.self_healing:
+                status_title = "✅ **Auto-Remediation Monitoring aktiv**"
+
+            orchestrator_status = "✅ Koordination aktiv" if self.orchestrator else "⏸️ deaktiviert"
+            healing_status = "✅ Gestartet" if self.self_healing else "⏸️ deaktiviert"
+            watcher_status = "✅ Gestartet" if self.event_watcher else "⏸️ deaktiviert"
+
             await self._send_status_message(
-                "✅ **Auto-Remediation System aktiv**\n"
-                f"• Remediation Orchestrator: ✅ Koordination aktiv\n"
-                f"• Self-Healing Coordinator: ✅ Gestartet\n"
-                f"• Event Watcher: ✅ Gestartet\n"
+                f"{status_title}\n"
+                f"• Remediation Orchestrator: {orchestrator_status}\n"
+                f"• Self-Healing Coordinator: {healing_status}\n"
+                f"• Event Watcher: {watcher_status}\n"
                 f"• Scan Intervals: Trivy=6h, CrowdSec/Fail2ban=60s, AIDE=15min",
                 0x00FF00
             )
@@ -606,7 +632,7 @@ class ShadowOpsBot(commands.Bot):
                 self.github_integration.ai_service = self.ai_service  # For KI patch notes
 
                 # Initialize Complete AI Learning System for Patch Notes
-                if self.config.ai_learning_enabled:
+                if self.config.ai_learning_enabled and self.config.ai_enabled:
                     try:
                         from integrations.patch_notes_trainer import get_patch_notes_trainer
                         from integrations.patch_notes_feedback import get_feedback_collector
@@ -659,7 +685,7 @@ class ShadowOpsBot(commands.Bot):
                         self.prompt_auto_tuner = None
                         self.llm_fine_tuning = None
                 else:
-                    self.logger.info("⏸️ AI Learning deaktiviert (config.ai_learning.enabled=false) - Patch Notes laufen ohne Training/A-B-Tests")
+                    self.logger.info("⏸️ AI Learning deaktiviert - Patch Notes laufen ohne Training/A-B-Tests")
                     self.patch_notes_trainer = None
                     self.github_integration.patch_notes_trainer = None
                     self.feedback_collector = None
@@ -671,17 +697,25 @@ class ShadowOpsBot(commands.Bot):
                     self.llm_fine_tuning = None
 
                 # Initialize Advanced Patch Notes Manager (optional, for approval system)
-                try:
-                    from integrations.patch_notes_manager import get_patch_notes_manager
-                    self.patch_notes_manager = get_patch_notes_manager(self, self.ai_service)
-                    self.github_integration.patch_notes_manager = self.patch_notes_manager
-                    self.logger.info("✅ Advanced Patch Notes Manager initialisiert (optional)")
-                except Exception as e:
-                    self.logger.debug(f"Advanced Patch Notes Manager nicht verfügbar: {e}")
+                if self.ai_service:
+                    try:
+                        from integrations.patch_notes_manager import get_patch_notes_manager
+                        self.patch_notes_manager = get_patch_notes_manager(self, self.ai_service)
+                        self.github_integration.patch_notes_manager = self.patch_notes_manager
+                        self.logger.info("✅ Advanced Patch Notes Manager initialisiert (optional)")
+                    except Exception as e:
+                        self.logger.debug(f"Advanced Patch Notes Manager nicht verfügbar: {e}")
+                        self.patch_notes_manager = None
+                else:
                     self.patch_notes_manager = None
 
                 await self.github_integration.start_webhook_server()
-                self.logger.info("✅ [5/6] GitHub Integration gestartet (Webhook Server läuft)")
+                await self.github_integration.start_local_polling()
+                await self.github_integration.ensure_project_webhooks()
+                if self.github_integration.enabled:
+                    self.logger.info("✅ [5/6] GitHub Integration gestartet (Webhook Server läuft)")
+                else:
+                    self.logger.warning("⚠️ [5/6] GitHub Webhook Server nicht aktiv - prüfe Port/Config")
 
                 # Link Queue Manager to GitHub Integration for AI requests
                 if self.queue_manager:
@@ -745,7 +779,7 @@ class ShadowOpsBot(commands.Bot):
             # ============================================
             # PHASE 6: STARTE AI LEARNING (mit größerem Delay)
             # ============================================
-            if self.config.ai_learning_enabled:
+            if self.config.ai_learning_enabled and self.config.ai_enabled:
                 self.logger.info("=" * 60)
                 self.logger.info("⏳ PHASE 6: AI Learning startet in 15 Sekunden...")
                 self.logger.info("=" * 60)
@@ -813,11 +847,11 @@ class ShadowOpsBot(commands.Bot):
                 except Exception as e:
                     self.logger.error(f"❌ Continuous Learning System konnte nicht gestartet werden: {e}", exc_info=True)
             else:
-                self.logger.info("ℹ️ AI Learning deaktiviert (config.ai_learning.enabled=false) - überspringe Phase 6")
+                self.logger.info("ℹ️ AI Learning deaktiviert - überspringe Phase 6")
                 await self._send_status_message(
                     "⏸️ **AI Learning pausiert**\n"
                     "• Background-Learning/Knowledge-Building ist deaktiviert\n"
-                    "• Patch Notes KI bleibt aktiv",
+                    "• Patch Notes laufen ohne KI",
                     0x95A5A6
                 )
 
@@ -1285,17 +1319,18 @@ def ensure_single_instance():
         try:
             old_pid = int(pid_file.read_text().strip())
 
-            # Check if process with that PID still exists
-            try:
-                os.kill(old_pid, 0)  # Signal 0 = check if process exists
-                print(f"❌ FEHLER: Bot läuft bereits (PID: {old_pid})")
-                print(f"   PID-Datei: {pid_file}")
-                print(f"   Zum Stoppen: kill {old_pid}")
-                sys.exit(1)
-            except OSError:
-                # Process doesn't exist anymore, PID file is stale
-                print(f"⚠️  Stale PID file gefunden (alter PID: {old_pid}), wird entfernt...")
-                pid_file.unlink()
+            if old_pid != current_pid:
+                # Check if process with that PID still exists
+                try:
+                    os.kill(old_pid, 0)  # Signal 0 = check if process exists
+                    print(f"❌ FEHLER: Bot läuft bereits (PID: {old_pid})")
+                    print(f"   PID-Datei: {pid_file}")
+                    print(f"   Zum Stoppen: kill {old_pid}")
+                    sys.exit(1)
+                except OSError:
+                    # Process doesn't exist anymore, PID file is stale
+                    print(f"⚠️  Stale PID file gefunden (alter PID: {old_pid}), wird entfernt...")
+                    pid_file.unlink()
         except (ValueError, FileNotFoundError):
             # Invalid or missing PID file
             pid_file.unlink(missing_ok=True)

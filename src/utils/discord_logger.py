@@ -68,6 +68,8 @@ class DiscordChannelLogger:
         self.channels['critical'] = self.config.channels.get('critical')
         self.channels['docker'] = self.config.channels.get('docker')
         self.channels['fail2ban'] = self.config.channels.get('fail2ban')
+        self.channels['crowdsec'] = self.config.channels.get('crowdsec')
+        self.channels['aide'] = self.config.channels.get('aide')
 
         logger.debug(f"Loaded {len([v for v in self.channels.values() if v])} channel IDs")
 
@@ -161,6 +163,10 @@ class DiscordChannelLogger:
             self.message_queue.put_nowait((channel_key, message, embed))
         except asyncio.QueueFull:
             logger.warning(f"Discord log queue is full! Dropping message for '{channel_key}'.")
+
+    def log_channel(self, channel_key: str, message: str, embed: Optional[discord.Embed] = None, severity: Optional[str] = None):
+        """Log message to any configured channel."""
+        self._log(channel_key, message, embed, severity)
 
     def _add_severity_icon(self, message: str, severity: Optional[str] = None) -> str:
         """Fügt Severity-Icon zur Message hinzu für bessere Übersichtlichkeit"""

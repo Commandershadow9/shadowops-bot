@@ -5,6 +5,7 @@ Monitors all security integrations for new threats/vulnerabilities and triggers 
 
 import asyncio
 import logging
+import time
 from datetime import datetime, timedelta
 from typing import Dict, List, Optional, Set
 from dataclasses import dataclass, field
@@ -96,6 +97,14 @@ class SecurityEventWatcher:
             'aide': {'scans': 0, 'events': 0, 'last_scan': None},
         }
 
+        # Discord activity logs (throttled)
+        self.activity_logs_enabled = True
+        self.activity_log_interval = 3600
+        if hasattr(config, 'auto_remediation') and config.auto_remediation:
+            self.activity_logs_enabled = bool(config.auto_remediation.get('activity_logs_enabled', True))
+            self.activity_log_interval = int(config.auto_remediation.get('activity_log_seconds', 3600) or 3600)
+        self.last_activity_log: Dict[str, float] = {}
+
     async def initialize(self, trivy, crowdsec, fail2ban, aide):
         """Initialize with integration instances"""
         self.trivy = trivy
@@ -138,6 +147,18 @@ class SecurityEventWatcher:
                    f"Fail2ban={self.intervals['fail2ban']}s, "
                    f"AIDE={self.intervals['aide']}s")
 
+        self._log_activity(
+            "startup",
+            "🛡️ **Security-Tools aktiv**\n"
+            f"• Trivy: Scan alle {self.intervals['trivy']}s\n"
+            f"• CrowdSec: Scan alle {self.intervals['crowdsec']}s\n"
+            f"• Fail2ban: Scan alle {self.intervals['fail2ban']}s\n"
+            f"• AIDE: Scan alle {self.intervals['aide']}s\n"
+            "• Alerts werden in den Security-Channels gepostet",
+            severity="info",
+            force=True
+        )
+
     async def stop(self):
         """Stop all event watchers"""
         logger.info("🛑 Stopping Security Event Watcher...")
@@ -150,6 +171,31 @@ class SecurityEventWatcher:
         self.watcher_tasks.clear()
 
         logger.info("✅ Event Watcher stopped")
+
+    def _log_activity(self, source: str, message: str, severity: str = "info", force: bool = False) -> None:
+        """Send throttled activity logs to the bot status channel."""
+        if not self.activity_logs_enabled:
+            return
+        if not getattr(self.bot, 'discord_logger', None):
+            return
+        if not getattr(self.bot.discord_logger, 'running', False):
+            return
+
+        channel_map = {
+            'trivy': 'docker',
+            'crowdsec': 'crowdsec',
+            'fail2ban': 'fail2ban',
+            'aide': 'aide',
+        }
+        channel_key = channel_map.get(source, 'bot_status')
+
+        now = time.time()
+        last_seen = self.last_activity_log.get(source, 0.0)
+        if not force and (now - last_seen) < self.activity_log_interval:
+            return
+
+        self.last_activity_log[source] = now
+        self.bot.discord_logger.log_channel(channel_key, message, severity=severity)
 
     async def _watch_trivy(self):
         """Watch for Docker vulnerabilities"""
@@ -194,6 +240,12 @@ class SecurityEventWatcher:
                     self.stats['trivy']['events'] += new_events
                     print(f"🐳 Trivy: {new_events} neue Batch-Events erkannt → Auto-Remediation")
                     logger.info(f"🐳 Trivy: {new_events} neue Batch-Events erkannt")
+                    self._log_activity(
+                        "trivy",
+                        f"🐳 Trivy: {new_events} neue Findings erkannt (Details im Docker-Channel)",
+                        severity="warning",
+                        force=True
+                    )
                 else:
                     print(f"🐳 Trivy: Keine neuen Events (Scan bereits verarbeitet)")
 
@@ -233,6 +285,12 @@ class SecurityEventWatcher:
                 if new_events > 0:
                     self.stats['crowdsec']['events'] += new_events
                     logger.info(f"🛡️ CrowdSec: {new_events} neue Threats erkannt")
+                    self._log_activity(
+                        "crowdsec",
+                        f"🛡️ CrowdSec: {new_events} neue Threat(s) erkannt (Details im CrowdSec-Channel)",
+                        severity="warning",
+                        force=True
+                    )
 
             except Exception as e:
                 logger.error(f"❌ CrowdSec watcher error: {e}", exc_info=True)
@@ -274,6 +332,12 @@ class SecurityEventWatcher:
                         await self._handle_new_event(batch_event)
                         self.stats['fail2ban']['events'] += 1
                         logger.info(f"🚫 Fail2ban: 1 Batch-Event mit {len(bans)} Bans erkannt")
+                        self._log_activity(
+                            "fail2ban",
+                            f"🚫 Fail2ban: {len(bans)} Bann(s) erkannt (Details im Fail2ban-Channel)",
+                            severity="warning",
+                            force=True
+                        )
                     else:
                         print(f"🚫 Fail2ban: Scan already processed (no new bans)")
 
@@ -314,6 +378,12 @@ class SecurityEventWatcher:
                 if new_events > 0:
                     self.stats['aide']['events'] += new_events
                     logger.info(f"📁 AIDE: {new_events} File Integrity Violations erkannt")
+                    self._log_activity(
+                        "aide",
+                        f"📁 AIDE: {new_events} Dateiänderung(en) erkannt (Details im AIDE-Channel)",
+                        severity="warning",
+                        force=True
+                    )
 
             except Exception as e:
                 logger.error(f"❌ AIDE watcher error: {e}", exc_info=True)
@@ -530,6 +600,10 @@ class SecurityEventWatcher:
 
         # Send channel alerts (for visibility)
         await self._send_channel_alert(event)
+
+        if hasattr(self.bot, 'config') and hasattr(self.bot.config, 'ai_enabled') and not self.bot.config.ai_enabled:
+            logger.info("⏸️ AI-Remediation deaktiviert - Event wird nur geloggt")
+            return
 
         # Route event to Orchestrator (coordinated remediation)
         # The Orchestrator batches events and creates a coordinated plan

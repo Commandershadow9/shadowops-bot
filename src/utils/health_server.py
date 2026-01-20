@@ -100,15 +100,15 @@ class HealthCheckServer:
         components = {}
 
         # Check if core components are initialized
-        if hasattr(self.bot, 'ai_service'):
+        if getattr(self.bot, 'ai_service', None):
             components['ai_service'] = 'active'
-        if hasattr(self.bot, 'self_healing'):
+        if getattr(self.bot, 'self_healing', None):
             components['self_healing'] = 'active'
-        if hasattr(self.bot, 'project_monitor'):
+        if getattr(self.bot, 'project_monitor', None):
             components['project_monitor'] = 'active'
             if hasattr(self.bot.project_monitor, 'projects'):
                 components['monitored_projects'] = len(self.bot.project_monitor.projects)
-        if hasattr(self.bot, 'deployment_manager'):
+        if getattr(self.bot, 'deployment_manager', None):
             components['deployment_manager'] = 'active'
 
         response_data = {

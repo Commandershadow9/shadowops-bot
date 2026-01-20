@@ -37,6 +37,22 @@ class CodeAnalyzer:
         """
         self.project_path = Path(project_path)
         self.source_dir = self.project_path / 'src'
+        self._js_parser_available: Optional[bool] = None
+        self._skip_dirs = {
+            '.git',
+            'node_modules',
+            '.next',
+            'dist',
+            'build',
+            'out',
+            'coverage',
+            'vendor',
+            '__pycache__',
+            '.venv',
+            'venv',
+            'env',
+            'backups'
+        }
 
         # Cache
         self.structure_cache: Optional[Dict[str, Any]] = None
@@ -117,7 +133,7 @@ class CodeAnalyzer:
         for base in source_dirs:
             for ext in extensions:
                 for path in base.rglob(ext):
-                    if '__pycache__' in str(path):
+                    if any(part in self._skip_dirs for part in path.parts):
                         continue
                     yield path
 
@@ -263,7 +279,7 @@ class CodeAnalyzer:
                 info['classes'] = []
 
                 esprima_bin = Path(__file__).parent.parent.parent / 'scripts' / 'parse-js-ts.js'
-                if esprima_bin.exists():
+                if esprima_bin.exists() and self._js_parser_available is not False:
                     try:
                         result = subprocess.run(
                             ['node', str(esprima_bin), str(file_path)],
@@ -272,6 +288,7 @@ class CodeAnalyzer:
                             timeout=10
                         )
                         if result.returncode == 0:
+                            self._js_parser_available = True
                             summaries = json.loads(result.stdout)
                             if summaries:
                                 summary = summaries[0]
@@ -280,7 +297,12 @@ class CodeAnalyzer:
                                 info['js_classes'].extend(summary.get('classes', []))
                                 info['exports'].extend(summary.get('exports', []))
                         else:
-                            logger.debug(f"esprima parser failed for {file_path}: {result.stderr}")
+                            if 'Cannot find module' in result.stderr and 'esprima' in result.stderr:
+                                if self._js_parser_available is None:
+                                    logger.info("esprima nicht verfuegbar, JS/TS AST-Parsing wird uebersprungen")
+                                self._js_parser_available = False
+                            else:
+                                logger.debug(f"esprima parser failed for {file_path}: {result.stderr}")
                     except Exception as e:
                         logger.debug(f"esprima parser error for {file_path}: {e}")
 

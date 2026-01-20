@@ -9,6 +9,13 @@ LOG_FILE="/tmp/shadowops-bot.log"
 cd "$BOT_DIR" || exit 1
 
 # Prüfe, ob bereits eine Instanz läuft
+RUNNING_PIDS=$(pgrep -f "python.*src/bot.py" || true)
+if [ -n "$RUNNING_PIDS" ]; then
+    echo "❌ Bot läuft bereits (PIDs: $RUNNING_PIDS)"
+    echo "Zum Stoppen: kill $RUNNING_PIDS"
+    exit 1
+fi
+
 if [ -f "$PID_FILE" ]; then
     OLD_PID=$(cat "$PID_FILE")
     if ps -p "$OLD_PID" > /dev/null 2>&1; then
@@ -21,11 +28,6 @@ if [ -f "$PID_FILE" ]; then
     fi
 fi
 
-# Stoppe alle laufenden Bot-Instanzen (Cleanup)
-echo "🧹 Cleanup: Stoppe alte Bot-Instanzen..."
-pkill -9 -f "python.*src/bot.py" 2>/dev/null || true
-sleep 2
-
 # Aktiviere Virtual Environment und starte Bot
 echo "🚀 Starte ShadowOps Bot..."
 source venv/bin/activate
@@ -33,12 +35,9 @@ source venv/bin/activate
 python3 src/bot.py > "$LOG_FILE" 2>&1 &
 BOT_PID=$!
 
-# Speichere PID
-echo "$BOT_PID" > "$PID_FILE"
-
 echo "✅ Bot gestartet (PID: $BOT_PID)"
 echo "📊 Logs: tail -f $LOG_FILE"
-echo "🛑 Stoppen: kill $BOT_PID"
+echo "🛑 Stoppen: kill $BOT_PID (oder kill \$(cat $PID_FILE), wenn PID-Datei da ist)"
 
 # Zeige erste Log-Zeilen
 sleep 3

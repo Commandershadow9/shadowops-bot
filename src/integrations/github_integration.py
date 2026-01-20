@@ -8,11 +8,15 @@ import hashlib
 import hmac
 import json
 import logging
+import subprocess
 from typing import Dict, Optional, Callable
 from datetime import datetime
 from pathlib import Path
 from aiohttp import web
+import aiohttp
 import discord
+from utils.state_manager import get_state_manager
+from integrations.git_history_analyzer import GitHistoryAnalyzer
 
 logger = logging.getLogger('shadowops')
 
@@ -40,6 +44,7 @@ class GitHubIntegration:
         self.config = config
         self.logger = logger
         self.ai_service = None  # Will be set by bot after AI Service is initialized
+        self.state_manager = get_state_manager()
 
         def _get_section(name: str, default=None):
             """Safely fetch config sections from dicts or Config objects."""
@@ -62,6 +67,18 @@ class GitHubIntegration:
         self.enabled = github_config.get('enabled', False)
         self.auto_deploy_enabled = github_config.get('auto_deploy', False)
         self.deploy_branches = github_config.get('deploy_branches', ['main', 'master'])
+        self.auto_create_webhooks = github_config.get('auto_create_webhooks', False)
+        self.webhook_public_url = github_config.get('webhook_public_url', '')
+        self.webhook_events = github_config.get('webhook_events', ['push', 'pull_request', 'release'])
+        self.local_polling_enabled = github_config.get('local_polling_enabled', True)
+        self.local_polling_interval = github_config.get('local_polling_interval', 60)
+        self.local_polling_fetch = github_config.get('local_polling_fetch', False)
+        self.local_polling_initial_skip = github_config.get('local_polling_initial_skip', True)
+        self.local_polling_max_commits = github_config.get('local_polling_max_commits', 50)
+        self.dedupe_ttl_seconds = github_config.get('dedupe_ttl_seconds', 300)
+        self.patch_notes_include_diffs = github_config.get('patch_notes_include_diffs', True)
+        self.patch_notes_diff_max_commits = github_config.get('patch_notes_diff_max_commits', 5)
+        self.patch_notes_diff_max_lines = github_config.get('patch_notes_diff_max_lines', 120)
 
         # Discord notification channel
         channels_config = _get_section('channels', {})
@@ -98,6 +115,8 @@ class GitHubIntegration:
         # Pending webhooks queue (for when bot is not ready yet)
         self.pending_webhooks = []
         self.bot_ready = False
+        self.local_polling_task = None
+        self._inflight_commits: Dict[str, float] = {}
 
         self.logger.info(f"🔧 GitHub Integration initialized (enabled: {self.enabled})")
 
@@ -184,7 +203,266 @@ class GitHubIntegration:
             await self.site.stop()
         if self.runner:
             await self.runner.cleanup()
+        await self.stop_local_polling()
         self.logger.info("🛑 GitHub webhook server stopped")
+
+    async def ensure_project_webhooks(self):
+        """Ensure GitHub webhooks exist for configured projects."""
+        if not self.auto_create_webhooks:
+            return
+
+        github_token = self._get_github_token()
+        if not github_token:
+            self.logger.warning("⚠️ GitHub Token fehlt - Auto-Webhook Setup übersprungen")
+            return
+
+        if not self.webhook_public_url:
+            self.logger.warning("⚠️ github.webhook_public_url fehlt - Auto-Webhook Setup übersprungen")
+            return
+
+        projects = self.config.projects if isinstance(self.config.projects, dict) else {}
+        if not projects:
+            return
+
+        for project_name, project_config in projects.items():
+            repo_url = project_config.get('repo_url') or project_config.get('repository_url')
+            if not repo_url:
+                repo_path = project_config.get('path')
+                if repo_path:
+                    repo_url = self._get_repo_url(Path(repo_path))
+            if not repo_url:
+                continue
+
+            await self._ensure_webhook_for_repo(
+                project_name=project_name,
+                repo_url=repo_url,
+                github_token=github_token
+            )
+
+    async def start_local_polling(self):
+        """Start local git polling for push detection (fallback)."""
+        if not self.local_polling_enabled:
+            self.logger.info("ℹ️ Local git polling deaktiviert (config: github.local_polling_enabled=false)")
+            return
+        if self.local_polling_task and not self.local_polling_task.done():
+            return
+        self.local_polling_task = asyncio.create_task(self._local_polling_loop())
+        self.logger.info(
+            f"🔄 Local git polling aktiv (Interval: {self.local_polling_interval}s)"
+        )
+
+    async def stop_local_polling(self):
+        """Stop local git polling task if running."""
+        if not self.local_polling_task:
+            return
+        self.local_polling_task.cancel()
+        try:
+            await self.local_polling_task
+        except asyncio.CancelledError:
+            pass
+        self.local_polling_task = None
+        self.logger.info("🛑 Local git polling gestoppt")
+
+    async def _local_polling_loop(self):
+        """Background loop for local git polling."""
+        while True:
+            try:
+                await self._poll_local_projects()
+            except Exception as e:
+                self.logger.error(f"❌ Local git polling Fehler: {e}", exc_info=True)
+            await asyncio.sleep(self.local_polling_interval)
+
+    async def _poll_local_projects(self):
+        """Check configured local repos for new commits and send patch notes."""
+        projects = self.config.projects if isinstance(self.config.projects, dict) else {}
+        if not projects:
+            return
+
+        for project_name, project_config in projects.items():
+            if not project_config.get('enabled', True):
+                continue
+
+            project_path = project_config.get('path')
+            if not project_path:
+                continue
+
+            repo_path = Path(project_path)
+            if not (repo_path / '.git').exists():
+                continue
+
+            branch = self._get_repo_branch(repo_path, project_config)
+            upstream_ref = self._get_upstream_ref(repo_path)
+            fallback_upstream = None
+            if not upstream_ref:
+                remote_url = self._run_git(repo_path, ['config', '--get', 'remote.origin.url'])
+                if remote_url:
+                    fallback_upstream = f"origin/{branch}"
+
+            if self.local_polling_fetch and (upstream_ref or fallback_upstream):
+                self._safe_git_fetch(repo_path)
+
+            head_ref = upstream_ref or fallback_upstream or "HEAD"
+            head_sha = self._get_commit_sha(repo_path, head_ref)
+            if not head_sha:
+                continue
+
+            normalized_project = self._normalize_repo_name(project_name)
+            last_sha = self._get_last_processed_commit(normalized_project, branch)
+            if not last_sha and self.local_polling_initial_skip:
+                self._set_last_processed_commit(normalized_project, branch, head_sha)
+                self.logger.info(
+                    f"ℹ️ Local git polling baseline gesetzt für {project_name}@{branch}"
+                )
+                continue
+
+            if last_sha == head_sha:
+                continue
+            if self._is_commit_inflight(normalized_project, branch, head_sha):
+                continue
+
+            repo_url = (
+                project_config.get('repo_url')
+                or project_config.get('repository_url')
+                or self._get_repo_url(repo_path)
+            )
+            commits = self._get_commits_between(repo_path, last_sha, head_ref, repo_url)
+            if not commits:
+                self.logger.info(
+                    f"ℹ️ Keine Commits gefunden für {project_name}@{branch} (local polling)"
+                )
+                self._set_last_processed_commit(normalized_project, branch, head_sha)
+                continue
+
+            pusher = commits[-1]['author'].get('name', 'local')
+            self.logger.info(
+                f"📥 Local git update erkannt: {project_name}@{branch} ({len(commits)} Commit(s))"
+            )
+            if not self._reserve_commit_processing(normalized_project, branch, head_sha):
+                continue
+            try:
+                await self._send_push_notification(
+                    repo_name=normalized_project,
+                    repo_url=repo_url or "",
+                    branch=branch,
+                    pusher=pusher,
+                    commits=commits
+                )
+                self._set_last_processed_commit(normalized_project, branch, head_sha)
+            finally:
+                self._unmark_commit_inflight(normalized_project, branch, head_sha)
+
+    def _get_github_token(self) -> Optional[str]:
+        if hasattr(self.config, 'github_token'):
+            try:
+                token = self.config.github_token
+                if token:
+                    return token
+            except Exception:
+                pass
+        if isinstance(self.config, dict):
+            return self.config.get('github', {}).get('token')
+        return None
+
+    def _parse_github_repo_slug(self, repo_url: str) -> Optional[str]:
+        if not repo_url:
+            return None
+        url = repo_url.strip()
+        if url.endswith('.git'):
+            url = url[:-4]
+        if url.startswith('git@'):
+            remainder = url.split('@', 1)[1]
+            if ':' in remainder:
+                host, path = remainder.split(':', 1)
+                if host.endswith('github.com'):
+                    return path.strip('/')
+                return None
+        if url.startswith('https://') or url.startswith('http://'):
+            parts = url.split('/')
+            if len(parts) >= 5:
+                host = parts[2]
+                if host.endswith('github.com'):
+                    return f"{parts[3]}/{parts[4]}"
+        return None
+
+    def _get_github_api_base(self, repo_url: str) -> Optional[str]:
+        if not repo_url:
+            return None
+        url = repo_url.strip()
+        if url.startswith('git@'):
+            remainder = url.split('@', 1)[1]
+            if ':' in remainder:
+                host = remainder.split(':', 1)[0]
+                if host.endswith('github.com'):
+                    return "https://api.github.com"
+                return f"https://{host}/api/v3"
+        if url.startswith('https://') or url.startswith('http://'):
+            host = url.split('/')[2]
+            if host.endswith('github.com'):
+                return "https://api.github.com"
+            return f"https://{host}/api/v3"
+        return None
+
+    async def _ensure_webhook_for_repo(self, project_name: str, repo_url: str, github_token: str) -> None:
+        repo_slug = self._parse_github_repo_slug(repo_url)
+        if not repo_slug:
+            self.logger.warning(f"⚠️ Repo URL nicht GitHub-kompatibel: {repo_url}")
+            return
+
+        api_base = self._get_github_api_base(repo_url)
+        if not api_base:
+            self.logger.warning(f"⚠️ Konnte GitHub API Base nicht bestimmen: {repo_url}")
+            return
+
+        hooks_url = f"{api_base}/repos/{repo_slug}/hooks"
+        headers = {
+            "Accept": "application/vnd.github+json",
+            "Authorization": f"token {github_token}"
+        }
+
+        async with aiohttp.ClientSession(headers=headers) as session:
+            try:
+                async with session.get(hooks_url, timeout=20) as resp:
+                    if resp.status != 200:
+                        body = await resp.text()
+                        self.logger.warning(
+                            f"⚠️ Webhook-Check fehlgeschlagen ({resp.status}) für {repo_slug}: {body}"
+                        )
+                        return
+                    hooks = await resp.json()
+            except Exception as e:
+                self.logger.warning(f"⚠️ Webhook-Check Fehler für {repo_slug}: {e}")
+                return
+
+            for hook in hooks:
+                config = hook.get('config', {})
+                if config.get('url') == self.webhook_public_url:
+                    self.logger.info(f"✅ Webhook existiert bereits für {project_name}")
+                    return
+
+            payload = {
+                "name": "web",
+                "active": True,
+                "events": self.webhook_events,
+                "config": {
+                    "url": self.webhook_public_url,
+                    "content_type": "json"
+                }
+            }
+
+            if self.webhook_secret:
+                payload["config"]["secret"] = self.webhook_secret
+
+            try:
+                async with session.post(hooks_url, json=payload, timeout=20) as resp:
+                    if resp.status not in (200, 201):
+                        body = await resp.text()
+                        self.logger.warning(
+                            f"⚠️ Webhook-Erstellung fehlgeschlagen ({resp.status}) für {repo_slug}: {body}"
+                        )
+                        return
+                    self.logger.info(f"✅ Webhook erstellt für {project_name}")
+            except Exception as e:
+                self.logger.warning(f"⚠️ Webhook-Erstellung Fehler für {repo_slug}: {e}")
 
     async def health_check(self, request: web.Request) -> web.Response:
         """Health check endpoint"""
@@ -286,19 +564,35 @@ class GitHubIntegration:
                 self.logger.info(f"Skipping push event for {repo_name}/{branch} (no commits).")
                 return
 
+            head_commit = payload.get('head_commit', {}).get('id')
+            if not head_commit and commits:
+                head_commit = commits[-1].get('id')
+            normalized_repo = self._normalize_repo_name(repo_name)
+            if head_commit and not self._reserve_commit_processing(normalized_repo, branch, head_commit):
+                self.logger.info(
+                    f"ℹ️ Push für {repo_name}/{branch} bereits verarbeitet ({head_commit[:7]})"
+                )
+                return
+
             self.logger.info(
                 f"📌 Push to {repo_name}/{branch}: "
                 f"{len(commits)} commit(s) by {pusher}"
             )
 
             # Send detailed patch notes notification
-            await self._send_push_notification(
-                repo_name=repo_name,
-                repo_url=repo_url,
-                branch=branch,
-                pusher=pusher,
-                commits=commits
-            )
+            try:
+                await self._send_push_notification(
+                    repo_name=normalized_repo,
+                    repo_url=repo_url,
+                    branch=branch,
+                    pusher=pusher,
+                    commits=commits
+                )
+                if head_commit:
+                    self._set_last_processed_commit(normalized_repo, branch, head_commit)
+            finally:
+                if head_commit:
+                    self._unmark_commit_inflight(normalized_repo, branch, head_commit)
 
             # Auto-deploy if enabled and on a deployment branch
             # Assuming 'head_commit' is present if there are commits
@@ -448,9 +742,10 @@ class GitHubIntegration:
         project_color = project_config.get('color', 0x3498DB) # Default blue
 
         # === INTERNAL EMBED (Technical, for developers) - DEUTSCH ===
+        commits_url = f"{repo_url}/commits/{branch}" if repo_url else None
         internal_embed = discord.Embed(
             title=f"🚀 Code-Update: {repo_name}",
-            url=f"{repo_url}/commits/{branch}",
+            url=commits_url,
             color=project_color,
             timestamp=datetime.utcnow()
         )
@@ -464,7 +759,10 @@ class GitHubIntegration:
             author = commit['author']['name']
             message = commit['message'].split('\n')[0] # First line of commit message
             url = commit['url']
-            commit_details.append(f"[`{sha}`]({url}) {message} - *{author}*")
+            if url:
+                commit_details.append(f"[`{sha}`]({url}) {message} - *{author}*")
+            else:
+                commit_details.append(f"`{sha}` {message} - *{author}*")
 
         if commit_details:
             internal_embed.description = "\n".join(commit_details)
@@ -495,7 +793,7 @@ class GitHubIntegration:
 
         customer_embed = discord.Embed(
             title=title_text,
-            url=f"{repo_url}/commits/{branch}",
+            url=commits_url,
             color=project_color,
             timestamp=datetime.utcnow()
         )
@@ -559,6 +857,7 @@ class GitHubIntegration:
         use_ai = patch_config.get('use_ai', False)
         language = patch_config.get('language', 'de')
 
+        ai_description = None
         if use_ai and self.ai_service:
             try:
                 self.logger.info(f"🤖 Generiere KI Patch Notes für {repo_name} (Sprache: {language})...")
@@ -569,6 +868,11 @@ class GitHubIntegration:
             except Exception as e:
                 self.logger.warning(f"⚠️ KI Patch Notes Generierung fehlgeschlagen, verwende Fallback: {e}")
                 # Keep the categorized version as fallback
+
+        if not ai_description:
+            changelog_fallback = self._build_changelog_fallback_description(project_config, language)
+            if changelog_fallback:
+                customer_embed.description = changelog_fallback
 
         # 1. Send to internal channel (technical embed)
         internal_channel = self.bot.get_channel(self.deployment_channel_id)
@@ -668,6 +972,221 @@ class GitHubIntegration:
         # 3. Send to external notification channels (customer servers) WITH feedback collection
         await self._send_external_git_notifications(repo_name, customer_embed, project_config, version)
 
+    def _get_guild_id(self) -> int:
+        """Resolve guild id from config in a safe way."""
+        try:
+            return int(getattr(self.config, 'guild_id'))
+        except Exception:
+            pass
+
+        if isinstance(self.config, dict):
+            return int(self.config.get('discord', {}).get('guild_id', 0))
+
+        discord_cfg = getattr(self.config, 'discord', {}) or {}
+        return int(discord_cfg.get('guild_id', 0))
+
+    def _get_git_state(self) -> Dict[str, str]:
+        guild_id = self._get_guild_id()
+        state = self.state_manager.get_value(guild_id, 'git_push_state', {})
+        return state if isinstance(state, dict) else {}
+
+    def _set_git_state(self, state: Dict[str, str]) -> None:
+        guild_id = self._get_guild_id()
+        self.state_manager.set_value(guild_id, 'git_push_state', state)
+
+    def _git_state_key(self, repo_name: str, branch: str) -> str:
+        normalized = self._normalize_repo_name(repo_name)
+        return f"{normalized}:{branch}"
+
+    def _get_last_processed_commit(self, repo_name: str, branch: str) -> Optional[str]:
+        state = self._get_git_state()
+        primary_key = self._git_state_key(repo_name, branch)
+        if primary_key in state:
+            return state.get(primary_key)
+
+        # Backward-compat keys (case variants before normalization)
+        legacy_keys = {
+            f"{repo_name}:{branch}",
+            f"{repo_name.lower()}:{branch}",
+            f"{repo_name.upper()}:{branch}",
+        }
+        for key in legacy_keys:
+            if key in state:
+                return state.get(key)
+        return None
+
+    def _set_last_processed_commit(self, repo_name: str, branch: str, commit_sha: str) -> None:
+        state = self._get_git_state()
+        state[self._git_state_key(repo_name, branch)] = commit_sha
+        self._set_git_state(state)
+
+    def _is_duplicate_push(self, repo_name: str, branch: str, commit_sha: str) -> bool:
+        return self._get_last_processed_commit(repo_name, branch) == commit_sha
+
+    def _commit_key(self, repo_name: str, branch: str, commit_sha: str) -> str:
+        normalized = self._normalize_repo_name(repo_name)
+        return f"{normalized}:{branch}:{commit_sha}"
+
+    def _cleanup_inflight(self) -> None:
+        if not self._inflight_commits:
+            return
+        now = datetime.utcnow().timestamp()
+        expired = [
+            key for key, ts in self._inflight_commits.items()
+            if now - ts > self.dedupe_ttl_seconds
+        ]
+        for key in expired:
+            self._inflight_commits.pop(key, None)
+
+    def _is_commit_inflight(self, repo_name: str, branch: str, commit_sha: str) -> bool:
+        self._cleanup_inflight()
+        key = self._commit_key(repo_name, branch, commit_sha)
+        return key in self._inflight_commits
+
+    def _mark_commit_inflight(self, repo_name: str, branch: str, commit_sha: str) -> None:
+        self._cleanup_inflight()
+        key = self._commit_key(repo_name, branch, commit_sha)
+        self._inflight_commits[key] = datetime.utcnow().timestamp()
+
+    def _unmark_commit_inflight(self, repo_name: str, branch: str, commit_sha: str) -> None:
+        key = self._commit_key(repo_name, branch, commit_sha)
+        self._inflight_commits.pop(key, None)
+
+    def _reserve_commit_processing(self, repo_name: str, branch: str, commit_sha: str) -> bool:
+        normalized = self._normalize_repo_name(repo_name)
+        if self._is_duplicate_push(normalized, branch, commit_sha):
+            return False
+        if self._is_commit_inflight(normalized, branch, commit_sha):
+            return False
+        self._mark_commit_inflight(normalized, branch, commit_sha)
+        return True
+
+    def _normalize_repo_name(self, repo_name: str) -> str:
+        if not repo_name:
+            return repo_name
+        projects = self.config.projects if isinstance(self.config.projects, dict) else {}
+        for key in projects.keys():
+            if key.lower() == repo_name.lower():
+                return key
+        return repo_name.lower()
+
+    def _run_git(self, repo_path: Path, args: list, timeout: int = 15) -> Optional[str]:
+        try:
+            result = subprocess.run(
+                ['git'] + args,
+                cwd=repo_path,
+                capture_output=True,
+                text=True,
+                timeout=timeout
+            )
+            if result.returncode != 0:
+                self.logger.debug(f"Git command failed: {' '.join(args)}: {result.stderr.strip()}")
+                return None
+            return result.stdout.strip()
+        except Exception as e:
+            self.logger.debug(f"Git command error: {' '.join(args)}: {e}")
+            return None
+
+    def _safe_git_fetch(self, repo_path: Path) -> None:
+        result = self._run_git(repo_path, ['fetch', '--all', '--prune'], timeout=60)
+        if result is None:
+            self.logger.debug(f"Git fetch failed for {repo_path}")
+
+    def _get_repo_branch(self, repo_path: Path, project_config: Dict) -> str:
+        branch = self._run_git(repo_path, ['rev-parse', '--abbrev-ref', 'HEAD'])
+        if branch and branch != 'HEAD':
+            return branch
+        deploy_branch = project_config.get('deploy', {}).get('branch')
+        return deploy_branch or 'main'
+
+    def _get_upstream_ref(self, repo_path: Path) -> Optional[str]:
+        return self._run_git(repo_path, ['rev-parse', '--abbrev-ref', '--symbolic-full-name', '@{u}'])
+
+    def _get_commit_sha(self, repo_path: Path, ref: str) -> Optional[str]:
+        return self._run_git(repo_path, ['rev-parse', ref])
+
+    def _normalize_repo_url(self, raw_url: Optional[str]) -> Optional[str]:
+        if not raw_url:
+            return None
+        url = raw_url.strip()
+
+        if url.startswith('git@'):
+            # git@github.com:owner/repo.git
+            remainder = url.split('@', 1)[1]
+            if ':' in remainder:
+                host, path = remainder.split(':', 1)
+                url = f"https://{host}/{path}"
+        elif url.startswith('ssh://git@'):
+            url = url.replace('ssh://git@', 'https://')
+        elif url.startswith('git://'):
+            url = url.replace('git://', 'https://')
+
+        if url.endswith('.git'):
+            url = url[:-4]
+        return url
+
+    def _get_repo_url(self, repo_path: Path) -> Optional[str]:
+        raw_url = self._run_git(repo_path, ['config', '--get', 'remote.origin.url'])
+        return self._normalize_repo_url(raw_url)
+
+    def _git_log_commits(self, repo_path: Path, rev_spec: str,
+                         repo_url: Optional[str], max_commits: Optional[int]) -> list:
+        if not rev_spec:
+            return []
+
+        format_str = "%H%x1f%an%x1f%B%x1e"
+        cmd = ['log', '--no-color', f'--pretty=format:{format_str}']
+        if max_commits:
+            cmd.insert(1, f'-n{max_commits}')
+        cmd.append(rev_spec)
+
+        output = self._run_git(repo_path, cmd, timeout=30)
+        if not output:
+            return []
+
+        commits = []
+        entries = output.strip("\n\x1e").split("\x1e")
+        for entry in entries:
+            if not entry.strip():
+                continue
+            parts = entry.split("\x1f")
+            if len(parts) < 3:
+                continue
+            commit_sha = parts[0].strip()
+            author = parts[1].strip()
+            message = parts[2].strip()
+            commit_url = f"{repo_url}/commit/{commit_sha}" if repo_url else ""
+            commits.append({
+                'id': commit_sha,
+                'author': {'name': author},
+                'message': message or '(no message)',
+                'url': commit_url
+            })
+
+        commits.reverse()
+        return commits
+
+    def _get_commits_between(self, repo_path: Path, start_sha: Optional[str],
+                             end_ref: str, repo_url: Optional[str]) -> list:
+        commits = []
+        if start_sha:
+            commits = self._git_log_commits(
+                repo_path,
+                f"{start_sha}..{end_ref}",
+                repo_url,
+                self.local_polling_max_commits
+            )
+        if commits:
+            return commits
+
+        fallback_limit = min(self.local_polling_max_commits, 5)
+        return self._git_log_commits(
+            repo_path,
+            end_ref,
+            repo_url,
+            fallback_limit
+        )
+
     def _split_embed_description(self, description: str, max_length: int = 4096) -> list[str]:
         """
         Split a long description into multiple chunks that fit Discord's limits.
@@ -741,6 +1260,171 @@ class GitHubIntegration:
 
         return message
 
+    def _build_code_changes_context(self, commits: list, project_path: Optional[Path]) -> str:
+        """Build a truncated diff summary for a handful of commits."""
+        if not self.patch_notes_include_diffs or not commits or not project_path:
+            return ""
+
+        try:
+            repo_path = Path(project_path)
+        except Exception:
+            return ""
+
+        analyzer = GitHistoryAnalyzer(str(repo_path))
+        if not analyzer.is_git_repository():
+            return ""
+
+        max_commits = min(self.patch_notes_diff_max_commits, len(commits))
+        if max_commits <= 0:
+            return ""
+
+        sections = []
+        for commit in commits[-max_commits:]:
+            commit_id = commit.get('id') or commit.get('sha') or commit.get('hash')
+            if not commit_id:
+                continue
+            diff = analyzer.get_code_changes_for_commit(commit_id, self.patch_notes_diff_max_lines)
+            if not diff:
+                continue
+            title = commit.get('message', '').split('\n')[0].strip()
+            short_id = commit_id[:7]
+            label = f"{short_id} {title}".strip()
+            sections.append(f"## {label}\n{diff}")
+
+        if not sections:
+            return ""
+
+        return "CODE CHANGES (DIFF SUMMARY, MAY BE TRUNCATED):\n\n" + "\n\n".join(sections)
+
+    def _load_patch_notes_context(self, project_config: Optional[Dict],
+                                  project_path: Optional[Path]) -> str:
+        """Load optional context files for richer patch notes prompts."""
+        if not project_config:
+            return ""
+
+        patch_config = project_config.get('patch_notes', {})
+        context_files = patch_config.get('context_files') or patch_config.get('context_file')
+        if not context_files:
+            return ""
+
+        if isinstance(context_files, str):
+            context_files = [context_files]
+        if not isinstance(context_files, list):
+            return ""
+
+        base_path = project_path
+        if not base_path:
+            base = project_config.get('path', '')
+            base_path = Path(base) if base else None
+
+        per_file_limit = int(patch_config.get('context_max_chars', 1500))
+        total_limit = int(patch_config.get('context_total_max_chars', 4000))
+
+        sections = []
+        total_chars = 0
+
+        for entry in context_files:
+            if not entry:
+                continue
+            entry_path = Path(entry)
+            if not entry_path.is_absolute() and base_path:
+                entry_path = base_path / entry_path
+            if not entry_path.exists():
+                continue
+            try:
+                content = entry_path.read_text(encoding='utf-8', errors='ignore').strip()
+            except Exception:
+                continue
+
+            if not content:
+                continue
+
+            if per_file_limit > 0 and len(content) > per_file_limit:
+                head_len = max(1, per_file_limit // 2)
+                tail_len = per_file_limit - head_len
+                content = (
+                    content[:head_len].rstrip()
+                    + "\n... (snip) ...\n"
+                    + content[-tail_len:].lstrip()
+                )
+
+            section = f"PROJECT CONTEXT FILE: {entry_path.name}\n{content}"
+            total_chars += len(section)
+            if total_limit > 0 and total_chars > total_limit:
+                break
+            sections.append(section)
+
+        if not sections:
+            return ""
+
+        return "PROJECT CONTEXT (REFERENCE):\n\n" + "\n\n".join(sections)
+
+    def _build_changelog_fallback_description(self, project_config: Optional[Dict], language: str) -> str:
+        """Build a user-facing description from CHANGELOG.md if present."""
+        if not project_config:
+            return ""
+
+        project_path = project_config.get('path')
+        if not project_path:
+            return ""
+
+        changelog_path = Path(project_path) / 'CHANGELOG.md'
+        if not changelog_path.exists():
+            return ""
+
+        try:
+            from utils.changelog_parser import get_changelog_parser
+            parser = get_changelog_parser(Path(project_path))
+            version = parser.get_latest_version()
+            if not version:
+                return ""
+            version_data = parser.get_version_section(version)
+            if not version_data:
+                return ""
+
+            header = f"**Version {version}**"
+            if version_data.get('title'):
+                header = f"{header} — {version_data['title']}"
+
+            content = version_data.get('content', '').strip()
+            if not content:
+                return ""
+
+            # Keep changelog content as the primary source (already structured).
+            if language == 'de':
+                return f"{header}\n\n{content}"
+            return f"{header}\n\n{content}"
+        except Exception as e:
+            self.logger.warning(f"⚠️ CHANGELOG Fallback failed: {e}")
+            return ""
+
+    def _is_patch_notes_too_short(self, response: str, commits: list) -> bool:
+        """Heuristic to detect underspecified AI output."""
+        if not response:
+            return True
+
+        bullet_count = sum(
+            1 for line in response.splitlines()
+            if line.strip().startswith('•')
+        )
+        commit_detail = any(
+            len([l for l in (c.get('message') or '').splitlines() if l.strip()]) >= 5
+            for c in commits
+        )
+
+        if len(commits) > 1 or commit_detail:
+            min_bullets = 3
+        else:
+            min_bullets = 1
+
+        if bullet_count < min_bullets:
+            return True
+
+        if commit_detail and len(response) < 300:
+            return True
+
+        return False
+
     async def _generate_ai_patch_notes(self, commits: list, language: str, repo_name: str,
                                        project_config: Optional[Dict] = None) -> Optional[str]:
         """
@@ -770,8 +1454,10 @@ class GitHubIntegration:
         # Try to get CHANGELOG content
         changelog_content = ""
         version = None
+        version_data = None
 
-        if project_config and self.patch_notes_trainer:
+        project_path = None
+        if project_config:
             project_path = Path(project_config.get('path', ''))
             changelog_path = project_path / 'CHANGELOG.md'
 
@@ -786,10 +1472,11 @@ class GitHubIntegration:
                             version = match.group(1)
                             break
 
+                    from utils.changelog_parser import get_changelog_parser
+                    parser = get_changelog_parser(project_path)
+
                     # Get CHANGELOG section if version found
                     if version:
-                        from utils.changelog_parser import get_changelog_parser
-                        parser = get_changelog_parser(project_path)
                         version_data = parser.get_version_section(version)
 
                         if version_data:
@@ -798,14 +1485,30 @@ class GitHubIntegration:
                         else:
                             self.logger.info(f"⚠️ Version {version} not found in CHANGELOG, using commits only")
                     else:
-                        self.logger.info("⚠️ No version detected in commits, using commits only")
+                        # Fallback: use latest version from CHANGELOG
+                        latest = parser.get_latest_version()
+                        if latest:
+                            version = latest
+                            version_data = parser.get_version_section(version)
+                            if version_data:
+                                changelog_content = version_data['content']
+                                self.logger.info(
+                                    f"📖 Using latest CHANGELOG.md section for v{version} "
+                                    f"({len(changelog_content)} chars)"
+                                )
+                        if not changelog_content:
+                            self.logger.info("⚠️ No version detected in commits, using commits only")
 
                 except Exception as e:
                     self.logger.warning(f"⚠️ Could not parse CHANGELOG: {e}")
 
+        project_context = self._load_patch_notes_context(project_config, project_path)
+
         # Build enhanced prompt with A/B Testing
         selected_variant = None
         variant_id = None
+
+        code_changes_context = self._build_code_changes_context(commits, project_path)
 
         if self.patch_notes_trainer and self.prompt_ab_testing and (changelog_content or project_config):
             try:
@@ -836,6 +1539,11 @@ class GitHubIntegration:
                         prompt += f"## Example {i} ({example['project']} v{example['version']}):\n"
                         prompt += f"```\n{example['generated_notes'][:400]}...\n```\n\n"
 
+                if code_changes_context:
+                    prompt += f"\n\n{code_changes_context}"
+                if project_context:
+                    prompt += f"\n\n{project_context}"
+
             except Exception as e:
                 self.logger.warning(f"⚠️ A/B Testing failed, using enhanced prompt: {e}")
                 try:
@@ -845,13 +1553,31 @@ class GitHubIntegration:
                         language=language,
                         project=repo_name
                     )
+                    if code_changes_context:
+                        prompt += f"\n\n{code_changes_context}"
+                    if project_context:
+                        prompt += f"\n\n{project_context}"
                     self.logger.info(f"🎯 Using enhanced AI prompt with training examples")
                 except Exception as e2:
                     self.logger.warning(f"⚠️ Enhanced prompt failed, using fallback: {e2}")
-                    prompt = self._build_fallback_prompt(commits, language, repo_name)
+                    prompt = self._build_fallback_prompt(
+                        commits,
+                        language,
+                        repo_name,
+                        changelog_content,
+                        code_changes_context,
+                        project_context
+                    )
         else:
             # Fallback to original prompt if no trainer available
-            prompt = self._build_fallback_prompt(commits, language, repo_name)
+            prompt = self._build_fallback_prompt(
+                commits,
+                language,
+                repo_name,
+                changelog_content,
+                code_changes_context,
+                project_context
+            )
 
         # Log commits being processed
         num_commits = len(commits)
@@ -863,10 +1589,12 @@ class GitHubIntegration:
             self.logger.info(f"   ... and {num_commits - 5} more commits")
 
         # Call AI Service
+        patch_config = project_config.get('patch_notes', {}) if project_config else {}
+        use_critical_model = patch_config.get('use_critical_model', True)
         try:
             ai_response = await self.ai_service.get_raw_ai_response(
                 prompt=prompt,
-                use_critical_model=True  # Use llama3.1 for best quality
+                use_critical_model=use_critical_model
             )
 
             if not ai_response:
@@ -885,12 +1613,43 @@ class GitHubIntegration:
                         break
                 response = '\n'.join(lines[start_idx:])
 
+            if self._is_patch_notes_too_short(response, commits):
+                self.logger.info("⚠️ AI Patch Notes zu kurz, starte zweiten Durchlauf mit striktem Prompt")
+                strict_prompt = self._build_fallback_prompt(
+                    commits,
+                    language,
+                    repo_name,
+                    changelog_content,
+                    code_changes_context,
+                    project_context,
+                    strict=True
+                )
+                retry = await self.ai_service.get_raw_ai_response(
+                    prompt=strict_prompt,
+                    use_critical_model=True
+                )
+                if retry:
+                    retry = retry.strip()
+                    if not retry.startswith('**'):
+                        retry_lines = retry.split('\n')
+                        retry_start = 0
+                        for i, line in enumerate(retry_lines):
+                            if line.startswith('**'):
+                                retry_start = i
+                                break
+                        retry = '\n'.join(retry_lines[retry_start:])
+                    if retry and len(retry) >= len(response):
+                        response = retry
+
             # Calculate quality score and record A/B test result
-            if self.patch_notes_trainer and changelog_content and version:
+            quality_context = changelog_content or project_context
+            if self.patch_notes_trainer and quality_context:
                 try:
+                    if not version and commits:
+                        version = (commits[-1].get('id') or commits[-1].get('sha') or '')[:7] or None
                     quality_score = self.patch_notes_trainer.calculate_quality_score(
                         generated_notes=response,
-                        changelog_content=changelog_content
+                        changelog_content=quality_context
                     )
                     self.logger.info(f"📊 Patch Notes Quality Score: {quality_score:.1f}/100")
 
@@ -916,14 +1675,15 @@ class GitHubIntegration:
                             except Exception as e:
                                 self.logger.debug(f"Auto-tuning check skipped: {e}")
 
-                    # Save as training example
-                    self.patch_notes_trainer.save_example(
-                        version=version,
-                        changelog_content=changelog_content,
-                        generated_notes=response,
-                        quality_score=quality_score,
-                        project=repo_name
-                    )
+                    # Save as training example when a version is available
+                    if version:
+                        self.patch_notes_trainer.save_example(
+                            version=version,
+                            changelog_content=quality_context,
+                            generated_notes=response,
+                            quality_score=quality_score,
+                            project=repo_name
+                        )
 
                     if quality_score >= 80:
                         self.logger.info(f"🌟 High-quality patch notes! Saved as training example.")
@@ -937,7 +1697,9 @@ class GitHubIntegration:
             self.logger.error(f"AI patch notes generation failed: {e}")
             return None
 
-    def _build_fallback_prompt(self, commits: list, language: str, repo_name: str) -> str:
+    def _build_fallback_prompt(self, commits: list, language: str, repo_name: str,
+                               changelog_content: str = "", code_changes_context: str = "",
+                               project_context: str = "", strict: bool = False) -> str:
         """Build fallback prompt when trainer is not available."""
         # Build commit summary for AI
         commit_summaries = []
@@ -965,6 +1727,17 @@ class GitHubIntegration:
         num_commits = len(commits)
         detail_instruction = ""
 
+        extra_sections = []
+        if changelog_content:
+            extra_sections.append(f"CHANGELOG INFORMATION:\n{changelog_content}")
+        if code_changes_context:
+            extra_sections.append(code_changes_context)
+        if project_context:
+            extra_sections.append(project_context)
+        extra_context = "\n\n".join(extra_sections).strip()
+        if extra_context:
+            extra_context = f"\n\n{extra_context}\n"
+
         if num_commits > 30:
             # Many commits - ask for high-level overview
             if language == 'de':
@@ -974,58 +1747,65 @@ class GitHubIntegration:
         elif num_commits > 15:
             # Medium amount - balanced approach, but RECOGNIZE major features
             if language == 'de':
-                detail_instruction = f"\n\n⚠️ Es gibt {num_commits} Commits. Gruppiere verwandte Commits (z.B. alle zu 'Delta Import') zu EINEM detaillierten Feature-Punkt. Release-Features sind GROSS und benötigen detaillierte Erklärung!"
+                detail_instruction = f"\n\n⚠️ Es gibt {num_commits} Commits. Gruppiere verwandte Commits (z.B. alle zum gleichen Feature-Namen) zu EINEM detaillierten Feature-Punkt. Release-Features sind GROSS und benötigen detaillierte Erklärung!"
             else:
-                detail_instruction = f"\n\n⚠️ There are {num_commits} commits. Group related commits (e.g., all 'Delta Import' commits) into ONE detailed feature point. Release features are MAJOR and need detailed explanation!"
+                detail_instruction = f"\n\n⚠️ There are {num_commits} commits. Group related commits (e.g., all commits for the same feature) into ONE detailed feature point. Release features are MAJOR and need detailed explanation!"
 
         # Build prompt based on language
+        strict_rules = ""
+        if strict:
+            min_bullets = max(3, len(commits))
+            min_chars = 400 if len(commits) > 1 else 250
+            if language == 'de':
+                strict_rules = (
+                    "\n\nSTRICTE QUALITAETSREGELN:\n"
+                    f"- Nutze mindestens {min_bullets} Bulletpoints (bei vorhandenen Detail-Infos).\n"
+                    f"- Ziel: mindestens {min_chars} Zeichen, wenn Commit-Body oder Diff Details enthalten.\n"
+                    "- Erzeuge KEINE Einzeiler-Ausgabe.\n"
+                )
+            else:
+                strict_rules = (
+                    "\n\nSTRICT QUALITY RULES:\n"
+                    f"- Use at least {min_bullets} bullet points when detailed info exists.\n"
+                    f"- Target at least {min_chars} characters if commit body or diff includes details.\n"
+                    "- Do NOT return a single-line answer.\n"
+                )
+
         if language == 'de':
             prompt = f"""Du bist ein professioneller Technical Writer. Erstelle benutzerfreundliche Patch Notes für das Projekt "{repo_name}".
 
 COMMITS (VOLLSTÄNDIGE LISTE):
 {commits_text}
+{extra_context}
 
 KRITISCHE REGELN:
 ⚠️ BESCHREIBE NUR ÄNDERUNGEN DIE WIRKLICH IN DEN COMMITS OBEN STEHEN!
 ⚠️ ERFINDE KEINE FEATURES ODER FIXES DIE NICHT IN DER COMMIT-LISTE SIND!
 ⚠️ Wenn ein Commit unklar ist, überspringe ihn lieber als zu raten!
+⚠️ Nutze CHANGELOG INFORMATION und CODE CHANGES (falls vorhanden) für Details.
+⚠️ Wenn Texte "offen", "todo", "still open" oder "risiken" nennen, markiere sie NICHT als abgeschlossen.
 
 WICHTIG - ZUSAMMENHÄNGENDE FEATURES ERKENNEN:
 🔍 Suche nach VERWANDTEN Commits die zusammengehören (z.B. mehrere "fix:" oder "feat:" Commits für das gleiche Feature)
 🔍 Release-Commits (feat: Release v...) enthalten oft GROSSE Änderungen - beschreibe diese DETAILLIERT!
-🔍 Commit-Serien wie "Delta Import", "Backup System", "Status Manager" sind EINZELNE Features, nicht getrennte Punkte!
+🔍 Commit-Serien mit gleichem Feature-Namen sind EINZELNE Features, nicht getrennte Punkte!
 🔍 Bei großen Refactorings: Erkenne die GESAMTBEDEUTUNG, nicht nur Einzelschritte!
-
-BEISPIEL FÜR GRUPPIERUNG:
-Wenn du diese Commits siehst:
-- feat: Implement delta import to catch missed messages during downtime
-- fix: Handle timezone-aware datetimes in delta import
-- fix: Import asyncio in delta import function
-- fix: Enable delta import on bot restart instead of force reimport
-- feat: Track last message timestamp for reliable delta imports
-
-Dann NICHT schreiben:
-• Delta Import implementiert
-• Timezone-Fehler behoben
-
-Sondern STATTDESSEN schreiben:
-• **Intelligenter Delta-Import**: Der Bot erkennt jetzt automatisch wenn er offline war und importiert nur die Nachrichten die während der Downtime verpasst wurden. Das bedeutet:
-  - Keine verlorenen Nachrichten mehr bei Bot-Neustarts
-  - Deutlich schnellerer Start (nur neue Nachrichten statt komplett neu importieren)
-  - Automatische Erkennung von Downtime über 1 Minute
-  - Fortschrittsanzeige im Dashboard während des Imports
+🔍 Wenn Commit-Bodies Abschnitte enthalten (z.B. "Rate Limiting:", "Monitoring:"), nutze pro Abschnitt einen Bulletpoint.
+🔍 Bei reinen Doku-/Status-Updates: als Status-Update zusammenfassen, keine Features erfinden.
 
 AUFGABE:
-Fasse diese Commits zu professionellen, DETAILLIERTEN Patch Notes zusammen:{detail_instruction}
+Fasse diese Commits zu professionellen, DETAILLIERTEN Patch Notes zusammen:{detail_instruction}{strict_rules}
 
 1. GRUPPIERE verwandte Commits zu EINEM ausführlichen Bulletpoint
 2. Kategorisiere in: 🆕 Neue Features, 🐛 Bugfixes, ⚡ Verbesserungen
 3. Verwende einfache, klare Sprache aber sei AUSFÜHRLICH
-4. Beschreibe WAS das Feature macht UND WARUM es wichtig ist
+4. Beginne mit Nutzer-Nutzen, danach technische Details
 5. Bei großen Features: 3-5 Sätze oder Sub-Bulletpoints mit Details
 6. Entferne Jargon und technische Präfixe
 7. Zielgruppe: Endkunden die verstehen wollen was sich verbessert hat
 8. Maximal 8000 Zeichen - nutze den Platz aus!
+9. Erfinde keine Details und wiederhole keine Beispiel-Formulierungen.
+9. Erfinde keine Details und verwende keine Beispiel-Formulierungen aus dem Prompt.
 
 FORMAT:
 Verwende Markdown mit ** für Kategorien und • für Hauptpunkte.
@@ -1050,48 +1830,36 @@ Erstelle JETZT die DETAILLIERTEN Patch Notes basierend auf den ECHTEN Commits ob
 
 COMMITS (COMPLETE LIST):
 {commits_text}
+{extra_context}
 
 CRITICAL RULES:
 ⚠️ ONLY DESCRIBE CHANGES THAT ARE ACTUALLY IN THE COMMITS ABOVE!
 ⚠️ NEVER INVENT FEATURES OR FIXES THAT ARE NOT IN THE COMMIT LIST!
 ⚠️ If a commit is unclear, skip it rather than guessing!
+⚠️ Use CHANGELOG INFORMATION and CODE CHANGES (if present) for details.
+⚠️ If text says "open", "todo", "still open", or "risks", do NOT mark it as completed.
 
 IMPORTANT - RECOGNIZE RELATED FEATURES:
 🔍 Look for RELATED commits that belong together (e.g., multiple "fix:" or "feat:" commits for the same feature)
 🔍 Release commits (feat: Release v...) often contain MAJOR changes - describe these in DETAIL!
-🔍 Commit series like "Delta Import", "Backup System", "Status Manager" are SINGLE features, not separate items!
+🔍 Commit series with the same feature name are SINGLE features, not separate items!
 🔍 For large refactorings: Recognize the OVERALL SIGNIFICANCE, not just individual steps!
-
-GROUPING EXAMPLE:
-If you see these commits:
-- feat: Implement delta import to catch missed messages during downtime
-- fix: Handle timezone-aware datetimes in delta import
-- fix: Import asyncio in delta import function
-- fix: Enable delta import on bot restart instead of force reimport
-- feat: Track last message timestamp for reliable delta imports
-
-Then DO NOT write:
-• Delta import implemented
-• Timezone error fixed
-
-Instead write:
-• **Smart Delta Import**: The bot now automatically detects when it was offline and imports only the messages that were missed during downtime. This means:
-  - No more lost messages during bot restarts
-  - Much faster startup (only new messages instead of full reimport)
-  - Automatic detection of downtime over 1 minute
-  - Progress display in dashboard during import
+🔍 If commit bodies include sections (e.g., "Rate Limiting:"), use one bullet per section.
+🔍 For doc/status-only updates: summarize as status updates; do not invent features.
 
 TASK:
-Summarize these commits into professional, DETAILED patch notes:{detail_instruction}
+Summarize these commits into professional, DETAILED patch notes:{detail_instruction}{strict_rules}
 
 1. GROUP related commits into ONE comprehensive bulletpoint
 2. Categorize into: 🆕 New Features, 🐛 Bug Fixes, ⚡ Improvements
 3. Use simple, clear language but be COMPREHENSIVE
-4. Describe WHAT the feature does AND WHY it matters
+4. Lead with user impact, then technical details
 5. For major features: 3-5 sentences or sub-bulletpoints with details
 6. Remove jargon and technical prefixes
 7. Target audience: End customers who want to understand what improved
 8. Maximum 8000 characters - use the space!
+9. Do not invent details or reuse example wording.
+9. Do not invent details and do not reuse example wording from the prompt.
 
 FORMAT:
 Use Markdown with ** for categories and • for main points.

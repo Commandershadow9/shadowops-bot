@@ -21,6 +21,10 @@ class InspectorCog(commands.Cog):
         """Zeigt AI-Provider Status und Performance-Statistiken"""
         await interaction.response.defer(ephemeral=False)
         try:
+            if not getattr(self.bot, 'ai_service', None):
+                await interaction.followup.send("⏸️ AI ist deaktiviert", ephemeral=True)
+                return
+
             embed = discord.Embed(
                 title="🤖 AI Provider Status",
                 description="Übersicht über alle konfigurierten AI-Provider",

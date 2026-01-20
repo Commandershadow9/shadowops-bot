@@ -10,6 +10,9 @@ User=cmdshadow
 Group=cmdshadow
 WorkingDirectory=/home/cmdshadow/shadowops-bot
 
+# Cleanup stale PID file and stop orphaned process (if any)
+ExecStartPre=/bin/bash -c 'PID_FILE=/home/cmdshadow/shadowops-bot/.bot.pid; if [ -f "$PID_FILE" ]; then pid=$(cat "$PID_FILE"); if [ -n "$pid" ] && kill -0 "$pid" 2>/dev/null; then kill "$pid"; sleep 2; if kill -0 "$pid" 2>/dev/null; then kill -9 "$pid"; fi; fi; rm -f "$PID_FILE"; fi'
+
 # Python mit Bot-Script (Virtual Environment)
 # Note: Adjust path if bot is deployed elsewhere
 ExecStart=/home/cmdshadow/shadowops-bot/venv/bin/python3 /home/cmdshadow/shadowops-bot/src/bot.py
