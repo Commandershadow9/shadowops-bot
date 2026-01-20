@@ -98,6 +98,7 @@ class GitHubIntegration:
             'push': self.handle_push_event,
             'pull_request': self.handle_pr_event,
             'release': self.handle_release_event,
+            'workflow_run': self.handle_workflow_run_event,
         }
 
         # Deployment manager (will be set by bot)
@@ -677,6 +678,79 @@ class GitHubIntegration:
 
         except Exception as e:
             self.logger.error(f"❌ Error handling release event: {e}", exc_info=True)
+
+    async def handle_workflow_run_event(self, payload: Dict):
+        """Handle workflow_run events (CI Ergebnisse)."""
+        try:
+            workflow = payload.get('workflow_run', {}) or {}
+            repo = payload.get('repository', {}) or {}
+
+            repo_name = repo.get('name', 'unknown')
+            repo_url = repo.get('html_url')
+            run_name = workflow.get('name', 'CI')
+            conclusion = workflow.get('conclusion') or payload.get('conclusion') or 'unknown'
+            status = workflow.get('status') or payload.get('status') or 'unknown'
+            branch = workflow.get('head_branch') or payload.get('branch') or '-'
+            sha = (workflow.get('head_sha') or payload.get('sha') or '')[:7]
+            run_url = workflow.get('html_url') or payload.get('url')
+            run_number = workflow.get('run_number')
+            summary = payload.get('summary') or ('Alle Jobs erfolgreich.' if conclusion == 'success' else 'CI fehlgeschlagen.')
+            failed_jobs = payload.get('failed_jobs') or []
+
+            # Project config lookup (case-insensitive)
+            project_config = {}
+            for key in self.config.projects.keys():
+                if key.lower() == repo_name.lower():
+                    project_config = self.config.projects[key]
+                    break
+
+            project_color = project_config.get('color', 0x3498DB)
+            if conclusion == 'success':
+                project_color = 0x2ECC71
+            elif conclusion == 'failure':
+                project_color = 0xE74C3C
+            elif conclusion == 'cancelled':
+                project_color = 0xF1C40F
+
+            title = f"🧪 CI Ergebnis: {run_name}"
+            if run_number:
+                title = f"{title} #{run_number}"
+
+            embed = discord.Embed(
+                title=title,
+                url=run_url,
+                color=project_color,
+                timestamp=datetime.utcnow(),
+                description=summary,
+            )
+            embed.add_field(name="Repository", value=repo_name, inline=True)
+            embed.add_field(name="Branch", value=branch, inline=True)
+            embed.add_field(name="Commit", value=sha or '-', inline=True)
+            embed.add_field(name="Status", value=status, inline=True)
+            embed.add_field(name="Ergebnis", value=conclusion, inline=True)
+
+            if failed_jobs:
+                failed_text = "\n".join(f"• {job}" for job in failed_jobs)
+                if len(failed_text) > 1000:
+                    failed_text = failed_text[:1000] + "…"
+                embed.add_field(name="Fehlgeschlagene Jobs", value=failed_text, inline=False)
+
+            # Always send to internal deployment log
+            internal_channel = self.bot.get_channel(self.deployment_channel_id)
+            if internal_channel:
+                await internal_channel.send(embed=embed)
+            else:
+                self.logger.warning("⚠️ Deployment log channel nicht gefunden (CI Notification).")
+
+            # Optional project-specific CI channel
+            ci_channel_id = project_config.get('ci_channel_id')
+            if ci_channel_id:
+                ci_channel = self.bot.get_channel(ci_channel_id)
+                if ci_channel and ci_channel_id != self.deployment_channel_id:
+                    await ci_channel.send(embed=embed)
+
+        except Exception as e:
+            self.logger.error(f"❌ Error handling workflow_run event: {e}", exc_info=True)
 
     async def _trigger_deployment(self, repo_name: str, branch: str, commit_sha: str):
         """
