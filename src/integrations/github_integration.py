@@ -121,6 +121,7 @@ class GitHubIntegration:
         self.bot_ready = False
         self.local_polling_task = None
         self._inflight_commits: Dict[str, float] = {}
+        self._ci_polling_tasks: Dict[str, asyncio.Task] = {}
 
         self.logger.info(f"🔧 GitHub Integration initialized (enabled: {self.enabled})")
 
@@ -691,6 +692,7 @@ class GitHubIntegration:
             workflow = payload.get('workflow_run', {}) or {}
             repo = payload.get('repository', {}) or {}
             action = payload.get('action') or workflow.get('action') or ''
+            from_poll = payload.get('_from_poll', False)
 
             repo_name = repo.get('name', 'unknown')
             repo_url = repo.get('html_url')
@@ -711,6 +713,7 @@ class GitHubIntegration:
             failed_jobs = payload.get('failed_jobs') or []
             jobs_url = workflow.get('jobs_url')
             run_id = workflow.get('id') or workflow.get('run_id') or run_number or sha or 'unknown'
+            run_api_url = workflow.get('url')
             jobs = []
             jobs_summary = None
             job_details = []
@@ -718,6 +721,9 @@ class GitHubIntegration:
             steps_total = 0
             steps_failed = 0
             steps_skipped = 0
+            steps_completed = 0
+            jobs_completed = 0
+            jobs_total = 0
             active_job_name = None
             active_step_name = None
             is_completed = action == 'completed' or status == 'completed'
@@ -767,6 +773,7 @@ class GitHubIntegration:
                     jobs = jobs_response.get('jobs') or []
 
             if jobs:
+                jobs_total = len(jobs)
                 counts = {
                     'success': 0,
                     'failure': 0,
@@ -781,6 +788,8 @@ class GitHubIntegration:
                 for job in jobs:
                     job_conclusion = job.get('conclusion') or job.get('status') or 'unknown'
                     job_status = job.get('status') or 'unknown'
+                    if job_status == 'completed':
+                        jobs_completed += 1
                     if job_conclusion in counts:
                         counts[job_conclusion] += 1
                     else:
@@ -812,6 +821,8 @@ class GitHubIntegration:
                         step_status = step.get('status') or step.get('conclusion') or 'unknown'
                         step_conclusion = step.get('conclusion') or step.get('status') or 'unknown'
                         steps_total += 1
+                        if step_status == 'completed' or step_conclusion in ('success', 'failure', 'skipped', 'cancelled', 'timed_out', 'action_required'):
+                            steps_completed += 1
                         if step_conclusion == 'skipped':
                             steps_skipped += 1
                         if step_conclusion not in ('success', 'skipped'):
@@ -900,6 +911,12 @@ class GitHubIntegration:
                 embed.add_field(name="Tests/Jobs", value=jobs_summary, inline=False)
 
             if not is_completed:
+                if jobs_total and steps_total:
+                    embed.add_field(
+                        name="Fortschritt",
+                        value=f"Jobs: {jobs_completed}/{jobs_total} | Schritte: {steps_completed}/{steps_total}",
+                        inline=False,
+                    )
                 if active_job_name:
                     embed.add_field(name="Aktueller Job", value=active_job_name, inline=True)
                 if active_step_name:
@@ -985,6 +1002,16 @@ class GitHubIntegration:
                     for item in detail_embeds:
                         await ci_channel.send(embed=item)
 
+            if not from_poll:
+                if is_completed:
+                    self._cancel_ci_polling(run_key_base)
+                else:
+                    await self._ensure_ci_polling(
+                        run_key=run_key_base,
+                        repo=repo,
+                        run_api_url=run_api_url,
+                    )
+
         except Exception as e:
             self.logger.error(f"❌ Error handling workflow_run event: {e}", exc_info=True)
 
@@ -1023,6 +1050,55 @@ class GitHubIntegration:
         ci_messages[run_key] = entry
         self.state_manager.set_value(self.guild_id, state_key, ci_messages)
 
+    async def _ensure_ci_polling(self, run_key: str, repo: Dict, run_api_url: Optional[str]) -> None:
+        """Start polling for CI updates (every 60s) until completed."""
+        if not run_key:
+            return
+        existing = self._ci_polling_tasks.get(run_key)
+        if existing and not existing.done():
+            return
+
+        task = asyncio.create_task(self._poll_ci_run(run_key, repo, run_api_url))
+        self._ci_polling_tasks[run_key] = task
+
+    def _cancel_ci_polling(self, run_key: str) -> None:
+        task = self._ci_polling_tasks.pop(run_key, None)
+        if task and not task.done():
+            task.cancel()
+
+    async def _poll_ci_run(self, run_key: str, repo: Dict, run_api_url: Optional[str]) -> None:
+        """Poll workflow_run status and refresh the CI message."""
+        attempts = 0
+        max_attempts = 120  # ~2 hours
+        try:
+            while attempts < max_attempts:
+                await asyncio.sleep(60)
+                attempts += 1
+
+                if not run_api_url:
+                    continue
+
+                workflow = await self._fetch_workflow_run(run_api_url)
+                if not workflow:
+                    continue
+
+                status = workflow.get('status') or 'unknown'
+                action = 'completed' if status == 'completed' else 'in_progress'
+                payload = {
+                    'workflow_run': workflow,
+                    'repository': repo,
+                    'action': action,
+                    '_from_poll': True,
+                }
+                await self.handle_workflow_run_event(payload)
+
+                if status == 'completed':
+                    break
+        except asyncio.CancelledError:
+            return
+        finally:
+            self._ci_polling_tasks.pop(run_key, None)
+
     async def _fetch_workflow_jobs(self, jobs_url: str) -> Optional[Dict]:
         """Fetch job details for a workflow run."""
         if not jobs_url:
@@ -1047,6 +1123,30 @@ class GitHubIntegration:
                     return await resp.json()
         except Exception as e:
             self.logger.error(f"❌ Fehler beim Laden der Workflow Jobs: {e}", exc_info=True)
+            return None
+
+    async def _fetch_workflow_run(self, run_api_url: Optional[str]) -> Optional[Dict]:
+        """Fetch workflow_run details from GitHub API."""
+        if not run_api_url:
+            return None
+        headers = {
+            "Accept": "application/vnd.github+json",
+        }
+        token = self._get_github_token()
+        if token:
+            headers["Authorization"] = f"token {token}"
+        try:
+            async with aiohttp.ClientSession(headers=headers) as session:
+                async with session.get(run_api_url, timeout=20) as resp:
+                    if resp.status != 200:
+                        body = await resp.text()
+                        self.logger.warning(
+                            f"⚠️ Workflow Run konnte nicht geladen werden ({resp.status}): {body}"
+                        )
+                        return None
+                    return await resp.json()
+        except Exception as e:
+            self.logger.error(f"❌ Fehler beim Laden des Workflow Runs: {e}", exc_info=True)
             return None
 
     async def _trigger_deployment(self, repo_name: str, branch: str, commit_sha: str):
