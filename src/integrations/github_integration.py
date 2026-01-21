@@ -706,6 +706,9 @@ class GitHubIntegration:
             jobs_summary = None
             job_details = []
             failed_steps_summary = []
+            steps_total = 0
+            steps_failed = 0
+            steps_skipped = 0
 
             if jobs_url:
                 jobs_response = await self._fetch_workflow_jobs(jobs_url)
@@ -755,8 +758,12 @@ class GitHubIntegration:
                         steps = job.get('steps') or []
                         failed_steps = []
                         for step in steps:
-                            step_conclusion = step.get('conclusion')
-                            if step_conclusion and step_conclusion not in ('success', 'skipped'):
+                            step_conclusion = step.get('conclusion') or 'unknown'
+                            steps_total += 1
+                            if step_conclusion == 'skipped':
+                                steps_skipped += 1
+                            if step_conclusion not in ('success', 'skipped'):
+                                steps_failed += 1
                                 failed_steps.append(step.get('name', 'Unbekannter Schritt'))
                         if failed_steps:
                             limited_steps = failed_steps[:4]
@@ -768,6 +775,8 @@ class GitHubIntegration:
                     f"Jobs: {total_jobs} | ✅ {counts['success']} | ❌ {counts['failure']} | "
                     f"⚠️ {counts['cancelled'] + counts['action_required']} | ⏭️ {counts['skipped']}"
                 )
+                if steps_total:
+                    jobs_summary = f"{jobs_summary}\nSchritte: {steps_total} | ❌ {steps_failed} | ⏭️ {steps_skipped}"
 
             # Project config lookup (case-insensitive)
             project_config = {}
@@ -804,11 +813,36 @@ class GitHubIntegration:
             if jobs_summary:
                 embed.add_field(name="Tests/Jobs", value=jobs_summary, inline=False)
 
+            detail_embeds = []
             if job_details:
                 details_text = "\n".join(job_details)
-                if len(details_text) > 1000:
-                    details_text = details_text[:1000] + "…"
-                embed.add_field(name="Job-Details", value=details_text, inline=False)
+                if len(details_text) <= 950:
+                    embed.add_field(name="Job-Details", value=details_text, inline=False)
+                else:
+                    chunk = []
+                    chunk_len = 0
+                    chunks = []
+                    for line in job_details:
+                        line_len = len(line) + 1
+                        if chunk_len + line_len > 900 and chunk:
+                            chunks.append("\n".join(chunk))
+                            chunk = []
+                            chunk_len = 0
+                        chunk.append(line)
+                        chunk_len += line_len
+                    if chunk:
+                        chunks.append("\n".join(chunk))
+
+                    total_parts = len(chunks)
+                    for index, text in enumerate(chunks, start=1):
+                        detail_embed = discord.Embed(
+                            title=f"🧪 CI Job-Details ({index}/{total_parts})",
+                            url=run_url,
+                            color=project_color,
+                            timestamp=datetime.utcnow(),
+                        )
+                        detail_embed.add_field(name="Job-Details", value=text, inline=False)
+                        detail_embeds.append(detail_embed)
             elif jobs_url:
                 embed.add_field(
                     name="Job-Details",
@@ -828,10 +862,13 @@ class GitHubIntegration:
                     failed_steps_text = failed_steps_text[:1000] + "…"
                 embed.add_field(name="Fehlgeschlagene Schritte", value=failed_steps_text, inline=False)
 
+            embeds_to_send = [embed] + detail_embeds
+
             # Always send to internal deployment log
             internal_channel = self.bot.get_channel(self.deployment_channel_id)
             if internal_channel:
-                await internal_channel.send(embed=embed)
+                for item in embeds_to_send:
+                    await internal_channel.send(embed=item)
             else:
                 self.logger.warning("⚠️ Deployment log channel nicht gefunden (CI Notification).")
 
@@ -840,7 +877,8 @@ class GitHubIntegration:
             if ci_channel_id:
                 ci_channel = self.bot.get_channel(ci_channel_id)
                 if ci_channel and ci_channel_id != self.deployment_channel_id:
-                    await ci_channel.send(embed=embed)
+                    for item in embeds_to_send:
+                        await ci_channel.send(embed=item)
 
         except Exception as e:
             self.logger.error(f"❌ Error handling workflow_run event: {e}", exc_info=True)
