@@ -696,6 +696,60 @@ class GitHubIntegration:
             run_number = workflow.get('run_number')
             summary = payload.get('summary') or ('Alle Jobs erfolgreich.' if conclusion == 'success' else 'CI fehlgeschlagen.')
             failed_jobs = payload.get('failed_jobs') or []
+            jobs_url = workflow.get('jobs_url')
+            jobs = []
+            jobs_summary = None
+            job_details = []
+
+            if jobs_url:
+                jobs_response = await self._fetch_workflow_jobs(jobs_url)
+                if jobs_response and isinstance(jobs_response, dict):
+                    jobs = jobs_response.get('jobs') or []
+
+            if jobs:
+                counts = {
+                    'success': 0,
+                    'failure': 0,
+                    'cancelled': 0,
+                    'skipped': 0,
+                    'neutral': 0,
+                    'timed_out': 0,
+                    'action_required': 0,
+                    'unknown': 0,
+                }
+
+                for job in jobs:
+                    job_conclusion = job.get('conclusion') or job.get('status') or 'unknown'
+                    if job_conclusion in counts:
+                        counts[job_conclusion] += 1
+                    else:
+                        counts['unknown'] += 1
+
+                    if job_conclusion not in ('success', 'skipped'):
+                        job_name = job.get('name', 'Unbekannter Job')
+                        if job_name not in failed_jobs:
+                            failed_jobs.append(job_name)
+
+                    emoji = '✅'
+                    if job_conclusion in ('failure', 'timed_out'):
+                        emoji = '❌'
+                    elif job_conclusion in ('cancelled', 'action_required'):
+                        emoji = '⚠️'
+                    elif job_conclusion == 'skipped':
+                        emoji = '⏭️'
+
+                    job_name = job.get('name', 'Unbekannter Job')
+                    job_url = job.get('html_url') or run_url or ''
+                    if job_url:
+                        job_details.append(f"{emoji} [{job_name}]({job_url}) — {job_conclusion}")
+                    else:
+                        job_details.append(f"{emoji} {job_name} — {job_conclusion}")
+
+                total_jobs = len(jobs)
+                jobs_summary = (
+                    f"Jobs: {total_jobs} | ✅ {counts['success']} | ❌ {counts['failure']} | "
+                    f"⚠️ {counts['cancelled'] + counts['action_required']} | ⏭️ {counts['skipped']}"
+                )
 
             # Project config lookup (case-insensitive)
             project_config = {}
@@ -729,6 +783,15 @@ class GitHubIntegration:
             embed.add_field(name="Status", value=status, inline=True)
             embed.add_field(name="Ergebnis", value=conclusion, inline=True)
 
+            if jobs_summary:
+                embed.add_field(name="Tests/Jobs", value=jobs_summary, inline=False)
+
+            if job_details:
+                details_text = "\n".join(job_details)
+                if len(details_text) > 1000:
+                    details_text = details_text[:1000] + "…"
+                embed.add_field(name="Job-Details", value=details_text, inline=False)
+
             if failed_jobs:
                 failed_text = "\n".join(f"• {job}" for job in failed_jobs)
                 if len(failed_text) > 1000:
@@ -751,6 +814,32 @@ class GitHubIntegration:
 
         except Exception as e:
             self.logger.error(f"❌ Error handling workflow_run event: {e}", exc_info=True)
+
+    async def _fetch_workflow_jobs(self, jobs_url: str) -> Optional[Dict]:
+        """Fetch job details for a workflow run."""
+        if not jobs_url:
+            return None
+
+        headers = {
+            "Accept": "application/vnd.github+json",
+        }
+        token = self._get_github_token()
+        if token:
+            headers["Authorization"] = f"token {token}"
+
+        try:
+            async with aiohttp.ClientSession(headers=headers) as session:
+                async with session.get(jobs_url, timeout=20) as resp:
+                    if resp.status != 200:
+                        body = await resp.text()
+                        self.logger.warning(
+                            f"⚠️ Workflow Jobs konnten nicht geladen werden ({resp.status}): {body}"
+                        )
+                        return None
+                    return await resp.json()
+        except Exception as e:
+            self.logger.error(f"❌ Fehler beim Laden der Workflow Jobs: {e}", exc_info=True)
+            return None
 
     async def _trigger_deployment(self, repo_name: str, branch: str, commit_sha: str):
         """
