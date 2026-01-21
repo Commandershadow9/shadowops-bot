@@ -311,8 +311,11 @@ class DeploymentManager:
 
         if shutil.which("rsync"):
             # Create backup using rsync for efficiency
+            # --no-perms --no-group --no-owner: Avoid chgrp/chown errors when source
+            # files are owned by Docker container user (uid 1001, gid 65533)
             cmd = [
-                'rsync', '-a',
+                'rsync', '-rlptD',
+                '--no-perms', '--no-group', '--no-owner',
                 '--exclude=.git',
                 '--exclude=__pycache__',
                 '--exclude=*.pyc',
@@ -541,8 +544,11 @@ class DeploymentManager:
 
         if shutil.which("rsync"):
             # Restore from backup using rsync
+            # --no-perms --no-group --no-owner: Avoid chgrp/chown errors when
+            # files were originally owned by Docker container user
             cmd = [
-                'rsync', '-a', '--delete',
+                'rsync', '-rlptD', '--delete',
+                '--no-perms', '--no-group', '--no-owner',
                 str(backup_path) + '/',
                 str(project['path']) + '/'
             ]
