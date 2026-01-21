@@ -5,6 +5,7 @@ Handles safe deployment with backups, tests, and rollback
 
 import asyncio
 import logging
+import shlex
 import subprocess
 import shutil
 import time
@@ -448,14 +449,26 @@ class DeploymentManager:
         Args:
             project: Project configuration
         """
-        cmd = project['post_deploy_command'].split()
+        raw_cmd = project['post_deploy_command']
+        uses_shell = any(token in raw_cmd for token in ['&&', ';', '|', '>', '<']) or raw_cmd.strip().startswith('cd ')
 
-        process = await asyncio.create_subprocess_exec(
-            *cmd,
-            cwd=str(project['path']),
-            stdout=asyncio.subprocess.PIPE,
-            stderr=asyncio.subprocess.PIPE
-        )
+        if uses_shell:
+            process = await asyncio.create_subprocess_exec(
+                'bash',
+                '-lc',
+                raw_cmd,
+                cwd=str(project['path']),
+                stdout=asyncio.subprocess.PIPE,
+                stderr=asyncio.subprocess.PIPE
+            )
+        else:
+            cmd = shlex.split(raw_cmd)
+            process = await asyncio.create_subprocess_exec(
+                *cmd,
+                cwd=str(project['path']),
+                stdout=asyncio.subprocess.PIPE,
+                stderr=asyncio.subprocess.PIPE
+            )
 
         stdout, stderr = await process.communicate()
 

@@ -758,31 +758,6 @@ class GitHubIntegration:
                     )
                     return
 
-            allowed_workflows = project_config.get('ci_workflows')
-            if allowed_workflows:
-                allowed = False
-                for workflow_name in allowed_workflows:
-                    name_lower = str(workflow_name).lower()
-                    if name_lower and (
-                        name_lower == str(run_name).lower()
-                        or name_lower == str(run_path).lower()
-                        or name_lower in str(run_name).lower()
-                        or name_lower in str(run_path).lower()
-                    ):
-                        allowed = True
-                        break
-                if not allowed:
-                    self.logger.info(
-                        f"ℹ️ Ignoriere workflow_run '{run_name}' (nicht in ci_workflows erlaubt)."
-                    )
-                    return
-            else:
-                if 'notify' in str(run_name).lower() or 'ci-notify' in str(run_path).lower():
-                    self.logger.info(
-                        f"ℹ️ Ignoriere workflow_run '{run_name}' (Notification Workflow)."
-                    )
-                    return
-
             if jobs_url and is_completed:
                 jobs_response = await self._fetch_workflow_jobs(jobs_url)
                 if jobs_response and isinstance(jobs_response, dict):
