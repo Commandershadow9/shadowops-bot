@@ -81,6 +81,8 @@ class GitHubIntegration:
         self.patch_notes_diff_max_lines = github_config.get('patch_notes_diff_max_lines', 120)
 
         # Discord notification channel
+        discord_config = _get_section('discord', {})
+        self.guild_id = int(discord_config.get('guild_id') or 0)
         channels_config = _get_section('channels', {})
         self.deployment_channel_id = channels_config.get('deployment_log', 0)
         self.code_fixes_channel_id = channels_config.get('code_fixes', self.deployment_channel_id)
@@ -686,10 +688,6 @@ class GitHubIntegration:
             repo = payload.get('repository', {}) or {}
             action = payload.get('action') or workflow.get('action') or ''
 
-            if action and action != 'completed':
-                self.logger.info(f"ℹ️ Ignoriere workflow_run action '{action}' (warte auf completed).")
-                return
-
             repo_name = repo.get('name', 'unknown')
             repo_url = repo.get('html_url')
             run_name = workflow.get('name', 'CI')
@@ -702,6 +700,7 @@ class GitHubIntegration:
             summary = payload.get('summary') or ('Alle Jobs erfolgreich.' if conclusion == 'success' else 'CI fehlgeschlagen.')
             failed_jobs = payload.get('failed_jobs') or []
             jobs_url = workflow.get('jobs_url')
+            run_id = workflow.get('id') or workflow.get('run_id') or run_number or sha or 'unknown'
             jobs = []
             jobs_summary = None
             job_details = []
@@ -709,8 +708,12 @@ class GitHubIntegration:
             steps_total = 0
             steps_failed = 0
             steps_skipped = 0
+            is_completed = action == 'completed' or status == 'completed'
 
-            if jobs_url:
+            if not summary and not is_completed:
+                summary = 'CI laeuft...'
+
+            if jobs_url and is_completed:
                 jobs_response = await self._fetch_workflow_jobs(jobs_url)
                 if jobs_response and isinstance(jobs_response, dict):
                     jobs = jobs_response.get('jobs') or []
@@ -862,12 +865,18 @@ class GitHubIntegration:
                     failed_steps_text = failed_steps_text[:1000] + "…"
                 embed.add_field(name="Fehlgeschlagene Schritte", value=failed_steps_text, inline=False)
 
-            embeds_to_send = [embed] + detail_embeds
+            run_key_base = f"{repo_name}:{run_id}"
 
             # Always send to internal deployment log
             internal_channel = self.bot.get_channel(self.deployment_channel_id)
             if internal_channel:
-                for item in embeds_to_send:
+                await self._send_or_update_ci_message(
+                    channel=internal_channel,
+                    embed=embed,
+                    run_key=run_key_base,
+                    allow_update=is_completed,
+                )
+                for item in detail_embeds:
                     await internal_channel.send(embed=item)
             else:
                 self.logger.warning("⚠️ Deployment log channel nicht gefunden (CI Notification).")
@@ -877,11 +886,52 @@ class GitHubIntegration:
             if ci_channel_id:
                 ci_channel = self.bot.get_channel(ci_channel_id)
                 if ci_channel and ci_channel_id != self.deployment_channel_id:
-                    for item in embeds_to_send:
+                    await self._send_or_update_ci_message(
+                        channel=ci_channel,
+                        embed=embed,
+                        run_key=run_key_base,
+                        allow_update=is_completed,
+                    )
+                    for item in detail_embeds:
                         await ci_channel.send(embed=item)
 
         except Exception as e:
             self.logger.error(f"❌ Error handling workflow_run event: {e}", exc_info=True)
+
+    async def _send_or_update_ci_message(
+        self,
+        channel: discord.abc.Messageable,
+        embed: discord.Embed,
+        run_key: str,
+        allow_update: bool,
+    ) -> None:
+        """Send or update a CI notification message for a workflow run."""
+        if not self.guild_id or not run_key:
+            await channel.send(embed=embed)
+            return
+
+        state_key = 'ci_messages'
+        ci_messages = self.state_manager.get_value(self.guild_id, state_key, {})
+        channel_id = getattr(channel, 'id', None)
+        if channel_id is None:
+            await channel.send(embed=embed)
+            return
+
+        entry = ci_messages.get(run_key, {})
+        message_id = entry.get(str(channel_id))
+
+        if allow_update and message_id:
+            try:
+                message = await channel.fetch_message(int(message_id))
+                await message.edit(embed=embed)
+                return
+            except Exception as e:
+                self.logger.warning(f"⚠️ Konnte CI-Nachricht nicht aktualisieren: {e}")
+
+        sent = await channel.send(embed=embed)
+        entry[str(channel_id)] = sent.id
+        ci_messages[run_key] = entry
+        self.state_manager.set_value(self.guild_id, state_key, ci_messages)
 
     async def _fetch_workflow_jobs(self, jobs_url: str) -> Optional[Dict]:
         """Fetch job details for a workflow run."""
