@@ -48,12 +48,12 @@ class DeploymentManager:
         # Deployment settings
         deployment_config = getattr(config, 'deployment', {})
         if isinstance(deployment_config, dict):
-            self.backup_dir = Path(deployment_config.get('backup_dir', 'backups'))
+            self.backup_dir = Path(deployment_config.get('backup_dir', 'backups')).resolve()
             self.max_backups_per_project = deployment_config.get('max_backups', 5)
             self.health_check_timeout = deployment_config.get('health_check_timeout', 30)
             self.test_timeout = deployment_config.get('test_timeout', 300)
         else:
-            self.backup_dir = Path(getattr(deployment_config, 'backup_dir', 'backups'))
+            self.backup_dir = Path(getattr(deployment_config, 'backup_dir', 'backups')).resolve()
             self.max_backups_per_project = getattr(deployment_config, 'max_backups', 5)
             self.health_check_timeout = getattr(deployment_config, 'health_check_timeout', 30)
             self.test_timeout = getattr(deployment_config, 'test_timeout', 300)
@@ -306,6 +306,7 @@ class DeploymentManager:
             "*.pyc",
             "node_modules",
             "venv",
+            "backups",
         )
 
         if shutil.which("rsync"):
@@ -317,6 +318,7 @@ class DeploymentManager:
                 '--exclude=*.pyc',
                 '--exclude=node_modules',
                 '--exclude=venv',
+                '--exclude=backups',
                 str(project['path']) + '/',
                 str(backup_path) + '/'
             ]
