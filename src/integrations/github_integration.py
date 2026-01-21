@@ -887,7 +887,7 @@ class GitHubIntegration:
                 title=title,
                 url=run_url,
                 color=project_color,
-                timestamp=datetime.utcnow(),
+                timestamp=datetime.now(timezone.utc),
                 description=summary,
             )
             embed.add_field(name="Repository", value=repo_name, inline=True)
@@ -948,7 +948,7 @@ class GitHubIntegration:
                             title=f"🧪 CI Job-Details ({index}/{total_parts})",
                             url=run_url,
                             color=project_color,
-                            timestamp=datetime.utcnow(),
+                            timestamp=datetime.now(timezone.utc),
                         )
                         detail_embed.add_field(name="Job-Details", value=text, inline=False)
                         detail_embeds.append(detail_embed)
