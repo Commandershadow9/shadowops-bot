@@ -718,6 +718,8 @@ class GitHubIntegration:
             steps_total = 0
             steps_failed = 0
             steps_skipped = 0
+            active_job_name = None
+            active_step_name = None
             is_completed = action == 'completed' or status == 'completed'
 
             if not summary:
@@ -758,7 +760,8 @@ class GitHubIntegration:
                     )
                     return
 
-            if jobs_url and is_completed:
+            allow_jobs_fetch = jobs_url and (is_completed or status in ('in_progress', 'queued'))
+            if allow_jobs_fetch:
                 jobs_response = await self._fetch_workflow_jobs(jobs_url)
                 if jobs_response and isinstance(jobs_response, dict):
                     jobs = jobs_response.get('jobs') or []
@@ -777,6 +780,7 @@ class GitHubIntegration:
 
                 for job in jobs:
                     job_conclusion = job.get('conclusion') or job.get('status') or 'unknown'
+                    job_status = job.get('status') or 'unknown'
                     if job_conclusion in counts:
                         counts[job_conclusion] += 1
                     else:
@@ -802,21 +806,27 @@ class GitHubIntegration:
                     else:
                         job_details.append(f"{emoji} {job_name} — {job_conclusion}")
 
-                    if job_conclusion not in ('success', 'skipped'):
-                        steps = job.get('steps') or []
-                        failed_steps = []
-                        for step in steps:
-                            step_conclusion = step.get('conclusion') or 'unknown'
-                            steps_total += 1
-                            if step_conclusion == 'skipped':
-                                steps_skipped += 1
-                            if step_conclusion not in ('success', 'skipped'):
-                                steps_failed += 1
-                                failed_steps.append(step.get('name', 'Unbekannter Schritt'))
-                        if failed_steps:
-                            limited_steps = failed_steps[:4]
-                            suffix = '' if len(failed_steps) <= 4 else '…'
-                            failed_steps_summary.append(f"{job_name}: {', '.join(limited_steps)}{suffix}")
+                    steps = job.get('steps') or []
+                    failed_steps = []
+                    for step in steps:
+                        step_status = step.get('status') or step.get('conclusion') or 'unknown'
+                        step_conclusion = step.get('conclusion') or step.get('status') or 'unknown'
+                        steps_total += 1
+                        if step_conclusion == 'skipped':
+                            steps_skipped += 1
+                        if step_conclusion not in ('success', 'skipped'):
+                            steps_failed += 1
+                            failed_steps.append(step.get('name', 'Unbekannter Schritt'))
+                        if not is_completed and step_status == 'in_progress' and not active_step_name:
+                            active_step_name = step.get('name', 'Unbekannter Schritt')
+
+                    if not is_completed and job_status == 'in_progress' and not active_job_name:
+                        active_job_name = job_name
+
+                    if failed_steps:
+                        limited_steps = failed_steps[:4]
+                        suffix = '' if len(failed_steps) <= 4 else '…'
+                        failed_steps_summary.append(f"{job_name}: {', '.join(limited_steps)}{suffix}")
 
                 total_jobs = len(jobs)
                 jobs_summary = (
@@ -888,6 +898,12 @@ class GitHubIntegration:
 
             if jobs_summary:
                 embed.add_field(name="Tests/Jobs", value=jobs_summary, inline=False)
+
+            if not is_completed:
+                if active_job_name:
+                    embed.add_field(name="Aktueller Job", value=active_job_name, inline=True)
+                if active_step_name:
+                    embed.add_field(name="Aktueller Schritt", value=active_step_name, inline=True)
 
             detail_embeds = []
             if job_details:
