@@ -705,6 +705,7 @@ class GitHubIntegration:
             jobs = []
             jobs_summary = None
             job_details = []
+            failed_steps_summary = []
 
             if jobs_url:
                 jobs_response = await self._fetch_workflow_jobs(jobs_url)
@@ -749,6 +750,18 @@ class GitHubIntegration:
                         job_details.append(f"{emoji} [{job_name}]({job_url}) — {job_conclusion}")
                     else:
                         job_details.append(f"{emoji} {job_name} — {job_conclusion}")
+
+                    if job_conclusion not in ('success', 'skipped'):
+                        steps = job.get('steps') or []
+                        failed_steps = []
+                        for step in steps:
+                            step_conclusion = step.get('conclusion')
+                            if step_conclusion and step_conclusion not in ('success', 'skipped'):
+                                failed_steps.append(step.get('name', 'Unbekannter Schritt'))
+                        if failed_steps:
+                            limited_steps = failed_steps[:4]
+                            suffix = '' if len(failed_steps) <= 4 else '…'
+                            failed_steps_summary.append(f"{job_name}: {', '.join(limited_steps)}{suffix}")
 
                 total_jobs = len(jobs)
                 jobs_summary = (
@@ -808,6 +821,12 @@ class GitHubIntegration:
                 if len(failed_text) > 1000:
                     failed_text = failed_text[:1000] + "…"
                 embed.add_field(name="Fehlgeschlagene Jobs", value=failed_text, inline=False)
+
+            if failed_steps_summary:
+                failed_steps_text = "\n".join(f"• {entry}" for entry in failed_steps_summary)
+                if len(failed_steps_text) > 1000:
+                    failed_steps_text = failed_steps_text[:1000] + "…"
+                embed.add_field(name="Fehlgeschlagene Schritte", value=failed_steps_text, inline=False)
 
             # Always send to internal deployment log
             internal_channel = self.bot.get_channel(self.deployment_channel_id)
