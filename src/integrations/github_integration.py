@@ -691,13 +691,14 @@ class GitHubIntegration:
             repo_name = repo.get('name', 'unknown')
             repo_url = repo.get('html_url')
             run_name = workflow.get('name', 'CI')
+            run_path = workflow.get('path') or ''
             conclusion = workflow.get('conclusion') or payload.get('conclusion') or 'unknown'
             status = workflow.get('status') or payload.get('status') or 'unknown'
             branch = workflow.get('head_branch') or payload.get('branch') or '-'
             sha = (workflow.get('head_sha') or payload.get('sha') or '')[:7]
             run_url = workflow.get('html_url') or payload.get('url')
             run_number = workflow.get('run_number')
-            summary = payload.get('summary') or ('Alle Jobs erfolgreich.' if conclusion == 'success' else 'CI fehlgeschlagen.')
+            summary = payload.get('summary')
             failed_jobs = payload.get('failed_jobs') or []
             jobs_url = workflow.get('jobs_url')
             run_id = workflow.get('id') or workflow.get('run_id') or run_number or sha or 'unknown'
@@ -710,8 +711,43 @@ class GitHubIntegration:
             steps_skipped = 0
             is_completed = action == 'completed' or status == 'completed'
 
-            if not summary and not is_completed:
-                summary = 'CI laeuft...'
+            if not summary:
+                if is_completed:
+                    summary = 'Alle Jobs erfolgreich.' if conclusion == 'success' else 'CI fehlgeschlagen.'
+                else:
+                    summary = 'CI laeuft...'
+
+            # Project config lookup (case-insensitive)
+            project_config = {}
+            for key in self.config.projects.keys():
+                if key.lower() == repo_name.lower():
+                    project_config = self.config.projects[key]
+                    break
+
+            allowed_workflows = project_config.get('ci_workflows')
+            if allowed_workflows:
+                allowed = False
+                for workflow_name in allowed_workflows:
+                    name_lower = str(workflow_name).lower()
+                    if name_lower and (
+                        name_lower == str(run_name).lower()
+                        or name_lower == str(run_path).lower()
+                        or name_lower in str(run_name).lower()
+                        or name_lower in str(run_path).lower()
+                    ):
+                        allowed = True
+                        break
+                if not allowed:
+                    self.logger.info(
+                        f"ℹ️ Ignoriere workflow_run '{run_name}' (nicht in ci_workflows erlaubt)."
+                    )
+                    return
+            else:
+                if 'notify' in str(run_name).lower() or 'ci-notify' in str(run_path).lower():
+                    self.logger.info(
+                        f"ℹ️ Ignoriere workflow_run '{run_name}' (Notification Workflow)."
+                    )
+                    return
 
             if jobs_url and is_completed:
                 jobs_response = await self._fetch_workflow_jobs(jobs_url)
@@ -781,13 +817,6 @@ class GitHubIntegration:
                 if steps_total:
                     jobs_summary = f"{jobs_summary}\nSchritte: {steps_total} | ❌ {steps_failed} | ⏭️ {steps_skipped}"
 
-            # Project config lookup (case-insensitive)
-            project_config = {}
-            for key in self.config.projects.keys():
-                if key.lower() == repo_name.lower():
-                    project_config = self.config.projects[key]
-                    break
-
             project_color = project_config.get('color', 0x3498DB)
             if conclusion == 'success':
                 project_color = 0x2ECC71
@@ -849,7 +878,8 @@ class GitHubIntegration:
             elif jobs_url:
                 embed.add_field(
                     name="Job-Details",
-                    value="Nicht abrufbar (GitHub Token/Rate-Limit oder Repo privat).",
+                    value="Nicht abrufbar (GitHub Token/Rate-Limit oder Repo privat). "
+                          "Optional: github.token in der Bot-Config setzen.",
                     inline=False,
                 )
 
@@ -920,7 +950,7 @@ class GitHubIntegration:
         entry = ci_messages.get(run_key, {})
         message_id = entry.get(str(channel_id))
 
-        if allow_update and message_id:
+        if message_id:
             try:
                 message = await channel.fetch_message(int(message_id))
                 await message.edit(embed=embed)
