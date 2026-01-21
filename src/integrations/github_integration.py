@@ -684,6 +684,11 @@ class GitHubIntegration:
         try:
             workflow = payload.get('workflow_run', {}) or {}
             repo = payload.get('repository', {}) or {}
+            action = payload.get('action') or workflow.get('action') or ''
+
+            if action and action != 'completed':
+                self.logger.info(f"ℹ️ Ignoriere workflow_run action '{action}' (warte auf completed).")
+                return
 
             repo_name = repo.get('name', 'unknown')
             repo_url = repo.get('html_url')
@@ -791,6 +796,12 @@ class GitHubIntegration:
                 if len(details_text) > 1000:
                     details_text = details_text[:1000] + "…"
                 embed.add_field(name="Job-Details", value=details_text, inline=False)
+            elif jobs_url:
+                embed.add_field(
+                    name="Job-Details",
+                    value="Nicht abrufbar (GitHub Token/Rate-Limit oder Repo privat).",
+                    inline=False,
+                )
 
             if failed_jobs:
                 failed_text = "\n".join(f"• {job}" for job in failed_jobs)
