@@ -8,9 +8,10 @@ import hashlib
 import hmac
 import json
 import logging
+import os
 import subprocess
 from typing import Dict, Optional, Callable
-from datetime import datetime
+from datetime import datetime, timezone
 from pathlib import Path
 from aiohttp import web
 import aiohttp
@@ -355,6 +356,9 @@ class GitHubIntegration:
                 self._unmark_commit_inflight(normalized_project, branch, head_sha)
 
     def _get_github_token(self) -> Optional[str]:
+        env_token = os.getenv('GITHUB_TOKEN') or os.getenv('GH_TOKEN')
+        if env_token:
+            return env_token
         if hasattr(self.config, 'github_token'):
             try:
                 token = self.config.github_token
@@ -698,6 +702,11 @@ class GitHubIntegration:
             sha = (workflow.get('head_sha') or payload.get('sha') or '')[:7]
             run_url = workflow.get('html_url') or payload.get('url')
             run_number = workflow.get('run_number')
+            run_started_at = workflow.get('run_started_at')
+            updated_at = workflow.get('updated_at') or workflow.get('completed_at')
+            head_commit = workflow.get('head_commit') or {}
+            actor_login = (workflow.get('actor') or {}).get('login')
+            event_name = workflow.get('event')
             summary = payload.get('summary')
             failed_jobs = payload.get('failed_jobs') or []
             jobs_url = workflow.get('jobs_url')
@@ -723,6 +732,31 @@ class GitHubIntegration:
                 if key.lower() == repo_name.lower():
                     project_config = self.config.projects[key]
                     break
+
+            allowed_workflows = project_config.get('ci_workflows')
+            if allowed_workflows:
+                allowed = False
+                for workflow_name in allowed_workflows:
+                    name_lower = str(workflow_name).lower()
+                    if name_lower and (
+                        name_lower == str(run_name).lower()
+                        or name_lower == str(run_path).lower()
+                        or name_lower in str(run_name).lower()
+                        or name_lower in str(run_path).lower()
+                    ):
+                        allowed = True
+                        break
+                if not allowed:
+                    self.logger.info(
+                        f"ℹ️ Ignoriere workflow_run '{run_name}' (nicht in ci_workflows erlaubt)."
+                    )
+                    return
+            else:
+                if 'notify' in str(run_name).lower() or 'ci-notify' in str(run_path).lower():
+                    self.logger.info(
+                        f"ℹ️ Ignoriere workflow_run '{run_name}' (Notification Workflow)."
+                    )
+                    return
 
             allowed_workflows = project_config.get('ci_workflows')
             if allowed_workflows:
@@ -825,6 +859,30 @@ class GitHubIntegration:
             elif conclusion == 'cancelled':
                 project_color = 0xF1C40F
 
+            def _parse_ts(value: Optional[str]) -> Optional[datetime]:
+                if not value:
+                    return None
+                try:
+                    return datetime.fromisoformat(value.replace('Z', '+00:00'))
+                except ValueError:
+                    return None
+
+            duration_text = None
+            started_dt = _parse_ts(run_started_at)
+            if started_dt:
+                end_dt = _parse_ts(updated_at) if is_completed else datetime.now(timezone.utc)
+                if end_dt:
+                    delta = end_dt - started_dt
+                    seconds = max(int(delta.total_seconds()), 0)
+                    minutes, secs = divmod(seconds, 60)
+                    hours, minutes = divmod(minutes, 60)
+                    if hours:
+                        duration_text = f"{hours}h {minutes}m {secs}s"
+                    elif minutes:
+                        duration_text = f"{minutes}m {secs}s"
+                    else:
+                        duration_text = f"{secs}s"
+
             title = f"🧪 CI Ergebnis: {run_name}"
             if run_number:
                 title = f"{title} #{run_number}"
@@ -841,6 +899,17 @@ class GitHubIntegration:
             embed.add_field(name="Commit", value=sha or '-', inline=True)
             embed.add_field(name="Status", value=status, inline=True)
             embed.add_field(name="Ergebnis", value=conclusion, inline=True)
+            if event_name:
+                embed.add_field(name="Trigger", value=event_name, inline=True)
+            if actor_login:
+                embed.add_field(name="Actor", value=actor_login, inline=True)
+            if duration_text:
+                embed.add_field(name="Dauer", value=duration_text, inline=True)
+            if run_path:
+                embed.add_field(name="Workflow Datei", value=run_path, inline=False)
+            if head_commit.get('message'):
+                commit_line = str(head_commit.get('message')).splitlines()[0][:200]
+                embed.add_field(name="Commit-Message", value=commit_line, inline=False)
 
             if jobs_summary:
                 embed.add_field(name="Tests/Jobs", value=jobs_summary, inline=False)
@@ -875,7 +944,7 @@ class GitHubIntegration:
                         )
                         detail_embed.add_field(name="Job-Details", value=text, inline=False)
                         detail_embeds.append(detail_embed)
-            elif jobs_url:
+            elif jobs_url and is_completed:
                 embed.add_field(
                     name="Job-Details",
                     value="Nicht abrufbar (GitHub Token/Rate-Limit oder Repo privat). "
@@ -904,7 +973,7 @@ class GitHubIntegration:
                     channel=internal_channel,
                     embed=embed,
                     run_key=run_key_base,
-                    allow_update=is_completed,
+                    allow_update=True,
                 )
                 for item in detail_embeds:
                     await internal_channel.send(embed=item)
@@ -920,7 +989,7 @@ class GitHubIntegration:
                         channel=ci_channel,
                         embed=embed,
                         run_key=run_key_base,
-                        allow_update=is_completed,
+                        allow_update=True,
                     )
                     for item in detail_embeds:
                         await ci_channel.send(embed=item)
