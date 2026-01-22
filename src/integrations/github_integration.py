@@ -711,6 +711,7 @@ class GitHubIntegration:
             event_name = workflow.get('event')
             summary = payload.get('summary')
             failed_jobs = payload.get('failed_jobs') or []
+            e2e_tests = payload.get('e2e_tests') or {}
             jobs_url = workflow.get('jobs_url')
             run_id = workflow.get('id') or workflow.get('run_id') or run_number or sha or 'unknown'
             run_api_url = workflow.get('url')
@@ -741,28 +742,31 @@ class GitHubIntegration:
                     project_config = self.config.projects[key]
                     break
 
+            # Always filter out notification workflows first
+            run_name_lower = str(run_name).lower()
+            run_path_lower = str(run_path).lower()
+            if 'notify' in run_name_lower or 'notify' in run_path_lower:
+                self.logger.info(
+                    f"ℹ️ Ignoriere workflow_run '{run_name}' (Notification Workflow)."
+                )
+                return
+
             allowed_workflows = project_config.get('ci_workflows')
             if allowed_workflows:
                 allowed = False
                 for workflow_name in allowed_workflows:
                     name_lower = str(workflow_name).lower()
+                    # Exact match or workflow file contains the name
                     if name_lower and (
-                        name_lower == str(run_name).lower()
-                        or name_lower == str(run_path).lower()
-                        or name_lower in str(run_name).lower()
-                        or name_lower in str(run_path).lower()
+                        name_lower == run_name_lower
+                        or f"/{name_lower}.yml" in run_path_lower
+                        or f"/{name_lower}.yaml" in run_path_lower
                     ):
                         allowed = True
                         break
                 if not allowed:
                     self.logger.info(
                         f"ℹ️ Ignoriere workflow_run '{run_name}' (nicht in ci_workflows erlaubt)."
-                    )
-                    return
-            else:
-                if 'notify' in str(run_name).lower() or 'ci-notify' in str(run_path).lower():
-                    self.logger.info(
-                        f"ℹ️ Ignoriere workflow_run '{run_name}' (Notification Workflow)."
                     )
                     return
 
@@ -795,7 +799,8 @@ class GitHubIntegration:
                     else:
                         counts['unknown'] += 1
 
-                    if job_conclusion not in ('success', 'skipped'):
+                    # Only count job as failed if it's completed with a failure conclusion
+                    if job_status == 'completed' and job_conclusion in ('failure', 'cancelled', 'timed_out'):
                         job_name = job.get('name', 'Unbekannter Job')
                         if job_name not in failed_jobs:
                             failed_jobs.append(job_name)
@@ -818,14 +823,15 @@ class GitHubIntegration:
                     steps = job.get('steps') or []
                     failed_steps = []
                     for step in steps:
-                        step_status = step.get('status') or step.get('conclusion') or 'unknown'
-                        step_conclusion = step.get('conclusion') or step.get('status') or 'unknown'
+                        step_status = step.get('status') or 'unknown'
+                        step_conclusion = step.get('conclusion') or 'unknown'
                         steps_total += 1
-                        if step_status == 'completed' or step_conclusion in ('success', 'failure', 'skipped', 'cancelled', 'timed_out', 'action_required'):
+                        if step_status == 'completed':
                             steps_completed += 1
                         if step_conclusion == 'skipped':
                             steps_skipped += 1
-                        if step_conclusion not in ('success', 'skipped'):
+                        # Only count steps as failed if they're completed with a failure conclusion
+                        if step_status == 'completed' and step_conclusion in ('failure', 'cancelled', 'timed_out'):
                             steps_failed += 1
                             failed_steps.append(step.get('name', 'Unbekannter Schritt'))
                         if not is_completed and step_status == 'in_progress' and not active_step_name:
@@ -840,12 +846,27 @@ class GitHubIntegration:
                         failed_steps_summary.append(f"{job_name}: {', '.join(limited_steps)}{suffix}")
 
                 total_jobs = len(jobs)
-                jobs_summary = (
-                    f"Jobs: {total_jobs} | ✅ {counts['success']} | ❌ {counts['failure']} | "
-                    f"⚠️ {counts['cancelled'] + counts['action_required']} | ⏭️ {counts['skipped']}"
-                )
+                # Calculate running jobs (in_progress or queued)
+                running_jobs = sum(1 for j in jobs if j.get('status') in ('in_progress', 'queued'))
+
+                if is_completed:
+                    jobs_summary = (
+                        f"Jobs: {total_jobs} | ✅ {counts['success']} | ❌ {counts['failure']} | "
+                        f"⚠️ {counts['cancelled'] + counts['action_required']} | ⏭️ {counts['skipped']}"
+                    )
+                else:
+                    # Show running state with progress
+                    jobs_summary = (
+                        f"Jobs: {jobs_completed}/{total_jobs} fertig | "
+                        f"✅ {counts['success']} | 🔄 {running_jobs} laufend | ❌ {counts['failure']}"
+                    )
+
                 if steps_total:
-                    jobs_summary = f"{jobs_summary}\nSchritte: {steps_total} | ❌ {steps_failed} | ⏭️ {steps_skipped}"
+                    if is_completed:
+                        jobs_summary = f"{jobs_summary}\nSchritte: {steps_total} | ❌ {steps_failed} | ⏭️ {steps_skipped}"
+                    else:
+                        steps_running = steps_total - steps_completed
+                        jobs_summary = f"{jobs_summary}\nSchritte: {steps_completed}/{steps_total} | 🔄 {steps_running} ausstehend | ❌ {steps_failed}"
 
             project_color = project_config.get('color', 0x3498DB)
             if conclusion == 'success':
@@ -909,6 +930,18 @@ class GitHubIntegration:
 
             if jobs_summary:
                 embed.add_field(name="Tests/Jobs", value=jobs_summary, inline=False)
+
+            # Display Playwright E2E test counts if available
+            e2e_total = e2e_tests.get('total', 0)
+            if e2e_total > 0:
+                e2e_passed = e2e_tests.get('passed', 0)
+                e2e_failed = e2e_tests.get('failed', 0)
+                e2e_skipped = e2e_tests.get('skipped', 0)
+                e2e_text = f"✅ {e2e_passed} bestanden | ❌ {e2e_failed} fehlgeschlagen"
+                if e2e_skipped > 0:
+                    e2e_text += f" | ⏭️ {e2e_skipped} übersprungen"
+                e2e_text += f" | 📊 {e2e_total} gesamt"
+                embed.add_field(name="🎭 Playwright E2E Tests", value=e2e_text, inline=False)
 
             if not is_completed:
                 if jobs_total and steps_total:
@@ -1037,9 +1070,12 @@ class GitHubIntegration:
         entry = ci_messages.get(run_key, {})
         message_id = entry.get(str(channel_id))
 
-        if message_id:
+        if message_id and allow_update:
             try:
-                message = await channel.fetch_message(int(message_id))
+                if hasattr(channel, "get_partial_message"):
+                    message = channel.get_partial_message(int(message_id))
+                else:
+                    message = await channel.fetch_message(int(message_id))
                 await message.edit(embed=embed)
                 return
             except Exception as e:

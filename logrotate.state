@@ -1,5 +1,6 @@
 logrotate state -- version 2
 "/home/cmdshadow/shadowops-bot/logs/shadowops_20251116.log" 2025-12-2-0:0:15
+"/home/cmdshadow/shadowops-bot/logs/shadowops_20260121.log" 2026-1-22-0:0:0
 "/home/cmdshadow/shadowops-bot/logs/shadowops-bot.log" 2025-12-2-0:0:15
 "/home/cmdshadow/shadowops-bot/logs/shadowops_20251201.log" 2025-12-2-0:0:15
 "/home/cmdshadow/shadowops-bot/logs/shadowops_20251121.log" 2025-12-2-0:0:15
@@ -9,6 +10,7 @@ logrotate state -- version 2
 "/home/cmdshadow/shadowops-bot/logs/shadowops_20251117.log" 2025-12-2-0:0:15
 "/home/cmdshadow/shadowops-bot/logs/shadowops_20260109.log" 2026-1-21-0:0:0
 "/home/cmdshadow/shadowops-bot/logs/shadowops_20251130.log" 2025-12-2-0:0:15
+"/home/cmdshadow/shadowops-bot/logs/shadowops_20260122.log" 2026-1-22-2:0:0
 "/home/cmdshadow/shadowops-bot/logs/shadowops_20260110.log" 2026-1-21-0:0:0
 "/home/cmdshadow/shadowops-bot/logs/shadowops_20251122.log" 2025-12-2-0:0:15
 "/home/cmdshadow/shadowops-bot/logs/shadowops_20260114.log" 2026-1-21-0:0:0
@@ -20,7 +22,7 @@ logrotate state -- version 2
 "/home/cmdshadow/shadowops-bot/logs/shadowops_20260119.log" 2026-1-21-0:0:0
 "/home/cmdshadow/shadowops-bot/logs/shadowops_20260107.log" 2026-1-21-0:0:0
 "/home/cmdshadow/shadowops-bot/logs/shadowops_20251119.log" 2025-12-2-0:0:15
-"/home/cmdshadow/shadowops-bot/logs/shadowops_20260120.log" 2026-1-21-0:0:0
+"/home/cmdshadow/shadowops-bot/logs/shadowops_20260120.log" 2026-1-22-0:0:57
 "/home/cmdshadow/shadowops-bot/logs/shadowops_20251120.log" 2025-12-2-0:0:15
 "/home/cmdshadow/shadowops-bot/logs/shadowops_20251228.log" 2026-1-21-0:0:0
 "/home/cmdshadow/shadowops-bot/logs/shadowops_20260112.log" 2026-1-21-0:0:0
