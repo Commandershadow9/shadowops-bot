@@ -9,6 +9,7 @@ import shlex
 import subprocess
 import shutil
 import time
+import os
 from typing import Dict, Optional, List
 from datetime import datetime
 from pathlib import Path
@@ -349,6 +350,11 @@ class DeploymentManager:
                 ignore=ignore,
                 dirs_exist_ok=True,
             )
+
+        try:
+            os.utime(backup_path, None)
+        except OSError as exc:
+            self.logger.warning(f"⚠️ Backup-Zeitstempel konnte nicht aktualisiert werden: {exc}")
 
         # Clean up old backups
         await self._cleanup_old_backups(project['name'])
