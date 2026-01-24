@@ -1,5 +1,41 @@
 # ShadowOps Bot - Changelog
 
+## [3.7.0] - 2026-01-24
+
+### 🚀 CI/CD Notification Improvements
+
+#### ✨ Hinzugefügt
+
+**Finale Deployment-Success-Benachrichtigung:**
+- Separates Embed nach erfolgreichem CI-Deployment
+- Zeigt: Repository, Branch, Commit, Deploy-Job, Gesamtdauer, Actor
+- Footer: "✅ Alle Tests bestanden • Production aktualisiert"
+- Log-Meldung: `✅ Deployment success notification sent for {repo}`
+
+**Projektname in CI-Notifications:**
+- Titel zeigt jetzt Projektname: "🧪 ZERODOX: CI CI #123"
+- Bessere Zuordnung bei mehreren Projekten
+
+#### 🔧 Geändert
+
+**Single-Channel CI-Notifications:**
+- Notifications gehen nur noch in EINEN Channel (nicht mehr doppelt)
+- Priorisierung: `ci_channel_id` → `deployment_log` (Fallback)
+- Vermeidet Spam und Verwirrung
+
+**Skipped Jobs gefiltert:**
+- Übersprungene Jobs werden nicht mehr in Job-Details angezeigt
+- Cleaner Output ohne unnötigen Noise
+
+#### 🐛 Behoben
+
+**Deploy-Enabled Check für projektspezifische Einstellungen:**
+- `_trigger_deployment()` prüft jetzt `deploy.enabled` BEVOR Notifications gesendet werden
+- Projekte mit `deploy.enabled: false` (z.B. ZERODOX mit eigenem CI/CD) lösen keine ShadowOps-Deployment-Meldungen mehr aus
+- Log-Meldung: `⏭️ Deployment disabled for {repo} - handled by CI/CD pipeline`
+
+---
+
 ## [3.6.0] - 2025-12-15
 
 ### 🧠 Knowledge Base Integration - Active Long-Term Learning

@@ -789,9 +789,15 @@ class GitHubIntegration:
                     'unknown': 0,
                 }
 
+                # Track if deployment was successful
+                deploy_success = False
+                deploy_job_name = None
+
                 for job in jobs:
                     job_conclusion = job.get('conclusion') or job.get('status') or 'unknown'
                     job_status = job.get('status') or 'unknown'
+                    job_name = job.get('name', 'Unbekannter Job')
+
                     if job_status == 'completed':
                         jobs_completed += 1
                     if job_conclusion in counts:
@@ -799,9 +805,13 @@ class GitHubIntegration:
                     else:
                         counts['unknown'] += 1
 
+                    # Check for deployment success
+                    if 'deploy' in job_name.lower() and job_conclusion == 'success':
+                        deploy_success = True
+                        deploy_job_name = job_name
+
                     # Only count job as failed if it's completed with a failure conclusion
                     if job_status == 'completed' and job_conclusion in ('failure', 'cancelled', 'timed_out'):
-                        job_name = job.get('name', 'Unbekannter Job')
                         if job_name not in failed_jobs:
                             failed_jobs.append(job_name)
 
@@ -815,10 +825,13 @@ class GitHubIntegration:
 
                     job_name = job.get('name', 'Unbekannter Job')
                     job_url = job.get('html_url') or run_url or ''
-                    if job_url:
-                        job_details.append(f"{emoji} [{job_name}]({job_url}) — {job_conclusion}")
-                    else:
-                        job_details.append(f"{emoji} {job_name} — {job_conclusion}")
+
+                    # Skip "skipped" jobs in details (they just add noise)
+                    if job_conclusion != 'skipped':
+                        if job_url:
+                            job_details.append(f"{emoji} [{job_name}]({job_url}) — {job_conclusion}")
+                        else:
+                            job_details.append(f"{emoji} {job_name} — {job_conclusion}")
 
                     steps = job.get('steps') or []
                     failed_steps = []
@@ -900,7 +913,8 @@ class GitHubIntegration:
                     else:
                         duration_text = f"{secs}s"
 
-            title = f"🧪 CI Ergebnis: {run_name}"
+            # Include project name in title for clarity
+            title = f"🧪 {repo_name}: CI {run_name}"
             if run_number:
                 title = f"{title} #{run_number}"
 
@@ -1007,33 +1021,53 @@ class GitHubIntegration:
 
             run_key_base = f"{repo_name}:{run_id}"
 
-            # Always send to internal deployment log
-            internal_channel = self.bot.get_channel(self.deployment_channel_id)
-            if internal_channel:
+            # Determine target channel: use project-specific CI channel if set,
+            # otherwise fall back to deployment_log (avoid sending to BOTH)
+            ci_channel_id = project_config.get('ci_channel_id')
+            target_channel = None
+
+            if ci_channel_id:
+                target_channel = self.bot.get_channel(ci_channel_id)
+                if not target_channel:
+                    self.logger.warning(f"⚠️ CI channel {ci_channel_id} nicht gefunden, fallback zu deployment_log")
+
+            if not target_channel:
+                target_channel = self.bot.get_channel(self.deployment_channel_id)
+
+            if target_channel:
                 await self._send_or_update_ci_message(
-                    channel=internal_channel,
+                    channel=target_channel,
                     embed=embed,
                     run_key=run_key_base,
                     allow_update=True,
                 )
-                for item in detail_embeds:
-                    await internal_channel.send(embed=item)
-            else:
-                self.logger.warning("⚠️ Deployment log channel nicht gefunden (CI Notification).")
-
-            # Optional project-specific CI channel
-            ci_channel_id = project_config.get('ci_channel_id')
-            if ci_channel_id:
-                ci_channel = self.bot.get_channel(ci_channel_id)
-                if ci_channel and ci_channel_id != self.deployment_channel_id:
-                    await self._send_or_update_ci_message(
-                        channel=ci_channel,
-                        embed=embed,
-                        run_key=run_key_base,
-                        allow_update=True,
-                    )
+                # Only send detail embeds when CI is completed (not during progress updates)
+                if is_completed and detail_embeds:
                     for item in detail_embeds:
-                        await ci_channel.send(embed=item)
+                        await target_channel.send(embed=item)
+
+                # Send final deployment success message
+                if is_completed and deploy_success and conclusion == 'success':
+                    deploy_embed = discord.Embed(
+                        title=f"🚀 {repo_name}: Deployment Erfolgreich!",
+                        color=0x2ECC71,  # Green
+                        timestamp=datetime.now(timezone.utc),
+                    )
+                    deploy_embed.add_field(name="Repository", value=repo_name, inline=True)
+                    deploy_embed.add_field(name="Branch", value=branch, inline=True)
+                    if deploy_job_name:
+                        deploy_embed.add_field(name="Deploy Job", value=deploy_job_name, inline=True)
+                    if duration_text:
+                        deploy_embed.add_field(name="Gesamtdauer", value=duration_text, inline=True)
+                    if sha:
+                        deploy_embed.add_field(name="Commit", value=sha[:8], inline=True)
+                    if actor_login:
+                        deploy_embed.add_field(name="Deployed von", value=actor_login, inline=True)
+                    deploy_embed.set_footer(text="✅ Alle Tests bestanden • Production aktualisiert")
+                    await target_channel.send(embed=deploy_embed)
+                    self.logger.info(f"✅ Deployment success notification sent for {repo_name}")
+            else:
+                self.logger.warning("⚠️ Kein Channel für CI Notification gefunden.")
 
             if not from_poll:
                 if is_completed:
@@ -1197,6 +1231,19 @@ class GitHubIntegration:
         if not self.deployment_manager:
             self.logger.warning("⚠️ No deployment manager configured")
             return
+
+        # Check if deployment is enabled for this project (case-insensitive lookup)
+        project_config = None
+        for key in self.config.projects.keys():
+            if key.lower() == repo_name.lower():
+                project_config = self.config.projects[key]
+                break
+
+        if project_config:
+            deploy_config = project_config.get('deploy', {})
+            if not deploy_config.get('enabled', True):
+                self.logger.info(f"⏭️ Deployment disabled for {repo_name} - handled by CI/CD pipeline")
+                return
 
         try:
             self.logger.info(f"🚀 Starting deployment: {repo_name}@{commit_sha}")
