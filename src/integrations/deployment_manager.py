@@ -78,18 +78,24 @@ class DeploymentManager:
             if not project_config.get('enabled', False):
                 continue
 
+            # Check if deployment is enabled for this project
+            deploy_config = project_config.get('deploy', {})
+            deploy_enabled = deploy_config.get('enabled', True)  # Default to True for backwards compatibility
+
             projects[project_name] = {
                 'name': project_name,
                 'path': Path(project_config.get('path', '')),
                 'branch': project_config.get('branch', 'main'),
-                'run_tests': project_config.get('deploy', {}).get('run_tests', False),
-                'test_command': project_config.get('deploy', {}).get('test_command', 'pytest'),
-                'post_deploy_command': project_config.get('deploy', {}).get('post_deploy_command', None),
+                'deploy_enabled': deploy_enabled,  # NEW: Track if deploy is enabled
+                'run_tests': deploy_config.get('run_tests', False),
+                'test_command': deploy_config.get('test_command', 'pytest'),
+                'post_deploy_command': deploy_config.get('post_deploy_command', None),
                 'health_check_url': project_config.get('monitor', {}).get('url', ''),
-                'service_name': project_config.get('deploy', {}).get('service_name', None)
+                'service_name': deploy_config.get('service_name', None)
             }
 
-            self.logger.info(f"✅ Loaded deployment config for: {project_name}")
+            status = "✅" if deploy_enabled else "⏭️ (deploy disabled)"
+            self.logger.info(f"{status} Loaded deployment config for: {project_name}")
 
         return projects
 
@@ -132,6 +138,17 @@ class DeploymentManager:
                 'success': False,
                 'error': error_msg,
                 'duration_seconds': 0
+            }
+
+        # Check if deployment is disabled for this project
+        if not self.projects[project_key].get('deploy_enabled', True):
+            self.logger.info(f"⏭️ Deployment disabled for '{project_name}' - skipping (handled by CI)")
+            return {
+                'success': True,
+                'skipped': True,
+                'error': None,
+                'duration_seconds': 0,
+                'message': 'Deployment handled by GitHub Actions CI'
             }
 
         # Mark deployment as active
