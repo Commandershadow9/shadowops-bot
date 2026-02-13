@@ -1,5 +1,27 @@
 # ShadowOps Bot - Changelog
 
+## [3.8.0] - 2026-02-13
+
+### DM-Alerts bei kritischen Incidents
+
+#### Hinzugefügt
+
+**DM-Benachrichtigungen an Admins:**
+- Neue Config-Option `discord.alert_dm_user_ids` — Liste von Discord User-IDs
+- Bei Projekt-Offline: DM nach 2+ fehlgeschlagenen Health-Checks mit Fehlerdetails und Downtime-Dauer
+- Bei Projekt-Recovery: DM mit Gesamt-Downtime
+- Fehlerbehandlung: `discord.Forbidden` bei deaktivierten DMs wird sauber abgefangen
+
+**Systemd Auto-Start:**
+- Service auf `enabled` gesetzt — startet automatisch nach Server-Reboot
+- Verhindert unbemerkte Ausfälle wie den Kernel-Update-Reboot vom 2026-02-13
+
+#### Geänderte Dateien
+- `src/integrations/project_monitor.py` — `_send_dm_alerts()`, Integration in Incident/Recovery-Flow
+- `config/config.yaml` — `alert_dm_user_ids` Konfiguration
+
+---
+
 ## [3.7.0] - 2026-01-24
 
 ### 🚀 CI/CD Notification Improvements

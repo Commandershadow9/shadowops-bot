@@ -185,6 +185,12 @@ class ProjectMonitor:
         # Incident Manager (will be set by bot.py after initialization)
         self.incident_manager = None
 
+        # DM alert user IDs (notified on critical incidents)
+        discord_config = self._get_config_section('discord', {})
+        self.alert_dm_user_ids: List[int] = [
+            int(uid) for uid in discord_config.get('alert_dm_user_ids', [])
+        ]
+
         self.logger.info(f"🔧 Project Monitor initialized with {len(self.projects)} projects")
 
     def _load_projects(self):
@@ -516,6 +522,9 @@ class ProjectMonitor:
         # Send to external notification channels (customer servers)
         await self._send_external_notifications(project, "offline", error=error)
 
+        # Send DM to admin users for critical alerts
+        await self._send_dm_alerts(project, "offline", error=error)
+
     async def _send_recovery_alert(self, project: ProjectStatus):
         """Send Discord alert when project recovers"""
         # Auto-resolve any open downtime incidents
@@ -553,6 +562,9 @@ class ProjectMonitor:
 
         # Send to external notification channels (customer servers)
         await self._send_external_notifications(project, "online")
+
+        # Send recovery DM to admin users
+        await self._send_dm_alerts(project, "online")
 
     def _create_incident_embed(self, project: ProjectStatus, error: str) -> discord.Embed:
         """Create embed for incident alert"""
@@ -664,6 +676,69 @@ class ProjectMonitor:
 
             except Exception as e:
                 self.logger.error(f"❌ Failed to send external notification for {project.name}: {e}")
+
+    async def _send_dm_alerts(self, project: ProjectStatus, event_type: str, error: str = None):
+        """
+        Send DM to configured admin users for critical project events.
+
+        Only sends DMs for:
+        - offline events after 5+ consecutive failures (~25 min with 300s interval)
+        - recovery events after extended downtime (>5 min)
+        """
+        if not self.alert_dm_user_ids:
+            return
+
+        # Only DM after sustained downtime (not transient blips)
+        if event_type == "offline" and project.consecutive_failures < 2:
+            return
+
+        for user_id in self.alert_dm_user_ids:
+            try:
+                user = self.bot.get_user(user_id) or await self.bot.fetch_user(user_id)
+                if not user:
+                    continue
+
+                if event_type == "offline":
+                    downtime = project.current_downtime_duration
+                    downtime_str = ""
+                    if downtime:
+                        minutes = int(downtime.total_seconds() // 60)
+                        downtime_str = f" (seit {minutes} Min.)"
+
+                    embed = discord.Embed(
+                        title=f"🚨 {project.name} ist OFFLINE{downtime_str}",
+                        description=(
+                            f"Health-Check fehlgeschlagen!\n"
+                            f"**Fehler:** {(error or 'Unbekannt')[:200]}\n"
+                            f"**Fehlversuche:** {project.consecutive_failures}x in Folge"
+                        ),
+                        color=discord.Color.red(),
+                        timestamp=datetime.utcnow()
+                    )
+                    await user.send(embed=embed)
+
+                elif event_type == "online":
+                    downtime_str = "unbekannt"
+                    if project.last_offline_time:
+                        downtime = datetime.utcnow() - project.last_offline_time
+                        hours = int(downtime.total_seconds() // 3600)
+                        minutes = int((downtime.total_seconds() % 3600) // 60)
+                        downtime_str = f"{hours}h {minutes}m" if hours > 0 else f"{minutes}m"
+
+                    embed = discord.Embed(
+                        title=f"✅ {project.name} ist wieder ONLINE",
+                        description=f"Service wiederhergestellt nach **{downtime_str}** Downtime.",
+                        color=discord.Color.green(),
+                        timestamp=datetime.utcnow()
+                    )
+                    await user.send(embed=embed)
+
+                self.logger.info(f"📩 DM Alert an User {user_id}: {project.name} {event_type}")
+
+            except discord.Forbidden:
+                self.logger.warning(f"⚠️ Kann keine DM an User {user_id} senden (DMs deaktiviert)")
+            except Exception as e:
+                self.logger.error(f"❌ DM Alert fehlgeschlagen für User {user_id}: {e}")
 
     async def _update_dashboard_loop(self):
         """Periodically update the dashboard message"""
