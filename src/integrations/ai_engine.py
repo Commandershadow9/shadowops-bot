@@ -133,8 +133,12 @@ class CodexProvider:
         env = self._get_clean_env()
 
         # CLI-Argumente aufbauen — kein Shell, nur Argumentliste
+        # --skip-git-repo-check: Kein trusted directory noetig
+        # -c mcp_servers={}: Keine MCP-Server laden (schneller, keine Auth-Fehler)
         args = [
             'codex', 'exec', '--ephemeral',
+            '--skip-git-repo-check',
+            '-c', 'mcp_servers={}',
             '-s', 'workspace-write',
             '-m', resolved_model,
         ]
@@ -202,6 +206,8 @@ class CodexProvider:
 
         args = [
             'codex', 'exec', '--ephemeral',
+            '--skip-git-repo-check',
+            '-c', 'mcp_servers={}',
             '-s', 'workspace-write',
             '-m', resolved_model,
             prompt,
