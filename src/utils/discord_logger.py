@@ -54,22 +54,18 @@ class DiscordChannelLogger:
         if not self.config:
             return
 
-        # Auto-Remediation channels with fallbacks to general channel map
-        self.channels['alerts'] = self.config.alerts_channel
+        # AI Engine channels
         self.channels['approvals'] = self.config.approvals_channel
-        self.channels['stats'] = self.config.stats_channel
         self.channels['ai_learning'] = self.config.ai_learning_channel
         self.channels['code_fixes'] = self.config.code_fixes_channel
         self.channels['orchestrator'] = self.config.orchestrator_channel
 
         # Standard channels
-        self.channels['performance'] = self.config.channels.get('performance')
         self.channels['bot_status'] = self.config.channels.get('bot_status')
         self.channels['critical'] = self.config.channels.get('critical')
         self.channels['docker'] = self.config.channels.get('docker')
         self.channels['fail2ban'] = self.config.channels.get('fail2ban')
         self.channels['crowdsec'] = self.config.channels.get('crowdsec')
-        self.channels['aide'] = self.config.channels.get('aide')
 
         logger.debug(f"Loaded {len([v for v in self.channels.values() if v])} channel IDs")
 

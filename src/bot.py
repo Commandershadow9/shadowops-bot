@@ -163,10 +163,9 @@ class ShadowOpsBot(commands.Bot):
 
             # Categories
             security_category = await self._get_or_create_category(guild, "🔐 Security Monitoring")
-            auto_remediation_category = await self._get_or_create_category(guild, "🤖 Auto-Remediation")
-            system_category = await self._get_or_create_category(guild, "⚙️ System Status")
-            multi_project_category = await self._get_or_create_category(guild, "🌐 Multi-Project")
-            project_updates_category = await self._get_or_create_category(guild, "📢 Project Updates")
+            auto_remediation_category = await self._get_or_create_category(guild, "🤖 AI Engine")
+            system_category = await self._get_or_create_category(guild, "📦 System & Projekte")
+            project_updates_category = await self._get_or_create_category(guild, "📢 Updates & CI")
 
             channels_created_or_updated_in_session = False 
 
@@ -228,22 +227,16 @@ class ShadowOpsBot(commands.Bot):
                 self.config._config['channels'] = {}
 
             core_channels_to_manage = [
-                ('critical', '🔴-critical', 'Kritische Security Alerts - Sofortige Reaktion erforderlich', security_category),
-                ('bot_status', '🤖-bot-status', '⚙️ Bot Startup, Health-Checks und System-Status', system_category),
-                ('deployment_log', '🚀-deployment-log', '🚀 Deployment-Benachrichtigungen und Auto-Deploy Logs', multi_project_category),
-                # Add other standard top-level channels here if they should be auto-created
-                ('sicherheitsdienst', '🛡️-security', 'Sicherheitsdienst Project Alerts', security_category),
-                ('nexus', '⚡-nexus', 'Nexus Project Alerts', security_category),
+                # 🔐 Security Monitoring
+                ('critical', '🚨-critical', 'Kritische Security Alerts - Sofortige Reaktion erforderlich', security_category),
                 ('fail2ban', '🚫-fail2ban', 'Fail2ban Bans und Aktivitäten', security_category),
                 ('crowdsec', '🛡️-crowdsec', 'CrowdSec Alerts', security_category),
                 ('docker', '🐳-docker', 'Docker Security Scans (Trivy)', security_category),
-                ('backups', '💾-backups', 'Backup Status und Logs', security_category),
-                ('aide', '📁-aide', 'AIDE File Integrity Monitoring', security_category),
-                ('ssh', '🔑-ssh', 'SSH Anomalien', security_category),
-                ('performance', '📊-performance', 'Performance Monitoring', system_category),
-                ('ai_queue', '🤖-ai-queue', 'AI Engine Queue Status Dashboard', system_category),
-                ('customer_alerts', '👥-customer-alerts', 'Kunden-sichtbare Alerts und Incidents', multi_project_category),
-                ('customer_status', '📊-customer-status', 'Projekt-Status Updates und Dashboards', multi_project_category),
+                ('guildscout', '⚡-guildscout', 'GuildScout Verification Alerts & Performance Monitoring', security_category),
+                # 📦 System & Projekte
+                ('bot_status', '🤖-bot-status', 'Bot Startup, Health-Checks und System-Status', system_category),
+                ('customer_alerts', '👥-customer-alerts', 'Kunden-sichtbare Alerts und Incidents', system_category),
+                ('deployment_log', '🚀-deployment-log', 'Deployment-Benachrichtigungen und Auto-Deploy Logs', system_category),
             ]
 
             for key, name, topic, category in core_channels_to_manage:
@@ -262,13 +255,10 @@ class ShadowOpsBot(commands.Bot):
                 ar_channel_names = self.config.auto_remediation.get('channel_names', {})
                 
                 ar_channels_to_manage = [
-                    ('alerts', ar_channel_names.get('alerts', '🤖-auto-remediation-alerts'), '🤖 Live-Updates aller Auto-Remediation Fixes'),
-                    ('approvals', ar_channel_names.get('approvals', '✋-auto-remediation-approvals'), '✋ Human-Approval Requests für kritische Fixes'),
-                    ('stats', ar_channel_names.get('stats', '📊-auto-remediation-stats'), '📊 Tägliche Auto-Remediation Statistiken'),
+                    ('approvals', ar_channel_names.get('approvals', '✋-approvals'), '✋ Human-Approval Requests für kritische Fixes'),
                     ('ai_learning', ar_channel_names.get('ai_learning', '🧠-ai-learning'), '🧠 AI Learning Logs: Code Analyzer, Git History, Knowledge Base'),
                     ('code_fixes', ar_channel_names.get('code_fixes', '🔧-code-fixes'), '🔧 Code Fixer: Vulnerability Processing & Fix Generation'),
                     ('orchestrator', ar_channel_names.get('orchestrator', '⚡-orchestrator'), '⚡ Orchestrator: Batch Event Coordination & Planning'),
-                    ('ai_code_scans', ar_channel_names.get('ai_code_scans', '🔎-ai-code-scans'), '🔎 Auto-Fix Vorschläge & Status (Reaction-basiert)') # Assuming this is meant to be here
                 ]
 
                 for channel_type, name, topic in ar_channels_to_manage:
