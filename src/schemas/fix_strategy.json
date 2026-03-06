@@ -1,0 +1,31 @@
+{
+  "type": "object",
+  "properties": {
+    "description": { "type": "string" },
+    "confidence": { "type": "number", "minimum": 0, "maximum": 1 },
+    "severity_assessment": { "type": "string", "enum": ["LOW", "MEDIUM", "HIGH", "CRITICAL"] },
+    "analysis": { "type": "string" },
+    "root_cause": { "type": "string" },
+    "steps": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "properties": {
+          "action": { "type": "string" },
+          "command": { "type": "string" },
+          "risk_level": { "type": "string", "enum": ["low", "medium", "high"] },
+          "rollback_command": { "type": "string" }
+        },
+        "required": ["action", "command", "risk_level"],
+        "additionalProperties": false
+      }
+    },
+    "affected_services": {
+      "type": "array",
+      "items": { "type": "string" }
+    },
+    "estimated_downtime_seconds": { "type": "integer" }
+  },
+  "required": ["description", "confidence", "severity_assessment", "analysis", "steps"],
+  "additionalProperties": false
+}

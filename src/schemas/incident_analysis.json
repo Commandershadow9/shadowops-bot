@@ -1,0 +1,27 @@
+{
+  "type": "object",
+  "properties": {
+    "incident_type": { "type": "string" },
+    "severity": { "type": "string", "enum": ["LOW", "MEDIUM", "HIGH", "CRITICAL"] },
+    "affected_service": { "type": "string" },
+    "root_cause": { "type": "string" },
+    "immediate_action": { "type": "string" },
+    "fix_steps": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "properties": {
+          "action": { "type": "string" },
+          "command": { "type": "string" },
+          "risk_level": { "type": "string", "enum": ["low", "medium", "high"] }
+        },
+        "required": ["action", "command", "risk_level"],
+        "additionalProperties": false
+      }
+    },
+    "confidence": { "type": "number", "minimum": 0, "maximum": 1 },
+    "requires_restart": { "type": "boolean" }
+  },
+  "required": ["incident_type", "severity", "affected_service", "root_cause", "fix_steps", "confidence"],
+  "additionalProperties": false
+}
