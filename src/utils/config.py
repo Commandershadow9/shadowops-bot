@@ -106,14 +106,7 @@ class Config:
         """
         Global flag for AI usage. Defaults to provider-based detection when unset.
         """
-        if 'enabled' in self.ai:
-            return bool(self.ai.get('enabled', True))
-
-        ai_cfg = self.ai
-        ai_ollama = ai_cfg.get('ollama', {}).get('enabled', False)
-        ai_claude = ai_cfg.get('anthropic', {}).get('enabled', False) and self.anthropic_api_key
-        ai_openai = ai_cfg.get('openai', {}).get('enabled', False) and self.openai_api_key
-        return bool(ai_ollama or ai_claude or ai_openai)
+        return bool(self.ai.get('enabled', False))
 
     @property
     def projects(self) -> Any:
@@ -165,12 +158,11 @@ class Config:
         ai_cfg = self.ai
         ai_features_enabled = bool(ai_cfg.get('enabled', True))
         if ai_features_enabled:
-            ai_ollama = ai_cfg.get('ollama', {}).get('enabled', False)
-            ai_claude = ai_cfg.get('anthropic', {}).get('enabled', False) and self.anthropic_api_key
-            ai_openai = ai_cfg.get('openai', {}).get('enabled', False) and self.openai_api_key
+            has_primary = bool(ai_cfg.get('primary', {}).get('engine'))
+            has_fallback = bool(ai_cfg.get('fallback', {}).get('engine'))
 
-            if not (ai_ollama or ai_claude or ai_openai):
-                warnings.append("Keine AI-Services konfiguriert! Mindestens einer sollte aktiviert sein")
+            if not (has_primary or has_fallback):
+                warnings.append("Keine AI-Engines konfiguriert! Mindestens primary oder fallback sollte gesetzt sein")
 
         if warnings and hasattr(logger, 'warning'):
             logger.warning("⚠️ Config-Warnings:")

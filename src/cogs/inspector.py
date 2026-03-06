@@ -31,21 +31,24 @@ class InspectorCog(commands.Cog):
                 color=0x5865F2,
                 timestamp=datetime.now()
             )
-            # Ollama
-            ollama_enabled = self.bot.ai_service.ollama_enabled
-            ollama_status = "🟢 Enabled" if ollama_enabled else "🔴 Disabled"
-            ollama_info = f"Status: {ollama_status}\nURL: `{self.bot.ai_service.ollama_url}`\nModel: `{self.bot.ai_service.ollama_model}`"
-            embed.add_field(name="🦙 Ollama (Local)", value=ollama_info, inline=False)
-            # Claude
-            claude_enabled = self.bot.ai_service.anthropic_enabled
-            claude_status = "🟢 Enabled" if claude_enabled else "🔴 Disabled"
-            claude_info = f"Status: {claude_status}\nModel: `{self.bot.ai_service.anthropic_model}`\nAPI Key: {'✅ Configured' if self.bot.ai_service.anthropic_api_key else '❌ Missing'}"
-            embed.add_field(name="🧠 Claude (Anthropic)", value=claude_info, inline=False)
-            # OpenAI
-            openai_enabled = self.bot.ai_service.openai_enabled
-            openai_status = "🟢 Enabled" if openai_enabled else "🔴 Disabled"
-            openai_info = f"Status: {openai_status}\nModel: `{self.bot.ai_service.openai_model}`\nAPI Key: {'✅ Configured' if self.bot.ai_service.openai_api_key else '❌ Missing'}"
-            embed.add_field(name="🤖 OpenAI (GPT)", value=openai_info, inline=False)
+            # Codex (Primary)
+            if hasattr(self.bot.ai_service, 'codex_provider'):
+                codex = self.bot.ai_service.codex_provider
+                codex_info = f"Status: 🟢 Primary\nModelle: `{codex.models}`"
+                embed.add_field(name="⚡ Codex CLI (Primary)", value=codex_info, inline=False)
+            # Claude (Fallback)
+            if hasattr(self.bot.ai_service, 'claude_provider'):
+                claude = self.bot.ai_service.claude_provider
+                claude_info = f"Status: 🟡 Fallback\nModelle: `{claude.models}`\nCLI: `{claude.cli_path}`"
+                embed.add_field(name="🧠 Claude CLI (Fallback)", value=claude_info, inline=False)
+            # Stats
+            if hasattr(self.bot.ai_service, 'stats'):
+                stats = self.bot.ai_service.get_stats()
+                stats_info = (
+                    f"Codex: {stats.get('codex_success', 0)}/{stats.get('codex_calls', 0)} erfolgreich\n"
+                    f"Claude: {stats.get('claude_success', 0)}/{stats.get('claude_calls', 0)} erfolgreich"
+                )
+                embed.add_field(name="📊 Engine Stats", value=stats_info, inline=False)
 
             await interaction.followup.send(embed=embed)
         except Exception as e:
