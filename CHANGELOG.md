@@ -56,6 +56,19 @@
 - `tests/conftest.py` — Mock-Config auf Dual-Engine umgestellt
 - `tests/unit/test_config.py` — Ollama-Assertions durch Engine-Assertions ersetzt
 
+#### Bugfixes
+
+- Zirkulaeren Import behoben: `auto_fix_manager` ↔ `continuous_learning_agent` (Lazy Import)
+- Fehlende Dependencies ergaenzt: `coloredlogs`, `python-dateutil` in pyproject.toml
+
+#### Discord Server Cleanup
+
+- 17 obsolete/leere Channels geloescht (Nexus, Ollama-Queue, Sicherheitsdienst, etc.)
+- Kategorien reorganisiert: 7 → 6 (🤖 Auto-Remediation → AI Engine, Multi-Project aufgeloest)
+- Channel-Namen gekuerzt (auto-remediation-approvals → approvals)
+- Config bereinigt: Doppelte Keys, null-Channels und tote Referenzen entfernt
+- Von 41 auf 19 Channels reduziert
+
 #### Tests
 
 - 161/161 Tests bestanden
