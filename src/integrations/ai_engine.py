@@ -166,7 +166,7 @@ class CodexProvider:
             stderr = stderr_bytes.decode('utf-8', errors='replace').strip()
 
             if proc.returncode != 0:
-                logger.warning(f"Codex CLI Fehler (Exit {proc.returncode}): {stderr[:200]}")
+                logger.warning(f"Codex CLI Fehler (Exit {proc.returncode}): {stderr[-500:]}")
                 return None
 
             if not stdout:
@@ -230,7 +230,7 @@ class CodexProvider:
 
             if proc.returncode != 0:
                 stderr = stderr_bytes.decode('utf-8', errors='replace').strip()
-                logger.warning(f"Codex CLI Raw Fehler (Exit {proc.returncode}): {stderr[:200]}")
+                logger.warning(f"Codex CLI Raw Fehler (Exit {proc.returncode}): {stderr[-500:]}")
                 return None
 
             return stdout or None
