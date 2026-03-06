@@ -1,6 +1,6 @@
 """
 AI Engine — Dual-Engine mit Codex CLI + Claude CLI
-Ersetzt das alte Ollama-basierte AIService fuer ShadowOps v4.
+Dual-Engine AI-System fuer ShadowOps v4.
 
 Architektur:
   - CodexProvider: Codex CLI (primaer) mit --output-schema fuer strukturierten Output

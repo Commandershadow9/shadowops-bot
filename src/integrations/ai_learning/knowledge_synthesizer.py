@@ -77,7 +77,7 @@ class KnowledgeSynthesizer:
                 "ram_patterns": {
                     # model_name: {
                     #   "avg_ram_required_gb": 4.8,
-                    #   "best_cleanup_method": "kill_ollama_runner",
+                    #   "best_cleanup_method": "restart_service",
                     #   "failure_rate": 0.1,
                     #   "optimal_conditions": {...}
                     # }

@@ -1,7 +1,7 @@
 """
 LLM Fine-Tuning System for Patch Notes Generation.
 
-Exports training data and facilitates fine-tuning of llama3.1.
+Exports training data in JSONL format for LLM fine-tuning.
 """
 
 import json
@@ -27,13 +27,13 @@ class LLMFineTuning:
 
         logger.info("✅ LLM Fine-Tuning system initialized")
 
-    def export_for_ollama_fine_tuning(self, project: Optional[str] = None,
+    def export_for_fine_tuning(self, project: Optional[str] = None,
                                       min_quality_score: float = 75.0,
                                       max_examples: int = 1000) -> Path:
         """
-        Export training data in Ollama fine-tuning format (JSONL).
+        Export training data in JSONL fine-tuning format.
 
-        Ollama format:
+        JSONL format:
         {"prompt": "...", "response": "..."}
 
         Args:
@@ -45,7 +45,7 @@ class LLMFineTuning:
             Path to exported file
         """
         timestamp = datetime.utcnow().strftime('%Y%m%d_%H%M%S')
-        export_file = self.export_dir / f'ollama_finetune_{project or "all"}_{timestamp}.jsonl'
+        export_file = self.export_dir / f'finetune_{project or "all"}_{timestamp}.jsonl'
 
         if not self.trainer.training_data_file.exists():
             logger.warning("No training data available for export")
@@ -90,13 +90,13 @@ Create the patch notes now:"""
 
                             response = example.get('generated_notes', '')
 
-                            # Write in Ollama format
-                            ollama_entry = {
+                            # Write in JSONL format
+                            entry = {
                                 'prompt': prompt,
                                 'response': response
                             }
 
-                            f_out.write(json.dumps(ollama_entry) + '\n')
+                            f_out.write(json.dumps(entry) + '\n')
                             exported_count += 1
 
                         except Exception as e:
@@ -167,7 +167,7 @@ Create the patch notes now:"""
 
     def generate_fine_tuning_script(self, export_file: Path, model_name: str = "llama3.1") -> Path:
         """
-        Generate a shell script for fine-tuning with Ollama.
+        Generate a shell script for fine-tuning (legacy, ai_learning disabled).
 
         Args:
             export_file: Path to exported training data
@@ -179,18 +179,13 @@ Create the patch notes now:"""
         script_file = export_file.parent / f'finetune_{export_file.stem}.sh'
 
         script_content = f"""#!/bin/bash
-# Fine-Tuning Script for Ollama
+# Fine-Tuning Data Export Script
 # Generated: {datetime.utcnow().isoformat()}
+# NOTE: ai_learning is currently disabled. This script is for reference only.
 
 set -e
 
-echo "🚀 Starting fine-tuning of {model_name}..."
-
-# Check if Ollama is installed
-if ! command -v ollama &> /dev/null; then
-    echo "❌ Ollama not found. Please install Ollama first."
-    exit 1
-fi
+echo "🚀 Fine-tuning data exported for {model_name}..."
 
 # Check if training data exists
 if [ ! -f "{export_file}" ]; then
@@ -198,37 +193,10 @@ if [ ! -f "{export_file}" ]; then
     exit 1
 fi
 
-# Create Modelfile for fine-tuning
-cat > Modelfile.finetune <<EOF
-FROM {model_name}
+echo "📝 Training data: {export_file}"
+echo "📊 Lines: $(wc -l < {export_file})"
 
-# Set parameters for patch notes generation
-PARAMETER temperature 0.7
-PARAMETER top_p 0.9
-PARAMETER repeat_penalty 1.1
-
-# System message
-SYSTEM You are an expert technical writer specializing in creating professional patch notes and release notes. You excel at transforming technical CHANGELOG information into user-friendly, comprehensive patch notes that clearly communicate what changed and why it matters.
-EOF
-
-echo "📝 Created Modelfile for fine-tuning"
-
-# Create fine-tuned model
 NEW_MODEL_NAME="{model_name}-patchnotes-$(date +%Y%m%d)"
-
-echo "🔧 Creating fine-tuned model: $NEW_MODEL_NAME"
-ollama create "$NEW_MODEL_NAME" -f Modelfile.finetune
-
-echo "✅ Fine-tuned model created: $NEW_MODEL_NAME"
-
-# Test the model
-echo ""
-echo "🧪 Testing fine-tuned model..."
-echo ""
-
-TEST_PROMPT="Create patch notes for a project based on this CHANGELOG:\\n\\n## Features\\n- Added dark mode\\n- Improved performance"
-
-ollama run "$NEW_MODEL_NAME" "$TEST_PROMPT"
 
 echo ""
 echo "✅ Fine-tuning complete!"
@@ -236,9 +204,10 @@ echo ""
 echo "To use this model in ShadowOps:"
 echo "1. Update config/config.yaml:"
 echo "   ai:"
-echo "     ollama:"
+echo "     primary:"
+echo "       engine: codex"
 echo "       models:"
-echo "         critical: $NEW_MODEL_NAME"
+echo "         standard: $NEW_MODEL_NAME"
 echo ""
 echo "2. Restart ShadowOps bot"
 echo ""
@@ -271,17 +240,17 @@ echo "Model name: $NEW_MODEL_NAME"
         logger.info(f"🚀 Preparing fine-tuning export for project: {project or 'all'}")
 
         # Export data
-        ollama_file = self.export_for_ollama_fine_tuning(project, min_quality_score)
+        jsonl_file = self.export_for_fine_tuning(project, min_quality_score)
         lora_file = self.export_for_lora_fine_tuning(project, min_quality_score)
 
         # Generate script
-        script_file = self.generate_fine_tuning_script(ollama_file)
+        script_file = self.generate_fine_tuning_script(jsonl_file)
 
         # Generate README
-        readme_file = self._generate_readme(ollama_file, lora_file, script_file)
+        readme_file = self._generate_readme(jsonl_file, lora_file, script_file)
 
         result = {
-            'ollama_data': ollama_file,
+            'jsonl_data': jsonl_file,
             'lora_data': lora_file,
             'script': script_file,
             'readme': readme_file
@@ -291,7 +260,7 @@ echo "Model name: $NEW_MODEL_NAME"
 
         return result
 
-    def _generate_readme(self, ollama_file: Path, lora_file: Path, script_file: Path) -> Path:
+    def _generate_readme(self, jsonl_file: Path, lora_file: Path, script_file: Path) -> Path:
         """Generate README for fine-tuning exports."""
         readme_file = self.export_dir / 'README_FINE_TUNING.md'
 
@@ -301,11 +270,11 @@ Generated: {datetime.utcnow().isoformat()}
 
 ## 📁 Exported Files
 
-- **Ollama Format**: `{ollama_file.name}` - Ready for Ollama fine-tuning
+- **JSONL Format**: `{jsonl_file.name}` - Ready for fine-tuning
 - **LoRA Format**: `{lora_file.name}` - For advanced LoRA fine-tuning
 - **Fine-Tuning Script**: `{script_file.name}` - Automated fine-tuning script
 
-## 🚀 Quick Start with Ollama
+## 🚀 Quick Start
 
 1. **Run the automated script**:
    ```bash
@@ -317,9 +286,10 @@ Generated: {datetime.utcnow().isoformat()}
    ```yaml
    # config/config.yaml
    ai:
-     ollama:
+     primary:
+       engine: codex
        models:
-         critical: llama3.1-patchnotes-YYYYMMDD
+         standard: gpt-5.3-codex
    ```
 
 3. **Restart ShadowOps**:
@@ -329,19 +299,10 @@ Generated: {datetime.utcnow().isoformat()}
 
 ## 📖 Manual Fine-Tuning (Advanced)
 
-### Option 1: Ollama Direct
+### Option 1: JSONL Direct
 
-```bash
-# Create Modelfile
-cat > Modelfile <<EOF
-FROM llama3.1
-
-SYSTEM You are an expert at creating professional patch notes.
-EOF
-
-# Create model
-ollama create my-patchnotes-model -f Modelfile
-```
+The exported JSONL file can be used with any fine-tuning platform
+that supports prompt/response pairs.
 
 ### Option 2: LoRA Fine-Tuning
 

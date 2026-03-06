@@ -2,8 +2,8 @@
 Continuous Learning Agent for ShadowOps Bot
 
 This agent continuously analyzes the system, learns from git commits, code changes,
-security events, and system behavior. It uses Ollama for intelligent analysis and
-provides regular feedback via Discord.
+security events, and system behavior. It uses the AI Engine (Codex + Claude) for
+intelligent analysis and provides regular feedback via Discord.
 
 Features:
 - Continuous Git history analysis
@@ -11,7 +11,7 @@ Features:
 - Security event correlation
 - System behavior learning
 - Regular Discord reports
-- Intelligent insights via Ollama
+- Intelligent insights via AI Engine
 """
 
 import asyncio
@@ -549,7 +549,7 @@ class ContinuousLearningAgent:
         pass
 
     async def _analyze_git_patterns(self, session: LearningSession) -> List[LearningInsight]:
-        """Analyze git commit patterns using Ollama"""
+        """Analyze git commit patterns using AI Engine"""
         insights = []
 
         try:
@@ -633,7 +633,7 @@ Identifiziere Muster oder wichtige Erkenntnisse. Antworte in 1-2 Sätzen auf Deu
                         description = analysis[:300]
                         confidence = 0.75
                 except Exception as e:
-                    self.logger.debug(f"Ollama analysis failed for {project_name}: {e}")
+                    self.logger.debug(f"AI analysis failed for {project_name}: {e}")
 
                 if not description:
                     unique_authors = {c.get('author', 'unbekannt') for c in recent_commits}
@@ -781,7 +781,7 @@ Identifiziere Muster oder wichtige Erkenntnisse. Antworte in 1-2 Sätzen auf Deu
                 await asyncio.sleep(3600)
 
     async def _analyze_code_patterns(self, session: LearningSession) -> List[LearningInsight]:
-        """Analyze code patterns using Ollama"""
+        """Analyze code patterns using AI Engine"""
         insights = []
 
         try:
@@ -800,7 +800,7 @@ Identifiziere Muster oder wichtige Erkenntnisse. Antworte in 1-2 Sätzen auf Deu
                 session.items_analyzed += summary.get('total_files', 0)
                 trend_text = self._update_trend(project_name, summary, metrics)
 
-                # Analyze code statistics with Ollama
+                # Analyze code statistics with AI Engine
                 doc_cov = metrics.get('documentation', {}).get('documentation_coverage')
                 largest_files = metrics.get('complexity', {}).get('largest_files', []) or []
                 largest_files_text = ", ".join([f"{f['module']} ({f['lines']} LOC)" for f in largest_files[:3]])
@@ -879,7 +879,7 @@ Liefer konkrete Hinweise für Stabilität, Wartbarkeit oder Security (keine Flos
                         confidence = 0.7
 
                 except Exception as e:
-                    self.logger.debug(f"Ollama analysis failed for {project_name}: {e}")
+                    self.logger.debug(f"AI analysis failed for {project_name}: {e}")
 
                 if not description:
                     description = (

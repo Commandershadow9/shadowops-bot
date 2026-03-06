@@ -6,7 +6,7 @@ Provides continuous learning capabilities:
 - Git commit pattern recognition
 - Code structure learning
 - Security event correlation
-- Intelligent insights via Ollama
+- Intelligent insights via AI Engine
 """
 
 from .continuous_learning_agent import ContinuousLearningAgent, LearningInsight, LearningSession

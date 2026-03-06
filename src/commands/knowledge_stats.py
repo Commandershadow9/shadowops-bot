@@ -287,7 +287,7 @@ class KnowledgeStatsCommands(commands.Cog):
         # Best Cleanup Method
         best_method = recommendations.get("best_cleanup_method")
         if best_method:
-            method_emoji = "🔧" if best_method == "kill_ollama_runner" else "🔄"
+            method_emoji = "🔧" if best_method == "restart_service" else "🔄"
             embed.add_field(
                 name=f"{method_emoji} Best Cleanup Method",
                 value=f"`{best_method}`",

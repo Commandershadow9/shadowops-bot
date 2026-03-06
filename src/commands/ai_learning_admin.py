@@ -208,16 +208,16 @@ class AILearningAdmin(commands.Cog):
             export_info = f"""
 **📁 Exported Files:**
 
-• **Ollama Format**: `{result['ollama_data'].name}`
+• **JSONL Format**: `{result['jsonl_data'].name}`
 • **LoRA Format**: `{result['lora_data'].name}`
 • **Fine-Tuning Script**: `{result['script'].name}`
 • **README**: `{result['readme'].name}`
 
-**📂 Location**: `{result['ollama_data'].parent}`
+**📂 Location**: `{result['jsonl_data'].parent}`
 
 **🚀 Quick Start:**
 ```bash
-cd {result['ollama_data'].parent}
+cd {result['jsonl_data'].parent}
 ./{result['script'].name}
 ```
 
