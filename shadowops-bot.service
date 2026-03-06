@@ -29,7 +29,8 @@ StandardError=journal
 SyslogIdentifier=shadowops-bot
 
 # Security
-NoNewPrivileges=true
+# WICHTIG: false nötig für sudo cscli/fail2ban-client Zugriff
+NoNewPrivileges=false
 PrivateTmp=true
 
 # Umgebungsvariablen

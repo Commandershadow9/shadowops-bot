@@ -276,6 +276,9 @@ class ShadowOpsBot(commands.Bot):
                     self.config._config['projects'] = {}
 
                 for proj_name, proj_config in self.config.projects.items():
+                    if not proj_config.get('enabled', True):
+                        self.logger.info(f"⏭️ Projekt '{proj_name}' deaktiviert, überspringe Channel-Setup")
+                        continue
                     # Generate default channel name if not explicitly set in config
                     channel_name = proj_config.get("update_channel_name", f"updates-{proj_name}")
                     
@@ -478,8 +481,8 @@ class ShadowOpsBot(commands.Bot):
                 # Initialisiere SmartQueue (Analyse-Pool + Fix-Lock)
                 self.logger.info("🔄 [2.5/5] Initialisiere SmartQueue...")
                 queue_config = self.config.ai.get('queue', {})
-                self.smart_queue = SmartQueue(queue_config, discord_logger=self.discord_logger)
-                await self.smart_queue.start()
+                self.smart_queue = SmartQueue(queue_config)
+                self.smart_queue.start()
                 self.logger.info("✅ [2.5/5] SmartQueue bereit (3 Analyse-Slots, Fix-Lock aktiv)")
 
                 # Initialisiere Self-Healing
