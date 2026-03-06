@@ -13,7 +13,7 @@ from pathlib import Path
 
 from src.integrations.event_watcher import SecurityEvent
 from src.integrations.knowledge_base import KnowledgeBase
-from src.integrations.ai_service import AIService
+from src.integrations.ai_engine import AIEngine
 
 
 class TestLearningCycle:
@@ -34,7 +34,7 @@ class TestLearningCycle:
         """
         # Setup
         kb = KnowledgeBase(db_path=str(temp_dir / "kb.db"))
-        ai_service = AIService(mock_config)
+        ai_service = AIEngine(mock_config)
 
         # New vulnerability event
         event = {
@@ -65,7 +65,7 @@ class TestLearningCycle:
             'analysis': 'Version 1.1.0 fixes the vulnerability'
         }
 
-        with patch.object(ai_service, '_analyze_with_ollama', return_value=mock_strategy):
+        with patch.object(ai_service, '_execute_with_fallback', return_value=mock_strategy):
             # AI generates strategy
             context = {
                 'event': event,
@@ -107,7 +107,7 @@ class TestLearningCycle:
         6. KB shows learning progression
         """
         kb = KnowledgeBase(db_path=str(temp_dir / "kb.db"))
-        ai_service = AIService(mock_config)
+        ai_service = AIEngine(mock_config)
 
         event = {
             'source': 'trivy',
@@ -165,7 +165,7 @@ class TestLearningCycle:
             'analysis': 'Previous failure due to dependencies, resolving first'
         }
 
-        with patch.object(ai_service, '_analyze_with_ollama', return_value=strategy_2):
+        with patch.object(ai_service, '_execute_with_fallback', return_value=strategy_2):
             context = {
                 'event': event,
                 'previous_attempts': previous_attempts
