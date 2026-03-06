@@ -1,7 +1,7 @@
 """
 SmartQueue — Intelligente Auftragssteuerung fuer ShadowOps v4
 
-Ersetzt den alten OllamaQueueManager mit:
+Intelligente Queue mit:
 - Parallelem Analyse-Pool (Semaphore-gesteuert)
 - Seriellem Fix-Lock (nur ein Fix gleichzeitig)
 - Circuit Breaker bei aufeinanderfolgenden Fehlern

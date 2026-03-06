@@ -796,7 +796,7 @@ class SelfHealingCoordinator:
             await self._update_status(status_message, status_embed,
                 "🧠 KI analysiert Sicherheitslücke...",
                 progress="▰▰▰▰▰▰▰▰▱▱▱▱▱▱▱▱▱▱▱▱ 40%",
-                thinking="Ollama/Claude untersucht CVEs, Packages, und Risiken...")
+                thinking="AI Engine untersucht CVEs, Packages, und Risiken...")
 
             # Actually generate strategy (this is the long part)
             # Start a heartbeat task to update Discord every 15 seconds
@@ -824,7 +824,8 @@ class SelfHealingCoordinator:
                     status_details = f"⏳ **Echtzeit-Analyse läuft...**\n\n"
 
                     # Show which model is being used
-                    model_name = self.ai_service.ollama_model_critical if job.event.severity == 'CRITICAL' else self.ai_service.ollama_model
+                    route = self.ai_service.router.get_route(job.event.severity, 'analysis')
+                    model_name = route['model']
                     status_details += f"🤖 **Modell:** {model_name}\n"
 
                     # Show elapsed time with progress

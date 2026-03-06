@@ -48,23 +48,35 @@ def mock_config():
 
     # AI config
     config.ai = {
-        'ollama': {
-            'enabled': True,
-            'url': 'http://localhost:11434',
-            'model': 'phi3:mini',
-            'model_critical': 'llama3.1',
-            'hybrid_models': True,
-            'request_delay_seconds': 4.0,
+        'primary': {
+            'engine': 'codex',
+            'models': {'fast': 'gpt-4o', 'standard': 'gpt-5.3-codex', 'thinking': 'o3'},
+            'timeout': 300,
+            'timeout_thinking': 600,
         },
-        'anthropic': {
-            'enabled': False,
-            'api_key': None,
-            'model': 'claude-3-5-sonnet-20241022',
+        'fallback': {
+            'engine': 'claude',
+            'cli_path': '/home/cmdshadow/.local/bin/claude',
+            'models': {'fast': 'claude-sonnet-4-6', 'standard': 'claude-sonnet-4-6', 'thinking': 'claude-opus-4-6'},
+            'timeout': 300,
         },
-        'openai': {
-            'enabled': False,
-            'api_key': None,
-            'model': 'gpt-4o',
+        'routing': {
+            'critical_analysis': {'engine': 'codex', 'model': 'thinking'},
+            'high_analysis': {'engine': 'codex', 'model': 'standard'},
+            'low_analysis': {'engine': 'codex', 'model': 'fast'},
+            'critical_verify': {'engine': 'claude', 'model': 'thinking'},
+        },
+        'verification': {
+            'test_before_push': True,
+            'verify_critical_with_claude': True,
+            'min_confidence': 0.85,
+        },
+        'queue': {
+            'max_analysis_parallel': 3,
+            'batch_threshold': 5,
+            'batch_window': 10,
+            'circuit_breaker_threshold': 5,
+            'circuit_breaker_timeout': 3600,
         },
     }
 
@@ -116,7 +128,10 @@ def mock_config_minimal():
     config = Mock()
     config.discord = {'token': 'test', 'guild_id': 1}
     config.channels = {}
-    config.ai = {'ollama': {'enabled': True, 'url': 'http://localhost:11434'}}
+    config.ai = {
+        'primary': {'engine': 'codex', 'models': {'fast': 'gpt-4o', 'standard': 'gpt-5.3-codex', 'thinking': 'o3'}, 'timeout': 300},
+        'fallback': {'engine': 'claude', 'cli_path': '/home/cmdshadow/.local/bin/claude', 'models': {'fast': 'claude-sonnet-4-6', 'standard': 'claude-sonnet-4-6', 'thinking': 'claude-opus-4-6'}, 'timeout': 300},
+    }
     config.auto_remediation = {'enabled': True, 'dry_run': True}
     return config
 
@@ -288,9 +303,13 @@ channels:
   security_alerts: 222
 
 ai:
-  ollama:
-    enabled: true
-    url: http://localhost:11434
+  primary:
+    engine: codex
+    models:
+      fast: gpt-4o
+      standard: gpt-5.3-codex
+      thinking: o3
+    timeout: 300
 """
     config_path.write_text(config_content)
     return config_path
