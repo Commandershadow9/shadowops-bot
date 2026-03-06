@@ -22,7 +22,6 @@ from pathlib import Path
 import json
 from dataclasses import dataclass, field
 
-from ..auto_fix_manager import FixProposal
 from .knowledge_synthesizer import KnowledgeSynthesizer
 
 logger = logging.getLogger('shadowops.learning')
@@ -910,6 +909,7 @@ Liefer konkrete Hinweise für Stabilität, Wartbarkeit oder Security (keine Flos
                     if hasattr(self.bot, "auto_fix_manager") and (auto_actions or coverage is not None and coverage < 60 or (test_files is not None and test_files == 0)):
                         summary_line = f"Hotspots: {largest_files_text or 'n/a'}, Coverage: {coverage if coverage is not None else 'n/a'}%, Doc: {doc_cov if doc_cov is not None else 'n/a'}%"
                         actions_for_proposal = auto_actions or []
+                        from ..auto_fix_manager import FixProposal
                         proposal = FixProposal(
                             project=project_name,
                             summary=summary_line,
