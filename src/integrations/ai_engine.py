@@ -137,11 +137,13 @@ class CodexProvider:
             'codex', 'exec', '--ephemeral',
             '-s', 'workspace-write',
             '-m', resolved_model,
-            '-q', prompt,
         ]
 
         if schema_path:
             args.extend(['--output-schema', str(schema_path)])
+
+        # Prompt als positionales Argument am Ende (Codex CLI v0.104+)
+        args.append(prompt)
 
         try:
             proc = await asyncio.create_subprocess_exec(
@@ -202,7 +204,7 @@ class CodexProvider:
             'codex', 'exec', '--ephemeral',
             '-s', 'workspace-write',
             '-m', resolved_model,
-            '-q', prompt,
+            prompt,
         ]
 
         try:

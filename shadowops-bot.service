@@ -39,7 +39,7 @@ Environment="PYTHONUTF8=1"
 # WICHTIG: CLAUDECODE darf NICHT gesetzt sein (verhindert "nested session" Fehler bei Claude CLI)
 UnsetEnvironment=CLAUDECODE
 # PATH fuer Codex und Claude CLI
-Environment="PATH=/home/cmdshadow/.local/bin:/usr/local/bin:/usr/bin:/bin"
+Environment="PATH=/home/cmdshadow/.nvm/versions/node/v25.2.1/bin:/home/cmdshadow/.local/bin:/usr/local/bin:/usr/bin:/bin"
 
 [Install]
 WantedBy=multi-user.target

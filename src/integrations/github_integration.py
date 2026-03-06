@@ -145,7 +145,7 @@ class GitHubIntegration:
 
         for port in ports_to_try:
             try:
-                self.site = web.TCPSite(self.runner, '0.0.0.0', port)
+                self.site = web.TCPSite(self.runner, '127.0.0.1', port)
                 await self.site.start()
                 self.webhook_port = port
                 self.logger.info(f"🚀 GitHub webhook server started on port {port}")

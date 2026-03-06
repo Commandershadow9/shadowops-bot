@@ -21,6 +21,7 @@ from typing import Dict, List, Optional, Any
 from pathlib import Path
 import json
 from dataclasses import dataclass, field
+import discord
 
 from .knowledge_synthesizer import KnowledgeSynthesizer
 
