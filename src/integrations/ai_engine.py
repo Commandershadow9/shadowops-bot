@@ -670,6 +670,10 @@ class AIEngine:
         """Alias fuer get_ai_analysis (Abwaertskompatibilitaet)"""
         return self.get_ai_analysis
 
+    async def get_raw_ai_response(self, prompt: str, use_critical_model: bool = False) -> Optional[str]:
+        """Alias fuer get_ai_analysis (Abwaertskompatibilitaet mit PatchNotesManager)"""
+        return await self.get_ai_analysis(prompt=prompt, use_critical_model=use_critical_model)
+
     # ------------------------------------------------------------------
     # Oeffentliche Methoden
     # ------------------------------------------------------------------
