@@ -20,7 +20,7 @@ class TestConfigLoader:
         assert config.discord['token'] == 'test_token'
         assert config.discord['guild_id'] == 12345
         assert config.channels['ai_learning'] == 111
-        assert config.ai['ollama']['enabled'] is True
+        assert config.ai['primary']['engine'] == 'codex'
 
     def test_missing_config_file(self, temp_dir):
         """Test error when config file is missing"""
@@ -65,15 +65,19 @@ channels:
   ai_learning: 111
 
 ai:
-  ollama:
-    enabled: true
-    url: http://localhost:11434
+  primary:
+    engine: codex
+    models:
+      fast: gpt-4o
+      standard: gpt-5.3-codex
+      thinking: o3
+    timeout: 300
 """)
 
         config = Config(str(minimal_config))
 
-        # Check that ollama config has defaults
-        assert 'model' in config.ai['ollama'] or config.ai['ollama'].get('model') is None
+        # Check that primary engine config has expected structure
+        assert config.ai['primary']['engine'] == 'codex'
 
     def test_config_as_dict(self, temp_config_file):
         """Test accessing config as dictionary"""
@@ -98,8 +102,8 @@ ai:
         config = Config(str(temp_config_file))
 
         # Deep nested access
-        assert config.ai['ollama']['enabled'] is True
-        assert config.ai['ollama']['url'] == 'http://localhost:11434'
+        assert config.ai['primary']['engine'] == 'codex'
+        assert config.ai['primary']['models']['fast'] == 'gpt-4o'
 
     def test_config_with_environment_variables(self, temp_dir, monkeypatch):
         """Test config with environment variable substitution"""
@@ -113,9 +117,13 @@ channels:
   ai_learning: 111
 
 ai:
-  ollama:
-    enabled: true
-    url: http://localhost:11434
+  primary:
+    engine: codex
+    models:
+      fast: gpt-4o
+      standard: gpt-5.3-codex
+      thinking: o3
+    timeout: 300
 """)
 
         # Set environment variable
@@ -165,8 +173,8 @@ class TestConfigValidation:
         """Test AI config validation"""
         config = Config(str(temp_config_file))
 
-        assert 'ollama' in config.ai
-        assert config.ai['ollama']['enabled'] in [True, False]
+        assert 'primary' in config.ai
+        assert config.ai['primary']['engine'] in ['codex', 'claude']
 
     def test_validate_channels_config(self, temp_config_file):
         """Test channels config validation"""
