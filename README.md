@@ -1,6 +1,6 @@
-# 🗡️ ShadowOps - Active Security Guardian v3.6 🚀
+# 🗡️ ShadowOps - Active Security Guardian v4.0 🚀
 
-**Status:** ✅ **LIVE & PRODUKTIV** | **Version:** 3.6.0 | **Letzte Aktualisierung:** 15.12.2025
+**Status:** AUF EIS | **Version:** 4.0.0 | **Letzte Aktualisierung:** 06.03.2026
 
 **ShadowOps** ist ein **vollständig autonomer Security Guardian** mit KI-gesteuerter Auto-Remediation, aktivem Knowledge-Einsatz, intelligenter Request-Queue, persistentem Langzeit-Lernsystem und Multi-Projekt-Management, der Sicherheitsbedrohungen nicht nur erkennt und analysiert, sondern **eigenständig behebt, aktiv aus Erfahrungen lernt und sein Wissen kontinuierlich einsetzt**.
 
@@ -10,75 +10,28 @@
 > 🔧 **API Dokumentation:** [docs/API.md](./docs/API.md)
 > 🚀 **Setup Guide:** [docs/SETUP_GUIDE.md](./docs/SETUP_GUIDE.md)
 
-## ⚡ Highlights v3.6
+## ⚡ Highlights v4.0
 
-### 🧠 **Active Knowledge Integration - Langzeit-Learning (v3.6 - NEW)**
-- ✅ **Auto-Fix nutzt gelernte Patterns aktiv**
-  - Success-Rates und Best Practices in AI-Prompts
-  - Strategy-Adaption: Aggressive (≥80%) / Standard (50-80%) / Careful (<50%)
-  - Context-Injection für bessere Fix-Qualität
-  - Kontinuierliche Verbesserung durch Feedback-Loop
-- ✅ **Proaktives RAM-Management**
-  - Prüft RAM-Bedarf VOR Ollama-Calls (nicht erst beim Fehler!)
-  - Nutzt gelernte Best-Cleanup-Methods pro Modell
-  - Trackt Cleanup-Erfolge für kontinuierliches Lernen
-  - Vermeidet OOM-Errors durch vorausschauende Planung
-- ✅ **Discord Knowledge Stats Command**
-  - `/knowledge-stats` - Gesamtübersicht (Auto-Fix + RAM Patterns)
-  - `/knowledge-stats project:<name>` - Projekt-Details mit Success-Rates
-  - `/knowledge-stats model:<name>` - RAM-Anforderungen pro Modell
-  - Farb-kodierte Embeds, Confidence-Levels, Best Practices
-  - Für alle User verfügbar (read-only, harmlos)
-- ✅ **NEXUS Microservices Integration**
-  - nexus-booking (Static HTML)
-  - nexus-orders (Wix Backend)
-  - nexus-firstpick (Wix Backend)
-  - Alle mit KI-Learning aktiviert
-- ✅ **Security Monitoring Fixes**
-  - Fail2ban/CrowdSec sudo-Permissions korrekt konfiguriert
-  - systemd NoNewPrivileges-Fix für sudo-Zugriff
-  - Erweiterte Debug-Ausgabe für besseres Troubleshooting
+### 🤖 **Dual-Engine AI System (v4.0 - NEW)**
+- ✅ **Codex CLI (Primary, 97%)**: gpt-4o (fast), gpt-5.3-codex (standard), o3 (thinking)
+- ✅ **Claude CLI (Fallback + Verify, 3%)**: claude-sonnet-4-6 (standard), claude-opus-4-6 (thinking)
+- ✅ **Config-basierter TaskRouter**: Routing nach Severity (CRITICAL→o3, HIGH→gpt-5.3-codex, LOW→gpt-4o)
+- ✅ **SmartQueue**: 3 parallele Analysen (Semaphore), serieller Fix-Lock, Circuit Breaker, Batch-Erkennung
+- ✅ **VerificationPipeline**: 4-Stufen Pre-Push (Confidence ≥85% → Tests → Claude-Verify → KB-Check)
+- ✅ **JSON-Schemas**: Structured Output für Codex (`--output-schema`) — fix_strategy, patch_notes, incident_analysis
+- ✅ **Vollständige MCP-Anbindung**: Beide Engines haben Zugriff auf Postgres, Redis, Docker, GitHub, Filesystem, Prisma
+- ✅ **Ollama komplett entfernt**: 1364 Zeilen Dead Code gelöscht, 0 Ollama-Referenzen im Quellcode
 
-**Design-Philosophie:**
-- 📊 **Langzeit-Learning**: Daten-Sammlung über Monate/Jahre
-- 🔄 **Pattern-Kompression**: 1000 Rohdaten → 10 komprimierte Patterns
-- 🧠 **Meta-Learning**: System lernt über eigenen Lernprozess
-- 🚀 **Active Usage**: Gelerntes Wissen wird AKTIV in Produktions-Fixes eingesetzt
-
-## ⚡ Highlights v3.5
-
-### 🔄 **Ollama Queue Management & Auto-Resolve (v3.5)**
-- ✅ **Intelligentes Request-Queuing**
-  - Priority-basierte AsyncIO Queue (verhindert Ollama Überlastung)
-  - 4 Prioritätsstufen: CRITICAL > HIGH > NORMAL > LOW
-  - **Security-First**: Security-Events erhalten IMMER Vorrang
-  - Single Worker Pattern (max 1 Ollama Request gleichzeitig)
-  - State Persistence & Performance-Statistiken
-- ✅ **Live Dashboard in Discord**
-  - Channel: `🔄-ollama-queue`
-  - Updates alle 30 Sekunden
-  - Zeigt: Aktueller Request, Queue Size, Statistiken, Priority-Verteilung
-  - Worker-Status (Running/Stopped)
-- ✅ **Admin Commands**
-  - `/queue-status` - Detaillierter Status
-  - `/queue-stats` - Performance-Statistiken
-  - `/queue-clear` - Queue leeren (ADMIN)
-  - `/queue-pause` / `/queue-resume` - Worker steuern (ADMIN)
-- ✅ **Auto-Resolve für Service-Recovery**
-  - Incidents werden automatisch geschlossen wenn Service wieder online
-  - Berechnet Ausfallzeit (Xh Ym)
-  - Thread-Update: "✅ GELÖST von Auto-Resolve: Dienst wieder erreichbar..."
-  - Komplette Timeline in Incident-Thread
-- ✅ **Deutsche Incident-Meldungen**
-  - Alle Embeds und Threads auf Deutsch
-  - "Vorfall", "Schweregrad", "Betroffene Projekte", etc.
-  - Konsistente Übersetzung im gesamten System
-
-**Vorteile:**
-- 🚫 Keine Ollama-Überlastung mehr (450% CPU, 5.6GB RAM → gelöst)
-- 🔒 Security-First Prinzip garantiert
-- 📊 Volle Transparenz durch Dashboard
-- 🇩🇪 Deutschsprachige Benutzeroberfläche
+**Architektur:**
+```
+Event → TaskRouter → Codex CLI (Primary)
+                      ↓ (bei Fehler/Timeout)
+                   Claude CLI (Fallback)
+                      ↓
+               VerificationPipeline (Pre-Push)
+                      ↓
+               SmartQueue (Fix-Lock + Circuit Breaker)
+```
 
 ## ⚡ Highlights v3.4
 
@@ -101,7 +54,7 @@
   - Verbesserungsvorschläge
   - Automatische Varianten-Erstellung
 - ✅ **Fine-Tuning Export**
-  - Ollama-Format (JSONL) für llama3.1
+  - JSONL-Format für LLM Fine-Tuning
   - LoRA-Format (Alpaca-Style)
   - Auto-generiertes Fine-Tuning-Script
 - ✅ **Admin-Befehle**
@@ -113,12 +66,10 @@
   - Gemeinsamer Lern-Pool (alle profitieren voneinander)
   - Zero-Config (automatisch für `use_ai: true`)
   - Projekt-übergreifendes Lernen
-- ✅ **Intelligentes RAM-Management (3-Stufen)**
-  - Automatische Prozess-Bereinigung (unnötige Prozesse beenden)
-  - Ollama-Neustart zur RAM-Freigabe
+- ✅ **Intelligentes RAM-Management**
+  - Automatische Prozess-Bereinigung
   - System-Cache-Flush als Fallback
-  - Bis zu 3 Retry-Versuche mit gleichem Modell
-  - Schützt kritische Services (PostgreSQL, Redis, Nginx, etc.)
+  - Schützt kritische Services (PostgreSQL, Redis, etc.)
 
 ## ⚡ Highlights v3.3
 
@@ -159,7 +110,7 @@ projects:
 ### 🌐 **Multi-Guild Customer Notifications (v3.2 - NEW)**
 - ✅ **Automatic Channel Setup**: Bot auto-creates monitoring channels on customer servers
 - ✅ **External Notifications**: Send Git updates and status alerts to customer Discord servers
-- ✅ **AI-Generated Patch Notes**: Professional, user-friendly updates with Ollama llama3.1
+- ✅ **AI-Generated Patch Notes**: Professional, user-friendly updates via Codex/Claude
 - ✅ **Dual-Channel System**: Technical logs (internal) + friendly updates (customers)
 - ✅ **Per-Project Configuration**: Configurable language (DE/EN) and notification types
 - ✅ **Message Splitting**: Automatic handling of Discord's 4096 character limit
@@ -210,8 +161,9 @@ projects:
 - ✅ **Safety First**: Dry-Run Mode, DO-NOT-TOUCH Validation, Circuit Breaker, Command Validation
 - ✅ **Live Discord Updates**: Echtzeit-Feedback während kompletter Execution (Backup → Fix → Verify → Restart)
 
-### 🤖 **Advanced AI System**
-- **Hybrid AI System**: Ollama (local llama3.1) → Claude → OpenAI (fallback chain)
+### 🤖 **Dual-Engine AI System (v4.0)**
+- **Codex CLI (Primary)**: gpt-4o / gpt-5.3-codex / o3 mit Structured Output (JSON-Schemas)
+- **Claude CLI (Fallback)**: claude-sonnet-4-6 / claude-opus-4-6 mit MCP-Zugriff
 - **RAG Context**: Projekt-Wissen + DO-NOT-TOUCH Regeln + Infrastructure Knowledge + Code Structure
 - **SQL Knowledge Base**: Persistent learning across sessions
 - **Event History**: Remembers ALL previous fix attempts with outcomes
@@ -305,7 +257,7 @@ projects:
 - Systemd (für Service)
 - Root/Sudo-Zugriff (für Log-Zugriff und Deployments)
 - Optional: GitHub Webhook für Auto-Deploy
-- Optional: Ollama für lokale AI (llama3.1)
+- Optional: Codex CLI (ChatGPT Plus) und/oder Claude CLI (Claude Max) für AI-Features
 
 ## 🚀 Quick Start
 
@@ -393,20 +345,29 @@ discord:
 
 ai:
   enabled: true
-  ollama:
-    enabled: true
-    url: http://localhost:11434
-    model: phi3:mini
-    model_critical: llama3.1
-    hybrid_models: true
 
-  anthropic:
-    enabled: false
-    # api_key: "" # WIRD JETZT ÜBER ENV VAR: ANTHROPIC_API_KEY GESETZT
+  primary:
+    engine: codex
+    models:
+      fast: gpt-4o
+      standard: gpt-5.3-codex
+      thinking: o3
+    timeout: 300
 
-  openai:
-    enabled: false
-    # api_key: "" # WIRD JETZT ÜBER ENV VAR: OPENAI_API_KEY GESETZT
+  fallback:
+    engine: claude
+    cli_path: /home/user/.local/bin/claude
+    models:
+      fast: claude-sonnet-4-6
+      standard: claude-sonnet-4-6
+      thinking: claude-opus-4-6
+    timeout: 300
+
+  routing:
+    critical_analysis: { engine: codex, model: thinking }
+    high_analysis: { engine: codex, model: standard }
+    low_analysis: { engine: codex, model: fast }
+    critical_verify: { engine: claude, model: thinking }
 
 auto_remediation:
   enabled: true
@@ -519,7 +480,9 @@ shadowops-bot/
 │   │   ├── inspector.py
 │   │   └── monitoring.py
 │   ├── integrations/
-│   │   ├── ai_service.py               # AI Service (Ollama/Claude/OpenAI)
+│   │   ├── ai_engine.py                # Dual-Engine AI (Codex + Claude CLI)
+│   │   ├── smart_queue.py              # SmartQueue (Analyse-Pool + Fix-Lock)
+│   │   ├── verification.py             # Pre-Push Verification Pipeline
 │   │   ├── orchestrator.py             # Remediation Orchestrator
 │   │   ├── event_watcher.py            # Security Event Watcher
 │   │   ├── knowledge_base.py           # SQL Learning System
@@ -542,9 +505,10 @@ shadowops-bot/
 │       └── discord_logger.py           # Discord Channel Logger
 ├── tests/
 │   ├── conftest.py                     # Test Fixtures
-│   ├── unit/                           # Unit Tests (150+)
+│   ├── unit/                           # Unit Tests (161)
 │   │   ├── test_config.py
-│   │   ├── test_ai_service.py
+│   │   ├── test_ai_engine.py           # 43 Tests (Router, Codex, Claude, AIEngine)
+│   │   ├── test_smart_queue.py         # 21 Tests (Pool, Lock, Circuit Breaker)
 │   │   ├── test_orchestrator.py
 │   │   ├── test_knowledge_base.py
 │   │   ├── test_event_watcher.py
@@ -610,10 +574,10 @@ shadowops-bot/
 
 See [CHANGELOG.md](./CHANGELOG.md) for detailed version history.
 
-### Version 3.2.0 (2025-11-25) - Current
+### Version 3.2.0 (2025-11-25)
 **🌐 Multi-Guild Customer Notifications:**
 - Automatic channel setup on customer servers
-- AI-generated patch notes (Ollama llama3.1)
+- AI-generated patch notes
 - Dual-channel system (internal technical + customer friendly)
 - Per-project language configuration (DE/EN)
 - Message splitting for long patch notes
@@ -688,14 +652,15 @@ See [CHANGELOG.md](./CHANGELOG.md) for detailed version history.
 - Basic security monitoring
 - Discord integration
 
-## 📊 Statistics (v3.1.0)
+## 📊 Statistics (v4.0.0)
 
 - **Total Lines of Code**: 15,000+
-- **Test Coverage**: 150+ tests
-- **AI Integrations**: 3 (Ollama, Claude, OpenAI)
+- **Test Coverage**: 161 Tests
+- **AI Engines**: 2 (Codex CLI + Claude CLI)
+- **AI Models**: 6 (gpt-4o, gpt-5.3-codex, o3, claude-sonnet-4-6, claude-opus-4-6)
 - **Security Integrations**: 4 (Fail2ban, CrowdSec, AIDE, Trivy)
 - **Discord Commands**: 14
-- **Supported Projects**: Unlimited
+- **Supported Projects**: 4 (Sicherheitsdienst, GuildScout, ShadowOps, ZERODOX)
 - **Deployment Automation**: Full CI/CD
 - **Incident Tracking**: Automatic with threads
 
@@ -725,10 +690,13 @@ python3 -c "from src.utils.config import get_config; get_config()"
 # Kann bis zu 1 Stunde dauern (Discord Cache)
 ```
 
-**AI Service funktioniert nicht:**
+**AI Engine funktioniert nicht:**
 ```bash
-# Ollama Status prüfen
-curl http://localhost:11434/api/tags
+# Codex CLI prüfen
+codex --version
+
+# Claude CLI prüfen
+~/.local/bin/claude --version
 
 # AI Stats in Discord
 /get-ai-stats
@@ -770,4 +738,4 @@ tail -f logs/shadowops.log | grep deployment
 
 **Made with 🗡️ by CommanderShadow**
 
-*ShadowOps v3.1 - The Ultimate AI-Powered Security Guardian*
+*ShadowOps v4.0 - Dual-Engine AI Security Guardian (Codex + Claude)*

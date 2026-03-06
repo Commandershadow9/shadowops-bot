@@ -1,5 +1,69 @@
 # ShadowOps Bot - Changelog
 
+## [4.0.0] - 2026-03-06
+
+### Dual-Engine AI System (Codex + Claude CLI)
+
+#### Hinzugefügt
+
+**Neue AI Engine (`src/integrations/ai_engine.py`, 991 LOC):**
+- `CodexProvider`: Codex CLI mit `--output-schema` (Structured Output), `--ephemeral` Sessions
+- `ClaudeProvider`: Claude CLI mit `--output-format json`, MCP auto-loaded
+- `TaskRouter`: Config-basiertes Routing nach Severity (CRITICAL/HIGH/MEDIUM/LOW)
+- `AIEngine`: Unified Interface mit `generate_fix_strategy()`, `verify_fix()`, `generate_raw_text()`
+- Fallback-Chain: Codex Primary (97%) → Claude Fallback (3%)
+- Stats-Tracking: Calls, Successes, Failures pro Engine
+
+**SmartQueue (`src/integrations/smart_queue.py`, 310 LOC):**
+- Analyse-Pool mit asyncio.Semaphore (max 3 parallel)
+- Serieller Fix-Lock (asyncio.Lock, 1 Fix gleichzeitig)
+- Circuit Breaker (5 Fehler → 1h Pause)
+- Batch-Modus-Erkennung bei Event-Bursts
+- Priority-Queue (CRITICAL vor LOW)
+
+**VerificationPipeline (`src/integrations/verification.py`, 347 LOC):**
+- 4-Stufen Pre-Push: Confidence (>=85%) → Tests → Claude-Verify → KB-Check
+- Async Test-Runner mit 300s Timeout
+- Graceful Degradation bei fehlender Knowledge Base
+
+**JSON-Schemas (`src/schemas/`):**
+- `fix_strategy.json` — Structured Output fuer Codex Fix-Analysen
+- `patch_notes.json` — Structured Output fuer Patch-Notes-Generierung
+- `incident_analysis.json` — Structured Output fuer Incident-Diagnose
+
+**Codex Skills (`~/.codex/skills/shadowops/`):**
+- 5 spezialisierte Skills: security-analyzer, patch-notes-writer, code-reviewer, incident-diagnoser, fix-verifier
+
+#### Entfernt
+
+- `src/integrations/ai_service.py` (1364 LOC) — Komplettes Ollama/OpenAI/Anthropic API System
+- `src/integrations/ollama_queue_manager.py` — Ollama-spezifische Queue
+- `src/integrations/queue_dashboard.py` — Ollama Queue Dashboard
+- `src/commands/queue_admin.py` — Ollama Queue Admin Commands
+- `tests/unit/test_ai_service.py` — Alte AI-Service Tests
+- Alle Ollama-Referenzen aus dem gesamten Quellcode (0 verbleibend in src/)
+
+#### Geaendert
+
+- `src/bot.py` — AIService → AIEngine, OllamaQueueManager → SmartQueue
+- `src/utils/config.py` — ai_enabled/Validierung auf primary/fallback Engines
+- `src/cogs/inspector.py` — /get-ai-stats zeigt Codex+Claude+Engine Stats
+- `src/integrations/self_healing.py` — AI-Modell-Auswahl via TaskRouter
+- `src/integrations/orchestrator.py` — AIService-Import → AIEngine
+- `src/integrations/patch_notes_manager.py` — generate_raw_text ohne model_pref
+- `src/integrations/ai_learning/continuous_learning_agent.py` — Docstrings aktualisiert
+- `config/config.yaml` — Neue Dual-Engine Config-Struktur
+- `tests/conftest.py` — Mock-Config auf Dual-Engine umgestellt
+- `tests/unit/test_config.py` — Ollama-Assertions durch Engine-Assertions ersetzt
+
+#### Tests
+
+- 161/161 Tests bestanden
+- 43 neue Tests (TestTaskRouter, TestCodexProvider, TestClaudeProvider, TestAIEngine)
+- 21 neue Tests (SmartQueue: Pool, Lock, Circuit Breaker, Batch, Priority)
+
+---
+
 ## [3.8.0] - 2026-02-13
 
 ### DM-Alerts bei kritischen Incidents
