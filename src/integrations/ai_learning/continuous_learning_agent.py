@@ -80,7 +80,7 @@ class ContinuousLearningAgent:
         Args:
             bot: Discord bot instance
             config: Configuration object
-            ai_service: AI service for Ollama integration
+            ai_service: AI Engine (Codex + Claude)
             context_manager: Context manager with git/code analyzers
             discord_logger: Discord logger for feedback
         """

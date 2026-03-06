@@ -17,7 +17,7 @@ from pathlib import Path
 from typing import Optional, Dict, Any
 
 from utils.changelog_parser import get_changelog_parser
-from integrations.ai_service import AIService
+from integrations.ai_engine import AIEngine
 
 logger = logging.getLogger('shadowops')
 
@@ -78,7 +78,7 @@ class PatchNotesManager:
     Manages patch notes generation and posting with review system.
     """
 
-    def __init__(self, bot: discord.Client, ai_service: AIService):
+    def __init__(self, bot: discord.Client, ai_service: AIEngine):
         self.bot = bot
         self.ai_service = ai_service
         self.pending_approvals: Dict[str, PatchNotesApprovalView] = {}
@@ -184,7 +184,7 @@ class PatchNotesManager:
         prompt = self._create_changelog_format_prompt(context, language, project_name)
 
         try:
-            ai_text = await self.ai_service.generate_raw_text(prompt, model_pref='llama3.1')
+            ai_text = await self.ai_service.generate_raw_text(prompt)
 
             if ai_text:
                 # Create embed
@@ -224,7 +224,7 @@ CHANGELOG Content:
 Return the formatted content ready for Discord embed fields."""
 
         try:
-            enhanced = await self.ai_service.generate_raw_text(prompt, model_pref='llama3.1')
+            enhanced = await self.ai_service.generate_raw_text(prompt)
             if enhanced:
                 # Update discord_data with enhanced formatting
                 # (Implementation depends on AI response structure)
@@ -370,6 +370,6 @@ Maximum 3900 characters (Discord limit)."""
         pass
 
 
-def get_patch_notes_manager(bot: discord.Client, ai_service: AIService) -> PatchNotesManager:
+def get_patch_notes_manager(bot: discord.Client, ai_service: AIEngine) -> PatchNotesManager:
     """Get PatchNotesManager instance."""
     return PatchNotesManager(bot, ai_service)
