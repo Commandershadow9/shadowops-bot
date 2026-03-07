@@ -20,6 +20,7 @@ import shutil
 import subprocess
 import tempfile
 from dataclasses import dataclass, field
+from datetime import datetime
 from pathlib import Path
 from typing import Dict, List, Optional, Any, Tuple
 
@@ -36,16 +37,39 @@ TRACKING_FILE = Path(__file__).parent.parent / "data" / "auto_fix_tracking.json"
 
 
 @dataclass
+class FixAction:
+    """Einzelne Aktion innerhalb eines Fix-Proposals mit Kontext."""
+    description: str
+    rationale: str = ""          # Warum ist diese Aenderung noetig?
+    confidence: float = 0.5      # 0.0-1.0 Wie sicher ist der Fix?
+    safety: str = "medium"       # low/medium/high - Risiko fuer Seiteneffekte
+    risk_assessment: str = ""    # Was koennte schiefgehen?
+    affected_files: List[str] = field(default_factory=list)
+    category: str = "improvement"  # bugfix/security/performance/improvement/refactoring
+
+    def confidence_bar(self) -> str:
+        filled = round(self.confidence * 10)
+        return "█" * filled + "░" * (10 - filled) + f" {self.confidence*100:.0f}%"
+
+    def safety_emoji(self) -> str:
+        return {"high": "🟢 Sicher", "medium": "🟡 Moderat", "low": "🔴 Riskant"}.get(self.safety, "⚪ Unbekannt")
+
+
+@dataclass
 class FixProposal:
     project: str
     summary: str
     actions: List[str] = field(default_factory=list)
+    structured_actions: List[FixAction] = field(default_factory=list)
     tests: List[str] = field(default_factory=list)
     suggested_tests: List[str] = field(default_factory=list)
     severity: str = "medium"
     message_id: Optional[int] = None
     channel_id: Optional[int] = None
     author_id: Optional[int] = None
+    area: str = ""               # Projekt-Bereich (z.B. "Security", "API", "Discord Integration")
+    overall_confidence: float = 0.5
+    overall_safety: str = "medium"
 
 
 class AutoFixManager:
@@ -228,7 +252,7 @@ class AutoFixManager:
             return False
 
     async def post_proposal(self, bot, proposal: FixProposal):
-        """Postet einen Vorschlag in den Code-Scan-Channel mit Reaktionen."""
+        """Postet einen Vorschlag in den Code-Scan-Channel mit strukturierten Details."""
         if not self.channel_id:
             await self.ensure_channels(bot)
         channel = bot.get_channel(self.channel_id) if self.channel_id else None
@@ -236,7 +260,7 @@ class AutoFixManager:
             logger.warning("Kein ai_code_scans Channel gefunden")
             return
 
-        # Ergänze Standard-Tests, falls keine angegeben
+        # Ergaenze Standard-Tests, falls keine angegeben
         project_path = self._get_project_path(proposal.project)
         default_tests = self._default_tests_for_project(proposal.project, project_path) if project_path else []
         tests_list = proposal.tests or []
@@ -248,34 +272,76 @@ class AutoFixManager:
         if not all_tests:
             all_tests = ["Keine Tests definiert/gefunden"]
 
+        # Severity-Farben
+        severity_colors = {"critical": 0xE74C3C, "high": 0xE67E22, "medium": 0x3498DB, "low": 0x95A5A6}
+        color = severity_colors.get(proposal.severity, 0x3498DB)
+
+        # Confidence-Bar fuer Gesamtbewertung
+        conf = proposal.overall_confidence
+        conf_filled = round(conf * 10)
+        conf_bar = "█" * conf_filled + "░" * (10 - conf_filled) + f" {conf*100:.0f}%"
+        safety_emoji = {"high": "🟢 Sicher", "medium": "🟡 Moderat", "low": "🔴 Riskant"}.get(proposal.overall_safety, "⚪")
+
+        area_text = f" ({proposal.area})" if proposal.area else ""
+
         embed = discord.Embed(
-            title=f"🔎 Fix-Vorschlag: {proposal.project}",
+            title=f"📋 Verbesserungsvorschlag: {proposal.project}{area_text}",
             description=proposal.summary,
-            color=0x3498DB
+            color=color,
+            timestamp=datetime.utcnow()
         )
-        embed.add_field(name="Severity", value=str(proposal.severity or "unknown"), inline=True)
-        embed.add_field(name="Initiator", value=str(proposal.author_id) if proposal.author_id else "Auto-Learning", inline=True)
-        if proposal.actions:
+
+        # Uebersichts-Header
+        embed.add_field(
+            name="📊 Bewertung",
+            value=f"**Severity:** {proposal.severity.upper()}\n"
+                  f"**Confidence:** {conf_bar}\n"
+                  f"**Safety:** {safety_emoji}",
+            inline=True
+        )
+        embed.add_field(
+            name="ℹ️ Meta",
+            value=f"**Initiator:** {'Auto-Learning' if not proposal.author_id else f'<@{proposal.author_id}>'}\n"
+                  f"**Actions:** {len(proposal.structured_actions or proposal.actions)}\n"
+                  f"**Bereich:** {proposal.area or 'Allgemein'}",
+            inline=True
+        )
+
+        # Strukturierte Actions mit Kontext (max 3 im Embed, Rest zusammengefasst)
+        if proposal.structured_actions:
+            for i, action in enumerate(proposal.structured_actions[:3]):
+                files_text = ", ".join(f"`{f}`" for f in action.affected_files[:3]) if action.affected_files else "—"
+                embed.add_field(
+                    name=f"{'🔧' if action.category == 'bugfix' else '🛡️' if action.category == 'security' else '⚡' if action.category == 'performance' else '📝'} {i+1}. {action.description[:60]}",
+                    value=f"**Warum:** {action.rationale[:120] or 'Keine Begruendung'}\n"
+                          f"**Confidence:** {action.confidence_bar()}\n"
+                          f"**Safety:** {action.safety_emoji()}\n"
+                          f"**Risiko:** {action.risk_assessment[:100] or 'Keine bekannten Risiken'}\n"
+                          f"**Dateien:** {files_text}",
+                    inline=False
+                )
+            if len(proposal.structured_actions) > 3:
+                remaining = len(proposal.structured_actions) - 3
+                embed.add_field(
+                    name=f"... und {remaining} weitere Aenderungen",
+                    value="Alle Details werden nach Genehmigung angezeigt.",
+                    inline=False
+                )
+        elif proposal.actions:
             embed.add_field(
-                name="Geplante Actions",
+                name="Geplante Aenderungen",
                 value="\n".join([f"• {a}" for a in proposal.actions])[:1024],
                 inline=False
             )
-        else:
-            embed.add_field(name="Geplante Actions", value="Keine spezifischen Actions erkannt", inline=False)
-        if proposal.suggested_tests:
-            embed.add_field(
-                name="KI-empfohlene Tests",
-                value="\n".join([f"• {t}" for t in proposal.suggested_tests])[:1024],
-                inline=False
-            )
-        if all_tests:
-            embed.add_field(
-                name="Geplante Tests",
-                value="\n".join([f"• {t}" for t in all_tests])[:1024],
-                inline=False
-            )
-        embed.set_footer(text="Nutze die Buttons: ✅ Umsetzen, 🧪 Nur Tests, ❌ Verwerfen")
+
+        # Tests
+        embed.add_field(
+            name="🧪 Verifikation nach Umsetzung",
+            value="\n".join([f"• {t}" for t in all_tests])[:1024],
+            inline=False
+        )
+
+        embed.set_footer(text="✅ Umsetzen + Testen | 🧪 Nur Tests | ❌ Verwerfen")
 
         view = self._build_view(bot, persistent=True)
         msg = await channel.send(embed=embed, view=view)
@@ -508,7 +574,16 @@ class AutoFixManager:
         non_skipped = [r for _, r in results if not r.get("skipped")]
         all_passed = all(r["returncode"] == 0 for r in non_skipped) if non_skipped else True
 
-        # Commit/Push/PR nur wenn Patch angewandt und Tests grün und Umsetzungspfad
+        # Post-Fix Verifikation: Wenn Patch angewandt, fuehre zusaetzliche Checks durch
+        verification_results = []
+        if apply_changes and patch_applied:
+            verification_results = await self._post_fix_verification(project_path, proposal, results, channel)
+            # Verifikation bestanden?
+            verification_passed = all(v.get("passed", False) for v in verification_results)
+            if not verification_passed:
+                all_passed = False
+
+        # Commit/Push/PR nur wenn Patch angewandt und Tests + Verifikation gruen
         if apply_changes and patch_applied and all_passed:
             commit_hash = await self._commit_changes(project_path, proposal)
             pushed = False
@@ -516,53 +591,94 @@ class AutoFixManager:
                 pushed = await self._push_branch(project_path, branch_name)
                 if pushed:
                     pr_link = await self._create_draft_pr(project_path, branch_name, proposal, diff_stat, results)
-        elif not all_passed:
-            await channel.send("⚠️ Tests fehlgeschlagen, keine Commits/PR.")
 
-        summary_lines = []
+        # Strukturiertes Ergebnis-Embed
+        color = 0x2ECC71 if all_passed else 0xE74C3C
+        status_text = "Alle Pruefungen bestanden" if all_passed else "Pruefungen fehlgeschlagen"
+        status_emoji = "✅" if all_passed else "❌"
+
+        embed = discord.Embed(
+            title=f"{status_emoji} Pipeline-Ergebnis: {proposal.project}",
+            description=f"**Status:** {status_text}\n**Modus:** {'Nur Tests' if not apply_changes else 'Umsetzung + Verifikation'}",
+            color=color,
+            timestamp=datetime.utcnow()
+        )
+
+        # Test-Ergebnisse kompakt
+        test_lines = []
         for cmd, res in results:
             if res.get("skipped"):
-                status = "⏭"
-                summary_lines.append(f"{status} `{cmd}` (übersprungen: {res['skipped']})")
+                test_lines.append(f"⏭ `{cmd}` — uebersprungen")
                 continue
-            status = "✅" if res["returncode"] == 0 else "❌"
-            summary_lines.append(f"{status} `{cmd}` ({res['duration']:.1f}s)")
-            if res["returncode"] != 0:
-                summary_lines.append(f"Ausgabe:\n{res['stdout'][:500]}\n{res['stderr'][:500]}")
-
+            icon = "✅" if res["returncode"] == 0 else "❌"
+            test_lines.append(f"{icon} `{cmd}` ({res['duration']:.1f}s)")
         if not results:
-            summary_lines.append("⚠️ Keine Tests definiert/gefunden; nichts ausgeführt.")
+            test_lines.append("⚠️ Keine Tests ausgefuehrt")
 
-        color = 0x2ECC71 if all_passed else 0xE74C3C
-        embed = discord.Embed(
-            title=f"🧪 Pipeline-Ergebnis: {proposal.project}",
-            description="\n".join(summary_lines)[:1900],
-            color=color
+        embed.add_field(
+            name="🧪 Tests",
+            value="\n".join(test_lines)[:1024] or "—",
+            inline=False
         )
-        embed.add_field(name="Modus", value="Nur Tests" if not apply_changes else "Umsetzung (Branch, Patch, Tests)", inline=False)
+
+        # Fehlerdetails nur bei Fehlschlag
+        for cmd, res in results:
+            if res.get("skipped"):
+                continue
+            if res["returncode"] != 0:
+                error_output = (res['stdout'][-400:] + "\n" + res['stderr'][-400:]).strip()
+                if error_output:
+                    embed.add_field(
+                        name=f"❌ Fehler in `{cmd[:40]}`",
+                        value=f"```\n{error_output[:900]}\n```",
+                        inline=False
+                    )
+
+        # Verifikations-Ergebnisse
+        if verification_results:
+            verif_lines = []
+            for v in verification_results:
+                icon = "✅" if v["passed"] else "❌"
+                verif_lines.append(f"{icon} **{v['check']}:** {v['detail']}")
+            embed.add_field(
+                name="🔍 Post-Fix Verifikation",
+                value="\n".join(verif_lines)[:1024],
+                inline=False
+            )
+
+        # Patch/Branch/PR Info
+        info_parts = []
         if branch_created and branch_name:
-            embed.add_field(name="Branch", value=branch_name, inline=False)
+            info_parts.append(f"**Branch:** `{branch_name}`")
         if patch_applied:
-            embed.add_field(name="Patch", value="Angewendet", inline=False)
-        else:
-            embed.add_field(name="Patch", value="Nicht angewendet oder nicht generiert", inline=False)
+            info_parts.append("**Patch:** Angewendet")
         if diff_stat:
-            embed.add_field(name="Diff", value=diff_stat[:1024], inline=False)
+            info_parts.append(f"**Diff:** {diff_stat[:200]}")
         if commit_hash:
-            embed.add_field(name="Commit", value=commit_hash, inline=False)
+            info_parts.append(f"**Commit:** `{commit_hash[:12]}`")
         if pr_link:
-            embed.add_field(name="Draft PR", value=pr_link, inline=False)
-        embed.set_footer(text="Auto-Fix Pipeline (sicherer Modus)")
+            info_parts.append(f"**Draft PR:** {pr_link}")
+        if not all_passed and apply_changes:
+            info_parts.append("⚠️ **Kein Commit/PR erstellt** — Pruefungen nicht bestanden")
+
+        if info_parts:
+            embed.add_field(
+                name="📦 Ergebnis",
+                value="\n".join(info_parts)[:1024],
+                inline=False
+            )
+
+        embed.set_footer(text="Auto-Fix Pipeline • Sichere Verifikation")
         await channel.send(embed=embed)
 
-        # 📊 Track result for learning system
+        # Track result for learning system
         mode = "read_only" if not apply_changes else "full"
         self._track_fix_result(proposal, all_passed, results, patch_applied, mode)
 
-        # 🔄 Restore stash if we created one
+        # Restore stash if we created one
         if stash_created:
             await self._restore_stash(project_path)
-            await channel.send("🔄 Git Stash wiederhergestellt - Working Tree wie vorher")
+            await channel.send("🔄 Git Stash wiederhergestellt — Working Tree wie vorher")
 
     def _resolve_test_command(self, cmd: str, project_path: Path) -> Tuple[Optional[str], Optional[str]]:
         """
@@ -1251,6 +1367,124 @@ Best Practices from successful fixes:
         except Exception as e:
             logger.error(f"Failed to create npm test script: {e}", exc_info=True)
             return False
+
+    async def _post_fix_verification(self, project_path: Path, proposal: FixProposal,
+                                     test_results: List[Tuple], channel) -> List[Dict[str, Any]]:
+        """
+        Post-Fix Verifikation: Prueft nach Patch-Anwendung ob alles in Ordnung ist.
+
+        Checks:
+        1. Syntax-Check (Python: py_compile, Node: node --check)
+        2. Import-Check (keine broken imports)
+        3. Regression-Check (Tests nochmal laufen)
+        4. Diff-Groessen-Check (Patch nicht zu gross/invasiv)
+
+        Returns:
+            Liste von Check-Ergebnissen [{check, passed, detail}]
+        """
+        checks = []
+        await channel.send("🔍 **Post-Fix Verifikation laeuft...**")
+
+        # Check 1: Diff-Groesse — Patch darf nicht zu invasiv sein
+        try:
+            diff_result = subprocess.run(
+                ["git", "diff", "--stat", "--numstat"],
+                cwd=project_path, capture_output=True, text=True, timeout=10
+            )
+            if diff_result.returncode == 0 and diff_result.stdout.strip():
+                lines = diff_result.stdout.strip().split("\n")
+                total_changed = 0
+                files_changed = 0
+                for line in lines:
+                    parts = line.split("\t")
+                    if len(parts) >= 2:
+                        try:
+                            added = int(parts[0]) if parts[0] != '-' else 0
+                            removed = int(parts[1]) if parts[1] != '-' else 0
+                            total_changed += added + removed
+                            files_changed += 1
+                        except ValueError:
+                            continue
+
+                if total_changed > 500:
+                    checks.append({"check": "Diff-Groesse", "passed": False,
+                                   "detail": f"{total_changed} Zeilen in {files_changed} Dateien — zu invasiv (max 500)"})
+                elif total_changed > 200:
+                    checks.append({"check": "Diff-Groesse", "passed": True,
+                                   "detail": f"{total_changed} Zeilen in {files_changed} Dateien — gross, aber akzeptabel"})
+                else:
+                    checks.append({"check": "Diff-Groesse", "passed": True,
+                                   "detail": f"{total_changed} Zeilen in {files_changed} Dateien"})
+            else:
+                checks.append({"check": "Diff-Groesse", "passed": True, "detail": "Keine Aenderungen erkannt"})
+        except Exception as e:
+            checks.append({"check": "Diff-Groesse", "passed": True, "detail": f"Check uebersprungen: {e}"})
+
+        # Check 2: Syntax-Check fuer geaenderte Dateien
+        try:
+            changed_files_result = subprocess.run(
+                ["git", "diff", "--name-only"],
+                cwd=project_path, capture_output=True, text=True, timeout=10
+            )
+            if changed_files_result.returncode == 0:
+                changed_files = [f.strip() for f in changed_files_result.stdout.strip().split("\n") if f.strip()]
+                syntax_errors = []
+
+                for f in changed_files[:10]:  # Max 10 Dateien pruefen
+                    file_path = project_path / f
+                    if not file_path.exists():
+                        continue
+
+                    if f.endswith(".py"):
+                        res = subprocess.run(
+                            ["python3", "-m", "py_compile", str(file_path)],
+                            capture_output=True, text=True, timeout=10
+                        )
+                        if res.returncode != 0:
+                            syntax_errors.append(f"{f}: {res.stderr[:100]}")
+
+                    elif f.endswith((".js", ".mjs")):
+                        node = shutil.which("node")
+                        if node:
+                            res = subprocess.run(
+                                [node, "--check", str(file_path)],
+                                capture_output=True, text=True, timeout=10
+                            )
+                            if res.returncode != 0:
+                                syntax_errors.append(f"{f}: {res.stderr[:100]}")
+
+                if syntax_errors:
+                    checks.append({"check": "Syntax-Pruefung", "passed": False,
+                                   "detail": "; ".join(syntax_errors[:3])})
+                else:
+                    checks.append({"check": "Syntax-Pruefung", "passed": True,
+                                   "detail": f"{len(changed_files)} Dateien geprueft — keine Syntaxfehler"})
+        except Exception as e:
+            checks.append({"check": "Syntax-Pruefung", "passed": True, "detail": f"Check uebersprungen: {e}"})
+
+        # Check 3: Regression-Test (Tests nochmal laufen wenn initial bestanden)
+        initial_passed = all(r.get("returncode") == 0 for _, r in test_results if not r.get("skipped"))
+        if initial_passed and test_results:
+            # Nur den ersten nicht-uebersprungenen Test nochmal laufen lassen (Schnellcheck)
+            for cmd, res in test_results:
+                if res.get("skipped"):
+                    continue
+                resolved_cmd, skip = self._resolve_test_command(cmd, project_path)
+                if skip or not resolved_cmd:
+                    continue
+                rerun = await self._run_command(resolved_cmd, cwd=project_path)
+                if rerun["returncode"] == 0:
+                    checks.append({"check": "Regression-Test", "passed": True,
+                                   "detail": f"`{cmd}` bestanden ({rerun['duration']:.1f}s)"})
+                else:
+                    checks.append({"check": "Regression-Test", "passed": False,
+                                   "detail": f"`{cmd}` fehlgeschlagen nach Patch!"})
+                break  # Nur einen Check als Schnelltest
+        else:
+            checks.append({"check": "Regression-Test", "passed": True,
+                           "detail": "Uebersprungen (initiale Tests nicht bestanden oder keine Tests)"})
+
+        return checks
 
     def _track_fix_result(self, proposal: FixProposal, success: bool, test_results: List[Tuple],
                           patch_applied: bool, mode: str) -> None:

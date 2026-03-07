@@ -77,7 +77,10 @@ class GuildScoutAlertsHandler:
 
         self.runner = web.AppRunner(self.app)
         await self.runner.setup()
-        self.site = web.TCPSite(self.runner, '0.0.0.0', self.webhook_port)
+        self.site = web.TCPSite(
+            self.runner, '0.0.0.0', self.webhook_port,
+            reuse_address=True, reuse_port=True
+        )
         await self.site.start()
 
         self.logger.info(f"✅ GuildScout Alerts webhook listening on port {self.webhook_port}")

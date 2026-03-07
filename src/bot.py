@@ -10,7 +10,6 @@ from discord import app_commands
 import asyncio
 import sys
 import os
-import atexit
 import signal
 from pathlib import Path
 from datetime import datetime, time
@@ -108,8 +107,6 @@ class ShadowOpsBot(commands.Bot):
         self.discord_logger = DiscordChannelLogger(bot=None, config=self.config)
         # Research Fetcher (sicherer Allowlist-Fetch)
         self.research_fetcher = ResearchFetcher(config=self.config, discord_logger=self.discord_logger)
-        # Auto-Fix Manager (Reaction-gesteuert)
-        self.auto_fix_manager = AutoFixManager(config=self.config, ai_service=None)
         # Auto-Fix Manager (Proposal/Reaction Flow)
         self.auto_fix_manager = AutoFixManager(config=self.config, ai_service=None)
         
@@ -237,6 +234,8 @@ class ShadowOpsBot(commands.Bot):
                 ('bot_status', '🤖-bot-status', 'Bot Startup, Health-Checks und System-Status', system_category),
                 ('customer_alerts', '👥-customer-alerts', 'Kunden-sichtbare Alerts und Incidents', system_category),
                 ('deployment_log', '🚀-deployment-log', 'Deployment-Benachrichtigungen und Auto-Deploy Logs', system_category),
+                # 📊 Dashboard
+                ('dashboard', '📊-dashboard', 'Live-Übersicht aller Projekte und deren Status', system_category),
             ]
 
             for key, name, topic, category in core_channels_to_manage:
@@ -355,6 +354,21 @@ class ShadowOpsBot(commands.Bot):
         """Setup Hook - wird VOR Discord-Verbindung aufgerufen"""
         self.logger.info("🗡️ ShadowOps Bot startet...")
         await self.load_cogs()
+
+        # SIGTERM-Handler im Event-Loop registrieren für graceful shutdown.
+        # bot.run() → asyncio.run() fängt nur SIGINT. SIGTERM (systemd stop/restart)
+        # muss explizit behandelt werden, damit bot.close() die HTTP-Server-Sockets freigibt.
+        self._sigterm_received = False
+        def _handle_sigterm():
+            if self._sigterm_received:
+                return  # Doppelten SIGTERM ignorieren
+            self._sigterm_received = True
+            self.logger.info("🛑 SIGTERM empfangen — starte graceful shutdown...")
+            asyncio.ensure_future(self.close())
+
+        loop = asyncio.get_running_loop()
+        loop.add_signal_handler(signal.SIGTERM, _handle_sigterm)
+
         self.logger.info("⏳ Warte auf Discord-Verbindung...")
 
     async def load_cogs(self):
@@ -592,6 +606,13 @@ class ShadowOpsBot(commands.Bot):
                 0x3498DB
             )
 
+            # Health-Server frueh starten damit Project-Monitor sich selbst pruefen kann
+            try:
+                await self.health_server.start()
+                self.logger.info("✅ Health Check Server gestartet (Port 8766)")
+            except Exception as e:
+                self.logger.error(f"❌ Health Check Server konnte nicht gestartet werden: {e}")
+
             # Initialisiere Customer Notifications
             self.logger.info("🔄 [1/5] Initialisiere Customer Notification Manager...")
             self.customer_notifications = CustomerNotificationManager(self, self.config)
@@ -828,15 +849,7 @@ class ShadowOpsBot(commands.Bot):
         else:
             self.logger.info("ℹ️ Auto-Remediation deaktiviert (config: auto_remediation.enabled=false)")
 
-        # ============================================
-        # START HEALTH CHECK SERVER
-        # ============================================
-        self.logger.info("🔄 Starte Health Check Server...")
-        try:
-            await self.health_server.start()
-            self.logger.info("✅ Health Check Server gestartet (Port 8766)")
-        except Exception as e:
-            self.logger.error(f"❌ Health Check Server konnte nicht gestartet werden: {e}")
+        # Health Check Server wurde bereits in Phase 5 gestartet (vor Project Monitor)
 
         # Starte Background Tasks
         # DISABLED: Old monitor_security replaced by Event Watcher System
@@ -845,6 +858,8 @@ class ShadowOpsBot(commands.Bot):
         #     self.monitor_security.start()
         if not self.daily_health_check.is_running():
             self.daily_health_check.start()
+        if not self.update_dashboard.is_running():
+            self.update_dashboard.start()
 
         # Setze Status
         await self.change_presence(
@@ -901,7 +916,9 @@ class ShadowOpsBot(commands.Bot):
 
     async def close(self):
         """Clean shutdown of the bot"""
+        import traceback
         self.logger.info("🛑 Shutting down ShadowOps Bot...")
+        self.logger.info(f"   Close() aufgerufen von: {''.join(traceback.format_stack()[-3:-1])}")
 
         # Stop continuous learning system
         if self.continuous_learning:
@@ -929,6 +946,13 @@ class ShadowOpsBot(commands.Bot):
                 await self.github_integration.stop_webhook_server()
             except Exception as e:
                 self.logger.error(f"Error stopping GitHub integration: {e}")
+
+        # Stop GuildScout alerts webhook server
+        if hasattr(self, 'guildscout_alerts') and self.guildscout_alerts:
+            try:
+                await self.guildscout_alerts.stop_webhook_server()
+            except Exception as e:
+                self.logger.error(f"Error stopping GuildScout alerts: {e}")
 
         # Close parent bot
         await super().close()
@@ -1057,6 +1081,134 @@ class ShadowOpsBot(commands.Bot):
         """Warte bis Bot bereit ist"""
         await self.wait_until_ready()
         self.logger.info("⏰ Daily Health-Check Task gestartet (läuft täglich um 06:00 Uhr)")
+
+    @tasks.loop(minutes=5)
+    async def update_dashboard(self):
+        """Aktualisiert das Dashboard-Embed mit aktuellem Projekt-Status alle 5 Minuten"""
+        try:
+            dashboard_channel_id = self.config.channels.get('dashboard')
+            if not dashboard_channel_id:
+                return
+
+            channel = self.get_channel(dashboard_channel_id)
+            if not channel:
+                return
+
+            # Baue Dashboard-Embed
+            embed = discord.Embed(
+                title="📊 ShadowOps — Projekt-Dashboard",
+                description="Live-Status aller überwachten Projekte",
+                color=0x2ECC71,
+                timestamp=datetime.now()
+            )
+
+            if self.project_monitor and self.project_monitor.projects:
+                online_count = sum(1 for p in self.project_monitor.projects.values() if p.is_online)
+                total_count = len(self.project_monitor.projects)
+                all_online = online_count == total_count
+
+                # Gesamtstatus
+                if all_online:
+                    embed.color = 0x2ECC71  # Grün
+                    embed.description = f"✅ **Alle {total_count} Projekte online**"
+                else:
+                    embed.color = 0xE74C3C  # Rot
+                    embed.description = f"⚠️ **{online_count}/{total_count} Projekte online**"
+
+                # Pro Projekt ein Feld
+                for project in sorted(self.project_monitor.projects.values(), key=lambda p: p.name):
+                    tag = self.config.projects.get(project.name, {}).get('tag', '')
+                    status_emoji = "🟢" if project.is_online else "🔴"
+                    status_text = "Online" if project.is_online else "Offline"
+
+                    # Details
+                    details = []
+                    if project.is_online:
+                        details.append(f"Antwortzeit: {project.average_response_time:.0f}ms")
+                    else:
+                        if project.current_downtime_duration:
+                            mins = int(project.current_downtime_duration.total_seconds() / 60)
+                            if mins < 60:
+                                details.append(f"Downtime: {mins}min")
+                            else:
+                                details.append(f"Downtime: {mins // 60}h {mins % 60}min")
+                        if project.last_error:
+                            details.append(f"Fehler: {project.last_error[:80]}")
+
+                    uptime = f"{project.uptime_percentage:.1f}%" if project.total_checks > 0 else "—"
+                    details.append(f"Uptime: {uptime}")
+
+                    if project.last_check_time:
+                        details.append(f"Letzter Check: <t:{int(project.last_check_time.timestamp())}:R>")
+
+                    field_name = f"{status_emoji} {tag} {project.name}" if tag else f"{status_emoji} {project.name}"
+                    embed.add_field(
+                        name=field_name,
+                        value=f"**{status_text}**\n" + "\n".join(details),
+                        inline=True
+                    )
+                # Health-Snapshots in Knowledge DB speichern
+                try:
+                    from integrations.ai_learning.knowledge_db import get_knowledge_db
+                    db = get_knowledge_db()
+                    for project in self.project_monitor.projects.values():
+                        db.add_health_snapshot(
+                            project_name=project.name,
+                            is_online=project.is_online,
+                            response_time_ms=project.average_response_time if project.is_online else None,
+                            uptime_pct=project.uptime_percentage if project.total_checks > 0 else None,
+                            error=project.last_error if not project.is_online else None
+                        )
+                except Exception:
+                    pass  # KB nicht verfügbar — kein Problem
+
+            else:
+                embed.description = "⏳ Project Monitor noch nicht initialisiert..."
+
+            embed.set_footer(text="Aktualisiert alle 5 Minuten")
+
+            # Suche nach existierendem Bot-Embed zum Editieren
+            dashboard_message = None
+
+            # 1. Prüfe gepinnte Nachrichten
+            try:
+                pins = await channel.pins()
+                for pin in pins:
+                    if pin.author.id == self.user.id and pin.embeds and pin.embeds[0].title and "Projekt-Dashboard" in pin.embeds[0].title:
+                        dashboard_message = pin
+                        break
+            except Exception:
+                pass
+
+            # 2. Fallback: Letzte Bot-Nachricht im Channel suchen
+            if not dashboard_message:
+                try:
+                    async for msg in channel.history(limit=10):
+                        if msg.author.id == self.user.id and msg.embeds and msg.embeds[0].title and "Projekt-Dashboard" in msg.embeds[0].title:
+                            dashboard_message = msg
+                            break
+                except Exception:
+                    pass
+
+            if dashboard_message:
+                await dashboard_message.edit(embed=embed)
+            else:
+                msg = await channel.send(embed=embed)
+                try:
+                    await msg.pin()
+                except discord.Forbidden:
+                    pass  # Kein Pin möglich, Embed wird trotzdem editiert beim nächsten Lauf
+
+        except Exception as e:
+            self.logger.error(f"❌ Fehler beim Dashboard-Update: {e}", exc_info=True)
+
+    @update_dashboard.before_loop
+    async def before_dashboard(self):
+        """Warte bis Bot bereit ist"""
+        await self.wait_until_ready()
+        # Warte bis Project Monitor initialisiert ist
+        await asyncio.sleep(30)
+        self.logger.info("📊 Dashboard-Task gestartet (aktualisiert alle 5 Minuten)")
 
     async def monitor_fail2ban(self):
         """Monitort Fail2ban für neue Bans"""
@@ -1256,7 +1408,9 @@ def main():
         logger.info("🗡️  ShadowOps Security Bot")
         logger.info("=" * 60)
 
-        # Starte Bot
+        # bot.run() nutzt intern asyncio.run() mit async with (garantiertes close()).
+        # SIGTERM wird im setup_hook() via Event-Loop-Signal-Handler behandelt,
+        # damit bot.close() die HTTP-Server-Sockets sauber freigibt.
         bot = ShadowOpsBot()
         bot.run(config.discord_token, log_handler=None)
 
@@ -1276,64 +1430,5 @@ def main():
         sys.exit(1)
 
 
-def ensure_single_instance():
-    """
-    Ensures only one instance of the bot is running using PID file.
-    Prevents multiple instances from running simultaneously.
-    """
-    pid_file = Path(__file__).parent.parent / ".bot.pid"
-    current_pid = os.getpid()
-
-    # Check if PID file exists
-    if pid_file.exists():
-        try:
-            old_pid = int(pid_file.read_text().strip())
-
-            if old_pid != current_pid:
-                # Check if process with that PID still exists
-                try:
-                    os.kill(old_pid, 0)  # Signal 0 = check if process exists
-                    print(f"❌ FEHLER: Bot läuft bereits (PID: {old_pid})")
-                    print(f"   PID-Datei: {pid_file}")
-                    print(f"   Zum Stoppen: kill {old_pid}")
-                    sys.exit(1)
-                except OSError:
-                    # Process doesn't exist anymore, PID file is stale
-                    print(f"⚠️  Stale PID file gefunden (alter PID: {old_pid}), wird entfernt...")
-                    pid_file.unlink()
-        except (ValueError, FileNotFoundError):
-            # Invalid or missing PID file
-            pid_file.unlink(missing_ok=True)
-
-    # Write current PID
-    pid_file.write_text(str(current_pid))
-    print(f"✅ Single Instance Lock erstellt (PID: {current_pid})")
-
-    # Register cleanup on exit
-    def cleanup_pid_file():
-        if pid_file.exists():
-            try:
-                stored_pid = int(pid_file.read_text().strip())
-                if stored_pid == current_pid:
-                    pid_file.unlink()
-                    print(f"🧹 PID-Datei entfernt")
-            except:
-                pass
-
-    atexit.register(cleanup_pid_file)
-
-    # Handle SIGTERM and SIGINT
-    def signal_handler(signum, frame):
-        print(f"\n🛑 Signal {signum} empfangen, beende Bot...")
-        cleanup_pid_file()
-        sys.exit(0)
-
-    signal.signal(signal.SIGTERM, signal_handler)
-    signal.signal(signal.SIGINT, signal_handler)
-
-
 if __name__ == "__main__":
-    # Ensure only one instance is running
-    ensure_single_instance()
-
     main()

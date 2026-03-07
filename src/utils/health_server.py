@@ -5,6 +5,7 @@ Provides a /health endpoint for monitoring systems
 
 import asyncio
 import logging
+import socket
 from aiohttp import web
 from datetime import datetime
 from typing import Optional
@@ -41,7 +42,10 @@ class HealthCheckServer:
             self.runner = web.AppRunner(self.app)
             await self.runner.setup()
 
-            self.site = web.TCPSite(self.runner, '0.0.0.0', self.port)
+            self.site = web.TCPSite(
+                self.runner, '0.0.0.0', self.port,
+                reuse_address=True, reuse_port=True
+            )
             await self.site.start()
 
             logger.info(f"✅ Health check server started on port {self.port}")

@@ -16,7 +16,7 @@
           "risk_level": { "type": "string", "enum": ["low", "medium", "high"] },
           "rollback_command": { "type": "string" }
         },
-        "required": ["action", "command", "risk_level"],
+        "required": ["action", "command", "risk_level", "rollback_command"],
         "additionalProperties": false
       }
     },

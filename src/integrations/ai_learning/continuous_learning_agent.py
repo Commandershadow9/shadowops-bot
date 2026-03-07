@@ -123,9 +123,14 @@ class ContinuousLearningAgent:
         self.report_task: Optional[asyncio.Task] = None
         self.trend_task: Optional[asyncio.Task] = None
         self.synthesis_task: Optional[asyncio.Task] = None
+        self.batched_report_task: Optional[asyncio.Task] = None
 
         # State caches
         self.last_git_hashes: Dict[str, set] = {}
+
+        # Insight-Batching: Sammle Insights und sende gebuendelt
+        self.batched_report_interval = 7200  # 2 Stunden
+        self._pending_insights: Dict[str, List[LearningInsight]] = {}  # category -> insights
 
         # Metrics
         self.total_sessions = 0
@@ -154,14 +159,14 @@ class ContinuousLearningAgent:
         self.report_task = asyncio.create_task(self._reporting_loop())
         self.trend_task = asyncio.create_task(self._trend_report_loop())
         self.synthesis_task = asyncio.create_task(self._knowledge_synthesis_loop())
+        self.batched_report_task = asyncio.create_task(self._batched_insight_loop())
 
-        # Send startup message
+        # Send startup message (kompakt)
         await self._send_learning_message(
-            "🧠 **Continuous Learning System gestartet**\n"
-            f"📊 Git Analysis: Alle {self.git_analysis_interval//60} Minuten\n"
-            f"💻 Code Analysis: Alle {self.code_analysis_interval//60} Minuten\n"
-            f"📈 Reports: Alle {self.report_interval//3600} Stunden\n"
-            f"🔄 Kontinuierliches Learning: Alle {self.learning_interval//60} Minuten",
+            "🧠 **Continuous Learning System v2 gestartet**\n"
+            f"📊 Analyse-Intervalle: Git {self.git_analysis_interval//60}min, Code {self.code_analysis_interval//60}min\n"
+            f"📋 Gebuendelte Reports: Alle {self.batched_report_interval//3600}h\n"
+            f"🔄 Synthese: Alle {self.synthesis_interval//3600}h",
             color=0x00FF00
         )
 
@@ -199,6 +204,12 @@ class ContinuousLearningAgent:
             self.synthesis_task.cancel()
             try:
                 await self.synthesis_task
+            except asyncio.CancelledError:
+                pass
+        if self.batched_report_task:
+            self.batched_report_task.cancel()
+            try:
+                await self.batched_report_task
             except asyncio.CancelledError:
                 pass
 
@@ -267,15 +278,15 @@ class ContinuousLearningAgent:
                     session.insights_generated = len(insights)
                     self.total_insights += len(insights)
 
-                    # Send immediate feedback for all git insights
+                    # Insights sammeln statt sofort senden
                     for insight in insights:
-                        await self._send_insight_notification(insight)
+                        self._queue_insight(insight)
 
                 session.end_time = datetime.utcnow()
                 self.total_sessions += 1
 
                 self.logger.info(
-                    f"✅ Git analysis complete: {session.insights_generated} insights"
+                    f"✅ Git analysis complete: {session.insights_generated} insights (gebuendelt)"
                 )
 
                 await asyncio.sleep(self.git_analysis_interval)
@@ -309,15 +320,15 @@ class ContinuousLearningAgent:
                     session.insights_generated = len(insights)
                     self.total_insights += len(insights)
 
-                    # Send immediate feedback for all code insights
+                    # Insights sammeln statt sofort senden
                     for insight in insights:
-                        await self._send_insight_notification(insight)
+                        self._queue_insight(insight)
 
                 session.end_time = datetime.utcnow()
                 self.total_sessions += 1
 
                 self.logger.info(
-                    f"✅ Code analysis complete: {session.insights_generated} insights"
+                    f"✅ Code analysis complete: {session.insights_generated} insights (gebuendelt)"
                 )
 
                 await asyncio.sleep(self.code_analysis_interval)
@@ -463,6 +474,26 @@ class ContinuousLearningAgent:
             if not fail2ban_events and not crowdsec_events:
                 return  # No events to analyze
 
+            # Security-Events in Knowledge DB speichern
+            try:
+                from .knowledge_db import get_knowledge_db
+                db = get_knowledge_db()
+                for event in fail2ban_events:
+                    db.add_security_event(
+                        event_type="fail2ban_ban",
+                        severity="MEDIUM",
+                        source_ip=event.get('ip'),
+                        details=f"Jail: {event.get('service', 'unknown')}"
+                    )
+                for event in crowdsec_events:
+                    db.add_security_event(
+                        event_type="crowdsec_decision",
+                        severity="HIGH",
+                        details=event.get('message', '')[:500]
+                    )
+            except Exception as e:
+                self.logger.debug(f"KB security event write failed: {e}")
+
             # Pattern 1: Identify repeat offenders (IPs banned multiple times)
             if fail2ban_events:
                 ip_counts = Counter(e['ip'] for e in fail2ban_events)
@@ -535,9 +566,9 @@ class ContinuousLearningAgent:
                     self.insights_queue.append(insight)
                     session.insights_generated += 1
 
-            # Send insights to Discord immediately
+            # Insights sammeln (werden gebuendelt gesendet)
             for insight in insights:
-                await self._send_insight_notification(insight)
+                self._queue_insight(insight)
 
         except Exception as e:
             self.logger.error(f"Error analyzing security events: {e}", exc_info=True)
@@ -905,18 +936,63 @@ Liefer konkrete Hinweise für Stabilität, Wartbarkeit oder Security (keine Flos
                         color=0xE74C3C
                     )
 
-                # Post Auto-Fix Proposal in ai_code_scans if Actions vorhanden
+                # Post strukturierten Fix-Proposal wenn Actions vorhanden
                 try:
-                    if hasattr(self.bot, "auto_fix_manager") and (auto_actions or coverage is not None and coverage < 60 or (test_files is not None and test_files == 0)):
-                        summary_line = f"Hotspots: {largest_files_text or 'n/a'}, Coverage: {coverage if coverage is not None else 'n/a'}%, Doc: {doc_cov if doc_cov is not None else 'n/a'}%"
-                        actions_for_proposal = auto_actions or []
-                        from ..auto_fix_manager import FixProposal
+                    if hasattr(self.bot, "auto_fix_manager") and (auto_actions or (coverage is not None and coverage < 60) or (test_files is not None and test_files == 0)):
+                        from ..auto_fix_manager import FixProposal, FixAction
+
+                        # Strukturierte Actions mit Kontext erstellen
+                        structured = []
+                        for action_text in (auto_actions or []):
+                            # Confidence und Safety basierend auf Action-Typ
+                            if "coverage" in action_text.lower() or "test" in action_text.lower():
+                                structured.append(FixAction(
+                                    description=action_text,
+                                    rationale="Niedrige Test-Coverage erhoeht das Risiko fuer unentdeckte Bugs bei Aenderungen",
+                                    confidence=0.8,
+                                    safety="high",
+                                    risk_assessment="Tests hinzufuegen hat kein Risiko fuer bestehenden Code",
+                                    category="improvement"
+                                ))
+                            elif "import" in action_text.lower() or "zyk" in action_text.lower():
+                                structured.append(FixAction(
+                                    description=action_text,
+                                    rationale="Import-Zyklen verlangsamen den Start und erschweren Refactoring",
+                                    confidence=0.7,
+                                    safety="medium",
+                                    risk_assessment="Aenderungen an Imports koennen andere Module beeinflussen",
+                                    category="refactoring"
+                                ))
+                            else:
+                                structured.append(FixAction(
+                                    description=action_text,
+                                    rationale="Automatisch erkannter Verbesserungsvorschlag",
+                                    confidence=0.6,
+                                    safety="medium",
+                                    risk_assessment="Risiko abhaengig vom Umfang der Aenderung",
+                                    category="improvement"
+                                ))
+
+                        # Gesamtbewertung
+                        avg_conf = sum(a.confidence for a in structured) / len(structured) if structured else 0.5
+
+                        summary_line = (
+                            f"Gesammelte Verbesserungen fuer {project_name}: "
+                            f"Coverage {coverage if coverage is not None else 'n/a'}%, "
+                            f"Doc {doc_cov if doc_cov is not None else 'n/a'}%, "
+                            f"Hotspots: {largest_files_text or 'n/a'}"
+                        )
+
                         proposal = FixProposal(
                             project=project_name,
                             summary=summary_line,
-                            actions=actions_for_proposal,
-                            tests=[],  # Manager nutzt Defaults
-                            suggested_tests=[]
+                            actions=[a.description for a in structured],
+                            structured_actions=structured,
+                            tests=[],
+                            suggested_tests=[],
+                            area="Code-Qualitaet",
+                            overall_confidence=avg_conf,
+                            overall_safety="high" if all(a.safety == "high" for a in structured) else "medium"
                         )
                         await self.bot.auto_fix_manager.post_proposal(self.bot, proposal)
                 except Exception as e:
@@ -976,17 +1052,145 @@ Liefer konkrete Hinweise für Stabilität, Wartbarkeit oder Security (keine Flos
         except Exception as e:
             self.logger.error(f"Error sending learning message: {e}")
 
+    def _queue_insight(self, insight: LearningInsight):
+        """Insight in die Warteschlange einreihen statt sofort senden."""
+        category = insight.category
+        if category not in self._pending_insights:
+            self._pending_insights[category] = []
+        self._pending_insights[category].append(insight)
+        self.logger.debug(f"Insight gequeued: {insight.title} ({category})")
+
+    async def _batched_insight_loop(self):
+        """Gebuendelte Insights alle 2h als strukturierten Report senden."""
+        # Warte 2h vor erstem Report
+        await asyncio.sleep(self.batched_report_interval)
+
+        while self.is_running:
+            try:
+                if self._pending_insights:
+                    await self._send_batched_report()
+                await asyncio.sleep(self.batched_report_interval)
+            except asyncio.CancelledError:
+                break
+            except Exception as e:
+                self.logger.error(f"Error in batched insight loop: {e}", exc_info=True)
+                await asyncio.sleep(3600)
+
+    async def _send_batched_report(self):
+        """Sendet alle gesammelten Insights als menschenlesbaren Report."""
+        channel = await self._get_learning_channel()
+        if not channel:
+            return
+
+        # Snapshot nehmen und Queue leeren
+        pending = dict(self._pending_insights)
+        self._pending_insights = {}
+
+        total_insights = sum(len(v) for v in pending.values())
+        if total_insights == 0:
+            return
+
+        # In Knowledge DB speichern (falls verfügbar)
+        try:
+            from .knowledge_db import get_knowledge_db
+            db = get_knowledge_db()
+            for category, insights in pending.items():
+                for ins in insights:
+                    db.add_insight(
+                        insight_id=ins.insight_id, category=category,
+                        title=ins.title, description=ins.description,
+                        confidence=ins.confidence,
+                        project=ins.data.get("project"),
+                        source=ins.data.get("source", category),
+                        data=ins.data
+                    )
+        except Exception as e:
+            self.logger.debug(f"Knowledge DB write failed: {e}")
+
+        # Menschenlesbare Zusammenfassung bauen
+        embed = discord.Embed(
+            title=f"🧠 Was ich gelernt habe — {total_insights} Erkenntnisse",
+            color=0x9B59B6,
+            timestamp=datetime.utcnow()
+        )
+
+        # Top-Insight pro Kategorie hervorheben (höchste Confidence)
+        top_insights = []
+        for category, insights in pending.items():
+            best = max(insights, key=lambda i: i.confidence)
+            top_insights.append((category, best))
+
+        if top_insights:
+            highlight_lines = []
+            for cat, ins in sorted(top_insights, key=lambda x: x[1].confidence, reverse=True)[:3]:
+                proj = ins.data.get("project", "")
+                proj_tag = f"[{proj}] " if proj else ""
+                highlight_lines.append(f"▸ {proj_tag}{ins.description[:200]}")
+            embed.description = "**Wichtigste Erkenntnisse:**\n" + "\n".join(highlight_lines)
+
+        # Pro Kategorie Details
+        category_info = {
+            "git_pattern": ("📚 Git-Analyse", "Was sich im Code verändert hat"),
+            "code_pattern": ("💻 Code-Qualität", "Muster und Schwachstellen im Code"),
+            "security_trend": ("🛡️ Security", "Angriffe und Bedrohungen"),
+            "system_behavior": ("🖥️ System-Verhalten", "Performance und Verfügbarkeit"),
+        }
+
+        for category, insights in pending.items():
+            label, subtitle = category_info.get(category, (category, ""))
+
+            # Konkrete, verständliche Zusammenfassung
+            lines = []
+            for ins in sorted(insights, key=lambda i: i.confidence, reverse=True)[:4]:
+                conf_bar = "█" * round(ins.confidence * 5) + "░" * (5 - round(ins.confidence * 5))
+                proj = ins.data.get("project", "")
+                proj_tag = f"**{proj}**: " if proj else ""
+                # Kürze und mache menschenlesbar
+                desc = ins.description.replace("\n", " ")[:180]
+                lines.append(f"`{conf_bar}` {proj_tag}{desc}")
+
+            if len(insights) > 4:
+                lines.append(f"*+{len(insights) - 4} weitere Erkenntnisse*")
+
+            embed.add_field(
+                name=f"{label} ({len(insights)})",
+                value="\n".join(lines)[:1024] or "—",
+                inline=False
+            )
+
+        # Knowledge DB Stats im Footer
+        kb_info = ""
+        try:
+            from .knowledge_db import get_knowledge_db
+            stats = get_knowledge_db().get_knowledge_stats()
+            kb_info = f" • KB: {stats['insights']['total']} Insights, {stats['patterns']['total']} Patterns"
+        except Exception:
+            pass
+
+        uptime = datetime.utcnow() - self.start_time
+        uptime_hours = uptime.total_seconds() / 3600
+        embed.set_footer(
+            text=f"Learning v2 • {self.total_sessions} Sessions • {uptime_hours:.1f}h Uptime{kb_info}"
+        )
+
+        await channel.send(embed=embed)
+        self.logger.info(f"📋 Batched report: {total_insights} insights in {len(pending)} Kategorien")
+
     async def _send_insight_notification(self, insight: LearningInsight):
-        """Send immediate notification for high-confidence insights"""
+        """Fallback: Einzelne Notification nur fuer kritische Insights (confidence >= 0.9)."""
+        if insight.confidence < 0.9:
+            # Nicht-kritische Insights werden gebuendelt
+            self._queue_insight(insight)
+            return
+
         try:
             channel = await self._get_learning_channel()
             if not channel:
                 return
 
-            import discord
             embed = discord.Embed(
-                title=f"🔍 Neue Erkenntnis: {insight.category}",
-                color=0xFFD700,
+                title=f"⚠️ Wichtige Erkenntnis: {insight.category}",
+                color=0xFF0000,
                 timestamp=insight.discovered_at
             )
 
@@ -1003,62 +1207,86 @@ Liefer konkrete Hinweise für Stabilität, Wartbarkeit oder Security (keine Flos
             self.logger.error(f"Error sending insight notification: {e}")
 
     async def _send_learning_report(self, pin: bool = False):
-        """Send periodic learning report to Discord"""
+        """Periodischer Status-Report mit Knowledge-DB-Daten (alle 6h)"""
         try:
             channel = await self._get_learning_channel()
             if not channel:
                 return
 
-            import discord
-
             uptime = datetime.utcnow() - self.start_time
             uptime_hours = uptime.total_seconds() / 3600
 
-            # Build report
             embed = discord.Embed(
-                title="📊 AI Learning Report",
-                description=f"Zusammenfassung der letzten {self.report_interval//3600} Stunden",
+                title="📊 AI Learning — Status-Report",
                 color=0x00FF00,
                 timestamp=datetime.utcnow()
             )
 
-            # Statistics
-            embed.add_field(
-                name="📈 Statistiken",
-                value=(
-                    f"**Sessions:** {self.total_sessions}\n"
-                    f"**Insights:** {self.total_insights}\n"
-                    f"**Uptime:** {uptime_hours:.1f}h"
-                ),
-                inline=True
-            )
+            # Knowledge DB Statistiken
+            kb_text = ""
+            try:
+                from .knowledge_db import get_knowledge_db
+                db = get_knowledge_db()
+                stats = db.get_knowledge_stats()
 
-            # Recent insights
-            if self.insights_queue:
-                recent = self.insights_queue[-3:]
-                insights_text = "\n".join([
-                    f"• {i.title[:40]}..." if len(i.title) > 40 else f"• {i.title}"
-                    for i in recent
-                ])
-                embed.add_field(
-                    name="🔍 Letzte Erkenntnisse",
-                    value=insights_text or "Keine neuen Erkenntnisse",
-                    inline=False
+                kb_text = (
+                    f"📚 **{stats['insights']['total']}** Erkenntnisse gespeichert\n"
+                    f"🛡️ **{stats['security']['total']}** Security-Events erfasst\n"
+                    f"🔧 **{stats['fixes']['total']}** Fixes dokumentiert"
                 )
+                if stats['fixes']['success_rate'] is not None and stats['fixes']['total'] > 0:
+                    kb_text += f" ({stats['fixes']['success_rate']:.0%} Erfolgsrate)"
+                kb_text += f"\n🧩 **{stats['patterns']['total']}** Langzeit-Patterns gelernt"
 
-            # System status
+                # Letzte Top-Erkenntnisse aus DB
+                recent = db.get_recent_insights(limit=3)
+                if recent:
+                    kb_text += "\n\n**Letzte Erkenntnisse:**"
+                    for ins in recent:
+                        proj = f"[{ins['project']}] " if ins.get('project') else ""
+                        kb_text += f"\n▸ {proj}{ins['title'][:80]}"
+            except Exception as e:
+                kb_text = f"⏳ Knowledge DB wird aufgebaut... ({self.total_insights} Insights bisher)"
+                self.logger.debug(f"KB stats failed: {e}")
+
+            embed.add_field(name="🧠 Wissensbasis", value=kb_text[:1024] or "—", inline=False)
+
+            # Security-Zusammenfassung (wenn verfügbar)
+            try:
+                from .knowledge_db import get_knowledge_db
+                sec = get_knowledge_db().get_security_summary(hours=24)
+                if sec['total_events'] > 0:
+                    sec_lines = [f"**{sec['total_events']}** Events in 24h"]
+                    for sev, count in sorted(sec['by_severity'].items(), key=lambda x: {'CRITICAL': 4, 'HIGH': 3, 'MEDIUM': 2, 'LOW': 1}.get(x[0], 0), reverse=True):
+                        if count > 0:
+                            sec_lines.append(f"  {sev}: {count}")
+                    if sec['top_ips']:
+                        top_ip_addr = next(iter(sec['top_ips']))
+                        top_ip_count = sec['top_ips'][top_ip_addr]
+                        sec_lines.append(f"Top-Angreifer: `{top_ip_addr}` ({top_ip_count}x)")
+                    embed.add_field(name="🛡️ Security (24h)", value="\n".join(sec_lines)[:1024], inline=True)
+            except Exception:
+                pass
+
+            # System-Status
+            online = 0
+            total = 0
             if hasattr(self.bot, 'project_monitor') and self.bot.project_monitor:
                 projects = self.bot.project_monitor.projects
                 online = sum(1 for p in projects.values() if p.is_online)
                 total = len(projects)
 
+            pending_count = sum(len(v) for v in self._pending_insights.values())
             embed.add_field(
-                name="🖥️ System Status",
-                value=f"**Projects:** {online}/{total} online",
+                name="⚙️ Agent-Status",
+                value=(
+                    f"Sessions: **{self.total_sessions}** | Uptime: **{uptime_hours:.1f}h**\n"
+                    f"Projekte: **{online}/{total}** online | Pending: **{pending_count}**"
+                ),
                 inline=True
             )
 
-            embed.set_footer(text="Continuous Learning Agent")
+            embed.set_footer(text="Continuous Learning v2 — Report alle 6h")
 
             msg = await channel.send(embed=embed)
             if pin:
@@ -1115,81 +1343,89 @@ Liefer konkrete Hinweise für Stabilität, Wartbarkeit oder Security (keine Flos
                 await asyncio.sleep(3600)  # Wait 1 hour on error
 
     async def _send_synthesis_notification(self, stats: Dict):
-        """
-        Send Discord notification about knowledge synthesis.
-
-        Args:
-            stats: Synthesis statistics
-        """
+        """Menschenlesbare Synthese-Benachrichtigung mit KB-Integration."""
         try:
             channel = await self._get_learning_channel()
             if not channel:
                 return
 
+            total = sum(stats.values())
+            kb = self.knowledge_synthesizer.knowledge
+
+            # Patterns in Knowledge DB speichern
+            try:
+                from .knowledge_db import get_knowledge_db
+                db = get_knowledge_db()
+
+                # Fix-Patterns als learned_patterns speichern
+                for project, patterns in kb.get("fix_patterns", {}).items():
+                    for pattern in patterns[-3:]:  # Nur die neuesten
+                        db.add_or_update_pattern(
+                            pattern_type="fix_pattern",
+                            title=pattern.get("fix_type", "unknown"),
+                            description=f"Projekt {project}: {pattern.get('description', 'N/A')[:200]}",
+                            data={"project": project, "success": pattern.get("success")}
+                        )
+
+                # Security-Patterns
+                for pattern in kb.get("security_patterns", [])[-3:]:
+                    db.add_or_update_pattern(
+                        pattern_type="security_pattern",
+                        title=pattern.get("type", "unknown"),
+                        description=pattern.get("description", "N/A")[:200],
+                        data=pattern
+                    )
+            except Exception as e:
+                self.logger.debug(f"Synthese KB-Write fehlgeschlagen: {e}")
+
+            # Embed bauen
             embed = discord.Embed(
-                title="🧠 Knowledge Synthesis Complete",
-                description="Long-term patterns extracted from learning data",
-                color=0x9B59B6,  # Purple
+                title=f"🔬 Wissens-Synthese — {total} neue Patterns",
+                color=0x9B59B6,
                 timestamp=datetime.utcnow()
             )
 
-            # Add stats
-            if stats["fix_patterns_extracted"] > 0:
-                embed.add_field(
-                    name="📊 Auto-Fix Patterns",
-                    value=f"**{stats['fix_patterns_extracted']}** patterns extracted\n"
-                          f"Success rates calculated per project",
-                    inline=True
-                )
+            # Was wurde extrahiert
+            synthesis_lines = []
+            if stats.get("fix_patterns_extracted", 0) > 0:
+                synthesis_lines.append(f"🔧 **{stats['fix_patterns_extracted']}** Fix-Patterns (was bei Reparaturen funktioniert)")
+            if stats.get("ram_patterns_extracted", 0) > 0:
+                synthesis_lines.append(f"💾 **{stats['ram_patterns_extracted']}** RAM/Performance-Patterns")
+            if stats.get("security_patterns_extracted", 0) > 0:
+                synthesis_lines.append(f"🛡️ **{stats['security_patterns_extracted']}** Sicherheits-Muster")
+            if stats.get("meta_insights", 0) > 0:
+                synthesis_lines.append(f"🧩 **{stats['meta_insights']}** Meta-Erkenntnisse (wie ich besser lerne)")
 
-            if stats["ram_patterns_extracted"] > 0:
-                embed.add_field(
-                    name="🧠 RAM Management Patterns",
-                    value=f"**{stats['ram_patterns_extracted']}** patterns extracted\n"
-                          f"Best cleanup methods identified",
-                    inline=True
-                )
+            embed.description = "\n".join(synthesis_lines) if synthesis_lines else "Keine neuen Patterns"
 
-            if stats["security_patterns_extracted"] > 0:
-                embed.add_field(
-                    name="🛡️ Security Patterns",
-                    value=f"**{stats['security_patterns_extracted']}** patterns extracted\n"
-                          f"Attack trends analyzed",
-                    inline=True
-                )
-
-            if stats["meta_insights"] > 0:
-                embed.add_field(
-                    name="🚀 Meta-Learning",
-                    value=f"**{stats['meta_insights']}** meta-insights generated\n"
-                          f"Learning velocity calculated",
-                    inline=False
-                )
-
-            # Add knowledge base stats
-            kb = self.knowledge_synthesizer.knowledge
-            total_projects = len(kb["fix_patterns"])
-            total_models = len(kb["ram_patterns"])
-
-            embed.add_field(
-                name="📚 Knowledge Base Stats",
-                value=f"**Projects tracked:** {total_projects}\n"
-                      f"**Models tracked:** {total_models}\n"
-                      f"**Total syntheses:** {kb['synthesis_count']}",
-                inline=False
-            )
-
-            # Learning velocity if available
-            if kb["meta_learning"].get("learning_velocity"):
+            # Lerngeschwindigkeit
+            velocity_text = ""
+            if kb.get("meta_learning", {}).get("learning_velocity"):
                 velocity = kb["meta_learning"]["learning_velocity"]
+                velocity_text = f"📈 Lernrate: **{velocity:.2f}** Patterns/Tag"
+                embed.add_field(name="Fortschritt", value=velocity_text, inline=True)
+
+            # KB-Gesamtstatus
+            try:
+                from .knowledge_db import get_knowledge_db
+                db_stats = get_knowledge_db().get_knowledge_stats()
                 embed.add_field(
-                    name="📈 Learning Velocity",
-                    value=f"**{velocity:.2f}** patterns per day\n"
-                          f"System is continuously improving!",
-                    inline=False
+                    name="📚 Wissensbasis gesamt",
+                    value=(
+                        f"{db_stats['insights']['total']} Insights\n"
+                        f"{db_stats['patterns']['total']} Patterns\n"
+                        f"{db_stats['fixes']['total']} Fixes"
+                    ),
+                    inline=True
+                )
+            except Exception:
+                embed.add_field(
+                    name="📚 KB (JSON)",
+                    value=f"{len(kb.get('fix_patterns', {}))} Projekte, {kb.get('synthesis_count', 0)} Synthesen",
+                    inline=True
                 )
 
-            embed.set_footer(text="Knowledge Synthesizer • Long-term Learning")
+            embed.set_footer(text="Knowledge Synthesizer v2")
 
             await channel.send(embed=embed)
 

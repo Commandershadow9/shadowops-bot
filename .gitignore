@@ -67,3 +67,4 @@ node_modules/
 # Local State
 logrotate.state
 backups/
+.serena/

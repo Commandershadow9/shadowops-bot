@@ -124,7 +124,7 @@ class SecurityEventWatcher:
             return
 
         self.running = True
-        print("🔍 Starting Security Event Watcher (EFFICIENT Mode)...")
+        logger.info("🔍 Starting Security Event Watcher (EFFICIENT Mode)...")
         logger.info("🔍 Starting Security Event Watcher (EFFICIENT Mode)...")
 
         # Start individual watchers
@@ -135,11 +135,11 @@ class SecurityEventWatcher:
             asyncio.create_task(self._watch_aide()),
         ]
 
-        print("✅ Event-Driven Auto-Remediation aktiv!")
-        print(f"📊 Scan Intervals: Trivy={self.intervals['trivy']}s, "
-              f"CrowdSec={self.intervals['crowdsec']}s, "
-              f"Fail2ban={self.intervals['fail2ban']}s, "
-              f"AIDE={self.intervals['aide']}s")
+        logger.info("✅ Event-Driven Auto-Remediation aktiv!")
+        logger.info(f"📊 Scan Intervals: Trivy={self.intervals['trivy']}s, "
+                   f"CrowdSec={self.intervals['crowdsec']}s, "
+                   f"Fail2ban={self.intervals['fail2ban']}s, "
+                   f"AIDE={self.intervals['aide']}s")
 
         logger.info("✅ Event-Driven Auto-Remediation aktiv!")
         logger.info(f"📊 Scan Intervals: Trivy={self.intervals['trivy']}s, "
@@ -198,83 +198,73 @@ class SecurityEventWatcher:
         self.bot.discord_logger.log_channel(channel_key, message, severity=severity)
 
     async def _watch_trivy(self):
-        """Watch for Docker vulnerabilities"""
-        print(f"🔍 Starting Trivy watcher ({self.intervals['trivy']}s intervals)")
-        logger.info(f"🔍 Starting Trivy watcher ({self.intervals['trivy']}s intervals)")
+        """Watch for Docker vulnerabilities (6h Intervall — Scans sind langsam)."""
+        interval = self.intervals['trivy']
+        logger.info(f"🔍 Starting Trivy watcher ({interval}s intervals)")
 
         while self.running:
             try:
-                print("🐳 Trivy: Scanning for vulnerabilities...")
+                logger.info("🐳 Trivy: Scanning...")
                 self.stats['trivy']['scans'] += 1
                 self.stats['trivy']['last_scan'] = datetime.now()
 
-                # Get latest scan results (returns max 1 summary event)
                 results = await self._get_trivy_results()
 
                 if not results:
-                    print(f"🐳 Trivy: No vulnerabilities found or scan not available")
-                    await asyncio.sleep(self.intervals['trivy'])
+                    await asyncio.sleep(interval)
                     continue
 
-                print(f"🐳 Trivy: Found {len(results)} summary event(s) in latest scan")
-
-                # Process summary event (should only be 1)
                 new_events = 0
                 for vuln_summary in results:
                     event = SecurityEvent(
                         source='trivy',
-                        event_type='docker_vulnerabilities_batch',  # Batch type!
+                        event_type='docker_vulnerabilities_batch',
                         severity=vuln_summary.get('Severity', 'UNKNOWN'),
                         details=vuln_summary,
-                        is_persistent=True  # Docker vulns require fixing!
+                        is_persistent=True
                     )
 
                     if await self._is_new_event(event):
-                        print(f"🐳 Trivy: NEW batch event detected - {vuln_summary.get('Stats', {}).get('critical', 0)} CRITICAL, {vuln_summary.get('Stats', {}).get('high', 0)} HIGH")
                         await self._handle_new_event(event)
                         new_events += 1
-                    else:
-                        print(f"🐳 Trivy: Scan already processed (no changes since last check)")
 
                 if new_events > 0:
                     self.stats['trivy']['events'] += new_events
-                    print(f"🐳 Trivy: {new_events} neue Batch-Events erkannt → Auto-Remediation")
                     logger.info(f"🐳 Trivy: {new_events} neue Batch-Events erkannt")
                     self._log_activity(
                         "trivy",
-                        f"🐳 Trivy: {new_events} neue Findings erkannt (Details im Docker-Channel)",
+                        f"🐳 **Trivy:** {new_events} neue Findings erkannt",
                         severity="warning",
                         force=True
                     )
-                else:
-                    print(f"🐳 Trivy: Keine neuen Events (Scan bereits verarbeitet)")
 
             except Exception as e:
-                print(f"❌ Trivy watcher error: {e}")
                 logger.error(f"❌ Trivy watcher error: {e}", exc_info=True)
 
-            # Wait for next scan
-            print(f"🐳 Trivy: Warte {self.intervals['trivy']}s bis zum nächsten Scan...")
-            await asyncio.sleep(self.intervals['trivy'])
+            await asyncio.sleep(interval)
 
     async def _watch_crowdsec(self):
-        """Watch for CrowdSec threats"""
-        logger.info(f"🔍 Starting CrowdSec watcher ({self.intervals['crowdsec']}s intervals)")
+        """Watch CrowdSec — Echtzeit-Erkennung aktiver Bedrohungen (30s Intervall)."""
+        interval = self.intervals['crowdsec']
+        logger.info(f"🔍 Starting CrowdSec Realtime Watcher ({interval}s intervals)")
 
         while self.running:
             try:
                 self.stats['crowdsec']['scans'] += 1
                 self.stats['crowdsec']['last_scan'] = datetime.now()
 
-                # Get active decisions
                 decisions = await self._get_crowdsec_decisions()
 
                 new_events = 0
                 for decision in decisions:
+                    # Severity basierend auf Decision-Typ
+                    decision_type = decision.get('type', '').lower()
+                    severity = 'CRITICAL' if decision_type == 'ban' else 'HIGH'
+
                     event = SecurityEvent(
                         source='crowdsec',
                         event_type='threat',
-                        severity='HIGH',  # All CrowdSec decisions are high priority
+                        severity=severity,
                         details=decision
                     )
 
@@ -284,10 +274,10 @@ class SecurityEventWatcher:
 
                 if new_events > 0:
                     self.stats['crowdsec']['events'] += new_events
-                    logger.info(f"🛡️ CrowdSec: {new_events} neue Threats erkannt")
+                    logger.info(f"🛡️ CrowdSec: {new_events} neue Threat(s) sofort erkannt")
                     self._log_activity(
                         "crowdsec",
-                        f"🛡️ CrowdSec: {new_events} neue Threat(s) erkannt (Details im CrowdSec-Channel)",
+                        f"🛡️ **CrowdSec:** {new_events} neue Bedrohung(en) sofort erkannt",
                         severity="warning",
                         force=True
                     )
@@ -295,56 +285,78 @@ class SecurityEventWatcher:
             except Exception as e:
                 logger.error(f"❌ CrowdSec watcher error: {e}", exc_info=True)
 
-            await asyncio.sleep(self.intervals['crowdsec'])
+            await asyncio.sleep(interval)
 
     async def _watch_fail2ban(self):
-        """Watch for Fail2ban bans"""
-        logger.info(f"🔍 Starting Fail2ban watcher ({self.intervals['fail2ban']}s intervals)")
+        """Watch Fail2ban — Echtzeit Log-Tailing mit Polling-Fallback.
+
+        Liest das fail2ban.log kontinuierlich mit kurzen Intervallen (15s).
+        Jeder neue Ban wird sofort als Event verarbeitet, nicht erst nach Minuten.
+        Kleine Batches (innerhalb eines Poll-Zyklus) werden zusammengefasst.
+        """
+        interval = self.intervals['fail2ban']
+        logger.info(f"🔍 Starting Fail2ban Realtime Watcher ({interval}s intervals)")
 
         while self.running:
             try:
                 self.stats['fail2ban']['scans'] += 1
                 self.stats['fail2ban']['last_scan'] = datetime.now()
 
-                # Get new bans
+                # get_new_bans() liest ab letzter Position — erkennt sofort neue Zeilen
                 bans = await self._get_fail2ban_bans()
 
-                # BATCH PROCESSING: Create ONE summary event instead of individual events
-                if bans and len(bans) > 0:
-                    # Create batch event with summary
-                    batch_event = SecurityEvent(
-                        source='fail2ban',
-                        event_type='bans_batch',  # Batch type!
-                        severity='MEDIUM',
-                        details={
-                            'Type': 'Fail2ban Batch',
-                            'Title': f"Fail2ban: {len(bans)} IP(s) banned",
-                            'Description': f"Detected {len(bans)} banned IP addresses",
-                            'Stats': {
-                                'total_bans': len(bans),
-                            },
-                            'Bans': bans[:10]  # Include first 10 for details
-                        }
-                    )
-
-                    if await self._is_new_event(batch_event):
-                        print(f"🚫 Fail2ban: NEW batch event - {len(bans)} bans")
-                        await self._handle_new_event(batch_event)
-                        self.stats['fail2ban']['events'] += 1
-                        logger.info(f"🚫 Fail2ban: 1 Batch-Event mit {len(bans)} Bans erkannt")
-                        self._log_activity(
-                            "fail2ban",
-                            f"🚫 Fail2ban: {len(bans)} Bann(s) erkannt (Details im Fail2ban-Channel)",
-                            severity="warning",
-                            force=True
+                if bans:
+                    # Einzelne Bans sofort melden (max 5 Details, Rest zusammengefasst)
+                    for ban in bans[:5]:
+                        event = SecurityEvent(
+                            source='fail2ban',
+                            event_type='ban',
+                            severity='HIGH' if ban.get('jail') == 'sshd' else 'MEDIUM',
+                            details={
+                                'Type': 'Fail2ban Ban',
+                                'Title': f"🚫 IP {ban.get('ip', '?')} gebannt ({ban.get('jail', '?')})",
+                                'Description': f"Jail: {ban.get('jail', '?')}, IP: {ban.get('ip', '?')}, Zeit: {ban.get('timestamp', '?')}",
+                                'IP': ban.get('ip', ''),
+                                'Jail': ban.get('jail', ''),
+                                'Timestamp': ban.get('timestamp', ''),
+                            }
                         )
-                    else:
-                        print(f"🚫 Fail2ban: Scan already processed (no new bans)")
+                        if await self._is_new_event(event):
+                            await self._handle_new_event(event)
+                            self.stats['fail2ban']['events'] += 1
+
+                    # Bei vielen Bans gleichzeitig: Zusammenfassung
+                    if len(bans) > 5:
+                        remaining = len(bans) - 5
+                        unique_ips = len(set(b.get('ip', '') for b in bans))
+                        jails = set(b.get('jail', '?') for b in bans)
+                        summary_event = SecurityEvent(
+                            source='fail2ban',
+                            event_type='bans_batch',
+                            severity='HIGH',
+                            details={
+                                'Type': 'Fail2ban Batch',
+                                'Title': f"🚫 +{remaining} weitere Bans ({unique_ips} IPs, Jails: {', '.join(jails)})",
+                                'Description': f"{len(bans)} Bans insgesamt in diesem Zyklus",
+                                'Stats': {'total_bans': len(bans)},
+                                'Bans': bans[5:15]
+                            }
+                        )
+                        if await self._is_new_event(summary_event):
+                            await self._handle_new_event(summary_event)
+
+                    logger.info(f"🚫 Fail2ban: {len(bans)} Ban(s) erkannt und gemeldet")
+                    self._log_activity(
+                        "fail2ban",
+                        f"🚫 **Fail2ban:** {len(bans)} neue Ban(s) sofort erkannt",
+                        severity="warning",
+                        force=True
+                    )
 
             except Exception as e:
                 logger.error(f"❌ Fail2ban watcher error: {e}", exc_info=True)
 
-            await asyncio.sleep(self.intervals['fail2ban'])
+            await asyncio.sleep(interval)
 
     async def _watch_aide(self):
         """Watch for file integrity violations"""

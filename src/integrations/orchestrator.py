@@ -558,12 +558,28 @@ class RemediationOrchestrator:
                 ai_model=result.get('ai_model', 'unknown')
             )
 
+            # Validierung: Leerer Plan mit 0% Confidence ist ein Fehler
+            if plan.confidence == 0 and len(plan.phases) == 0:
+                logger.error(
+                    f"KI konnte keinen verwertbaren Plan erstellen "
+                    f"(Confidence: 0%, keine Phasen). "
+                    f"Prompt-Länge: {len(prompt)} Zeichen. "
+                    f"AI-Rohantwort: {json.dumps(result, default=str, ensure_ascii=False)[:500]}"
+                )
+                status_text = (
+                    "KI konnte keinen verwertbaren Plan erstellen "
+                    "(Confidence: 0%, keine Phasen). "
+                    "Der Prompt war möglicherweise zu lang."
+                )
+                await self._send_batch_status(batch, status_text, 0xE74C3C)  # Rot
+                return None
+
             # Sende finale Discord-Message: Plan erstellt
             phase_names = "\n".join([f"• **Phase {i+1}**: {p['name']}" for i, p in enumerate(plan.phases)])
-            status_text = f"✅ **Plan erstellt**\n\n{phase_names}\n\n⏱️ Geschätzte Dauer: **{plan.estimated_duration_minutes}min**\n🎯 Confidence: **{plan.confidence:.0%}**"
+            status_text = f"**Plan erstellt**\n\n{phase_names}\n\n Geschätzte Dauer: **{plan.estimated_duration_minutes}min**\n Confidence: **{plan.confidence:.0%}**"
             await self._send_batch_status(batch, status_text, 0x2ECC71)  # Green
 
-            logger.info(f"✅ Koordinierter Plan erstellt: {len(plan.phases)} Phasen, {plan.confidence:.0%} Confidence")
+            logger.info(f"Koordinierter Plan erstellt: {len(plan.phases)} Phasen, {plan.confidence:.0%} Confidence")
             return plan
 
         except Exception as e:
@@ -640,12 +656,126 @@ class RemediationOrchestrator:
         # Finale Message falls noch nicht von _create_coordinated_plan() gesendet
         # (kann passieren wenn done=True gesetzt wird bevor letzte Update)
 
+    def _summarize_event_details(self, event_details, max_chars: int = 2000) -> str:
+        """
+        Kürzt Event-Details intelligent auf max_chars.
+
+        Erkennt Event-Typen und erstellt kompakte Zusammenfassungen:
+        - Trivy: Image-Name, Critical/High Counts, empfohlene Aktion
+        - Fail2ban: IP, Jail, Zeitraum
+        - CrowdSec: Decision-Type, IP, Szenario
+        - Allgemein: JSON mit indent=2, dann auf max_chars kürzen
+        """
+        # Falls String, versuche JSON zu parsen
+        if isinstance(event_details, str):
+            try:
+                event_details = json.loads(event_details)
+            except (json.JSONDecodeError, TypeError):
+                # Einfacher String — direkt kürzen
+                if len(event_details) <= max_chars:
+                    return event_details
+                return event_details[:max_chars - 20] + "\n... [gekürzt]"
+
+        if not isinstance(event_details, dict):
+            text = str(event_details)
+            if len(text) <= max_chars:
+                return text
+            return text[:max_chars - 20] + "\n... [gekürzt]"
+
+        # Trivy-Events erkennen (CVE-Scans)
+        if 'AffectedImages' in event_details or 'ImageDetails' in event_details or 'vulnerabilities' in event_details:
+            summary_parts = []
+            summary_parts.append("=== Trivy CVE-Scan Zusammenfassung ===")
+
+            # Vulnerability-Counts
+            vulns = event_details.get('vulnerabilities', {})
+            if vulns:
+                total = sum(v for v in vulns.values() if isinstance(v, (int, float)))
+                summary_parts.append(f"Gesamt: {total} Vulnerabilities")
+                for sev in ['critical', 'high', 'medium', 'low']:
+                    count = vulns.get(sev, 0)
+                    if count > 0:
+                        summary_parts.append(f"  {sev.upper()}: {count}")
+
+            # Totals auf Top-Level
+            for key in ['total_critical', 'total_high', 'total_medium', 'total_low']:
+                val = event_details.get(key)
+                if val and val > 0:
+                    severity_name = key.replace('total_', '').upper()
+                    summary_parts.append(f"  {severity_name}: {val}")
+
+            # Betroffene Images
+            affected = event_details.get('AffectedImages', [])
+            if affected:
+                summary_parts.append(f"Betroffene Images ({len(affected)}):")
+                for img in affected[:5]:
+                    img_details = event_details.get('ImageDetails', {}).get(img, {})
+                    critical = img_details.get('critical', 0)
+                    high = img_details.get('high', 0)
+                    project = img_details.get('project', 'unbekannt')
+                    summary_parts.append(f"  - {img}: CRITICAL={critical}, HIGH={high} (Projekt: {project})")
+                if len(affected) > 5:
+                    summary_parts.append(f"  ... und {len(affected) - 5} weitere Images")
+
+            # Empfohlene Aktion
+            action = event_details.get('recommended_action', event_details.get('action'))
+            if action:
+                summary_parts.append(f"Empfohlene Aktion: {action}")
+
+            result = "\n".join(summary_parts)
+            if len(result) <= max_chars:
+                return result
+            return result[:max_chars - 20] + "\n... [gekürzt]"
+
+        # Fail2ban-Events erkennen
+        if any(k in event_details for k in ['jail', 'banned_ip', 'ban_time']):
+            summary_parts = []
+            summary_parts.append("=== Fail2ban Event ===")
+            if event_details.get('banned_ip'):
+                summary_parts.append(f"IP: {event_details['banned_ip']}")
+            if event_details.get('jail'):
+                summary_parts.append(f"Jail: {event_details['jail']}")
+            if event_details.get('ban_time'):
+                summary_parts.append(f"Ban-Dauer: {event_details['ban_time']}")
+            if event_details.get('failures'):
+                summary_parts.append(f"Fehlversuche: {event_details['failures']}")
+            if event_details.get('action'):
+                summary_parts.append(f"Aktion: {event_details['action']}")
+            return "\n".join(summary_parts)
+
+        # CrowdSec-Events erkennen
+        if any(k in event_details for k in ['decision_type', 'scenario', 'crowdsec']):
+            summary_parts = []
+            summary_parts.append("=== CrowdSec Event ===")
+            if event_details.get('decision_type'):
+                summary_parts.append(f"Decision: {event_details['decision_type']}")
+            if event_details.get('source_ip'):
+                summary_parts.append(f"IP: {event_details['source_ip']}")
+            if event_details.get('scenario'):
+                summary_parts.append(f"Szenario: {event_details['scenario']}")
+            if event_details.get('duration'):
+                summary_parts.append(f"Dauer: {event_details['duration']}")
+            if event_details.get('action'):
+                summary_parts.append(f"Aktion: {event_details['action']}")
+            return "\n".join(summary_parts)
+
+        # Allgemein: JSON mit indent=2, dann kürzen
+        try:
+            text = json.dumps(event_details, indent=2, default=str, ensure_ascii=False)
+        except (TypeError, ValueError):
+            text = str(event_details)
+
+        if len(text) <= max_chars:
+            return text
+        return text[:max_chars - 20] + "\n... [gekürzt]"
+
     def _build_coordinated_planning_prompt(self, context: Dict) -> str:
         """Baut Prompt für koordinierte Planung mit Infrastructure Context"""
 
         prompt_parts = []
 
         # ADD: Context Manager Integration for Infrastructure Knowledge
+        max_infra_context_chars = 3000
         if self.ai_service and hasattr(self.ai_service, 'context_manager') and self.ai_service.context_manager:
             prompt_parts.append("# INFRASTRUCTURE & PROJECT KNOWLEDGE BASE")
             prompt_parts.append("Du hast Zugriff auf detaillierte Informationen über die Server-Infrastruktur und laufende Projekte.")
@@ -658,6 +788,10 @@ class RemediationOrchestrator:
                     event.get('event_type', 'unknown')
                 )
                 if relevant_context:
+                    # Kürze Infrastructure-Kontext auf max_infra_context_chars
+                    if len(relevant_context) > max_infra_context_chars:
+                        logger.info(f"Infrastructure-Kontext gekürzt: {len(relevant_context)} -> {max_infra_context_chars} Zeichen")
+                        relevant_context = relevant_context[:max_infra_context_chars - 30] + "\n... [Kontext gekürzt]"
                     prompt_parts.append(relevant_context)
                     break  # Only add context once (same for all events in batch)
 
@@ -681,7 +815,10 @@ Du bist ein Security-Engineer der einen KOORDINIERTEN Gesamt-Plan erstellt.
 
         for i, event in enumerate(context['events'], 1):
             prompt_parts.append(f"\n### Event {i}: {event['source']} ({event['severity']})\n")
-            prompt_parts.append(f"```\n{event.get('details', 'N/A')}\n```\n")
+            # Event-Details intelligent kürzen statt volles JSON
+            raw_details = event.get('details', 'N/A')
+            summarized_details = self._summarize_event_details(raw_details, max_chars=2000)
+            prompt_parts.append(f"```\n{summarized_details}\n```\n")
 
         prompt_parts.append("""
 
@@ -714,7 +851,9 @@ Ausgabe als JSON:
 }
 """)
 
-        return "\n".join(prompt_parts)
+        final_prompt = "\n".join(prompt_parts)
+        logger.info(f"Koordinierter Prompt erstellt: {len(final_prompt)} Zeichen, {len(context['events'])} Events")
+        return final_prompt
 
     async def _request_approval(self, batch: SecurityEventBatch, plan: RemediationPlan) -> bool:
         """
@@ -1557,6 +1696,21 @@ Ausgabe als JSON:
                         fix_result = await self._execute_fix_for_source(event.source, event_dict, strategy)
 
                         fix_results.append(fix_result)
+
+                        # Fix-Ergebnis in Knowledge DB speichern
+                        try:
+                            from integrations.ai_learning.knowledge_db import get_knowledge_db
+                            get_knowledge_db().add_fix_result(
+                                project=project_name,
+                                fix_type="orchestrator",
+                                description=strategy.get('description', 'N/A')[:500],
+                                commands=[s.get('command', '') for s in strategy.get('steps', [])],
+                                success=fix_result.get('status') == 'success',
+                                confidence=strategy.get('confidence'),
+                                ai_model=strategy.get('ai_model', 'unknown')
+                            )
+                        except Exception:
+                            pass
 
                         if fix_result.get('status') != 'success':
                             logger.error(f"      ❌ Fix fehlgeschlagen für Event {event.event_id[:8]}: {fix_result.get('error', 'Unknown')[:50]}")
