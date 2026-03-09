@@ -19,6 +19,7 @@ import json
 import logging
 import os
 import re
+import tempfile
 from typing import Dict, Optional, List
 from pathlib import Path
 
@@ -854,6 +855,201 @@ class AIEngine:
             logger.info(f"Fix-Verifikation: {result.get('confidence', 0):.0%} Confidence")
 
         return result
+
+    async def run_analyst_session(
+        self,
+        prompt: str,
+        timeout: int = 1800,
+        max_turns: int = 25,
+    ) -> Optional[Dict]:
+        """
+        Startet eine autonome Claude Code Session zur Server-Analyse.
+
+        Die Session kann frei den Server explorieren (Logs, Docker, Configs, etc.)
+        und liefert strukturierte Ergebnisse zurueck.
+
+        Args:
+            prompt: Analyse-Prompt mit Aufgabenbeschreibung
+            timeout: Maximale Laufzeit in Sekunden (Default: 30 Min)
+            max_turns: Maximale Anzahl an Tool-Aufrufen (Default: 25)
+
+        Returns:
+            Dict mit Session-Ergebnissen oder None bei Fehler
+        """
+        # Temp-Datei fuer strukturierten Output
+        tmp_path = tempfile.mktemp(suffix='.json', prefix='analyst_')
+        schema_path = os.path.join(
+            os.path.dirname(__file__), '..', 'schemas', 'analyst_session.json'
+        )
+
+        # Schema-Inhalt laden fuer Prompt-Injection
+        try:
+            with open(schema_path, 'r', encoding='utf-8') as f:
+                schema_content = f.read()
+        except Exception as e:
+            logger.error(f"Analyst-Schema nicht lesbar: {e}")
+            return None
+
+        # Prompt erweitern: Ergebnisse als JSON in Temp-Datei schreiben
+        full_prompt = (
+            f"{prompt}\n\n"
+            f"--- AUSGABE-ANWEISUNG ---\n"
+            f"Wenn du fertig bist, schreibe deine Ergebnisse als valides JSON "
+            f"in die Datei: {tmp_path}\n"
+            f"Das JSON MUSS diesem Schema entsprechen:\n"
+            f"```json\n{schema_content}\n```\n"
+            f"Nutze das Write-Tool um die Datei zu erstellen. "
+            f"Kein Markdown, nur reines JSON."
+        )
+
+        # Erlaubte Tools — spezifische Bash-Prefixe (kein rm, kein dd, etc.)
+        allowed_tools = (
+            'Bash(git *),Bash(docker *),Bash(ufw *),Bash(systemctl *),'
+            'Bash(ss *),Bash(who *),Bash(df *),Bash(free *),Bash(ps *),'
+            'Bash(cat *),Bash(ls *),Bash(find *),Bash(chmod *),Bash(chown *),'
+            'Bash(apt *),Bash(npm *),Bash(go *),Bash(curl *),Bash(head *),'
+            'Bash(tail *),Bash(wc *),Bash(grep *),Bash(trivy *),Bash(cscli *),'
+            'Bash(aide *),Bash(certbot *),Bash(gh *),Read,Glob,Grep,Write,Edit'
+        )
+
+        args = [
+            self.claude.cli_path,
+            '-p', full_prompt,
+            '--model', 'claude-opus-4-6',
+            '--max-turns', str(max_turns),
+            '--output-format', 'text',
+            '--verbose',
+            '--allowedTools', allowed_tools,
+        ]
+
+        env = self.claude._get_clean_env()
+
+        logger.info(
+            f"Analyst-Session gestartet (Timeout: {timeout}s, Max-Turns: {max_turns})"
+        )
+
+        proc = None
+        try:
+            proc = await asyncio.create_subprocess_exec(
+                *args,
+                stdout=asyncio.subprocess.PIPE,
+                stderr=asyncio.subprocess.PIPE,
+                env=env,
+                cwd='/home/cmdshadow',
+            )
+
+            stdout_bytes, stderr_bytes = await asyncio.wait_for(
+                proc.communicate(), timeout=timeout
+            )
+
+            stdout = stdout_bytes.decode('utf-8', errors='replace') if stdout_bytes else ''
+            stderr = stderr_bytes.decode('utf-8', errors='replace') if stderr_bytes else ''
+
+            if proc.returncode != 0:
+                logger.error(
+                    f"Analyst-Session fehlgeschlagen (rc={proc.returncode}): "
+                    f"{stderr[:500]}"
+                )
+                return None
+
+            # Ergebnis aus Temp-Datei lesen
+            result = self._read_analyst_result(tmp_path, stdout)
+
+            if result:
+                findings_count = len(result.get('findings', []))
+                knowledge_count = len(result.get('knowledge_updates', []))
+                logger.info(
+                    f"Analyst-Session abgeschlossen: "
+                    f"{findings_count} Findings, {knowledge_count} Knowledge-Updates"
+                )
+            else:
+                logger.warning("Analyst-Session: Kein strukturiertes Ergebnis erhalten")
+
+            return result
+
+        except asyncio.TimeoutError:
+            logger.warning(f"Analyst-Session Timeout nach {timeout}s — versuche Teilergebnisse")
+            if proc:
+                try:
+                    proc.kill()
+                    await proc.wait()
+                except ProcessLookupError:
+                    pass
+
+            # Versuche trotzdem die Temp-Datei zu lesen (wurde evtl. schon geschrieben)
+            result = self._read_analyst_result(tmp_path)
+            if result:
+                result['summary'] = f"[TIMEOUT] {result.get('summary', 'Session abgebrochen')}"
+                findings_count = len(result.get('findings', []))
+                logger.info(
+                    f"Analyst-Session (Timeout): {findings_count} Findings aus Teilergebnis"
+                )
+            return result
+
+        except Exception as e:
+            logger.error(f"Analyst-Session Fehler: {e}", exc_info=True)
+            return None
+
+        finally:
+            # Temp-Datei aufraeumen
+            try:
+                if os.path.exists(tmp_path):
+                    os.unlink(tmp_path)
+            except OSError:
+                pass
+
+    def _read_analyst_result(
+        self,
+        tmp_path: str,
+        stdout: str = "",
+    ) -> Optional[Dict]:
+        """
+        Liest das Analyst-Ergebnis aus Temp-Datei oder extrahiert es aus stdout.
+
+        Args:
+            tmp_path: Pfad zur Temp-Datei
+            stdout: stdout-Output als Fallback
+
+        Returns:
+            Geparstes Dict oder None
+        """
+        # Primaer: Temp-Datei
+        if os.path.exists(tmp_path):
+            try:
+                with open(tmp_path, 'r', encoding='utf-8') as f:
+                    data = json.load(f)
+                logger.debug("Analyst-Ergebnis aus Temp-Datei gelesen")
+                return data
+            except (json.JSONDecodeError, OSError) as e:
+                logger.warning(f"Temp-Datei nicht parsbar: {e}")
+
+        # Fallback: JSON aus stdout extrahieren
+        if stdout:
+            # Suche nach JSON-Objekt das mit {"summary" beginnt
+            match = re.search(r'\{"summary".*', stdout, re.DOTALL)
+            if match:
+                json_str = match.group(0)
+                # Finde das passende schliessende Bracket
+                depth = 0
+                end_idx = 0
+                for i, ch in enumerate(json_str):
+                    if ch == '{':
+                        depth += 1
+                    elif ch == '}':
+                        depth -= 1
+                        if depth == 0:
+                            end_idx = i + 1
+                            break
+
+                if end_idx > 0:
+                    try:
+                        data = json.loads(json_str[:end_idx])
+                        logger.debug("Analyst-Ergebnis aus stdout extrahiert")
+                        return data
+                    except json.JSONDecodeError:
+                        logger.warning("JSON aus stdout nicht parsbar")
+
+        return None
 
     # ------------------------------------------------------------------
     # Interne Methoden

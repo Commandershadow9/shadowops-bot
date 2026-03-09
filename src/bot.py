@@ -52,6 +52,9 @@ from integrations.research_fetcher import ResearchFetcher
 # Server Assistant (ersetzt Learning System)
 from integrations.server_assistant import ServerAssistant
 
+# Security Analyst (autonome AI Security Sessions)
+from integrations.analyst import SecurityAnalyst
+
 # Queue Management
 from integrations.smart_queue import SmartQueue
 
@@ -102,6 +105,8 @@ class ShadowOpsBot(commands.Bot):
 
         # Server Assistant (ersetzt Learning)
         self.server_assistant = None
+        # Security Analyst (autonome AI Security Sessions)
+        self.security_analyst = None
 
         # Queue Management
         self.smart_queue = None
@@ -802,6 +807,31 @@ class ShadowOpsBot(commands.Bot):
                     exc_info=True
                 )
 
+            # Security Analyst starten (wenn aktiviert)
+            analyst_config = self.config._config.get('security_analyst', {})
+            if analyst_config.get('enabled', False):
+                try:
+                    self.security_analyst = SecurityAnalyst(
+                        bot=self,
+                        config=self.config,
+                        ai_engine=self.ai_service,
+                    )
+                    await self.security_analyst.start()
+                    self.logger.info("Security Analyst gestartet")
+
+                    await self._send_status_message(
+                        "**Security Analyst aktiv**\n"
+                        "- Autonome Sessions bei User-Idle\n"
+                        "- Discord-Briefing bei Online-Rueckkehr\n"
+                        "- GitHub Issues fuer Code-Findings",
+                        0x00FF00
+                    )
+                except Exception as e:
+                    self.logger.error(
+                        f"Security Analyst konnte nicht gestartet werden: {e}",
+                        exc_info=True
+                    )
+
             # Legacy: AI Learning System (falls in Config noch aktiviert)
             if self.config.ai_learning_enabled and self.config.ai_enabled:
                 self.logger.info(
@@ -882,6 +912,13 @@ class ShadowOpsBot(commands.Bot):
         import traceback
         self.logger.info("🛑 Shutting down ShadowOps Bot...")
         self.logger.info(f"   Close() aufgerufen von: {''.join(traceback.format_stack()[-3:-1])}")
+
+        # Stop Security Analyst
+        if self.security_analyst:
+            try:
+                await self.security_analyst.stop()
+            except Exception as e:
+                self.logger.error(f"Error stopping security analyst: {e}")
 
         # Stop Server Assistant
         if self.server_assistant:
