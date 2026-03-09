@@ -1,0 +1,74 @@
+{
+  "type": "object",
+  "properties": {
+    "summary": {
+      "type": "string",
+      "description": "Zusammenfassung der Analyst-Session"
+    },
+    "topics_investigated": {
+      "type": "array",
+      "items": { "type": "string" },
+      "description": "Liste der untersuchten Themen"
+    },
+    "findings": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "properties": {
+          "severity": {
+            "type": "string",
+            "enum": ["critical", "high", "medium", "low", "info"]
+          },
+          "category": { "type": "string" },
+          "title": { "type": "string" },
+          "description": { "type": "string" },
+          "fix_type": {
+            "type": "string",
+            "enum": ["auto_fixed", "issue_needed", "needs_decision", "info_only"]
+          },
+          "affected_project": { "type": "string" },
+          "affected_files": {
+            "type": "array",
+            "items": { "type": "string" }
+          },
+          "auto_fix_details": { "type": "string" },
+          "rollback_command": { "type": "string" },
+          "issue_title": { "type": "string" },
+          "issue_body": { "type": "string" }
+        },
+        "required": ["severity", "category", "title", "description", "fix_type"],
+        "additionalProperties": false
+      },
+      "description": "Erkenntnisse und Findings der Session"
+    },
+    "knowledge_updates": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "properties": {
+          "category": { "type": "string" },
+          "subject": { "type": "string" },
+          "content": { "type": "string" },
+          "confidence": {
+            "type": "number",
+            "minimum": 0,
+            "maximum": 1
+          }
+        },
+        "required": ["category", "subject", "content", "confidence"],
+        "additionalProperties": false
+      },
+      "description": "Wissensaktualisierungen aus der Analyse"
+    },
+    "health_check_passed": {
+      "type": "boolean",
+      "description": "Ob der Gesundheitscheck bestanden wurde"
+    },
+    "next_priority": {
+      "type": "string",
+      "description": "Naechste Prioritaet fuer zukuenftige Sessions"
+    }
+  },
+  "required": ["summary", "topics_investigated", "findings", "knowledge_updates", "health_check_passed"],
+  "additionalProperties": false
+}
