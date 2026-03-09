@@ -781,16 +781,21 @@ class SecurityAnalyst:
         # Issue-Titel mit Security-Prefix
         full_title = f"[Security] {title}"
 
-        # Labels vorbereiten
-        labels = f"security,priority:{severity}"
+        # Severity-Badge im Body (Labels koennten fehlen)
+        body_with_badge = (
+            f"**Severity:** {severity.upper()} | "
+            f"**Projekt:** {affected_project or 'Server'}\n\n"
+            f"{body}"
+        )
 
         try:
+            # Erst MIT Labels versuchen
             proc = await asyncio.create_subprocess_exec(
                 'gh', 'issue', 'create',
                 '--repo', repo,
                 '--title', full_title,
-                '--body', body,
-                '--label', labels,
+                '--body', body_with_badge,
+                '--label', f"security,priority:{severity}",
                 stdout=asyncio.subprocess.PIPE,
                 stderr=asyncio.subprocess.PIPE,
             )
@@ -800,10 +805,28 @@ class SecurityAnalyst:
                 issue_url = stdout.decode().strip()
                 logger.info("GitHub-Issue erstellt: %s", issue_url)
                 return issue_url
-            else:
-                error = stderr.decode().strip()
-                logger.error("GitHub-Issue Erstellung fehlgeschlagen: %s", error[:300])
-                return None
+
+            # Label-Fehler? Retry ohne Labels
+            error = stderr.decode().strip()
+            if 'label' in error.lower():
+                logger.warning("Labels nicht gefunden, erstelle Issue ohne Labels: %s", error[:150])
+                proc2 = await asyncio.create_subprocess_exec(
+                    'gh', 'issue', 'create',
+                    '--repo', repo,
+                    '--title', full_title,
+                    '--body', body_with_badge,
+                    stdout=asyncio.subprocess.PIPE,
+                    stderr=asyncio.subprocess.PIPE,
+                )
+                stdout2, stderr2 = await asyncio.wait_for(proc2.communicate(), timeout=30)
+                if proc2.returncode == 0:
+                    issue_url = stdout2.decode().strip()
+                    logger.info("GitHub-Issue erstellt (ohne Labels): %s", issue_url)
+                    return issue_url
+                error = stderr2.decode().strip()
+
+            logger.error("GitHub-Issue Erstellung fehlgeschlagen: %s", error[:300])
+            return None
 
         except asyncio.TimeoutError:
             logger.error("GitHub-Issue Erstellung: Timeout nach 30s")
