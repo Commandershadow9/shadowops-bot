@@ -45,9 +45,12 @@ from integrations.customer_notifications import CustomerNotificationManager
 from integrations.customer_server_setup import CustomerServerSetup
 from integrations.guildscout_alerts import GuildScoutAlertsHandler
 
-# AI Learning System
+# AI Learning System (Legacy, nur noch fuer Config-Kompatibilitaet)
 from integrations.ai_learning import ContinuousLearningAgent
 from integrations.research_fetcher import ResearchFetcher
+
+# Server Assistant (ersetzt Learning System)
+from integrations.server_assistant import ServerAssistant
 
 # Queue Management
 from integrations.smart_queue import SmartQueue
@@ -94,8 +97,11 @@ class ShadowOpsBot(commands.Bot):
         self.customer_notifications = None
         self.customer_server_setup = None
 
-        # AI Learning System
+        # AI Learning System (Legacy)
         self.continuous_learning = None
+
+        # Server Assistant (ersetzt Learning)
+        self.server_assistant = None
 
         # Queue Management
         self.smart_queue = None
@@ -768,82 +774,39 @@ class ShadowOpsBot(commands.Bot):
             )
 
             # ============================================
-            # PHASE 6: STARTE AI LEARNING (mit größerem Delay)
+            # PHASE 6: SERVER ASSISTANT (ersetzt altes Learning)
             # ============================================
-            if self.config.ai_learning_enabled and self.config.ai_enabled:
-                self.logger.info("=" * 60)
-                self.logger.info("⏳ PHASE 6: AI Learning startet in 15 Sekunden...")
-                self.logger.info("=" * 60)
+            self.logger.info("=" * 60)
+            self.logger.info("PHASE 6: Server Assistant starten...")
+            self.logger.info("=" * 60)
 
-                await self._send_status_message(
-                    "⏳ **Phase 6/6:** AI Learning startet in 15 Sekunden...\n"
-                    "Warte bis Monitoring & Auto-Remediation stabil laufen...",
-                    0x3498DB
+            try:
+                self.server_assistant = ServerAssistant(
+                    bot=self,
+                    config=self.config,
+                    ai_service=self.ai_service,
                 )
-
-                # Warte 15 Sekunden bevor AI Learning startet
-                # Damit hat Monitoring Zeit, erste Scans durchzuführen
-                await asyncio.sleep(15)
-
-                # AI Learning wird vom Event Watcher automatisch gestartet
-                # Sende nur Status-Update
-                self.logger.info("=" * 60)
-                self.logger.info("✅ System vollständig hochgefahren - AI Learning kann starten")
-                self.logger.info("=" * 60)
+                await self.server_assistant.start()
+                self.logger.info("Server Assistant gestartet")
 
                 await self._send_status_message(
-                    "✅ **AI Learning bereit**\n"
-                    "• Code Analyzer: Bereit für Vulnerability Scans\n"
-                    "• Git History Learner: Bereit für Pattern Learning\n"
-                    "• Knowledge Base: Aktiv",
+                    "**Phase 6/6: Server Assistant aktiv**\n"
+                    "- Daily Housekeeping: 06:00 (lokal, 0 Token)\n"
+                    "- Weekly Intelligence Report: Mo 07:00 (1 AI-Call)\n"
+                    "- Git Push Security Review: event-getrieben",
                     0x00FF00
                 )
+            except Exception as e:
+                self.logger.error(
+                    f"Server Assistant konnte nicht gestartet werden: {e}",
+                    exc_info=True
+                )
 
-                # ============================================
-                # START CONTINUOUS LEARNING SYSTEM
-                # ============================================
-                self.logger.info("=" * 60)
-                self.logger.info("🧠 Starting Continuous Learning System...")
-                self.logger.info("=" * 60)
-
-                try:
-                    self.continuous_learning = ContinuousLearningAgent(
-                        bot=self,
-                        config=self.config,
-                        ai_service=self.ai_service,
-                        context_manager=self.context_manager,
-                        discord_logger=self.discord_logger
-                    )
-                    await self.continuous_learning.start()
-                    self.logger.info("✅ Continuous Learning System gestartet")
-
-                    # Load Knowledge Stats Commands
-                    try:
-                        from commands.knowledge_stats import setup as setup_knowledge_stats
-                        await setup_knowledge_stats(
-                            self,
-                            self.continuous_learning.knowledge_synthesizer,
-                            self.config
-                        )
-                        self.logger.info("✅ Knowledge Stats Commands geladen")
-
-                        # Sync commands to Discord
-                        guild = discord.Object(id=self.config.guild_id)
-                        self.tree.copy_global_to(guild=guild)
-                        await self.tree.sync(guild=guild)
-                        self.logger.info("✅ Knowledge Stats Commands synchronisiert")
-                    except Exception as e:
-                        self.logger.error(f"❌ Fehler beim Laden der Knowledge Stats Commands: {e}", exc_info=True)
-
-                except Exception as e:
-                    self.logger.error(f"❌ Continuous Learning System konnte nicht gestartet werden: {e}", exc_info=True)
-            else:
-                self.logger.info("ℹ️ AI Learning deaktiviert - überspringe Phase 6")
-                await self._send_status_message(
-                    "⏸️ **AI Learning pausiert**\n"
-                    "• Background-Learning/Knowledge-Building ist deaktiviert\n"
-                    "• Patch Notes laufen ohne KI",
-                    0x95A5A6
+            # Legacy: AI Learning System (falls in Config noch aktiviert)
+            if self.config.ai_learning_enabled and self.config.ai_enabled:
+                self.logger.info(
+                    "AI Learning ist in Config aktiviert, "
+                    "wird aber durch Server Assistant ersetzt"
                 )
 
         else:
@@ -920,7 +883,14 @@ class ShadowOpsBot(commands.Bot):
         self.logger.info("🛑 Shutting down ShadowOps Bot...")
         self.logger.info(f"   Close() aufgerufen von: {''.join(traceback.format_stack()[-3:-1])}")
 
-        # Stop continuous learning system
+        # Stop Server Assistant
+        if self.server_assistant:
+            try:
+                await self.server_assistant.stop()
+            except Exception as e:
+                self.logger.error(f"Error stopping server assistant: {e}")
+
+        # Stop continuous learning system (Legacy)
         if self.continuous_learning:
             try:
                 await self.continuous_learning.stop()

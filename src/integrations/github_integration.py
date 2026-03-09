@@ -356,6 +356,17 @@ class GitHubIntegration:
                     commits=commits
                 )
                 self._set_last_processed_commit(normalized_project, branch, head_sha)
+
+                # Server Assistant: Security Review bei lokalem Push
+                if hasattr(self.bot, 'server_assistant') and self.bot.server_assistant:
+                    try:
+                        asyncio.create_task(
+                            self.bot.server_assistant.review_push_security(
+                                repo_name=normalized_project, commits=commits
+                            )
+                        )
+                    except Exception as e:
+                        self.logger.debug(f"Push Security Review Fehler: {e}")
             finally:
                 self._unmark_commit_inflight(normalized_project, branch, head_sha)
 
@@ -604,6 +615,17 @@ class GitHubIntegration:
             finally:
                 if head_commit:
                     self._unmark_commit_inflight(normalized_repo, branch, head_commit)
+
+            # Server Assistant: Security Review bei Push (event-getrieben)
+            if hasattr(self.bot, 'server_assistant') and self.bot.server_assistant:
+                try:
+                    asyncio.create_task(
+                        self.bot.server_assistant.review_push_security(
+                            repo_name=normalized_repo, commits=commits
+                        )
+                    )
+                except Exception as e:
+                    self.logger.debug(f"Push Security Review Fehler: {e}")
 
             # Auto-deploy if enabled and on a deployment branch
             # Assuming 'head_commit' is present if there are commits

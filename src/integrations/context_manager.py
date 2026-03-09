@@ -217,8 +217,8 @@ class ContextManager:
         """
         project_paths = {}
 
-        # Always include shadowops-bot itself
-        project_paths['shadowops-bot'] = Path(__file__).parent.parent.parent
+        # shadowops-bot Self-Monitoring entfernt — bringt keinen Nutzen,
+        # verbraucht nur Token (analysiert sich selbst in einer Endlosschleife)
 
         # Load additional projects from config
         if self.config:
