@@ -17,9 +17,11 @@
 - **[config/config.example.yaml](./config/config.example.yaml)** - Konfigurationstemplate
 
 ### Features & Systeme
+- **[docs/SECURITY_ANALYST.md](./docs/SECURITY_ANALYST.md)** - **NEU:** Autonomer AI Security Engineer (v4.0)
 - **[docs/AUTO_REMEDIATION.md](./docs/AUTO_REMEDIATION.md)** - Auto-Remediation System (v2.0)
   - ⚠️ Teilweise veraltet, siehe ACTIVE_SECURITY_GUARDIAN.md für v3.0
 - **[HYBRID_AI_SYSTEM.md](./HYBRID_AI_SYSTEM.md)** - Hybrid AI Architektur (Ollama + Claude + OpenAI)
+  - ⚠️ Veraltet — Ollama entfernt, jetzt Dual-Engine (Codex + Claude CLI)
 - **[LIVE_DISCORD_UPDATES.md](./LIVE_DISCORD_UPDATES.md)** - Live Status Updates Implementation
 
 ### Entwicklung & Historie
@@ -55,9 +57,22 @@ Diese Dokumente beschreiben frühere Versionen und sind teilweise überholt:
 - IMPLEMENTATION_COMPLETE.md (v2.0) → Siehe ACTIVE_SECURITY_GUARDIAN.md für v3.0
 - docs/AUTO_REMEDIATION.md (v2.0) → Siehe ACTIVE_SECURITY_GUARDIAN.md für vollständige Fixer
 
-## 🆕 Version 3.0 Highlights
+## 🆕 Version 4.0 Highlights
 
-**Neu in v3.0 (Active Security Guardian):**
+**Neu in v4.0:**
+- ✅ Dual AI Engine (Codex CLI + Claude CLI mit Fallback)
+- ✅ ServerAssistant (Daily Housekeeping + Weekly Report)
+- ✅ **Security Analyst** — Autonomer AI Security Engineer
+  - Freies Denken, nicht Checklisten
+  - Autonome Claude Code Sessions (max 25 Turns)
+  - Activity-basiert (startet nur wenn User idle)
+  - Eigene Postgres-DB für akkumuliertes Wissen
+  - Health-Snapshots mit Rollback-Erkennung
+  - Discord-Briefings + GitHub Issues
+
+Alle Details zum Security Analyst in **[docs/SECURITY_ANALYST.md](./docs/SECURITY_ANALYST.md)**!
+
+**v3.0 (Active Security Guardian):**
 - ✅ Echte Fix-Execution (keine Placeholders mehr!)
 - ✅ 4 vollständige Fixer-Module (Trivy, CrowdSec, Fail2ban, AIDE)
 - ✅ Backup & Rollback System
