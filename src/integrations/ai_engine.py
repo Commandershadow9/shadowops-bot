@@ -902,16 +902,39 @@ class AIEngine:
             f"Kein Markdown, nur reines JSON."
         )
 
-        # Erlaubte Tools — spezifische Bash-Prefixe (kein rm, kein dd, etc.)
+        # Erlaubte Tools — Bash-Prefixe + MCP-Tools + Kern-Tools
         # Format: Bash(command:*) mit Doppelpunkt (NICHT Leerzeichen!)
         allowed_tools = (
+            # Bash-Befehle (kein rm, kein dd)
             'Bash(git:*),Bash(docker:*),Bash(ufw:*),Bash(systemctl:*),'
             'Bash(ss:*),Bash(who:*),Bash(df:*),Bash(free:*),Bash(ps:*),'
             'Bash(cat:*),Bash(ls:*),Bash(find:*),Bash(chmod:*),Bash(chown:*),'
             'Bash(apt:*),Bash(npm:*),Bash(go:*),Bash(curl:*),Bash(head:*),'
             'Bash(tail:*),Bash(wc:*),Bash(grep:*),Bash(trivy:*),Bash(cscli:*),'
             'Bash(aide:*),Bash(certbot:*),Bash(gh:*),Bash(sudo:*),'
-            'Read,Glob,Grep,Write,Edit'
+            # Kern-Tools
+            'Read,Glob,Grep,Write,Edit,ToolSearch,'
+            # MCP: Docker (read-only)
+            'mcp__docker__list-containers,mcp__docker__get-logs,'
+            # MCP: Postgres (read-only!)
+            'mcp__postgres-guildscout__execute_sql,'
+            'mcp__postgres-guildscout__list_schemas,'
+            'mcp__postgres-guildscout__list_objects,'
+            'mcp__postgres-guildscout__get_object_details,'
+            'mcp__postgres-guildscout__analyze_db_health,'
+            'mcp__postgres-zerodox__execute_sql,'
+            'mcp__postgres-zerodox__list_schemas,'
+            'mcp__postgres-zerodox__list_objects,'
+            'mcp__postgres-zerodox__get_object_details,'
+            'mcp__postgres-zerodox__analyze_db_health,'
+            # MCP: Redis (read-only)
+            'mcp__redis__info,mcp__redis__scan_keys,mcp__redis__get,'
+            'mcp__redis__hgetall,mcp__redis__lrange,mcp__redis__type,'
+            'mcp__redis__dbsize,mcp__redis__client_list,'
+            # MCP: GitHub (Issues + Read)
+            'mcp__github__list_issues,mcp__github__search_issues,'
+            'mcp__github__search_code,mcp__github__get_file_contents,'
+            'mcp__github__issue_write,mcp__github__issue_read'
         )
 
         args = [

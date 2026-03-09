@@ -31,6 +31,23 @@ Der Security Analyst ist ein autonomer AI-Agent, der wie ein echter Security Eng
 
 Der Analyst erstellt **GitHub Issues** mit Beschreibung, betroffenen Dateien und Severity. Er fixt niemals Code direkt — das macht der Mensch.
 
+### Issue-Routing
+
+Issues landen automatisch im richtigen GitHub-Repo:
+
+| Projekt-Keyword | Repo |
+|----------------|------|
+| `guildscout` | Commandershadow9/GuildScout |
+| `zerodox` | Commandershadow9/ZERODOX |
+| `shadowops` | Commandershadow9/shadowops-bot |
+| Server / Infra / unbekannt | Commandershadow9/shadowops-bot (Default) |
+
+Matching ist Substring-basiert: `"GuildScout / Security Analyst"` matcht `guildscout` → GuildScout-Repo.
+
+Issues werden erstellt bei:
+- `fix_type: issue_needed` — immer
+- `fix_type: needs_decision` — nur bei Severity critical/high/medium
+
 ---
 
 ## Architektur
@@ -133,7 +150,7 @@ Prüft 4 Quellen parallel via `asyncio.gather()`:
 |-------|---------|-----------|
 | SSH | `who` Befehl | User hat Terminal offen |
 | Git | `git log --since 30min` in 5 Projektverzeichnissen | Kürzliche Commits |
-| AI-Prozesse | `pgrep -f claude\|codex` | Claude Code oder Codex läuft |
+| AI-Prozesse | `pgrep -a claude \| grep --session-id` | Nur interaktive Claude-Sessions (ignoriert Agents, MCP-Server) |
 | Discord | `member.status` via discord.py | User ist online/idle/dnd |
 
 **Cooldown:** 30 Minuten nach letzter erkannter Aktivität.
@@ -147,11 +164,24 @@ claude -p "PROMPT" \
   --max-turns 25 \
   --output-format text \
   --model claude-opus-4-6 \
-  --allowedTools "Bash(git*)" "Bash(docker*)" "Bash(ufw*)" ... \
-  Read Glob Grep Write Edit
+  --allowedTools "Bash(git:*),Bash(docker:*),Bash(ufw:*),...,Read,Glob,Grep,Write,Edit,ToolSearch,mcp__docker__list-containers,..."
 ```
 
-**Wichtig:** `--allowedTools` verhindert, dass die CLI nach Freigaben fragt (non-interaktiver Modus). Nur whitelisted Bash-Prefixe sind erlaubt — kein `rm`, kein `dd`.
+**Wichtig:**
+- `--allowedTools` Syntax: `Bash(command:*)` mit **Doppelpunkt** (nicht Leerzeichen!)
+- MCP-Tools aus `~/.claude.json` sind in `-p` Sessions sichtbar, müssen aber in `--allowedTools` stehen
+- `ToolSearch` muss erlaubt sein, damit deferred MCP-Tools geladen werden können
+- Nur whitelisted Bash-Prefixe — kein `rm`, kein `dd`
+
+### MCP-Tools (verfügbar)
+
+| MCP Server | Tools | Zugriff |
+|------------|-------|---------|
+| Docker | `list-containers`, `get-logs` | Read-only |
+| Postgres (GuildScout) | `execute_sql`, `list_schemas`, `list_objects`, `analyze_db_health` | Read-only! |
+| Postgres (ZERODOX) | `execute_sql`, `list_schemas`, `list_objects`, `analyze_db_health` | Read-only! |
+| Redis | `info`, `scan_keys`, `get`, `hgetall`, `type`, `dbsize` | Read-only |
+| GitHub | `list_issues`, `search_issues`, `search_code`, `issue_write` | Issues erstellen |
 
 ## Discord-Briefing
 

@@ -48,12 +48,15 @@ MAIN_LOOP_INTERVAL = 60
 HEARTBEAT_EVERY = 10
 
 # Projekt-zu-Repo Mapping fuer GitHub-Issues
+# Keys werden als Substring-Match in affected_project gesucht
 PROJECT_REPO_MAP = {
     'guildscout': 'Commandershadow9/GuildScout',
     'zerodox': 'Commandershadow9/ZERODOX',
     'shadowops': 'Commandershadow9/shadowops-bot',
-    'shadowops-bot': 'Commandershadow9/shadowops-bot',
 }
+
+# Fallback-Repo fuer Server-/Infrastruktur-Findings
+DEFAULT_REPO = 'Commandershadow9/shadowops-bot'
 
 # Services fuer Health-Checks
 USER_SERVICES = [
@@ -323,8 +326,12 @@ class SecurityAnalyst:
                 fix_type = finding.get('fix_type', 'info_only')
                 github_issue_url = None
 
-                # GitHub-Issue erstellen fuer Code-Findings
-                if fix_type == 'issue_needed':
+                # GitHub-Issue erstellen fuer Code-Findings und wichtige Entscheidungen
+                should_create_issue = (
+                    fix_type == 'issue_needed'
+                    or (fix_type == 'needs_decision' and finding.get('severity') in ('critical', 'high', 'medium'))
+                )
+                if should_create_issue:
                     github_issue_url = await self._create_github_issue(finding)
                     if github_issue_url:
                         issues_created += 1
@@ -712,6 +719,25 @@ class SecurityAnalyst:
     # GitHub Issues
     # ─────────────────────────────────────────────────────────────────
 
+    def _resolve_repo(self, affected_project: str) -> str:
+        """Bestimmt das GitHub-Repo anhand des affected_project Strings.
+
+        Nutzt Substring-Matching: "GuildScout / Security Analyst" matcht "guildscout".
+        Bei mehreren Matches gewinnt der erste. Server/Infra-Findings landen
+        im DEFAULT_REPO (shadowops-bot).
+
+        Args:
+            affected_project: Freitext-Projekt-String aus dem Finding
+
+        Returns:
+            GitHub Repo im Format "Owner/Repo"
+        """
+        project_lower = affected_project.lower()
+        for key, repo in PROJECT_REPO_MAP.items():
+            if key in project_lower:
+                return repo
+        return DEFAULT_REPO
+
     async def _create_github_issue(self, finding: Dict) -> Optional[str]:
         """Erstellt ein GitHub-Issue fuer ein Code-Finding
 
@@ -721,15 +747,9 @@ class SecurityAnalyst:
         Returns:
             Issue-URL oder None bei Fehler
         """
-        project = finding.get('affected_project', '').lower().strip()
-        repo = PROJECT_REPO_MAP.get(project)
-
-        if not repo:
-            logger.warning(
-                "Kein Repo-Mapping fuer Projekt '%s' — Issue wird nicht erstellt",
-                project,
-            )
-            return None
+        affected_project = finding.get('affected_project', '').strip()
+        repo = self._resolve_repo(affected_project)
+        logger.info("Issue-Routing: '%s' -> %s", affected_project, repo)
 
         title = finding.get('issue_title', finding.get('title', 'Security Finding'))
         body = finding.get('issue_body', finding.get('description', ''))
