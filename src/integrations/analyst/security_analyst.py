@@ -44,6 +44,9 @@ APPROVAL_TIMEOUT = 300
 # Intervall des Main-Loops (1 Minute)
 MAIN_LOOP_INTERVAL = 60
 
+# Heartbeat-Log alle N Loops (10 = alle 10 Minuten bei 60s Intervall)
+HEARTBEAT_EVERY = 10
+
 # Projekt-zu-Repo Mapping fuer GitHub-Issues
 PROJECT_REPO_MAP = {
     'guildscout': 'Commandershadow9/GuildScout',
@@ -144,14 +147,18 @@ class SecurityAnalyst:
         await asyncio.sleep(30)
         logger.info("SecurityAnalyst Main-Loop aktiv")
 
+        loop_count = 0
+
         while self._running:
             try:
+                loop_count += 1
+
                 # Tages-Reset: Zaehler zuruecksetzen wenn neuer Tag
                 today = date.today()
                 if today != self._today:
                     self._today = today
                     self._sessions_today = 0
-                    logger.debug("Neuer Tag — Session-Zaehler zurueckgesetzt")
+                    logger.info("Neuer Tag — Session-Zaehler zurueckgesetzt")
 
                 # Pending Briefing senden wenn User auf Discord erreichbar
                 if self._briefing_pending and self._pending_result:
@@ -162,9 +169,20 @@ class SecurityAnalyst:
                         self._pending_result = None
                         logger.info("Pending Briefing gesendet (User ist %s)", discord_status)
 
+                # Activity-Check
+                user_active = await self.activity_monitor.is_user_active()
+
+                # Heartbeat alle 10 Minuten auf INFO-Level
+                if loop_count % HEARTBEAT_EVERY == 0:
+                    logger.info(
+                        "Heartbeat: user_active=%s, sessions_today=%d/%d, briefing_pending=%s",
+                        user_active, self._sessions_today, MAX_SESSIONS_PER_DAY,
+                        self._briefing_pending,
+                    )
+
                 # Session starten wenn: User idle + Tages-Limit nicht erreicht + keine laufende Session
                 if (
-                    not await self.activity_monitor.is_user_active()
+                    not user_active
                     and self._sessions_today < MAX_SESSIONS_PER_DAY
                     and self._current_session_id is None
                 ):

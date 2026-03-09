@@ -183,14 +183,19 @@ class ActivityMonitor:
         return False
 
     async def _check_ai_processes(self) -> bool:
-        """Prüft ob Claude oder Codex CLI-Prozesse laufen.
+        """Prüft ob der User interaktive Claude Code Sessions laufen hat.
+
+        Erkennt NUR: claude --session-id (interaktive User-Sessions)
+        Ignoriert: codex exec (Agents), codex mcp-server, claude -p (Analyst), serena
 
         Returns:
-            True wenn mindestens ein AI-Prozess gefunden
+            True wenn mindestens eine interaktive Session gefunden
         """
         try:
+            # Nur interaktive Claude Sessions haben --session-id im cmdline
+            # Ignoriert: codex (SEO Agent), mcp-server, claude -p (Analyst)
             proc = await asyncio.create_subprocess_shell(
-                "pgrep -cf '(claude|codex)' 2>/dev/null || echo 0",
+                "pgrep -a claude 2>/dev/null | grep -c -- '--session-id' || echo 0",
                 stdout=asyncio.subprocess.PIPE,
                 stderr=asyncio.subprocess.PIPE,
             )
