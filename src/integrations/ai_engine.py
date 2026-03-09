@@ -903,13 +903,15 @@ class AIEngine:
         )
 
         # Erlaubte Tools — spezifische Bash-Prefixe (kein rm, kein dd, etc.)
+        # Format: Bash(command:*) mit Doppelpunkt (NICHT Leerzeichen!)
         allowed_tools = (
-            'Bash(git *),Bash(docker *),Bash(ufw *),Bash(systemctl *),'
-            'Bash(ss *),Bash(who *),Bash(df *),Bash(free *),Bash(ps *),'
-            'Bash(cat *),Bash(ls *),Bash(find *),Bash(chmod *),Bash(chown *),'
-            'Bash(apt *),Bash(npm *),Bash(go *),Bash(curl *),Bash(head *),'
-            'Bash(tail *),Bash(wc *),Bash(grep *),Bash(trivy *),Bash(cscli *),'
-            'Bash(aide *),Bash(certbot *),Bash(gh *),Read,Glob,Grep,Write,Edit'
+            'Bash(git:*),Bash(docker:*),Bash(ufw:*),Bash(systemctl:*),'
+            'Bash(ss:*),Bash(who:*),Bash(df:*),Bash(free:*),Bash(ps:*),'
+            'Bash(cat:*),Bash(ls:*),Bash(find:*),Bash(chmod:*),Bash(chown:*),'
+            'Bash(apt:*),Bash(npm:*),Bash(go:*),Bash(curl:*),Bash(head:*),'
+            'Bash(tail:*),Bash(wc:*),Bash(grep:*),Bash(trivy:*),Bash(cscli:*),'
+            'Bash(aide:*),Bash(certbot:*),Bash(gh:*),Bash(sudo:*),'
+            'Read,Glob,Grep,Write,Edit'
         )
 
         args = [
