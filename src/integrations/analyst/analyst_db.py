@@ -145,6 +145,41 @@ class AnalystDB:
         )
         logger.info("Session %d pausiert (User online)", session_id)
 
+    async def count_sessions_today(self) -> int:
+        """Anzahl der Sessions die heute bereits gelaufen sind.
+
+        Wird beim Start genutzt um _sessions_today korrekt zu initialisieren,
+        damit der Counter auch nach Bot-Restarts stimmt.
+
+        Returns:
+            Anzahl Sessions heute (completed + running)
+        """
+        count = await self.pool.fetchval(
+            """SELECT COUNT(*) FROM sessions
+               WHERE started_at::date = CURRENT_DATE
+                 AND status IN ('completed', 'running')"""
+        )
+        return count or 0
+
+    async def find_similar_open_finding(self, title: str) -> Optional[Dict]:
+        """Sucht ein offenes Finding mit aehnlichem Titel (case-insensitive).
+
+        Verhindert doppelte GitHub-Issues fuer das gleiche Problem.
+
+        Args:
+            title: Titel des neuen Findings
+
+        Returns:
+            Dict des aehnlichen Findings oder None
+        """
+        row = await self.pool.fetchrow(
+            """SELECT id, title, github_issue_url FROM findings
+               WHERE status = 'open'
+                 AND LOWER(title) = LOWER($1)""",
+            title,
+        )
+        return dict(row) if row else None
+
     async def get_last_session(self) -> Optional[Dict]:
         """Letzte abgeschlossene Session abrufen
 

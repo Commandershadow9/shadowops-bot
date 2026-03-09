@@ -120,6 +120,15 @@ class SecurityAnalyst:
             return
 
         await self.db.connect()
+
+        # Session-Counter aus DB laden (ueberlebt Bot-Restarts)
+        self._sessions_today = await self.db.count_sessions_today()
+        if self._sessions_today > 0:
+            logger.info(
+                "Session-Counter aus DB geladen: %d Sessions heute bereits gelaufen",
+                self._sessions_today,
+            )
+
         self._running = True
         self._task = asyncio.create_task(self._main_loop())
         logger.info("SecurityAnalyst gestartet")
@@ -156,12 +165,15 @@ class SecurityAnalyst:
             try:
                 loop_count += 1
 
-                # Tages-Reset: Zaehler zuruecksetzen wenn neuer Tag
+                # Tages-Reset: Zaehler aus DB laden wenn neuer Tag
                 today = date.today()
                 if today != self._today:
                     self._today = today
-                    self._sessions_today = 0
-                    logger.info("Neuer Tag — Session-Zaehler zurueckgesetzt")
+                    self._sessions_today = await self.db.count_sessions_today()
+                    logger.info(
+                        "Neuer Tag — Session-Zaehler aus DB: %d",
+                        self._sessions_today,
+                    )
 
                 # Pending Briefing senden wenn User auf Discord erreichbar
                 if self._briefing_pending and self._pending_result:
@@ -749,9 +761,20 @@ class SecurityAnalyst:
         """
         affected_project = finding.get('affected_project', '').strip()
         repo = self._resolve_repo(affected_project)
-        logger.info("Issue-Routing: '%s' -> %s", affected_project, repo)
 
         title = finding.get('issue_title', finding.get('title', 'Security Finding'))
+
+        # Duplikaterkennung: Offenes Finding mit gleichem Titel in DB?
+        existing = await self.db.find_similar_open_finding(finding.get('title', ''))
+        if existing:
+            existing_url = existing.get('github_issue_url', '')
+            logger.info(
+                "Duplikat erkannt: Finding '%s' existiert bereits (ID #%d, Issue: %s) — ueberspringe",
+                existing['title'][:50], existing['id'], existing_url or 'kein Issue',
+            )
+            return existing_url or None
+
+        logger.info("Issue-Routing: '%s' -> %s", affected_project, repo)
         body = finding.get('issue_body', finding.get('description', ''))
         severity = finding.get('severity', 'medium')
 
