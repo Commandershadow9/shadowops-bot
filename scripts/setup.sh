@@ -49,7 +49,7 @@ if [ -f "/etc/systemd/system/shadowops-bot.service" ]; then
     echo "⚠️  Service bereits installiert"
 else
     echo "🔧 Installiere Systemd Service..."
-    sudo cp shadowops-bot.service /etc/systemd/system/
+    sudo cp deploy/shadowops-bot.service /etc/systemd/system/
     sudo systemctl daemon-reload
     sudo systemctl enable shadowops-bot
     echo "✅ Service installiert und aktiviert"

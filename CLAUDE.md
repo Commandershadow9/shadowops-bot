@@ -20,7 +20,7 @@
 | Aktion | Befehl |
 |--------|--------|
 | Status | `sudo systemctl status shadowops-bot` |
-| Restart | `./restart.sh [--pull] [--logs]` |
+| Restart | `scripts/restart.sh [--pull] [--logs]` |
 | Logs (live) | `journalctl -u shadowops-bot -f` |
 | Logs (Datei) | `tail -f logs/shadowops_YYYYMMDD.log` |
 | Tests | `pytest tests/ -x` (einzeln! OOM-Gefahr bei 8 GB VPS) |
@@ -116,13 +116,32 @@
 |-------|-------|
 | `config/config.yaml` | Hauptkonfiguration (NICHT in Git!) |
 | `config/config.example.yaml` | Template fuer neue Setups |
+| `config/config.recommended.yaml` | Empfohlene Einstellungen |
+| `config/safe_upgrades.yaml` | Curated Upgrade-Pfade fuer Packages |
+| `config/logrotate.conf` | Logrotate-Konfiguration |
 | `data/state.json` | Dynamischer Bot-State (Channel IDs, etc.) |
 | `data/knowledge_base.db` | SQLite Learning Database |
+
+### Deploy
+| Datei | Zweck |
+|-------|-------|
+| `deploy/shadowops-bot.service` | systemd Unit-File (Quelle fuer /etc/systemd/system/) |
+
+### Scripts (`scripts/`)
+| Datei | Zweck |
+|-------|-------|
+| `restart.sh` | Bot neustarten (--pull, --logs) |
+| `diagnose-bot.sh` | Diagnose: Status, Ports, Logs, Konflikte |
+| `setup.sh` | Erstinstallation (venv, Dependencies, Service) |
+| `update-config.sh` | Config-Migration bei Updates |
+| `get_bot_invite.py` | Discord Bot Invite-URL generieren |
+| `test_alerts.py` | Test-Plan fuer Discord Alert Channels |
 
 ### Dokumentation
 | Pfad | Inhalt |
 |------|--------|
-| `docs/` | Aktuelle Dokumentation |
+| `docs/` | Aktive Referenz-Doku (API, Overview, Security Analyst) |
+| `docs/guides/` | Benutzer-Anleitungen (Setup, Quickstart, Multi-Guild) |
 | `docs/plans/` | Design- und Implementierungsdokumente |
-| `docs/adr/` | Architecture Decision Records |
+| `docs/adr/` | Architecture Decision Records (6 ADRs) |
 | `docs/archive/` | Veraltete Dokumentation (historisch) |

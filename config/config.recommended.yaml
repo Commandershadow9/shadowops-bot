@@ -1,0 +1,95 @@
+# ShadowOps - Empfohlene Starter-Config
+# Für den Anfang: Nur DEIN Dev-Discord
+
+discord:
+  # ⚠️ Token MUSS regeneriert werden! (wurde öffentlich gepostet)
+  token: "NEUER_TOKEN_HIER"
+
+  # Dein Dev-Discord Server ID
+  guild_id: 1438065435496157267
+
+# Channel-Zuordnung (TRAGE DEINE IDS EIN!)
+channels:
+  # === WICHTIGE ALERTS ===
+  # Kritische Alerts von allen Projekten
+  critical_all: 1438100552977350717  # 🔴 critical-all Channel ID
+
+  # === PROJEKT-SPEZIFISCH ===
+  # Sicherheitsdienst
+  sicherheitsdienst_alerts: null  # 🛡️ security-alerts Channel ID
+  sicherheitsdienst_docker: null  # 🐳 docker-scans Channel ID (für Sicherheitsdienst)
+  sicherheitsdienst_backups: null # 💾 backups Channel ID (für Sicherheitsdienst)
+
+  # NEXUS (wenn du separate Channels willst)
+  nexus_alerts: null
+  nexus_docker: null
+  nexus_backups: null
+
+  # === SERVER-WIDE ===
+  # Fail2ban (IP-Bans)
+  fail2ban: null  # 🚫 fail2ban-bans Channel ID
+
+  # CrowdSec (KI-Bedrohungen)
+  crowdsec: null  # 🤖 crowdsec-threats Channel ID
+
+  # AIDE (File Integrity)
+  aide: null      # 🔐 aide-checks Channel ID
+
+  # SSH-Angriffe
+  ssh: null       # 🔑 ssh-attacks Channel ID
+
+  # Fallback: Wenn ein spezifischer Channel null ist, wird dieser benutzt
+  fallback: 1438100552977350717
+
+# Projekt-Tags & Farben
+projects:
+  sicherheitsdienst:
+    enabled: true
+    tag: "🛡️ [SECURITY]"
+    color: 0xE74C3C  # Rot
+
+  nexus:
+    enabled: true
+    tag: "⚡ [NEXUS]"
+    color: 0x3498DB  # Blau
+
+  server:
+    enabled: true
+    tag: "🖥️ [SERVER]"
+    color: 0x95A5A6  # Grau
+
+# Alert-Einstellungen
+alerts:
+  # Nur HIGH und CRITICAL anzeigen (weniger Spam)
+  min_severity: "HIGH"
+
+  # Anti-Spam: 60 Sek zwischen gleichen Alerts
+  rate_limit_seconds: 60
+
+  # Optional: @mention bei kritischen Alerts
+  mention_roles:
+    critical: null  # Role ID für @Admin bei CRITICAL
+    high: null      # Role ID für @Security bei HIGH
+
+# System-Log-Pfade (nicht ändern!)
+log_paths:
+  fail2ban: "/var/log/fail2ban/fail2ban.log"
+  crowdsec: "/var/log/crowdsec.log"
+  crowdsec_api: "/var/log/crowdsec_api.log"
+  aide: "/var/log/aide/aideinit.log"
+  docker_scans: "/var/log/trivy-scans"
+  auth: "journalctl"
+  backup: "/var/backups/sicherheitsdienst-db"
+
+# Permissions
+permissions:
+  # TRAGE DEINE DISCORD USER ID EIN!
+  # Rechtsklick auf dein Profil → ID kopieren
+  admins:
+    - 123456789012345678  # Deine User ID hier!
+
+# Bot-Einstellungen
+bot:
+  status: "🔒 Monitoring Security"
+  auto_reconnect: true
+  debug: false  # Auf true setzen für mehr Logs

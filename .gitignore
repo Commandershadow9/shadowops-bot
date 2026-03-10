@@ -25,20 +25,15 @@ wheels/
 
 # Bot Secrets & Config
 config/config.yaml
-config/*.yaml
-!config/config.example.yaml
 .env
 *.token
 *.key
 
 # Logs & Data
 logs/
-logs/*.log
-logs/*.txt
-logs/seen_events.json
-logs/event_history.json
 *.log
 data/
+src/data/
 
 # IDE
 .vscode/
@@ -55,16 +50,12 @@ Thumbs.db
 .pytest_cache/
 .coverage
 htmlcov/
-data/ai_knowledge.db
 
-# Runtime files
+# Runtime
 .bot.pid
 logrotate.state
 
-# Node
-node_modules/
-
-# Local State
-logrotate.state
+# Local
 backups/
 .serena/
+node_modules/

@@ -6,7 +6,7 @@
 #   --logs   Live-Logs nach Start anzeigen
 set -euo pipefail
 
-BOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+BOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 SERVICE="shadowops-bot.service"
 
 RED='\033[0;31m'

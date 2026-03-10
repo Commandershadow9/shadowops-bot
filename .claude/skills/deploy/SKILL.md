@@ -20,11 +20,11 @@ description: ShadowOps Bot deployen (restart mit optionalem git pull)
 
 3. **Restart**
    ```bash
-   ./restart.sh --logs
+   scripts/restart.sh --logs
    ```
    Oder mit Pull:
    ```bash
-   ./restart.sh --pull --logs
+   scripts/restart.sh --pull --logs
    ```
 
 4. **Verify:** Warte 30s, dann pruefe:
