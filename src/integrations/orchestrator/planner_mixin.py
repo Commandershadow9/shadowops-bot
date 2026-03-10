@@ -121,7 +121,7 @@ class PlannerMixin:
             streaming_state['done'] = True
             try:
                 await update_task
-            except:
+            except Exception:
                 pass
 
             logger.error(f"❌ Fehler bei koordinierter Planung: {e}", exc_info=True)

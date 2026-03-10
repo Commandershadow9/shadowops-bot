@@ -356,7 +356,7 @@ class CodeAnalyzer:
                         comparator = node.test.comparators[0]
                         if isinstance(comparator, ast.Constant):
                             return comparator.value == '__main__'
-        except:
+        except Exception:
             pass
         return False
 

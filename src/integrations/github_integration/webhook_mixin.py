@@ -7,7 +7,7 @@ import hmac
 import json
 import logging
 import os
-from datetime import datetime
+from datetime import datetime, timezone
 from typing import Dict, Optional
 
 import aiohttp
@@ -208,7 +208,7 @@ class WebhookMixin:
         return web.json_response({
             'status': 'healthy',
             'service': 'github-webhook',
-            'timestamp': datetime.utcnow().isoformat()
+            'timestamp': datetime.now(timezone.utc).isoformat()
         })
 
     async def webhook_handler(self, request: web.Request) -> web.Response:

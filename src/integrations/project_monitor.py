@@ -9,7 +9,7 @@ import logging
 import json
 import time
 from typing import Dict, List, Optional
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 import discord
 
@@ -70,7 +70,7 @@ class ProjectStatus:
         """Get current downtime duration if project is down"""
         if self.is_online or not self.current_downtime_start:
             return None
-        return datetime.utcnow() - self.current_downtime_start
+        return datetime.now(timezone.utc) - self.current_downtime_start
 
     def update_online(self, response_time_ms: float):
         """Update status when health check succeeds"""
@@ -78,8 +78,8 @@ class ProjectStatus:
         was_recovering = self.consecutive_failures > 0
 
         self.is_online = True
-        self.last_check_time = datetime.utcnow()
-        self.last_online_time = datetime.utcnow()
+        self.last_check_time = datetime.now(timezone.utc)
+        self.last_online_time = datetime.now(timezone.utc)
         self.total_checks += 1
         self.successful_checks += 1
         self.consecutive_failures = 0
@@ -98,8 +98,8 @@ class ProjectStatus:
         was_online = self.is_online
 
         self.is_online = False
-        self.last_check_time = datetime.utcnow()
-        self.last_offline_time = datetime.utcnow()
+        self.last_check_time = datetime.now(timezone.utc)
+        self.last_offline_time = datetime.now(timezone.utc)
         self.total_checks += 1
         self.failed_checks += 1
         self.consecutive_failures += 1
@@ -107,7 +107,7 @@ class ProjectStatus:
 
         # Start downtime tracking
         if was_online:
-            self.current_downtime_start = datetime.utcnow()
+            self.current_downtime_start = datetime.now(timezone.utc)
 
         return was_online  # Return True if this is a new incident
 
@@ -532,7 +532,7 @@ class ProjectMonitor:
             try:
                 # Calculate downtime duration
                 if project.last_offline_time:
-                    downtime = datetime.utcnow() - project.last_offline_time
+                    downtime = datetime.now(timezone.utc) - project.last_offline_time
                     hours = int(downtime.total_seconds() // 3600)
                     minutes = int((downtime.total_seconds() % 3600) // 60)
 
@@ -572,7 +572,7 @@ class ProjectMonitor:
             title=f"🔴 {project.name} is DOWN",
             description=f"Health check failed for **{project.name}**",
             color=discord.Color.red(),
-            timestamp=datetime.utcnow()
+            timestamp=datetime.now(timezone.utc)
         )
 
         embed.add_field(name="Project", value=project.name, inline=True)
@@ -598,7 +598,7 @@ class ProjectMonitor:
             title=f"✅ {project.name} is BACK ONLINE",
             description=f"**{project.name}** has recovered",
             color=discord.Color.green(),
-            timestamp=datetime.utcnow()
+            timestamp=datetime.now(timezone.utc)
         )
 
         embed.add_field(name="Project", value=project.name, inline=True)
@@ -713,14 +713,14 @@ class ProjectMonitor:
                             f"**Fehlversuche:** {project.consecutive_failures}x in Folge"
                         ),
                         color=discord.Color.red(),
-                        timestamp=datetime.utcnow()
+                        timestamp=datetime.now(timezone.utc)
                     )
                     await user.send(embed=embed)
 
                 elif event_type == "online":
                     downtime_str = "unbekannt"
                     if project.last_offline_time:
-                        downtime = datetime.utcnow() - project.last_offline_time
+                        downtime = datetime.now(timezone.utc) - project.last_offline_time
                         hours = int(downtime.total_seconds() // 3600)
                         minutes = int((downtime.total_seconds() % 3600) // 60)
                         downtime_str = f"{hours}h {minutes}m" if hours > 0 else f"{minutes}m"
@@ -729,7 +729,7 @@ class ProjectMonitor:
                         title=f"✅ {project.name} ist wieder ONLINE",
                         description=f"Service wiederhergestellt nach **{downtime_str}** Downtime.",
                         color=discord.Color.green(),
-                        timestamp=datetime.utcnow()
+                        timestamp=datetime.now(timezone.utc)
                     )
                     await user.send(embed=embed)
 
@@ -788,7 +788,7 @@ class ProjectMonitor:
             title="📊 Project Status Dashboard",
             description="Real-time status of all monitored projects",
             color=discord.Color.blue(),
-            timestamp=datetime.utcnow()
+            timestamp=datetime.now(timezone.utc)
         )
 
         # Count online/offline projects

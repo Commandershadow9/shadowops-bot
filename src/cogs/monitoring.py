@@ -5,7 +5,7 @@ Cog for general monitoring commands.
 import discord
 from discord import app_commands
 from discord.ext import commands
-from datetime import datetime
+from datetime import datetime, timezone
 
 from utils.embeds import EmbedBuilder
 
@@ -67,7 +67,7 @@ class MonitoringCog(commands.Cog):
                 title="🚫 Aktuell gebannte IP-Adressen",
                 description=f"Zeige bis zu {limit} gebannte IPs",
                 color=0xE74C3C,
-                timestamp=datetime.utcnow()
+                timestamp=datetime.now(timezone.utc)
             )
 
             if f2b_bans:
@@ -100,7 +100,7 @@ class MonitoringCog(commands.Cog):
                 title=f"⚠️ Bedrohungen der letzten {hours}h",
                 description=f"Zeige neueste CrowdSec Alerts",
                 color=0xE67E22,
-                timestamp=datetime.utcnow()
+                timestamp=datetime.now(timezone.utc)
             )
             if alerts:
                 for alert in alerts[:10]:

@@ -474,7 +474,7 @@ class AideFixer:
                 timeout=5
             )
             return result.success
-        except:
+        except Exception:
             return False
 
     async def _restore_from_git(self, file_path: str) -> bool:

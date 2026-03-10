@@ -4,7 +4,7 @@ CI polling and deployment methods for GitHubIntegration.
 
 import asyncio
 import logging
-from datetime import datetime
+from datetime import datetime, timezone
 from typing import Dict, Optional
 
 import aiohttp
@@ -188,7 +188,7 @@ class CIMixin:
                     title="🚀 Deployment Started",
                     description=f"Deploying **{repo_name}** from `{branch}@{commit_sha}`",
                     color=discord.Color.blue(),
-                    timestamp=datetime.utcnow()
+                    timestamp=datetime.now(timezone.utc)
                 )
                 embed.add_field(name="Repository", value=repo_name, inline=True)
                 embed.add_field(name="Branch", value=branch, inline=True)

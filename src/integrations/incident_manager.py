@@ -8,7 +8,7 @@ import logging
 import json
 import hashlib
 from typing import Dict, List, Optional
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from enum import Enum
 import discord
@@ -59,8 +59,8 @@ class Incident:
         self.event_type = event_type
 
         self.status = IncidentStatus.OPEN
-        self.created_at = datetime.utcnow()
-        self.updated_at = datetime.utcnow()
+        self.created_at = datetime.now(timezone.utc)
+        self.updated_at = datetime.now(timezone.utc)
         self.resolved_at: Optional[datetime] = None
 
         # Discord thread info
@@ -77,20 +77,20 @@ class Incident:
     def add_timeline_event(self, event: str, author: str = "system"):
         """Add event to incident timeline"""
         self.timeline.append({
-            'timestamp': datetime.utcnow().isoformat(),
+            'timestamp': datetime.now(timezone.utc).isoformat(),
             'event': event,
             'author': author
         })
-        self.updated_at = datetime.utcnow()
+        self.updated_at = datetime.now(timezone.utc)
 
     def update_status(self, new_status: IncidentStatus, author: str = "system"):
         """Update incident status"""
         old_status = self.status
         self.status = new_status
-        self.updated_at = datetime.utcnow()
+        self.updated_at = datetime.now(timezone.utc)
 
         if new_status == IncidentStatus.RESOLVED:
-            self.resolved_at = datetime.utcnow()
+            self.resolved_at = datetime.now(timezone.utc)
 
         self.add_timeline_event(
             f"Status changed: {old_status.value} → {new_status.value}",
@@ -108,7 +108,7 @@ class Incident:
         """Get incident duration"""
         if self.resolved_at:
             return self.resolved_at - self.created_at
-        return datetime.utcnow() - self.created_at
+        return datetime.now(timezone.utc) - self.created_at
 
     def to_dict(self) -> Dict:
         """Serialize incident to dictionary"""
@@ -231,7 +231,7 @@ class IncidentManager:
 
     def _generate_incident_id(self, title: str, event_type: str) -> str:
         """Generate unique incident ID"""
-        content = f"{title}_{event_type}_{datetime.utcnow().date()}"
+        content = f"{title}_{event_type}_{datetime.now(timezone.utc).date()}"
         return hashlib.md5(content.encode()).hexdigest()[:12]
 
     async def create_incident(
@@ -461,7 +461,7 @@ class IncidentManager:
                     thread = await channel.fetch_channel(incident.thread_id)
 
             if thread:
-                timestamp = datetime.utcnow().strftime('%Y-%m-%d %H:%M:%S UTC')
+                timestamp = datetime.now(timezone.utc).strftime('%Y-%m-%d %H:%M:%S UTC')
                 await thread.send(f"**[{timestamp}]** {message}")
 
         except discord.NotFound:
@@ -522,7 +522,7 @@ class IncidentManager:
 
     async def auto_close_old_incidents(self):
         """Automatically close resolved incidents after configured time"""
-        cutoff_time = datetime.utcnow() - timedelta(hours=self.auto_close_after_hours)
+        cutoff_time = datetime.now(timezone.utc) - timedelta(hours=self.auto_close_after_hours)
 
         for incident in list(self.incidents.values()):
             if incident.status == IncidentStatus.RESOLVED and incident.resolved_at:

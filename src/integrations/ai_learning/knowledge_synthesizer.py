@@ -14,7 +14,7 @@ This enables the AI to get smarter over months and years.
 import json
 import logging
 from pathlib import Path
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 from typing import Dict, List, Optional, Any
 from collections import Counter, defaultdict
 
@@ -168,7 +168,7 @@ class KnowledgeSynthesizer:
         stats["meta_insights"] = meta_insights
 
         # Update synthesis metadata
-        self.knowledge["last_synthesis"] = datetime.utcnow().isoformat()
+        self.knowledge["last_synthesis"] = datetime.now(timezone.utc).isoformat()
         self.knowledge["synthesis_count"] += 1
 
         # Save knowledge base
@@ -241,7 +241,7 @@ class KnowledgeSynthesizer:
                     "success_rate": round(success_rate, 3),
                     "best_practices": common_success_actions,
                     "failure_count": len(failed_entries),
-                    "last_updated": datetime.utcnow().isoformat()
+                    "last_updated": datetime.now(timezone.utc).isoformat()
                 }
 
                 # Update knowledge base
@@ -320,7 +320,7 @@ class KnowledgeSynthesizer:
                     "avg_ram_available_gb": round(avg_ram_available, 2) if avg_ram_available else None,
                     "best_cleanup_method": best_method,
                     "cleanup_success_rate": len(successful_cleanups) / len(events_with_method) if events_with_method else 0,
-                    "last_updated": datetime.utcnow().isoformat()
+                    "last_updated": datetime.now(timezone.utc).isoformat()
                 }
 
                 # Update knowledge base
@@ -373,10 +373,10 @@ class KnowledgeSynthesizer:
             # Track synthesis interval
             if self.knowledge["last_synthesis"]:
                 last_synthesis = datetime.fromisoformat(self.knowledge["last_synthesis"])
-                interval_hours = (datetime.utcnow() - last_synthesis).total_seconds() / 3600
+                interval_hours = (datetime.now(timezone.utc) - last_synthesis).total_seconds() / 3600
 
                 self.knowledge["meta_learning"]["synthesis_intervals"].append({
-                    "timestamp": datetime.utcnow().isoformat(),
+                    "timestamp": datetime.now(timezone.utc).isoformat(),
                     "interval_hours": round(interval_hours, 2),
                     "patterns_extracted": sum(synthesis_stats.values())
                 })

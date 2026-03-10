@@ -12,7 +12,7 @@ import sqlite3
 import json
 import logging
 from pathlib import Path
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 from typing import Dict, List, Optional, Any
 
 logger = logging.getLogger('shadowops.knowledge_db')
@@ -338,7 +338,7 @@ class KnowledgeDB:
             ID des Datensatzes
         """
         data_json = json.dumps(data, ensure_ascii=False) if data else None
-        now = datetime.utcnow().isoformat()
+        now = datetime.now(timezone.utc).isoformat()
 
         # Prüfen ob Pattern bereits existiert
         existing = self.conn.execute(
@@ -414,7 +414,7 @@ class KnowledgeDB:
         Returns:
             Dict mit {total_events, by_type, by_severity, top_ips}
         """
-        since = (datetime.utcnow() - timedelta(hours=hours)).isoformat()
+        since = (datetime.now(timezone.utc) - timedelta(hours=hours)).isoformat()
 
         # Gesamt-Anzahl
         total = self.conn.execute(
@@ -472,7 +472,7 @@ class KnowledgeDB:
         Returns:
             Liste von Health-Snapshot-Dicts, chronologisch sortiert
         """
-        since = (datetime.utcnow() - timedelta(hours=hours)).isoformat()
+        since = (datetime.now(timezone.utc) - timedelta(hours=hours)).isoformat()
 
         rows = self.conn.execute(
             """SELECT * FROM health_snapshots
@@ -634,7 +634,7 @@ class KnowledgeDB:
         Args:
             days: Alter in Tagen (default 90)
         """
-        cutoff = (datetime.utcnow() - timedelta(days=days)).isoformat()
+        cutoff = (datetime.now(timezone.utc) - timedelta(days=days)).isoformat()
 
         deleted_health = self.conn.execute(
             "DELETE FROM health_snapshots WHERE created_at < ?", (cutoff,)

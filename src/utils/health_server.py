@@ -7,7 +7,7 @@ import asyncio
 import logging
 import socket
 from aiohttp import web
-from datetime import datetime
+from datetime import datetime, timezone
 from typing import Optional
 
 logger = logging.getLogger("shadowops.health")
@@ -29,7 +29,7 @@ class HealthCheckServer:
         self.app: Optional[web.Application] = None
         self.runner: Optional[web.AppRunner] = None
         self.site: Optional[web.TCPSite] = None
-        self.start_time = datetime.utcnow()
+        self.start_time = datetime.now(timezone.utc)
 
     async def start(self):
         """Start the health check HTTP server"""
@@ -71,7 +71,7 @@ class HealthCheckServer:
             not self.bot.is_closed()
         )
 
-        uptime = (datetime.utcnow() - self.start_time).total_seconds()
+        uptime = (datetime.now(timezone.utc) - self.start_time).total_seconds()
 
         response_data = {
             'status': 'healthy' if is_healthy else 'unhealthy',
@@ -81,7 +81,7 @@ class HealthCheckServer:
             'uptime_seconds': round(uptime, 2),
             'guilds': len(self.bot.guilds) if self.bot.is_ready() else 0,
             'latency_ms': round(self.bot.latency * 1000, 2) if self.bot.is_ready() else None,
-            'timestamp': datetime.utcnow().isoformat()
+            'timestamp': datetime.now(timezone.utc).isoformat()
         }
 
         status_code = 200 if is_healthy else 503
@@ -92,13 +92,13 @@ class HealthCheckServer:
         """Simple ping endpoint"""
         return web.json_response({
             'status': 'pong',
-            'timestamp': datetime.utcnow().isoformat()
+            'timestamp': datetime.now(timezone.utc).isoformat()
         })
 
     async def detailed_status(self, request: web.Request) -> web.Response:
         """Detailed status with component information"""
         is_healthy = self.bot.is_ready() and not self.bot.is_closed()
-        uptime = (datetime.utcnow() - self.start_time).total_seconds()
+        uptime = (datetime.now(timezone.utc) - self.start_time).total_seconds()
 
         # Gather component status
         components = {}
@@ -125,7 +125,7 @@ class HealthCheckServer:
             'guilds': len(self.bot.guilds) if self.bot.is_ready() else 0,
             'latency_ms': round(self.bot.latency * 1000, 2) if self.bot.is_ready() else None,
             'components': components,
-            'timestamp': datetime.utcnow().isoformat()
+            'timestamp': datetime.now(timezone.utc).isoformat()
         }
 
         status_code = 200 if is_healthy else 503

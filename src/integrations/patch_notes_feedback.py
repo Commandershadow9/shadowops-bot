@@ -9,7 +9,7 @@ import logging
 import discord
 from discord import Message, Reaction, User
 from typing import Dict, Optional
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 
 logger = logging.getLogger('shadowops')
 
@@ -55,7 +55,7 @@ class PatchNotesFeedbackCollector:
         self.tracked_messages[message.id] = {
             'project': project,
             'version': version,
-            'timestamp': datetime.utcnow(),
+            'timestamp': datetime.now(timezone.utc),
             'channel_id': message.channel.id,
         }
 
@@ -147,7 +147,7 @@ class PatchNotesFeedbackCollector:
         Args:
             max_age_hours: Maximum age in hours before cleanup
         """
-        cutoff = datetime.utcnow() - timedelta(hours=max_age_hours)
+        cutoff = datetime.now(timezone.utc) - timedelta(hours=max_age_hours)
 
         to_remove = []
         for msg_id, data in self.tracked_messages.items():
@@ -200,7 +200,7 @@ class PatchNotesFeedbackCollector:
 
                             if user_id:
                                 users.add(user_id)
-                    except:
+                    except Exception:
                         continue
         except Exception as e:
             logger.error(f"Failed to read feedback: {e}")

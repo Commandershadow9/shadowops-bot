@@ -3,7 +3,7 @@ Git state tracking methods for GitHubIntegration.
 """
 
 import logging
-from datetime import datetime
+from datetime import datetime, timezone
 from typing import Dict, Optional
 
 logger = logging.getLogger('shadowops')
@@ -69,7 +69,7 @@ class StateMixin:
     def _cleanup_inflight(self) -> None:
         if not self._inflight_commits:
             return
-        now = datetime.utcnow().timestamp()
+        now = datetime.now(timezone.utc).timestamp()
         expired = [
             key for key, ts in self._inflight_commits.items()
             if now - ts > self.dedupe_ttl_seconds
@@ -85,7 +85,7 @@ class StateMixin:
     def _mark_commit_inflight(self, repo_name: str, branch: str, commit_sha: str) -> None:
         self._cleanup_inflight()
         key = self._commit_key(repo_name, branch, commit_sha)
-        self._inflight_commits[key] = datetime.utcnow().timestamp()
+        self._inflight_commits[key] = datetime.now(timezone.utc).timestamp()
 
     def _unmark_commit_inflight(self, repo_name: str, branch: str, commit_sha: str) -> None:
         key = self._commit_key(repo_name, branch, commit_sha)

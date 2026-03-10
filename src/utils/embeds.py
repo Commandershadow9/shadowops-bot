@@ -4,7 +4,7 @@ Erstellt schöne, farbcodierte Embeds für verschiedene Alert-Typen
 """
 
 import discord
-from datetime import datetime
+from datetime import datetime, timezone
 from typing import Optional, Dict, Any, List
 from enum import Enum
 
@@ -64,7 +64,7 @@ class EmbedBuilder:
             title=full_title,
             description=description,
             color=color,
-            timestamp=datetime.utcnow()
+            timestamp=datetime.now(timezone.utc)
         )
 
         # Felder hinzufügen

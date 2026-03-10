@@ -8,7 +8,7 @@ import json
 import logging
 from pathlib import Path
 from typing import Dict, List, Optional
-from datetime import datetime
+from datetime import datetime, timezone
 
 logger = logging.getLogger('shadowops')
 
@@ -44,7 +44,7 @@ class LLMFineTuning:
         Returns:
             Path to exported file
         """
-        timestamp = datetime.utcnow().strftime('%Y%m%d_%H%M%S')
+        timestamp = datetime.now(timezone.utc).strftime('%Y%m%d_%H%M%S')
         export_file = self.export_dir / f'finetune_{project or "all"}_{timestamp}.jsonl'
 
         if not self.trainer.training_data_file.exists():
@@ -117,7 +117,7 @@ Create the patch notes now:"""
 
         Format: Alpaca-style instruction dataset
         """
-        timestamp = datetime.utcnow().strftime('%Y%m%d_%H%M%S')
+        timestamp = datetime.now(timezone.utc).strftime('%Y%m%d_%H%M%S')
         export_file = self.export_dir / f'lora_finetune_{project or "all"}_{timestamp}.json'
 
         if not self.trainer.training_data_file.exists():
@@ -180,7 +180,7 @@ Create the patch notes now:"""
 
         script_content = f"""#!/bin/bash
 # Fine-Tuning Data Export Script
-# Generated: {datetime.utcnow().isoformat()}
+# Generated: {datetime.now(timezone.utc).isoformat()}
 # NOTE: ai_learning is currently disabled. This script is for reference only.
 
 set -e
@@ -266,7 +266,7 @@ echo "Model name: $NEW_MODEL_NAME"
 
         readme_content = f"""# Fine-Tuning Guide for Patch Notes Generation
 
-Generated: {datetime.utcnow().isoformat()}
+Generated: {datetime.now(timezone.utc).isoformat()}
 
 ## 📁 Exported Files
 

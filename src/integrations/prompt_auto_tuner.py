@@ -8,7 +8,7 @@ import logging
 import json
 from pathlib import Path
 from typing import Dict, List, Optional, Tuple
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 from collections import Counter
 
 logger = logging.getLogger('shadowops')
@@ -40,7 +40,7 @@ class PromptAutoTuner:
         Returns:
             Dict with insights about what works and what doesn't
         """
-        cutoff_date = datetime.utcnow() - timedelta(days=days)
+        cutoff_date = datetime.now(timezone.utc) - timedelta(days=days)
 
         # Get training examples
         high_performers = []  # Score >= 80
@@ -68,7 +68,7 @@ class PromptAutoTuner:
                             high_performers.append(example)
                         elif score < 60:
                             low_performers.append(example)
-                    except:
+                    except Exception:
                         continue
         except Exception as e:
             logger.error(f"Failed to analyze performance patterns: {e}")
@@ -243,7 +243,7 @@ class PromptAutoTuner:
 
         # Log tuning
         tuning_log = {
-            'timestamp': datetime.utcnow().isoformat(),
+            'timestamp': datetime.now(timezone.utc).isoformat(),
             'original_variant_id': variant_id,
             'new_variant_id': new_variant_id,
             'project': project,

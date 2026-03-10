@@ -126,41 +126,37 @@ auto_remediation:
 
 # ╔═══════════════════════════════════════════════════════════════════════════╗
 # ║ AI SERVICES (KI-gestützte Analyse)                                       ║
-# ║ Hierarchie: Ollama (lokal) → Claude → OpenAI (Fallback)                 ║
+# ║ Dual-Engine: Codex CLI (Primary) + Claude CLI (Fallback)                ║
 # ╚═══════════════════════════════════════════════════════════════════════════╝
 ai:
   # Globales AI-Toggle (deaktiviert alle AI-Features inkl. Remediation/Queue/Learning)
   enabled: true
-  # === OLLAMA (PRIMARY - lokal & kostenlos) ===
-  ollama:
-    enabled: true
-    url: "http://127.0.0.1:11434"
 
-    # Standard-Modell (schnell, für normale Events)
-    model: "phi3:mini"
+  # === CODEX CLI (PRIMARY — OpenAI Codex via CLI) ===
+  codex:
+    # Pfad zur Codex CLI (Standard: im PATH)
+    cli_path: "codex"
+    # Modelle nach Geschwindigkeit
+    models:
+      fast: "gpt-5.3-codex"       # Schnelle Analysen
+      standard: "gpt-5.3-codex"   # Standard-Analysen + Structured Output
+      thinking: "o3"              # Komplexe Planungsaufgaben
 
-    # Critical-Modell (intelligenter, für schwere Events)
-    model_critical: "llama3.1"
+  # === CLAUDE CLI (FALLBACK — Anthropic Claude via CLI) ===
+  claude:
+    # Pfad zur Claude CLI
+    cli_path: "/home/cmdshadow/.local/bin/claude"
+    # Modelle nach Geschwindigkeit
+    models:
+      fast: "claude-sonnet-4-6"    # Schnelle Analysen
+      standard: "claude-sonnet-4-6" # Standard-Analysen
+      thinking: "claude-opus-4-6"  # Security Analyst Sessions
 
-    # Hybrid-Modus: Automatisch bestes Modell wählen basiert auf Severity
-    hybrid_models: true
-
-    # Rate Limiting: Verzögerung zwischen Anfragen (verhindert Server-Überlastung)
-    request_delay_seconds: 4.0  # 4 Sekunden Pause zwischen AI-Calls
-
-  # === ANTHROPIC CLAUDE (Fallback #1 - wenn Ollama fehlt) ===
-  anthropic:
-    enabled: false
-    # API Key. Sollte als Umgebungsvariable ANTHROPIC_API_KEY gesetzt werden.
-    api_key: ""  # Env: ANTHROPIC_API_KEY
-    model: "claude-3-5-sonnet-20241022"
-
-  # === OPENAI (Fallback #2 - wenn Claude auch fehlt) ===
-  openai:
-    enabled: false
-    # API Key. Sollte als Umgebungsvariable OPENAI_API_KEY gesetzt werden.
-    api_key: ""  # Env: OPENAI_API_KEY
-    model: "gpt-4o"
+  # === TIMEOUTS ===
+  timeouts:
+    codex_seconds: 300   # 5 Min für Codex CLI
+    claude_seconds: 300  # 5 Min für Claude CLI
+    analyst_seconds: 1800 # 30 Min für Security Analyst Sessions
 
 # ╔═══════════════════════════════════════════════════════════════════════════╗
 # ║ PROJECTS (Überwachte Projekte)                                           ║

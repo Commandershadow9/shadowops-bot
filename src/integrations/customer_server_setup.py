@@ -348,5 +348,5 @@ class CustomerServerSetup:
 
                 try:
                     await target_channel.send(embed=embed)
-                except:
+                except Exception:
                     pass

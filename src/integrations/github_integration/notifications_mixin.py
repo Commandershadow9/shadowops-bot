@@ -4,7 +4,7 @@ Discord notification methods for GitHubIntegration.
 
 import logging
 import re
-from datetime import datetime
+from datetime import datetime, timezone
 from pathlib import Path
 from typing import Dict, Optional
 
@@ -41,7 +41,7 @@ class NotificationsMixin:
             title=f"🚀 Code-Update: {repo_name}",
             url=commits_url,
             color=project_color,
-            timestamp=datetime.utcnow()
+            timestamp=datetime.now(timezone.utc)
         )
         internal_embed.set_author(name=pusher)
         internal_embed.add_field(name="Branch", value=branch, inline=True)
@@ -89,7 +89,7 @@ class NotificationsMixin:
             title=title_text,
             url=commits_url,
             color=project_color,
-            timestamp=datetime.utcnow()
+            timestamp=datetime.now(timezone.utc)
         )
 
         # Categorize commits by type
@@ -291,7 +291,7 @@ class NotificationsMixin:
             description=f"**{title}**",
             url=url,
             color=color,
-            timestamp=datetime.utcnow()
+            timestamp=datetime.now(timezone.utc)
         )
 
         embed.add_field(name="Repository", value=repo, inline=True)
@@ -317,7 +317,7 @@ class NotificationsMixin:
             description=f"**{repo}** `{tag}`",
             url=url,
             color=discord.Color.purple() if is_prerelease else discord.Color.gold(),
-            timestamp=datetime.utcnow()
+            timestamp=datetime.now(timezone.utc)
         )
 
         embed.add_field(name="Tag", value=f"`{tag}`", inline=True)
@@ -340,7 +340,7 @@ class NotificationsMixin:
             title="✅ Deployment Successful",
             description=f"**{repo}** deployed successfully",
             color=discord.Color.green(),
-            timestamp=datetime.utcnow()
+            timestamp=datetime.now(timezone.utc)
         )
 
         embed.add_field(name="Repository", value=repo, inline=True)
@@ -368,7 +368,7 @@ class NotificationsMixin:
             title="❌ Deployment Failed",
             description=f"**{repo}** deployment failed",
             color=discord.Color.red(),
-            timestamp=datetime.utcnow()
+            timestamp=datetime.now(timezone.utc)
         )
 
         embed.add_field(name="Repository", value=repo, inline=True)
@@ -397,7 +397,7 @@ class NotificationsMixin:
             title="💥 Deployment Exception",
             description=f"**{repo}** deployment crashed",
             color=discord.Color.dark_red(),
-            timestamp=datetime.utcnow()
+            timestamp=datetime.now(timezone.utc)
         )
 
         embed.add_field(name="Repository", value=repo, inline=True)

@@ -11,7 +11,7 @@ import shutil
 import time
 import os
 from typing import Dict, Optional, List
-from datetime import datetime
+from datetime import datetime, timezone
 from pathlib import Path
 import discord
 
@@ -625,7 +625,7 @@ class DeploymentManager:
             title="🚀 Deployment Started",
             description=f"Deploying **{project_name}** from branch `{branch}`",
             color=discord.Color.blue(),
-            timestamp=datetime.utcnow()
+            timestamp=datetime.now(timezone.utc)
         )
 
         embed.add_field(name="Project", value=project_name, inline=True)
@@ -645,7 +645,7 @@ class DeploymentManager:
             return
 
         try:
-            timestamp = datetime.utcnow().strftime('%H:%M:%S')
+            timestamp = datetime.now(timezone.utc).strftime('%H:%M:%S')
             await channel.send(f"**[{timestamp}] {project_name}:** {message}")
         except Exception as e:
             self.logger.error(f"❌ Failed to send Discord update: {e}", exc_info=True)
@@ -662,7 +662,7 @@ class DeploymentManager:
             title="✅ Deployment Successful",
             description=f"**{project_name}** deployed successfully",
             color=discord.Color.green(),
-            timestamp=datetime.utcnow()
+            timestamp=datetime.now(timezone.utc)
         )
 
         embed.add_field(name="Project", value=project_name, inline=True)
@@ -700,7 +700,7 @@ class DeploymentManager:
             title="❌ Deployment Failed",
             description=f"**{project_name}** deployment failed",
             color=discord.Color.red(),
-            timestamp=datetime.utcnow()
+            timestamp=datetime.now(timezone.utc)
         )
 
         embed.add_field(name="Project", value=project_name, inline=True)
@@ -743,7 +743,7 @@ class DeploymentManager:
             title="💥 Deployment Exception",
             description=f"**{project_name}** deployment crashed with unexpected error",
             color=discord.Color.dark_red(),
-            timestamp=datetime.utcnow()
+            timestamp=datetime.now(timezone.utc)
         )
 
         embed.add_field(name="Project", value=project_name, inline=True)

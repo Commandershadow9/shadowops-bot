@@ -9,7 +9,7 @@ import logging
 import random
 from pathlib import Path
 from typing import Dict, List, Optional, Tuple
-from datetime import datetime
+from datetime import datetime, timezone
 from dataclasses import dataclass, asdict
 
 logger = logging.getLogger('shadowops')
@@ -92,7 +92,7 @@ class PromptABTesting:
                 name='Detailed Grouping',
                 description='Emphasizes grouping related commits into detailed feature descriptions',
                 template=self._get_detailed_template('de'),  # Default German
-                created_at=datetime.utcnow().isoformat(),
+                created_at=datetime.now(timezone.utc).isoformat(),
                 active=True
             ),
             PromptVariant(
@@ -100,7 +100,7 @@ class PromptABTesting:
                 name='Concise Overview',
                 description='Focuses on concise, high-level overview with key points',
                 template=self._get_concise_template('de'),  # Default German
-                created_at=datetime.utcnow().isoformat(),
+                created_at=datetime.now(timezone.utc).isoformat(),
                 active=True
             ),
             PromptVariant(
@@ -108,7 +108,7 @@ class PromptABTesting:
                 name='Benefit-Focused',
                 description='Emphasizes user benefits and impact rather than technical details',
                 template=self._get_benefit_focused_template('de'),  # Default German
-                created_at=datetime.utcnow().isoformat(),
+                created_at=datetime.now(timezone.utc).isoformat(),
                 active=True
             ),
         ]
@@ -358,7 +358,7 @@ FORMAT:
             version=version,
             quality_score=quality_score,
             user_feedback_score=user_feedback_score,
-            timestamp=datetime.utcnow().isoformat()
+            timestamp=datetime.now(timezone.utc).isoformat()
         )
 
         # Append to results file
@@ -408,7 +408,7 @@ FORMAT:
                         stats['total_feedback'] += result.get('user_feedback_score', 0)
                         stats['quality_scores'].append(result.get('quality_score', 0))
                         stats['feedback_scores'].append(result.get('user_feedback_score', 0))
-                    except:
+                    except Exception:
                         continue
 
             # Calculate averages and combined scores
@@ -467,7 +467,7 @@ FORMAT:
             name=name,
             description=description,
             template=template,
-            created_at=datetime.utcnow().isoformat(),
+            created_at=datetime.now(timezone.utc).isoformat(),
             active=True
         )
 

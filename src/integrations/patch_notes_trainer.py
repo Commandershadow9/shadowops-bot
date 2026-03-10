@@ -13,7 +13,7 @@ import logging
 import json
 from pathlib import Path
 from typing import Dict, List, Optional, Tuple
-from datetime import datetime
+from datetime import datetime, timezone
 import re
 
 logger = logging.getLogger('shadowops')
@@ -66,7 +66,7 @@ class PatchNotesTrainer:
             'changelog': changelog_content,
             'generated_notes': generated_notes,
             'quality_score': quality_score,
-            'timestamp': datetime.utcnow().isoformat(),
+            'timestamp': datetime.now(timezone.utc).isoformat(),
         }
 
         # Append to training data
@@ -110,7 +110,7 @@ class PatchNotesTrainer:
             'project': project,
             'type': feedback_type,
             'data': feedback_data,
-            'timestamp': datetime.utcnow().isoformat()
+            'timestamp': datetime.now(timezone.utc).isoformat()
         }
 
         with open(self.feedback_file, 'a', encoding='utf-8') as f:
@@ -370,7 +370,7 @@ Format:
                         data = json.loads(line)
                         scores.append(data.get('quality_score', 0))
                         stats['projects'].add(data.get('project', 'unknown'))
-                    except:
+                    except Exception:
                         continue
 
                 if scores:

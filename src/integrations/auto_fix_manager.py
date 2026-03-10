@@ -20,7 +20,7 @@ import shutil
 import subprocess
 import tempfile
 from dataclasses import dataclass, field
-from datetime import datetime
+from datetime import datetime, timezone
 from pathlib import Path
 from typing import Dict, List, Optional, Any, Tuple
 
@@ -288,7 +288,7 @@ class AutoFixManager:
             title=f"📋 Verbesserungsvorschlag: {proposal.project}{area_text}",
             description=proposal.summary,
             color=color,
-            timestamp=datetime.utcnow()
+            timestamp=datetime.now(timezone.utc)
         )
 
         # Uebersichts-Header
@@ -601,7 +601,7 @@ class AutoFixManager:
             title=f"{status_emoji} Pipeline-Ergebnis: {proposal.project}",
             description=f"**Status:** {status_text}\n**Modus:** {'Nur Tests' if not apply_changes else 'Umsetzung + Verifikation'}",
             color=color,
-            timestamp=datetime.utcnow()
+            timestamp=datetime.now(timezone.utc)
         )
 
         # Test-Ergebnisse kompakt
@@ -1512,7 +1512,7 @@ Best Practices from successful fixes:
 
             # Build tracking entry
             entry = {
-                "timestamp": datetime.utcnow().isoformat(),
+                "timestamp": datetime.now(timezone.utc).isoformat(),
                 "project": proposal.project,
                 "severity": proposal.severity,
                 "success": success,

@@ -12,7 +12,7 @@ import asyncio
 import logging
 import discord
 from discord import ui
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Optional, Dict, Any
 
@@ -192,7 +192,7 @@ class PatchNotesManager:
                     title=f"✨ Updates for {project_name}",
                     description=f"**Version {version}** 🚀",
                     color=project_config.get('color', 3447003),
-                    timestamp=datetime.utcnow()
+                    timestamp=datetime.now(timezone.utc)
                 )
 
                 # Parse AI response and add as field
@@ -276,7 +276,7 @@ Maximum 3900 characters (Discord limit)."""
             title=discord_data['title'],
             description=discord_data['description'],
             color=project_config.get('color', 3447003),
-            timestamp=datetime.utcnow()
+            timestamp=datetime.now(timezone.utc)
         )
 
         for field in discord_data['fields']:

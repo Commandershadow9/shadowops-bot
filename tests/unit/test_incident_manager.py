@@ -2,7 +2,7 @@
 Unit Tests for Incident Manager
 """
 
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from unittest.mock import Mock, AsyncMock, patch, MagicMock
 
@@ -114,13 +114,13 @@ class TestIncidentClass:
             'affected_projects': ['project1'],
             'event_type': 'downtime',
             'status': 'in_progress',
-            'created_at': datetime.utcnow().isoformat(),
-            'updated_at': datetime.utcnow().isoformat(),
+            'created_at': datetime.now(timezone.utc).isoformat(),
+            'updated_at': datetime.now(timezone.utc).isoformat(),
             'resolved_at': None,
             'thread_id': 12345,
             'original_message_id': 67890,
             'timeline': [
-                {'timestamp': datetime.utcnow().isoformat(), 'event': 'Created', 'author': 'system'}
+                {'timestamp': datetime.now(timezone.utc).isoformat(), 'event': 'Created', 'author': 'system'}
             ],
             'resolution_notes': None
         }
@@ -426,7 +426,7 @@ class TestAutoClose:
         )
 
         incident.update_status(IncidentStatus.RESOLVED, 'admin')
-        incident.resolved_at = datetime.utcnow() - timedelta(hours=30)
+        incident.resolved_at = datetime.now(timezone.utc) - timedelta(hours=30)
 
         manager.incidents[incident.id] = incident
 

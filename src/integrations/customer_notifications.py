@@ -5,7 +5,7 @@ Filters and formats messages for customer visibility
 
 import logging
 from typing import Dict, Optional
-from datetime import datetime
+from datetime import datetime, timezone
 import discord
 
 logger = logging.getLogger(__name__)
@@ -128,7 +128,7 @@ class CustomerNotificationManager:
             title=f"🚨 Incident Report: {project}",
             description=issue,
             color=discord.Color.red(),
-            timestamp=datetime.utcnow()
+            timestamp=datetime.now(timezone.utc)
         )
 
         embed.add_field(
@@ -185,7 +185,7 @@ class CustomerNotificationManager:
             title=f"✅ Resolved: {project}",
             description=f"The issue affecting **{project}** has been resolved.",
             color=discord.Color.green(),
-            timestamp=datetime.utcnow()
+            timestamp=datetime.now(timezone.utc)
         )
 
         embed.add_field(
@@ -264,7 +264,7 @@ class CustomerNotificationManager:
             title=title,
             description=f"We're deploying an update to **{project}**",
             color=discord.Color.blue(),
-            timestamp=datetime.utcnow()
+            timestamp=datetime.now(timezone.utc)
         )
 
         embed.add_field(
@@ -351,7 +351,7 @@ class CustomerNotificationManager:
             title=f"{emoji} Status Update",
             description=message,
             color=color,
-            timestamp=datetime.utcnow()
+            timestamp=datetime.now(timezone.utc)
         )
 
         embed.set_footer(text="ShadowOps Team")
@@ -403,7 +403,7 @@ class CustomerNotificationManager:
             title=f"{emoji} Security Alert: {title}",
             description=description,
             color=color,
-            timestamp=datetime.utcnow()
+            timestamp=datetime.now(timezone.utc)
         )
 
         embed.add_field(
@@ -414,7 +414,7 @@ class CustomerNotificationManager:
 
         embed.add_field(
             name="📅 Detected",
-            value=f"<t:{int(datetime.utcnow().timestamp())}:R>",
+            value=f"<t:{int(datetime.now(timezone.utc).timestamp())}:R>",
             inline=True
         )
 
@@ -472,7 +472,7 @@ class CustomerNotificationManager:
             title=f"🔧 Scheduled Maintenance: {project}",
             description=f"Planned maintenance window for **{project}**",
             color=discord.Color.blue(),
-            timestamp=datetime.utcnow()
+            timestamp=datetime.now(timezone.utc)
         )
 
         embed.add_field(

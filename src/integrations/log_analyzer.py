@@ -188,7 +188,7 @@ class LogAnalyzer:
                 timestamp = datetime.strptime(timestamp_match.group(1), '%Y-%m-%d %H:%M:%S')
                 if timestamp < cutoff_time:
                     continue
-            except:
+            except Exception:
                 continue
 
             entry = {
@@ -237,7 +237,7 @@ class LogAnalyzer:
                 timestamp = datetime.fromisoformat(timestamp_str.replace('Z', '+00:00'))
                 if timestamp.replace(tzinfo=None) < cutoff_time:
                     continue
-            except:
+            except Exception:
                 continue
 
             entry = {
@@ -280,7 +280,7 @@ class LogAnalyzer:
                 timestamp = datetime.fromisoformat(timestamp_match.group(1))
                 if timestamp < cutoff_time:
                     continue
-            except:
+            except Exception:
                 continue
 
             entry = {
@@ -328,7 +328,7 @@ class LogAnalyzer:
                 timestamp = datetime.strptime(timestamp_match.group(1), '%Y-%m-%d %H:%M:%S')
                 if timestamp < cutoff_time:
                     continue
-            except:
+            except Exception:
                 continue
 
             entry = {
@@ -369,7 +369,7 @@ class LogAnalyzer:
             if ts_match:
                 try:
                     timestamp = datetime.strptime(ts_match.group(1), '%Y-%m-%d %H:%M:%S')
-                except:
+                except Exception:
                     timestamp = None
 
             if timestamp and timestamp < cutoff_time:

@@ -16,7 +16,7 @@ Features:
 
 import asyncio
 import logging
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 from typing import Dict, List, Optional, Any
 from pathlib import Path
 import json
@@ -43,7 +43,7 @@ class LearningSession:
         """Get session duration in seconds"""
         if self.end_time:
             return (self.end_time - self.start_time).total_seconds()
-        return (datetime.utcnow() - self.start_time).total_seconds()
+        return (datetime.now(timezone.utc) - self.start_time).total_seconds()
 
 
 @dataclass
@@ -54,7 +54,7 @@ class LearningInsight:
     title: str
     description: str
     confidence: float  # 0.0 - 1.0
-    discovered_at: datetime = field(default_factory=datetime.utcnow)
+    discovered_at: datetime = field(default_factory=lambda: datetime.now(timezone.utc))
     data: Dict[str, Any] = field(default_factory=dict)
 
     def to_embed_field(self) -> Dict[str, str]:
@@ -135,7 +135,7 @@ class ContinuousLearningAgent:
         # Metrics
         self.total_sessions = 0
         self.total_insights = 0
-        self.start_time = datetime.utcnow()
+        self.start_time = datetime.now(timezone.utc)
 
         # Trend state file
         self.trend_file = Path(__file__).parent.parent.parent / 'data' / 'learning_trends.json'
@@ -222,8 +222,8 @@ class ContinuousLearningAgent:
                 await asyncio.sleep(self.learning_interval)
 
                 session = LearningSession(
-                    session_id=f"continuous_{int(datetime.utcnow().timestamp())}",
-                    start_time=datetime.utcnow(),
+                    session_id=f"continuous_{int(datetime.now(timezone.utc).timestamp())}",
+                    start_time=datetime.now(timezone.utc),
                     session_type="continuous"
                 )
                 self.current_session = session
@@ -239,7 +239,7 @@ class ContinuousLearningAgent:
                 # Analyze project health trends
                 await self._analyze_project_health_trends(session)
 
-                session.end_time = datetime.utcnow()
+                session.end_time = datetime.now(timezone.utc)
                 self.total_sessions += 1
 
                 self.logger.info(
@@ -263,8 +263,8 @@ class ContinuousLearningAgent:
         while self.is_running:
             try:
                 session = LearningSession(
-                    session_id=f"git_{int(datetime.utcnow().timestamp())}",
-                    start_time=datetime.utcnow(),
+                    session_id=f"git_{int(datetime.now(timezone.utc).timestamp())}",
+                    start_time=datetime.now(timezone.utc),
                     session_type="git"
                 )
 
@@ -282,7 +282,7 @@ class ContinuousLearningAgent:
                     for insight in insights:
                         self._queue_insight(insight)
 
-                session.end_time = datetime.utcnow()
+                session.end_time = datetime.now(timezone.utc)
                 self.total_sessions += 1
 
                 self.logger.info(
@@ -305,8 +305,8 @@ class ContinuousLearningAgent:
         while self.is_running:
             try:
                 session = LearningSession(
-                    session_id=f"code_{int(datetime.utcnow().timestamp())}",
-                    start_time=datetime.utcnow(),
+                    session_id=f"code_{int(datetime.now(timezone.utc).timestamp())}",
+                    start_time=datetime.now(timezone.utc),
                     session_type="code"
                 )
 
@@ -324,7 +324,7 @@ class ContinuousLearningAgent:
                     for insight in insights:
                         self._queue_insight(insight)
 
-                session.end_time = datetime.utcnow()
+                session.end_time = datetime.now(timezone.utc)
                 self.total_sessions += 1
 
                 self.logger.info(
@@ -369,7 +369,7 @@ class ContinuousLearningAgent:
 
                 if latency_ms > 200:
                     insight = LearningInsight(
-                        insight_id=f"latency_{int(datetime.utcnow().timestamp())}",
+                        insight_id=f"latency_{int(datetime.now(timezone.utc).timestamp())}",
                         category="system_behavior",
                         title="Erhöhte Bot-Latenz erkannt",
                         description=f"Aktuelle Latenz: {latency_ms}ms (Normal: <200ms)",
@@ -388,7 +388,7 @@ class ContinuousLearningAgent:
                 for name, project in projects.items():
                     if project.uptime_percentage < 95 and project.total_checks > 10:
                         insight = LearningInsight(
-                            insight_id=f"uptime_{name}_{int(datetime.utcnow().timestamp())}",
+                            insight_id=f"uptime_{name}_{int(datetime.now(timezone.utc).timestamp())}",
                             category="system_behavior",
                             title=f"Niedrige Uptime: {name}",
                             description=f"Uptime: {project.uptime_percentage:.1f}% ({project.failed_checks} failures)",
@@ -502,7 +502,7 @@ class ContinuousLearningAgent:
                 if repeat_offenders:
                     top_offender = max(repeat_offenders.items(), key=lambda x: x[1])
                     insight = LearningInsight(
-                        insight_id=f"security_repeat_{int(datetime.utcnow().timestamp())}",
+                        insight_id=f"security_repeat_{int(datetime.now(timezone.utc).timestamp())}",
                         category="security_trend",
                         title="Persistent Attacker Detected",
                         description=f"IP {top_offender[0]} has been banned {top_offender[1]} times in 24h. "
@@ -522,7 +522,7 @@ class ContinuousLearningAgent:
                 most_targeted = max(services_targeted.items(), key=lambda x: x[1]) if services_targeted else ('unknown', 0)
 
                 insight = LearningInsight(
-                    insight_id=f"security_volume_{int(datetime.utcnow().timestamp())}",
+                    insight_id=f"security_volume_{int(datetime.now(timezone.utc).timestamp())}",
                     category="security_trend",
                     title="High Attack Volume Detected",
                     description=f"{total_bans} attacks blocked in 24h. "
@@ -544,7 +544,7 @@ class ContinuousLearningAgent:
                         ts = datetime.fromisoformat(event['timestamp'])
                         hour_key = ts.strftime('%Y-%m-%d %H:00')
                         hourly_counts[hour_key] = hourly_counts.get(hour_key, 0) + 1
-                    except:
+                    except Exception:
                         continue
 
                 max_hourly = max(hourly_counts.values()) if hourly_counts else 0
@@ -553,7 +553,7 @@ class ContinuousLearningAgent:
                     unique_ips = len(set(e['ip'] for e in fail2ban_events))
 
                     insight = LearningInsight(
-                        insight_id=f"security_coordinated_{int(datetime.utcnow().timestamp())}",
+                        insight_id=f"security_coordinated_{int(datetime.now(timezone.utc).timestamp())}",
                         category="security_trend",
                         title="Coordinated Attack Pattern",
                         description=f"{max_hourly} attacks in single hour ({peak_hour}). "
@@ -597,9 +597,9 @@ class ContinuousLearningAgent:
                 for c in all_commits:
                     try:
                         commit_date = parse(c['date'])
-                        if (datetime.utcnow() - commit_date).total_seconds() < 86400:
+                        if (datetime.now(timezone.utc) - commit_date).total_seconds() < 86400:
                             recent_commits.append(c)
-                    except:
+                    except Exception:
                         continue
 
                 # Fallback: if nothing in last 24h, use latest commits anyway so we always learn
@@ -681,7 +681,7 @@ Identifiziere Muster oder wichtige Erkenntnisse. Antworte in 1-2 Sätzen auf Deu
                         description = (description + f"\nNeu seit letztem Lauf: {delta_text}")[:450]
 
                 insight = LearningInsight(
-                    insight_id=f"git_{project_name}_{int(datetime.utcnow().timestamp())}",
+                    insight_id=f"git_{project_name}_{int(datetime.now(timezone.utc).timestamp())}",
                     category="git_pattern",
                     title=f"Git-Aktivität in {project_name}",
                     description=description,
@@ -776,7 +776,7 @@ Identifiziere Muster oder wichtige Erkenntnisse. Antworte in 1-2 Sätzen auf Deu
                     deltas.append(f"{key}: {value} ({'+' if delta>=0 else ''}{delta})")
             proj_state[key] = value
 
-        proj_state['updated_at'] = datetime.utcnow().isoformat()
+        proj_state['updated_at'] = datetime.now(timezone.utc).isoformat()
         state[project_name] = proj_state
         self._save_trend_state(state)
 
@@ -999,7 +999,7 @@ Liefer konkrete Hinweise für Stabilität, Wartbarkeit oder Security (keine Flos
                     self.logger.debug(f"Could not post auto-fix proposal: {e}")
 
                 insight = LearningInsight(
-                    insight_id=f"code_{project_name}_{int(datetime.utcnow().timestamp())}",
+                    insight_id=f"code_{project_name}_{int(datetime.now(timezone.utc).timestamp())}",
                     category="code_pattern",
                     title=f"Code-Analyse: {project_name}",
                     description=description,
@@ -1038,7 +1038,7 @@ Liefer konkrete Hinweise für Stabilität, Wartbarkeit oder Security (keine Flos
             embed = discord.Embed(
                 description=message,
                 color=color,
-                timestamp=datetime.utcnow()
+                timestamp=datetime.now(timezone.utc)
             )
             embed.set_footer(text="Continuous Learning Agent")
 
@@ -1111,7 +1111,7 @@ Liefer konkrete Hinweise für Stabilität, Wartbarkeit oder Security (keine Flos
         embed = discord.Embed(
             title=f"🧠 Was ich gelernt habe — {total_insights} Erkenntnisse",
             color=0x9B59B6,
-            timestamp=datetime.utcnow()
+            timestamp=datetime.now(timezone.utc)
         )
 
         # Top-Insight pro Kategorie hervorheben (höchste Confidence)
@@ -1167,7 +1167,7 @@ Liefer konkrete Hinweise für Stabilität, Wartbarkeit oder Security (keine Flos
         except Exception:
             pass
 
-        uptime = datetime.utcnow() - self.start_time
+        uptime = datetime.now(timezone.utc) - self.start_time
         uptime_hours = uptime.total_seconds() / 3600
         embed.set_footer(
             text=f"Learning v2 • {self.total_sessions} Sessions • {uptime_hours:.1f}h Uptime{kb_info}"
@@ -1213,13 +1213,13 @@ Liefer konkrete Hinweise für Stabilität, Wartbarkeit oder Security (keine Flos
             if not channel:
                 return
 
-            uptime = datetime.utcnow() - self.start_time
+            uptime = datetime.now(timezone.utc) - self.start_time
             uptime_hours = uptime.total_seconds() / 3600
 
             embed = discord.Embed(
                 title="📊 AI Learning — Status-Report",
                 color=0x00FF00,
-                timestamp=datetime.utcnow()
+                timestamp=datetime.now(timezone.utc)
             )
 
             # Knowledge DB Statistiken
@@ -1382,7 +1382,7 @@ Liefer konkrete Hinweise für Stabilität, Wartbarkeit oder Security (keine Flos
             embed = discord.Embed(
                 title=f"🔬 Wissens-Synthese — {total} neue Patterns",
                 color=0x9B59B6,
-                timestamp=datetime.utcnow()
+                timestamp=datetime.now(timezone.utc)
             )
 
             # Was wurde extrahiert

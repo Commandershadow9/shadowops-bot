@@ -9,7 +9,7 @@ import hmac
 import hashlib
 import json
 from typing import Dict, Optional
-from datetime import datetime
+from datetime import datetime, timezone
 from aiohttp import web
 import discord
 
@@ -225,7 +225,7 @@ class GuildScoutAlertsHandler:
             title=title,
             description=description,
             color=color,
-            timestamp=datetime.utcnow()
+            timestamp=datetime.now(timezone.utc)
         )
 
         # Add metadata fields
@@ -246,7 +246,7 @@ class GuildScoutAlertsHandler:
             title=title,
             description=description,
             color=discord.Color.red(),
-            timestamp=datetime.utcnow()
+            timestamp=datetime.now(timezone.utc)
         )
         embed.set_footer(text="GuildScout Error")
         return embed
@@ -259,7 +259,7 @@ class GuildScoutAlertsHandler:
             title=title,
             description=description,
             color=color,
-            timestamp=datetime.utcnow()
+            timestamp=datetime.now(timezone.utc)
         )
         embed.set_footer(text="GuildScout Health Monitor")
         return embed
@@ -278,7 +278,7 @@ class GuildScoutAlertsHandler:
             title=title,
             description=description,
             color=color,
-            timestamp=datetime.utcnow()
+            timestamp=datetime.now(timezone.utc)
         )
         embed.set_footer(text="GuildScout Alert")
         return embed

@@ -58,7 +58,7 @@ class QueueItem:
     event: Dict[str, Any]
     callback: Callable
     priority: int
-    created_at: datetime = field(default_factory=datetime.utcnow)
+    created_at: datetime = field(default_factory=lambda: datetime.now(timezone.utc))
     result: Optional[Dict] = None
 
     @property
