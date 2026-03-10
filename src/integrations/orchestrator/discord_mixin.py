@@ -56,7 +56,7 @@ class DiscordUIMixin:
                     message = await channel.fetch_message(batch.status_message_id)
                     await message.edit(embed=embed)
                     logger.debug(f"📝 Discord-Status updated (Message ID: {batch.status_message_id})")
-                except:
+                except Exception:
                     # Message not found, send new one
                     message = await channel.send(embed=embed)
                     batch.status_message_id = message.id

@@ -99,6 +99,8 @@ class TestPushEventHandling:
         integration = GitHubIntegration(mock_bot, enabled_config)
         integration._trigger_deployment = AsyncMock()
         integration._send_push_notification = AsyncMock()
+        # Dedup-Logik mocken — Test darf nicht von persistentem State abhängen
+        integration._reserve_commit_processing = Mock(return_value=True)
 
         payload = {
             'repository': {
@@ -124,6 +126,8 @@ class TestPushEventHandling:
         integration = GitHubIntegration(mock_bot, enabled_config)
         integration._trigger_deployment = AsyncMock()
         integration._send_push_notification = AsyncMock()
+        # Dedup-Logik mocken — Test darf nicht von persistentem State abhängen
+        integration._reserve_commit_processing = Mock(return_value=True)
 
         payload = {
             'repository': {

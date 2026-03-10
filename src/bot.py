@@ -1053,7 +1053,7 @@ class ShadowOpsBot(commands.Bot):
             try:
                 stats = self.fail2ban.get_jail_stats()
                 fail2ban_bans_today = sum(s.get('currently_banned', 0) for s in stats.values())
-            except:
+            except Exception:
                 fail2ban_ok = False
 
             crowdsec_ok = True
@@ -1062,7 +1062,7 @@ class ShadowOpsBot(commands.Bot):
                 crowdsec_ok = self.crowdsec.is_running()
                 decisions = self.crowdsec.get_active_decisions(limit=100)
                 crowdsec_decisions = len(decisions)
-            except:
+            except Exception:
                 crowdsec_ok = False
 
             docker_ok = True
@@ -1073,7 +1073,7 @@ class ShadowOpsBot(commands.Bot):
                 if results:
                     docker_last_scan = results.get('date', 'Unbekannt')
                     docker_vulnerabilities = results.get('critical', 0)
-            except:
+            except Exception:
                 docker_ok = False
 
             aide_ok = True
@@ -1081,7 +1081,7 @@ class ShadowOpsBot(commands.Bot):
             try:
                 aide_ok = self.aide.is_timer_active()
                 aide_last_check = self.aide.get_last_check_date()
-            except:
+            except Exception:
                 aide_ok = False
 
             # Erstelle Health-Check Report
