@@ -1,5 +1,7 @@
 """
 Discord notification methods for GitHubIntegration.
+
+v2: Dual-Format (Discord kurz + Web ausführlich), Batching, Stats, Feedback-Buttons
 """
 
 import logging
@@ -33,7 +35,30 @@ class NotificationsMixin:
         if not project_config:
             project_config = self.config.projects.get(repo_name, {})
 
-        project_color = project_config.get('color', 0x3498DB) # Default blue
+        project_color = project_config.get('color', 0x3498DB)  # Default blue
+        patch_config = project_config.get('patch_notes', {})
+        language = patch_config.get('language', 'de')
+
+        # === BATCHING CHECK ===
+        if hasattr(self, 'patch_notes_batcher') and self.patch_notes_batcher:
+            if self.patch_notes_batcher.should_batch(commits, repo_name):
+                result = self.patch_notes_batcher.add_commits(repo_name, commits)
+                self.logger.info(
+                    f"📦 Commits für {repo_name} gesammelt: "
+                    f"{result['total_pending']} ausstehend (Ready: {result['ready']})"
+                )
+
+                if result['ready']:
+                    # Batch ist voll — alle gesammelten Commits freigeben
+                    all_commits = self.patch_notes_batcher.release_batch(repo_name)
+                    if all_commits:
+                        self.logger.info(f"🚀 Batch-Release: {len(all_commits)} gesammelte Commits")
+                        commits = all_commits
+                    # Weiter mit normaler Verarbeitung
+                else:
+                    # Noch nicht genug — nur interne Notification, keine Patch Notes
+                    await self._send_internal_only(repo_name, repo_url, branch, pusher, commits, project_color)
+                    return
 
         # === INTERNAL EMBED (Technical, for developers) - DEUTSCH ===
         commits_url = f"{repo_url}/commits/{branch}" if repo_url else None
@@ -51,7 +76,7 @@ class NotificationsMixin:
         for commit in commits:
             sha = commit['id'][:7]
             author = commit['author']['name']
-            message = commit['message'].split('\n')[0] # First line of commit message
+            message = commit['message'].split('\n')[0]  # First line of commit message
             url = commit['url']
             if url:
                 commit_details.append(f"[`{sha}`]({url}) {message} - *{author}*")
@@ -63,76 +88,7 @@ class NotificationsMixin:
         else:
             internal_embed.description = "Keine neuen Commits in diesem Push."
 
-        # === CUSTOMER EMBED (User-friendly, categorized) - Language from config ===
-        patch_config = project_config.get('patch_notes', {})
-        language = patch_config.get('language', 'de')  # Default: Deutsch
-
-        # Language-specific texts
-        if language == 'en':
-            title_text = f"✨ Updates for {repo_name}"
-            footer_text = f"{len(commits)} commit(s) by {pusher}"
-            feature_header = "**🆕 New Features:**"
-            bugfix_header = "**🐛 Bug Fixes:**"
-            improvement_header = "**⚡ Improvements:**"
-            other_header = "**📝 Other Changes:**"
-            default_desc = "Various updates and improvements"
-        else:  # Deutsch
-            title_text = f"✨ Updates für {repo_name}"
-            footer_text = f"{len(commits)} Commit(s) von {pusher}"
-            feature_header = "**🆕 Neue Features:**"
-            bugfix_header = "**🐛 Bugfixes:**"
-            improvement_header = "**⚡ Verbesserungen:**"
-            other_header = "**📝 Weitere Änderungen:**"
-            default_desc = "Diverse Updates und Verbesserungen"
-
-        customer_embed = discord.Embed(
-            title=title_text,
-            url=commits_url,
-            color=project_color,
-            timestamp=datetime.now(timezone.utc)
-        )
-
-        # Categorize commits by type
-        features = []
-        fixes = []
-        improvements = []
-        other = []
-
-        for commit in commits:
-            message = commit['message'].split('\n')[0]
-            message_lower = message.lower()
-
-            # Simple categorization based on commit message
-            if message_lower.startswith('feat') or 'feature' in message_lower or 'add' in message_lower:
-                features.append(self._format_user_friendly_commit(message))
-            elif message_lower.startswith('fix') or 'bug' in message_lower or 'issue' in message_lower:
-                fixes.append(self._format_user_friendly_commit(message))
-            elif message_lower.startswith('improve') or 'optimize' in message_lower or 'enhance' in message_lower or 'update' in message_lower:
-                improvements.append(self._format_user_friendly_commit(message))
-            else:
-                other.append(self._format_user_friendly_commit(message))
-
-        # Build customer-friendly description
-        description_parts = []
-
-        if features:
-            description_parts.append(feature_header + "\n" + "\n".join(f"• {f}" for f in features))
-
-        if fixes:
-            description_parts.append(bugfix_header + "\n" + "\n".join(f"• {f}" for f in fixes))
-
-        if improvements:
-            description_parts.append(improvement_header + "\n" + "\n".join(f"• {i}" for i in improvements))
-
-        if other:
-            description_parts.append(other_header + "\n" + "\n".join(f"• {o}" for o in other))
-
-        customer_embed.description = "\n\n".join(description_parts) if description_parts else default_desc
-
-        customer_embed.set_footer(text=footer_text)
-
         # === ADVANCED PATCH NOTES SYSTEM (if available) ===
-        # Try advanced system first (CHANGELOG-based, review system)
         if self.patch_notes_manager and patch_config.get('use_advanced_system', False):
             try:
                 self.logger.info(f"🎯 Using advanced patch notes system for {repo_name}")
@@ -142,14 +98,12 @@ class NotificationsMixin:
                     commits=commits,
                     repo_name=repo_name
                 )
-                # Advanced system handles everything - skip old logic
                 return
             except Exception as e:
                 self.logger.warning(f"⚠️ Advanced system failed, falling back to legacy: {e}", exc_info=True)
 
-        # === AI-GENERATED PATCH NOTES (legacy system) ===
+        # === AI-GENERATED PATCH NOTES ===
         use_ai = patch_config.get('use_ai', False)
-        language = patch_config.get('language', 'de')
 
         ai_description = None
         if use_ai and self.ai_service:
@@ -157,113 +111,316 @@ class NotificationsMixin:
                 self.logger.info(f"🤖 Generiere KI Patch Notes für {repo_name} (Sprache: {language})...")
                 ai_description = await self._generate_ai_patch_notes(commits, language, repo_name, project_config)
                 if ai_description:
-                    customer_embed.description = ai_description
                     self.logger.info(f"✅ KI Patch Notes erfolgreich generiert")
             except Exception as e:
                 self.logger.warning(f"⚠️ KI Patch Notes Generierung fehlgeschlagen, verwende Fallback: {e}")
-                # Keep the categorized version as fallback
 
-        if not ai_description:
+        # === BUILD CUSTOMER EMBED (Dual-Format: Discord kurz) ===
+        customer_embed = self._build_customer_embed(
+            repo_name, commits_url, project_color, commits, language,
+            ai_description, project_config
+        )
+
+        # === WEB EXPORT (SEO-optimiert, ausführlich) ===
+        await self._export_web_changelog(repo_name, commits, ai_description, project_config, language)
+
+        # 1. Send to internal channel (technical embed)
+        await self._send_to_internal_channel(internal_embed, repo_name)
+
+        # 2. Send to customer-facing channels with feedback collection
+        version = self._extract_version_from_commits(commits)
+        await self._send_to_customer_channels(customer_embed, repo_name, project_config, version)
+
+        # 3. Send to external notification channels (customer servers) WITH feedback collection
+        await self._send_external_git_notifications(repo_name, customer_embed, project_config, version)
+
+    def _build_customer_embed(self, repo_name: str, commits_url: str,
+                               project_color: int, commits: list, language: str,
+                               ai_description: Optional[str],
+                               project_config: Dict) -> discord.Embed:
+        """Baue das Customer-Embed (Kurzformat für Discord)."""
+        patch_config = project_config.get('patch_notes', {})
+
+        # Language-specific texts
+        if language == 'en':
+            title_text = f"✨ Updates for {repo_name}"
+        else:
+            title_text = f"✨ Updates für {repo_name}"
+
+        customer_embed = discord.Embed(
+            title=title_text,
+            url=commits_url,
+            color=project_color,
+            timestamp=datetime.now(timezone.utc)
+        )
+
+        if ai_description:
+            customer_embed.description = ai_description
+        else:
+            # Fallback: Changelog oder Kategorisierung
             changelog_fallback = self._build_changelog_fallback_description(project_config, language)
             if changelog_fallback:
                 customer_embed.description = changelog_fallback
+            else:
+                customer_embed.description = self._categorize_commits_text(commits, language)
 
-        # 1. Send to internal channel (technical embed)
-        internal_channel = self.bot.get_channel(self.deployment_channel_id)
-        if internal_channel:
-            try:
-                # Check if description is too long and split if needed
-                description_chunks = self._split_embed_description(internal_embed.description or "")
+        # Web-Link hinzufügen (falls konfiguriert)
+        changelog_url = patch_config.get('changelog_url', '')
+        if changelog_url:
+            if language == 'de':
+                customer_embed.add_field(
+                    name="📖 Alle Details",
+                    value=f"[Vollständige Patch Notes auf der Webseite]({changelog_url})",
+                    inline=False
+                )
+            else:
+                customer_embed.add_field(
+                    name="📖 Full Details",
+                    value=f"[Complete patch notes on the website]({changelog_url})",
+                    inline=False
+                )
 
-                if len(description_chunks) <= 1:
-                    # Single embed - send as is
-                    await internal_channel.send(embed=internal_embed)
-                    self.logger.info(f"📢 Technische Patch Notes für {repo_name} im internen Channel gesendet.")
-                else:
-                    # Multiple embeds needed - split across messages
-                    for i, chunk in enumerate(description_chunks):
-                        embed_copy = discord.Embed(
-                            title=f"{internal_embed.title} (Teil {i+1}/{len(description_chunks)})" if i > 0 else internal_embed.title,
-                            url=internal_embed.url,
-                            color=internal_embed.color,
-                            description=chunk,
-                            timestamp=internal_embed.timestamp
-                        )
-                        if i == 0:
-                            embed_copy.set_author(name=internal_embed.author.name)
-                            # Copy fields for first embed
-                            for field in internal_embed.fields:
-                                embed_copy.add_field(name=field.name, value=field.value, inline=field.inline)
-                        await internal_channel.send(embed=embed_copy)
+        # Footer mit Stats
+        footer_parts = [f"{len(commits)} Commit(s)"]
 
-                    self.logger.info(f"📢 Technische Patch Notes für {repo_name} im internen Channel gesendet ({len(description_chunks)} Teile).")
-            except Exception as e:
-                self.logger.error(f"❌ Fehler beim Senden der Push-Benachrichtigung im internen Channel: {e}")
+        # Git stats aus dem letzten AI-Aufruf lesen
+        git_stats = getattr(self, '_last_git_stats', None)
+        if git_stats:
+            files = git_stats.get('files_changed', 0)
+            if files > 0:
+                footer_parts.append(f"{files} Dateien")
+            added = git_stats.get('lines_added', 0)
+            removed = git_stats.get('lines_removed', 0)
+            if added > 0:
+                footer_parts.append(f"+{added}/-{removed}")
 
-        # 2. Send to customer-facing channel (user-friendly embed)
-        # Extract version from commits for feedback tracking (do this BEFORE sending messages)
-        version = None
+        customer_embed.set_footer(text=" · ".join(footer_parts))
+
+        return customer_embed
+
+    def _categorize_commits_text(self, commits: list, language: str) -> str:
+        """Kategorisiere Commits als Fallback-Text."""
+        if language == 'en':
+            feature_header = "**🆕 New Features:**"
+            bugfix_header = "**🐛 Bug Fixes:**"
+            improvement_header = "**⚡ Improvements:**"
+            other_header = "**📝 Other Changes:**"
+            default_desc = "Various updates and improvements"
+        else:
+            feature_header = "**🆕 Neue Features:**"
+            bugfix_header = "**🐛 Bugfixes:**"
+            improvement_header = "**⚡ Verbesserungen:**"
+            other_header = "**📝 Weitere Änderungen:**"
+            default_desc = "Diverse Updates und Verbesserungen"
+
+        features = []
+        fixes = []
+        improvements = []
+        other = []
+
+        for commit in commits:
+            message = commit['message'].split('\n')[0]
+            message_lower = message.lower()
+
+            if message_lower.startswith('feat') or 'feature' in message_lower or 'add' in message_lower:
+                features.append(self._format_user_friendly_commit(message))
+            elif message_lower.startswith('fix') or 'bug' in message_lower or 'issue' in message_lower:
+                fixes.append(self._format_user_friendly_commit(message))
+            elif message_lower.startswith('improve') or 'optimize' in message_lower or 'enhance' in message_lower or 'update' in message_lower:
+                improvements.append(self._format_user_friendly_commit(message))
+            else:
+                other.append(self._format_user_friendly_commit(message))
+
+        description_parts = []
+
+        if features:
+            description_parts.append(feature_header + "\n" + "\n".join(f"• {f}" for f in features))
+        if fixes:
+            description_parts.append(bugfix_header + "\n" + "\n".join(f"• {f}" for f in fixes))
+        if improvements:
+            description_parts.append(improvement_header + "\n" + "\n".join(f"• {i}" for i in improvements))
+        if other:
+            description_parts.append(other_header + "\n" + "\n".join(f"• {o}" for o in other))
+
+        return "\n\n".join(description_parts) if description_parts else default_desc
+
+    def _extract_version_from_commits(self, commits: list) -> Optional[str]:
+        """Extrahiere Version aus Commit-Messages."""
         for commit in commits:
             msg = commit.get('message', '')
             match = re.search(r'v?(?:ersion|elease)?\s*([0-9]+\.[0-9]+\.[0-9]+)', msg, re.IGNORECASE)
             if match:
-                version = match.group(1)
-                self.logger.info(f"📌 Version detected from commits: v{version}")
-                break
+                return match.group(1)
+        return None
 
-        customer_channel_id = project_config.get('update_channel_id')
-        if customer_channel_id:
-            customer_channel = self.bot.get_channel(customer_channel_id)
-            if customer_channel:
-                try:
-                    # Check if description is too long and split if needed
-                    description_chunks = self._split_embed_description(customer_embed.description or "")
+    async def _export_web_changelog(self, repo_name: str, commits: list,
+                                     ai_description: Optional[str],
+                                     project_config: Dict, language: str) -> None:
+        """Exportiere Patch Notes als Web-Changelog (SEO-optimiert)."""
+        web_exporter = getattr(self, 'web_exporter', None)
+        if not web_exporter:
+            return
 
-                    sent_message = None
+        version = self._extract_version_from_commits(commits)
+        if not version:
+            return
 
-                    if len(description_chunks) <= 1:
-                        # Single embed - send as is
-                        sent_message = await customer_channel.send(embed=customer_embed)
-                        self.logger.info(f"📢 Benutzerfreundliche Patch Notes für {repo_name} im Kunden-Channel {customer_channel_id} gesendet.")
-                    else:
-                        # Multiple embeds needed - split across messages
-                        for i, chunk in enumerate(description_chunks):
-                            embed_copy = discord.Embed(
-                                title=f"{customer_embed.title} (Teil {i+1}/{len(description_chunks)})" if i > 0 else customer_embed.title,
-                                url=customer_embed.url,
-                                color=customer_embed.color,
-                                description=chunk,
-                                timestamp=customer_embed.timestamp
-                            )
-                            if i == len(description_chunks) - 1:  # Add footer only to last embed
-                                embed_copy.set_footer(text=customer_embed.footer.text)
-                            message = await customer_channel.send(embed=embed_copy)
+        git_stats = getattr(self, '_last_git_stats', None) or {}
 
-                            # Track the first message for feedback (main content)
-                            if i == 0:
-                                sent_message = message
-
-                        self.logger.info(f"📢 Benutzerfreundliche Patch Notes für {repo_name} im Kunden-Channel {customer_channel_id} gesendet ({len(description_chunks)} Teile).")
-
-                    # ACTIVATE FEEDBACK COLLECTION for internal channel message
-                    if sent_message and self.feedback_collector and version:
-                        try:
-                            await self.feedback_collector.track_patch_notes_message(
-                                message=sent_message,
-                                project=repo_name,
-                                version=version
-                            )
-                            self.logger.info(f"👍 Feedback collection activated for {repo_name} v{version} (internal channel)")
-                        except Exception as e:
-                            self.logger.warning(f"⚠️ Could not activate feedback collection for internal channel: {e}")
-
-                except Exception as e:
-                    self.logger.error(f"❌ Fehler beim Senden der Push-Benachrichtigung im Kunden-Channel {customer_channel_id}: {e}")
+        # TL;DR aus AI-Description extrahieren
+        tldr = ""
+        content = ai_description or ""
+        if content:
+            # TL;DR aus dem Text extrahieren (nach "TL;DR:" suchen)
+            tldr_match = re.search(r'\*\*TL;DR:\*\*\s*(.+?)(?:\n|$)', content)
+            if tldr_match:
+                tldr = tldr_match.group(1).strip()
             else:
-                self.logger.warning(f"⚠️ Kunden-Update Channel {customer_channel_id} für {repo_name} nicht gefunden.")
+                # Ersten Satz als TL;DR
+                first_line = content.split('\n')[0].strip()
+                if first_line and not first_line.startswith('**'):
+                    tldr = first_line
+                else:
+                    tldr = f"{repo_name} {version} Update"
 
-        # 3. Send to external notification channels (customer servers) WITH feedback collection
-        await self._send_external_git_notifications(repo_name, customer_embed, project_config, version)
+        title = f"{repo_name} {version}"
+
+        try:
+            web_exporter.export(
+                project=repo_name,
+                version=version,
+                title=title,
+                tldr=tldr,
+                content=content,
+                stats=git_stats,
+                language=language,
+            )
+            self.logger.info(f"📝 Web-Changelog exportiert: {repo_name} v{version}")
+        except Exception as e:
+            self.logger.warning(f"⚠️ Web-Export fehlgeschlagen: {e}")
+
+    async def _send_to_internal_channel(self, embed: discord.Embed, repo_name: str) -> None:
+        """Sende technische Notification an internen Channel."""
+        internal_channel = self.bot.get_channel(self.deployment_channel_id)
+        if not internal_channel:
+            return
+
+        try:
+            description_chunks = self._split_embed_description(embed.description or "")
+
+            if len(description_chunks) <= 1:
+                await internal_channel.send(embed=embed)
+            else:
+                for i, chunk in enumerate(description_chunks):
+                    embed_copy = discord.Embed(
+                        title=f"{embed.title} (Teil {i+1}/{len(description_chunks)})" if i > 0 else embed.title,
+                        url=embed.url,
+                        color=embed.color,
+                        description=chunk,
+                        timestamp=embed.timestamp
+                    )
+                    if i == 0:
+                        embed_copy.set_author(name=embed.author.name)
+                        for field in embed.fields:
+                            embed_copy.add_field(name=field.name, value=field.value, inline=field.inline)
+                    await internal_channel.send(embed=embed_copy)
+
+            self.logger.info(f"📢 Technische Patch Notes für {repo_name} im internen Channel gesendet.")
+        except Exception as e:
+            self.logger.error(f"❌ Fehler beim Senden der Push-Benachrichtigung: {e}")
+
+    async def _send_to_customer_channels(self, embed: discord.Embed, repo_name: str,
+                                          project_config: Dict, version: Optional[str]) -> None:
+        """Sende Patch Notes an Customer-Channel mit Feedback-Collection."""
+        customer_channel_id = project_config.get('update_channel_id')
+        if not customer_channel_id:
+            return
+
+        customer_channel = self.bot.get_channel(customer_channel_id)
+        if not customer_channel:
+            self.logger.warning(f"⚠️ Kunden-Update Channel {customer_channel_id} für {repo_name} nicht gefunden.")
+            return
+
+        try:
+            description_chunks = self._split_embed_description(embed.description or "")
+            sent_message = None
+
+            if len(description_chunks) <= 1:
+                sent_message = await customer_channel.send(embed=embed)
+            else:
+                for i, chunk in enumerate(description_chunks):
+                    embed_copy = discord.Embed(
+                        title=f"{embed.title} (Teil {i+1}/{len(description_chunks)})" if i > 0 else embed.title,
+                        url=embed.url,
+                        color=embed.color,
+                        description=chunk,
+                        timestamp=embed.timestamp
+                    )
+                    if i == len(description_chunks) - 1 and embed.footer:
+                        embed_copy.set_footer(text=embed.footer.text)
+                    message = await customer_channel.send(embed=embed_copy)
+                    if i == 0:
+                        sent_message = message
+
+            self.logger.info(f"📢 Patch Notes für {repo_name} im Kunden-Channel gesendet.")
+
+            # Feedback-Collection aktivieren
+            if sent_message and self.feedback_collector and version:
+                try:
+                    await self.feedback_collector.track_patch_notes_message(
+                        message=sent_message,
+                        project=repo_name,
+                        version=version,
+                        add_feedback_button=True,
+                    )
+                    self.logger.info(f"👍 Feedback collection aktiviert für {repo_name} v{version}")
+                except Exception as e:
+                    self.logger.warning(f"⚠️ Feedback collection fehlgeschlagen: {e}")
+
+        except Exception as e:
+            self.logger.error(f"❌ Fehler beim Senden im Kunden-Channel: {e}")
+
+    async def _send_internal_only(self, repo_name: str, repo_url: str, branch: str,
+                                   pusher: str, commits: list, color: int) -> None:
+        """Sende nur interne Notification (wenn Commits gebatcht werden)."""
+        internal_channel = self.bot.get_channel(self.deployment_channel_id)
+        if not internal_channel:
+            return
+
+        commits_url = f"{repo_url}/commits/{branch}" if repo_url else None
+
+        embed = discord.Embed(
+            title=f"📦 Gesammelt: {repo_name}",
+            url=commits_url,
+            color=color,
+            timestamp=datetime.now(timezone.utc),
+            description=(
+                f"**{len(commits)}** Commit(s) von **{pusher}** gesammelt.\n"
+                f"Wird mit dem nächsten Release veröffentlicht."
+            )
+        )
+        embed.add_field(name="Branch", value=branch, inline=True)
+
+        # Zeige Batch-Status
+        if hasattr(self, 'patch_notes_batcher') and self.patch_notes_batcher:
+            summary = self.patch_notes_batcher.get_pending_summary()
+            if repo_name in summary:
+                info = summary[repo_name]
+                embed.add_field(
+                    name="📊 Batch",
+                    value=f"{info['count']} ausstehend (Release bei {self.patch_notes_batcher.batch_threshold})",
+                    inline=True
+                )
+
+        for commit in commits[:5]:
+            # Zeige Commit-Titel im Embed
+            pass  # Wird über description schon abgedeckt
+
+        try:
+            await internal_channel.send(embed=embed)
+            self.logger.info(f"📦 Batch-Notification für {repo_name} gesendet")
+        except Exception as e:
+            self.logger.error(f"❌ Fehler bei Batch-Notification: {e}")
 
     async def _send_pr_notification(
         self, action: str, repo: str, pr_number: int, title: str,
@@ -375,7 +532,6 @@ class NotificationsMixin:
         embed.add_field(name="Branch", value=f"`{branch}`", inline=True)
         embed.add_field(name="Commit", value=f"`{sha}`", inline=True)
 
-        # Truncate error if too long
         if len(error) > 500:
             error = error[:497] + "..."
         embed.add_field(name="Error", value=f"```{error}```", inline=False)
@@ -404,7 +560,6 @@ class NotificationsMixin:
         embed.add_field(name="Branch", value=f"`{branch}`", inline=True)
         embed.add_field(name="Commit", value=f"`{sha}`", inline=True)
 
-        # Truncate error if too long
         if len(error) > 500:
             error = error[:497] + "..."
         embed.add_field(name="Exception", value=f"```{error}```", inline=False)
@@ -416,14 +571,7 @@ class NotificationsMixin:
         """
         Send Git push notifications to external servers (customer guilds)
         AND activate feedback collection for AI learning.
-
-        Args:
-            repo_name: Repository name
-            embed: The embed to send (customer-friendly patch notes)
-            project_config: Project configuration dictionary
-            version: Version number (for feedback tracking)
         """
-        # Get external notifications config
         external_notifs = project_config.get('external_notifications', [])
         if not external_notifs:
             return
@@ -432,12 +580,10 @@ class NotificationsMixin:
             if not notif_config.get('enabled', False):
                 continue
 
-            # Check if git_push notifications are enabled
             notify_on = notif_config.get('notify_on', {})
             if not notify_on.get('git_push', True):
                 continue
 
-            # Get channel
             channel_id = notif_config.get('channel_id')
             if not channel_id:
                 continue
@@ -448,17 +594,12 @@ class NotificationsMixin:
                     self.logger.warning(f"⚠️ External channel {channel_id} not found for {repo_name}")
                     continue
 
-                # Check if description is too long and split if needed
                 description_chunks = self._split_embed_description(embed.description or "")
-
                 sent_message = None
 
                 if len(description_chunks) <= 1:
-                    # Single embed - send as is
                     sent_message = await channel.send(embed=embed)
-                    self.logger.info(f"📤 Sent git update for {repo_name} to external server")
                 else:
-                    # Multiple embeds needed - split across messages
                     for i, chunk in enumerate(description_chunks):
                         embed_copy = discord.Embed(
                             title=f"{embed.title} (Teil {i+1}/{len(description_chunks)})" if i > 0 else embed.title,
@@ -467,25 +608,22 @@ class NotificationsMixin:
                             description=chunk,
                             timestamp=embed.timestamp
                         )
-                        if i == len(description_chunks) - 1:  # Add footer only to last embed
-                            if embed.footer:
-                                embed_copy.set_footer(text=embed.footer.text)
-
+                        if i == len(description_chunks) - 1 and embed.footer:
+                            embed_copy.set_footer(text=embed.footer.text)
                         message = await channel.send(embed=embed_copy)
-
-                        # Track the first message for feedback (main content)
                         if i == 0:
                             sent_message = message
 
-                    self.logger.info(f"📤 Sent git update for {repo_name} to external server ({len(description_chunks)} parts)")
+                self.logger.info(f"📤 Sent git update for {repo_name} to external server")
 
-                # ACTIVATE FEEDBACK COLLECTION for this message
+                # ACTIVATE FEEDBACK COLLECTION
                 if sent_message and self.feedback_collector and version:
                     try:
                         await self.feedback_collector.track_patch_notes_message(
                             message=sent_message,
                             project=repo_name,
-                            version=version
+                            version=version,
+                            add_feedback_button=True,
                         )
                         self.logger.info(f"👍 Feedback collection activated for {repo_name} v{version}")
                     except Exception as e:

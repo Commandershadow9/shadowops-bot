@@ -111,6 +111,14 @@ class PromptABTesting:
                 created_at=datetime.now(timezone.utc).isoformat(),
                 active=True
             ),
+            PromptVariant(
+                id='community_v1',
+                name='Community-Friendly',
+                description='TL;DR + Benefit-Focus + Stats — optimiert für Community und SEO',
+                template=self._get_community_template('de'),  # Default German
+                created_at=datetime.now(timezone.utc).isoformat(),
+                active=True
+            ),
         ]
 
         for variant in variants:
@@ -272,6 +280,81 @@ FORMAT:
 **🆕 Neue Features:**
 • **Feature Name**: [Vorteil]. Das bedeutet [Nutzerauswirkung]. Technisch: [wie es funktioniert]"""
 
+    def _get_community_template(self, language: str = 'de') -> str:
+        """Get community-friendly template with TL;DR and stats.
+
+        Args:
+            language: 'de' for German, 'en' for English
+        """
+        if language == 'en':
+            return """You are a community manager writing patch notes for {project}.
+Your audience is NON-TECHNICAL end users who want to understand what improved.
+
+# CHANGELOG INFORMATION
+{changelog}
+
+# COMMIT MESSAGES
+{commits}
+
+{stats_section}
+
+INSTRUCTIONS:
+1. START with a TL;DR (1-2 sentences summarizing the most important change)
+2. List changes by BENEFIT TO USERS, not technical implementation
+3. Use categories: 🆕 New Features, 🐛 Bug Fixes, ⚡ Improvements
+4. For each change: What is it? Why does it matter? What does it mean for me?
+5. Keep it friendly and conversational — no jargon
+6. Maximum 3500 characters (Discord)
+
+FORMAT:
+> **TL;DR:** [One sentence summary of the biggest change]
+
+**🆕 New Features:**
+• **Feature Name**: What it does and why you'll love it
+  - Concrete benefit for users
+
+**🐛 Bug Fixes:**
+• **Fix Name**: What was broken and how it's fixed now
+
+**⚡ Improvements:**
+• **Improvement**: How the experience got better
+
+{stats_line}"""
+        else:  # German
+            return """Du bist ein Community Manager und schreibst Patch Notes für {project}.
+Deine Zielgruppe sind NICHT-TECHNISCHE Endnutzer die verstehen wollen, was sich verbessert hat.
+
+# CHANGELOG INFORMATIONEN
+{changelog}
+
+# COMMIT NACHRICHTEN
+{commits}
+
+{stats_section}
+
+ANWEISUNGEN:
+1. BEGINNE mit einem TL;DR (1-2 Sätze die die wichtigste Änderung zusammenfassen)
+2. Liste Änderungen nach NUTZEN FÜR USER, nicht technischer Umsetzung
+3. Verwende Kategorien: 🆕 Neue Features, 🐛 Bugfixes, ⚡ Verbesserungen
+4. Pro Änderung: Was ist es? Warum ist es wichtig? Was bedeutet das für mich?
+5. Halte es freundlich und verständlich — kein Fachjargon
+6. Maximum 3500 Zeichen (Discord)
+
+FORMAT:
+> **TL;DR:** [Ein Satz der die größte Änderung zusammenfasst]
+
+**🆕 Neue Features:**
+• **Feature-Name**: Was es macht und warum du es lieben wirst
+  - Konkreter Vorteil für Nutzer
+
+**🐛 Bugfixes:**
+• **Fix-Name**: Was kaputt war und wie es jetzt behoben ist
+
+**⚡ Verbesserungen:**
+• **Verbesserung**: Wie das Erlebnis besser wurde
+
+{stats_line}"""
+
     def get_variant_template(self, variant_id: str, language: str = 'de') -> str:
         """Get the template for a specific variant in the requested language.
 
@@ -288,6 +371,8 @@ FORMAT:
             return self._get_concise_template(language)
         elif variant_id == 'benefit_focused_v1':
             return self._get_benefit_focused_template(language)
+        elif variant_id == 'community_v1':
+            return self._get_community_template(language)
         else:
             # For custom variants, return stored template (may not have language support)
             variant = self.variants.get(variant_id)

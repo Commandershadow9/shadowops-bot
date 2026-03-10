@@ -72,7 +72,9 @@
 | `customer_server_setup.py` | Auto-Setup von Kunden-Discord-Servern |
 | `guildscout_alerts.py` | GuildScout Alert-Forwarding (Port 9091) |
 | `server_assistant.py` | Server Assistant (ersetzt Legacy Learning System) |
-| `patch_notes_manager.py` | AI-generierte Patch Notes |
+| `patch_notes_manager.py` | AI-generierte Patch Notes (v2: Dual-Output, Web-Export) |
+| `patch_notes_batcher.py` | Sammelt kleine Patches, gibt sie gebuendelt frei |
+| `patch_notes_web_exporter.py` | SEO-optimierter Web-Export (JSON + Markdown) |
 | `knowledge_base.py` | SQLite Knowledge Database |
 | `log_analyzer.py` | Log-Analyse und -Auswertung |
 | `code_analyzer.py` | Code-Analyse fuer Fix-Strategien |
@@ -136,6 +138,7 @@
 | `update-config.sh` | Config-Migration bei Updates |
 | `get_bot_invite.py` | Discord Bot Invite-URL generieren |
 | `test_alerts.py` | Test-Plan fuer Discord Alert Channels |
+| `run_tests_with_coverage.sh` | Tests mit Coverage ausfuehren, Ergebnisse nach data/test_results.json |
 
 ### Dokumentation
 | Pfad | Inhalt |

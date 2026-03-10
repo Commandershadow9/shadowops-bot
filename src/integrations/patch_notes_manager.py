@@ -1,15 +1,19 @@
 """
-Advanced Patch Notes Management System.
+Advanced Patch Notes Management System v2.
 
 Features:
-- CHANGELOG-based AI generation
+- CHANGELOG-based AI generation with community_v1 variant
 - Two-pass review system with Discord approval
 - Automatic Major/Minor release detection
-- Fallback to manual scripts
+- Dual output: Discord (kurz) + Web (ausführlich, SEO)
+- Batching kleiner Patches
+- Text-Feedback via Discord Modal
+- Git stats + CI stats integration
 """
 
 import asyncio
 import logging
+import re
 import discord
 from discord import ui
 from datetime import datetime, timedelta, timezone
@@ -76,11 +80,17 @@ class PatchNotesApprovalView(ui.View):
 class PatchNotesManager:
     """
     Manages patch notes generation and posting with review system.
+
+    v2: Dual-Output, Web-Export, Batching, Stats
     """
 
-    def __init__(self, bot: discord.Client, ai_service: AIEngine):
+    def __init__(self, bot: discord.Client, ai_service: AIEngine,
+                 web_exporter=None, batcher=None, feedback_collector=None):
         self.bot = bot
         self.ai_service = ai_service
+        self.web_exporter = web_exporter
+        self.batcher = batcher
+        self.feedback_collector = feedback_collector
         self.pending_approvals: Dict[str, PatchNotesApprovalView] = {}
 
     async def handle_git_push(self, project_name: str, project_config: Dict[str, Any],
@@ -188,18 +198,64 @@ class PatchNotesManager:
 
             if ai_text:
                 # Create embed
+                if language == 'de':
+                    title_text = f"✨ Updates für {project_name}"
+                else:
+                    title_text = f"✨ Updates for {project_name}"
+
                 embed = discord.Embed(
-                    title=f"✨ Updates for {project_name}",
-                    description=f"**Version {version}** 🚀",
+                    title=title_text,
+                    description=ai_text[:4096],
                     color=project_config.get('color', 3447003),
                     timestamp=datetime.now(timezone.utc)
                 )
 
-                # Parse AI response and add as field
-                embed.add_field(name="", value=ai_text[:4096], inline=False)
+                # Web-Link hinzufügen (falls konfiguriert)
+                changelog_url = patch_notes_config.get('changelog_url', '')
+                if changelog_url:
+                    link_text = "Vollständige Patch Notes" if language == 'de' else "Full patch notes"
+                    embed.add_field(
+                        name="📖",
+                        value=f"[{link_text}]({changelog_url})",
+                        inline=False
+                    )
+
+                embed.set_footer(text=f"Version {version} · {len(commits)} Commit(s)")
 
                 # Post directly (no approval for minor releases)
-                await self.post_patch_notes(project_name, embed, project_config)
+                sent_message = await self.post_patch_notes(project_name, embed, project_config)
+
+                # Web-Export
+                if self.web_exporter:
+                    try:
+                        # TL;DR extrahieren
+                        tldr_match = re.search(r'\*\*TL;DR:\*\*\s*(.+?)(?:\n|$)', ai_text)
+                        tldr = tldr_match.group(1).strip() if tldr_match else f"{project_name} {version} Update"
+
+                        self.web_exporter.export(
+                            project=project_name,
+                            version=version,
+                            title=f"{project_name} {version}",
+                            tldr=tldr,
+                            content=ai_text,
+                            stats={'commits': len(commits), 'files_changed': 0,
+                                   'lines_added': 0, 'lines_removed': 0, 'contributors': []},
+                            language=language,
+                        )
+                    except Exception as e:
+                        logger.warning(f"⚠️ Web-Export fehlgeschlagen: {e}")
+
+                # Feedback-Collection aktivieren
+                if sent_message and self.feedback_collector:
+                    try:
+                        await self.feedback_collector.track_patch_notes_message(
+                            message=sent_message,
+                            project=project_name,
+                            version=version,
+                            add_feedback_button=True,
+                        )
+                    except Exception as e:
+                        logger.warning(f"⚠️ Feedback collection fehlgeschlagen: {e}")
 
         except Exception as e:
             logger.error(f"AI generation failed: {e}", exc_info=True)
@@ -320,8 +376,12 @@ Maximum 3900 characters (Discord limit)."""
         logger.info(f"✅ Patch notes draft sent for approval: {project_name} v{version}")
 
     async def post_patch_notes(self, project_name: str, embed: discord.Embed,
-                                project_config: Optional[Dict] = None) -> None:
-        """Post patch notes to external channels."""
+                                project_config: Optional[Dict] = None) -> Optional[discord.Message]:
+        """Post patch notes to external channels.
+
+        Returns:
+            First successfully sent message (for feedback tracking)
+        """
         if project_config is None:
             from src.utils.config import get_config
             config = get_config()
@@ -329,7 +389,9 @@ Maximum 3900 characters (Discord limit)."""
 
         if not project_config:
             logger.error(f"Project config not found: {project_name}")
-            return
+            return None
+
+        first_sent = None
 
         # Get external notification channels
         external_notifications = project_config.get('external_notifications', [])
@@ -355,10 +417,14 @@ Maximum 3900 characters (Discord limit)."""
                 continue
 
             try:
-                await channel.send(embed=embed)
+                sent = await channel.send(embed=embed)
                 logger.info(f"✅ Patch notes posted to {guild.name} - #{channel.name}")
+                if first_sent is None:
+                    first_sent = sent
             except Exception as e:
                 logger.error(f"Failed to post patch notes: {e}", exc_info=True)
+
+        return first_sent
 
     async def _fallback_commit_based(self, project_name: str, project_config: Dict,
                                      commits: list, repo_name: str) -> None:

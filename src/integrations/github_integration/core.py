@@ -116,6 +116,14 @@ class GitHubIntegration(WebhookMixin, PollingMixin, EventHandlersMixin, CIMixin,
         self.prompt_ab_testing = None
         self.prompt_auto_tuner = None
 
+        # Patch Notes v2: Batcher + Web Exporter (will be set by bot)
+        self.patch_notes_batcher = None
+        self.web_exporter = None
+
+        # Temporäre Stats vom letzten AI-Aufruf
+        self._last_git_stats = None
+        self._last_version = None
+
         # Pending webhooks queue (for when bot is not ready yet)
         self.pending_webhooks = []
         self.bot_ready = False

@@ -2,8 +2,10 @@
 AI patch notes generation methods for GitHubIntegration.
 """
 
+import json
 import logging
 import re
+import subprocess
 from pathlib import Path
 from typing import Dict, Optional
 
@@ -13,6 +15,137 @@ logger = logging.getLogger('shadowops')
 
 
 class AIPatchNotesMixin:
+
+    def _collect_git_stats(self, commits: list, project_path: Optional[Path]) -> Dict:
+        """
+        Sammle Git-Statistiken aus Commits und Repository.
+
+        Returns:
+            Dict mit commits, files_changed, lines_added, lines_removed, contributors
+        """
+        stats = {
+            'commits': len(commits),
+            'files_changed': 0,
+            'lines_added': 0,
+            'lines_removed': 0,
+            'contributors': [],
+        }
+
+        # Contributors aus Commits
+        authors = set()
+        for commit in commits:
+            author = commit.get('author', {})
+            name = author.get('name') or author.get('username', '')
+            if name:
+                authors.add(name)
+        stats['contributors'] = sorted(authors)
+
+        # Git diff stats berechnen
+        if project_path and project_path.exists():
+            try:
+                # Ältesten und neuesten Commit-SHA finden
+                shas = []
+                for commit in commits:
+                    sha = commit.get('id') or commit.get('sha') or commit.get('hash')
+                    if sha:
+                        shas.append(sha)
+
+                if len(shas) >= 2:
+                    diff_range = f"{shas[0]}^..{shas[-1]}"
+                elif len(shas) == 1:
+                    diff_range = f"{shas[0]}^..{shas[0]}"
+                else:
+                    diff_range = None
+
+                if diff_range:
+                    result = subprocess.run(
+                        ['git', 'diff', '--shortstat', diff_range],
+                        cwd=str(project_path),
+                        capture_output=True,
+                        text=True,
+                        timeout=10
+                    )
+                    if result.returncode == 0 and result.stdout.strip():
+                        output = result.stdout.strip()
+                        # Parse: "23 files changed, 847 insertions(+), 203 deletions(-)"
+                        files_match = re.search(r'(\d+) files? changed', output)
+                        ins_match = re.search(r'(\d+) insertions?\(\+\)', output)
+                        del_match = re.search(r'(\d+) deletions?\(-\)', output)
+
+                        if files_match:
+                            stats['files_changed'] = int(files_match.group(1))
+                        if ins_match:
+                            stats['lines_added'] = int(ins_match.group(1))
+                        if del_match:
+                            stats['lines_removed'] = int(del_match.group(1))
+            except Exception as e:
+                logger.debug(f"Git stats collection failed: {e}")
+
+        # Test-Ergebnisse laden (falls vorhanden)
+        test_results_path = Path(__file__).parent.parent.parent / 'data' / 'test_results.json'
+        if test_results_path.exists():
+            try:
+                with open(test_results_path, 'r', encoding='utf-8') as f:
+                    test_data = json.load(f)
+                if test_data.get('status') in ('passed', 'failed'):
+                    stats['tests_passed'] = test_data.get('tests_passed', 0)
+                    stats['tests_total'] = test_data.get('tests_total', 0)
+                    coverage = test_data.get('coverage_percent')
+                    if coverage is not None and coverage != 'null':
+                        stats['coverage_percent'] = float(coverage)
+            except Exception as e:
+                logger.debug(f"Test results loading failed: {e}")
+
+        return stats
+
+    def _format_stats_line(self, stats: Dict, language: str = 'de') -> str:
+        """Formatiere Stats als einzeilige Zusammenfassung für Discord."""
+        parts = []
+        commits = stats.get('commits', 0)
+        files = stats.get('files_changed', 0)
+        added = stats.get('lines_added', 0)
+
+        if commits > 0:
+            parts.append(f"{commits} Commits")
+        if files > 0:
+            parts.append(f"{files} Dateien" if language == 'de' else f"{files} files")
+        if added > 0:
+            removed = stats.get('lines_removed', 0)
+            parts.append(f"+{added}/-{removed} Zeilen" if language == 'de' else f"+{added}/-{removed} lines")
+
+        tests_total = stats.get('tests_total')
+        tests_passed = stats.get('tests_passed')
+        if tests_total is not None and tests_total > 0:
+            parts.append(f"{tests_passed}/{tests_total} Tests ✅")
+
+        coverage = stats.get('coverage_percent')
+        if coverage is not None:
+            parts.append(f"{coverage:.0f}% Coverage")
+
+        if not parts:
+            return ""
+
+        return "📊 " + " · ".join(parts)
+
+    def _format_stats_section(self, stats: Dict, language: str = 'de') -> str:
+        """Formatiere Stats als Kontext-Sektion für den AI-Prompt."""
+        if stats.get('commits', 0) < 5:
+            return ""
+
+        if language == 'de':
+            section = "# RELEASE-STATISTIKEN\n"
+        else:
+            section = "# RELEASE STATS\n"
+
+        section += f"- {stats.get('commits', 0)} Commits\n"
+        section += f"- {stats.get('files_changed', 0)} Dateien geändert\n"
+        section += f"- +{stats.get('lines_added', 0)} / -{stats.get('lines_removed', 0)} Zeilen\n"
+
+        contributors = stats.get('contributors', [])
+        if contributors:
+            section += f"- Contributors: {', '.join(contributors)}\n"
+
+        return section
 
     def _split_embed_description(self, description: str, max_length: int = 4096) -> list[str]:
         """
@@ -329,6 +462,11 @@ class AIPatchNotesMixin:
 
         project_context = self._load_patch_notes_context(project_config, project_path)
 
+        # Collect git stats
+        git_stats = self._collect_git_stats(commits, project_path)
+        stats_line = self._format_stats_line(git_stats, language)
+        stats_section = self._format_stats_section(git_stats, language)
+
         # Build enhanced prompt with A/B Testing
         selected_variant = None
         variant_id = None
@@ -351,11 +489,17 @@ class AIPatchNotesMixin:
                     variant_id=variant_id,
                     language=language
                 )
-                prompt = variant_template.format(
-                    project=repo_name,
-                    changelog=changelog_content or "No CHANGELOG available",
-                    commits='\n'.join([f"- {c.get('message', '')}" for c in commits[:10]])
-                )
+                # format_map mit DefaultDict um KeyError bei alten Templates zu vermeiden
+                from collections import defaultdict
+
+                format_values = defaultdict(str, {
+                    'project': repo_name,
+                    'changelog': changelog_content or "No CHANGELOG available",
+                    'commits': '\n'.join([f"- {c.get('message', '')}" for c in commits[:10]]),
+                    'stats_section': stats_section,
+                    'stats_line': stats_line if git_stats.get('commits', 0) >= 5 else '',
+                })
+                prompt = variant_template.format_map(format_values)
 
                 # Add examples from trainer
                 if self.patch_notes_trainer.good_examples:
@@ -515,7 +659,18 @@ class AIPatchNotesMixin:
                 except Exception as e:
                     self.logger.warning(f"⚠️ Quality scoring failed: {e}")
 
+            # Append stats line to response if substantial release
+            if stats_line and git_stats.get('commits', 0) >= 5:
+                # Nur anhängen wenn nicht schon im AI-Output enthalten
+                if '📊' not in response:
+                    response = response.rstrip() + f"\n\n{stats_line}"
+
             self.logger.info(f"✅ AI generated patch notes for {repo_name} ({len(response)} chars)")
+
+            # Store stats for web export (accessible via attribute)
+            self._last_git_stats = git_stats
+            self._last_version = version
+
             return response if response else None
 
         except Exception as e:
