@@ -1,5 +1,46 @@
 # ShadowOps Bot - Changelog
 
+## [4.0.1] - 2026-03-10
+
+### Bugfixes
+
+**Discord Embed Crash (50035 Invalid Form Body):**
+- Embed-Felder werden jetzt automatisch in mehrere Fields gesplittet wenn >1024 Zeichen
+- Neue Helper: `_split_text_for_embed()`, `_set_embed_status()`, `_get_embed_text()`
+- `_build_final_summary()` kompakter: Max 1 Zeile pro Phase, inline Vulnerability-Anzeige
+
+**SIGUSR1-Crash bei Logrotate (Mitternacht):**
+- Signal-Handler in `bot.py` mit `try/except` gewrappt — Exception wird nicht mehr propagiert
+- Bot überlebt jetzt das Logrotate-Signal zuverlässig
+
+**Security Analyst JSON-Parsing:**
+- Robusterer Fallback: Markdown-Codeblöcke + flexible Key-Suche in stdout
+- Debug-Logging bei fehlgeschlagener JSON-Extraktion
+
+**GitHub Issue Labels:**
+- Labels `security` + `priority:*` auf allen 3 Repos erstellt (shadowops-bot, GuildScout, ZERODOX)
+- Kein doppelter API-Call mehr bei Issue-Erstellung
+
+**Test-Isolation:**
+- Push-Event-Tests mocken jetzt `_reserve_commit_processing` (State-unabhängig)
+
+### Refactoring
+
+**datetime.utcnow() Migration:**
+- 116x `datetime.utcnow()` → `datetime.now(timezone.utc)` in 23 Dateien
+- 2x `default_factory=datetime.utcnow` → Lambda mit `timezone.utc`
+- Health-Check-Timestamps sind jetzt timezone-aware (UTC+00:00)
+
+**Bare Exception Cleanup:**
+- 20x `except:` → `except Exception:` (bot.py, discord_mixin, log_analyzer, etc.)
+
+**Discord.py 2.7 Compatibility:**
+- `await channel.pins()` → `async for pin in channel.pins()` (AsyncIterator)
+- Test-Warnings: 193 → 1 (nur audioop aus discord.py)
+
+**Config-Template:**
+- `config.example.yaml`: Ollama-Section durch Dual-Engine (Codex CLI + Claude CLI) ersetzt
+
 ## [4.0.0] - 2026-03-06
 
 ### Dual-Engine AI System (Codex + Claude CLI)
