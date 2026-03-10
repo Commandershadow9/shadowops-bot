@@ -413,68 +413,36 @@ class RecoveryMixin:
             summary_parts.append(f"{status_emoji} {phase_name}")
         summary_parts.append("")
 
-        # 3. Actions Taken (detailed breakdown)
+        # 3. Actions Taken (compact — max 1 Zeile pro Phase)
         summary_parts.append(f"**🔧 Durchgeführte Aktionen:**")
 
-        # Collect actions from phases
         for phase in plan.phases:
             phase_name = phase.get('name', 'Unknown Phase')
             steps = phase.get('steps', [])
-
             if steps:
-                for step in steps[:3]:  # Show first 3 steps per phase
-                    summary_parts.append(f"• {step}")
+                summary_parts.append(f"• {steps[0][:60]}")
             else:
-                # Generic action based on phase name
-                if 'backup' in phase_name.lower():
-                    summary_parts.append(f"• System-Backup erstellt")
-                elif 'npm' in phase_name.lower() or 'package' in phase_name.lower():
-                    summary_parts.append(f"• NPM Pakete aktualisiert")
-                elif 'docker' in phase_name.lower():
-                    summary_parts.append(f"• Docker Image neu gebaut")
-                elif 'trivy' in phase_name.lower() or 'scan' in phase_name.lower():
-                    summary_parts.append(f"• Trivy Security Scan durchgeführt")
-                else:
-                    summary_parts.append(f"• {phase_name}")
+                summary_parts.append(f"• {phase_name[:60]}")
 
         summary_parts.append("")
 
-        # 4. Vulnerability Details (if Trivy event) - WITH BEFORE/AFTER COMPARISON
+        # 4. Vulnerability Details (compact)
         trivy_events = [e for e in batch.events if e.source == 'trivy']
         if trivy_events:
-            summary_parts.append(f"**🛡️ Vulnerability Scan Results:**")
-
-            for event in trivy_events[:1]:  # Show first Trivy event
+            for event in trivy_events[:1]:
                 event_details = event.event_details if hasattr(event, 'event_details') else {}
                 vulns = event_details.get('vulnerabilities', {})
 
                 if vulns:
-                    # Calculate totals
                     total_before = sum(vulns.values())
-
-                    summary_parts.append(f"**📊 Vor dem Fix:**")
-                    for severity in ['critical', 'high', 'medium', 'low']:
-                        count = vulns.get(severity, 0)
+                    vuln_parts = []
+                    for sev in ['critical', 'high', 'medium', 'low']:
+                        count = vulns.get(sev, 0)
                         if count > 0:
-                            emoji = {"critical": "🔴", "high": "🟠", "medium": "🟡", "low": "🔵"}.get(severity, "⚪")
-                            summary_parts.append(f"  {emoji} {severity.upper()}: {count}")
-
-                    summary_parts.append(f"  **Gesamt: {total_before} Vulnerabilities**")
-
-                    summary_parts.append(f"\n**📊 Nach dem Fix:**")
-                    summary_parts.append(f"  ✅ Security Scan durchgeführt")
-                    summary_parts.append(f"  ✅ Docker Image neu gebaut")
-                    summary_parts.append(f"  ✅ Vulnerabilities adressiert")
-
-                    summary_parts.append(f"\n**🎯 Ergebnis:**")
-                    summary_parts.append(f"  ✅ Fix erfolgreich durchgeführt")
-                    summary_parts.append(f"  🔒 System gesichert")
-
-                    # Note: Actual "after" scan results would come from Trivy re-scan
-                    # This would be available if Phase 3 includes verification
-                    summary_parts.append(f"\n💡 **Hinweis:** Detaillierte Scan-Results in den Logs verfügbar")
-                else:
-                    summary_parts.append(f"✅ Keine aktiven Vulnerabilities gefunden")
+                            emoji = {"critical": "🔴", "high": "🟠", "medium": "🟡", "low": "🔵"}.get(sev, "⚪")
+                            vuln_parts.append(f"{emoji}{count} {sev}")
+                    summary_parts.append(f"**🛡️ Vorher:** {' | '.join(vuln_parts)} ({total_before} gesamt)")
+                    summary_parts.append(f"**🎯 Nachher:** ✅ Fix durchgeführt, System gesichert")
 
             summary_parts.append("")
 

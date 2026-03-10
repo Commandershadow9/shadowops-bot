@@ -23,6 +23,59 @@ logger = logging.getLogger('shadowops')
 class ExecutorMixin:
     """Mixin für Plan-Ausführung, Multi-Projekt und Phase-Execution"""
 
+    @staticmethod
+    def _split_text_for_embed(text: str, max_len: int = 1024) -> list:
+        """Split text into chunks that fit Discord's 1024 char field limit.
+
+        Splits at paragraph boundaries (\\n\\n), then line boundaries (\\n).
+        """
+        if len(text) <= max_len:
+            return [text]
+
+        chunks = []
+        current = ""
+
+        for para in text.split('\n\n'):
+            candidate = f"{current}\n\n{para}" if current else para
+            if len(candidate) <= max_len:
+                current = candidate
+                continue
+
+            if current:
+                chunks.append(current)
+                current = ""
+
+            # Paragraph selbst zu lang — zeilenweise splitten
+            if len(para) > max_len:
+                for line in para.split('\n'):
+                    line_candidate = f"{current}\n{line}" if current else line
+                    if len(line_candidate) <= max_len:
+                        current = line_candidate
+                    else:
+                        if current:
+                            chunks.append(current)
+                        current = line[:max_len - 3] + "..." if len(line) > max_len else line
+            else:
+                current = para
+
+        if current:
+            chunks.append(current)
+
+        return chunks[:5]  # Max 5 Fields fuer Lesbarkeit
+
+    def _set_embed_status(self, embed, name: str, value: str, *, inline: bool = False):
+        """Set embed field(s), auto-splitting into multiple fields if > 1024 chars."""
+        embed.clear_fields()
+        chunks = self._split_text_for_embed(value)
+        for i, chunk in enumerate(chunks):
+            suffix = f" ({i + 1})" if i > 0 else ""
+            embed.add_field(name=f"{name}{suffix}", value=chunk, inline=inline)
+
+    @staticmethod
+    def _get_embed_text(embed) -> str:
+        """Get full status text from potentially split embed fields."""
+        return '\n\n'.join(f.value for f in embed.fields)
+
     async def _process_next_batch(self):
         """Verarbeitet nächsten Batch (mit Execution Lock!)"""
 
@@ -423,12 +476,7 @@ class ExecutorMixin:
             if exec_message:
                 exec_embed.color = discord.Color.green()
                 exec_embed.title = "✅ Koordinierte Remediation abgeschlossen"
-                exec_embed.set_field_at(
-                    0,
-                    name="📊 Execution Summary",
-                    value=final_summary,
-                    inline=False
-                )
+                self._set_embed_status(exec_embed, "📊 Execution Summary", final_summary)
                 await exec_message.edit(embed=exec_embed)
 
             return True
@@ -444,12 +492,7 @@ class ExecutorMixin:
             if exec_message:
                 exec_embed.color = discord.Color.red()
                 exec_embed.title = "❌ Remediation fehlgeschlagen"
-                exec_embed.set_field_at(
-                    0,
-                    name="📊 Status",
-                    value=f"❌ Kritischer Fehler!\n```{str(e)[:100]}```\n\n🔄 Rollback durchgeführt",
-                    inline=False
-                )
+                self._set_embed_status(exec_embed, "📊 Status", f"❌ Kritischer Fehler!\n```{str(e)[:100]}```\n\n🔄 Rollback durchgeführt")
                 await exec_message.edit(embed=exec_embed)
 
             return False
@@ -660,12 +703,7 @@ class ExecutorMixin:
                 exec_embed.color = discord.Color.orange()
                 exec_embed.title = "⚠️ Multi-Project Remediation teilweise erfolgreich"
 
-            exec_embed.set_field_at(
-                0,
-                name="📊 Final Summary",
-                value=final_summary,
-                inline=False
-            )
+            self._set_embed_status(exec_embed, "📊 Final Summary", final_summary)
             await exec_message.edit(embed=exec_embed)
 
         # Discord Channel Logger: Final Summary
@@ -991,13 +1029,8 @@ class ExecutorMixin:
 
                     # Discord: Show what will be done
                     if exec_message and exec_embed and steps_preview:
-                        current_field = exec_embed.fields[0]
-                        exec_embed.set_field_at(
-                            0,
-                            name="📊 Status",
-                            value=f"{current_field.value}\n\n📋 Fix {idx}/{len(events)}: {event.source.upper()}{steps_preview}",
-                            inline=False
-                        )
+                        current_text = self._get_embed_text(exec_embed)
+                        self._set_embed_status(exec_embed, "📊 Status", f"{current_text}\n\n📋 Fix {idx}/{len(events)}: {event.source.upper()}{steps_preview}")
                         await exec_message.edit(embed=exec_embed)
 
                     # RETRY LOGIC: Try fix up to 3 times
@@ -1009,14 +1042,9 @@ class ExecutorMixin:
                     for attempt in range(1, max_retries + 1):
                         # Discord Live Update: Starting fix (with retry info)
                         if exec_message and exec_embed:
-                            current_field = exec_embed.fields[0]
+                            current_text = self._get_embed_text(exec_embed)
                             retry_info = f" (Attempt {attempt}/{max_retries})" if attempt > 1 else ""
-                            exec_embed.set_field_at(
-                                0,
-                                name="📊 Status",
-                                value=f"{current_field.value}\n\n🔧 Fix {idx}/{len(events)}: {event.source.upper()}{retry_info}\n⏳ Executing...",
-                                inline=False
-                            )
+                            self._set_embed_status(exec_embed, "📊 Status", f"{current_text}\n\n🔧 Fix {idx}/{len(events)}: {event.source.upper()}{retry_info}\n⏳ Executing...")
                             await exec_message.edit(embed=exec_embed)
 
                         # Execute fix via self-healing
@@ -1062,15 +1090,9 @@ class ExecutorMixin:
 
                             # Discord Live Update: Fix successful
                             if exec_message and exec_embed:
-                                current_field = exec_embed.fields[0]
-                                base_value = current_field.value.split('\n\n🔧')[0]  # Remove previous fix status
+                                base_value = self._get_embed_text(exec_embed).split('\n\n🔧')[0]
                                 success_msg = f" after {attempt} attempt(s)" if attempt > 1 else ""
-                                exec_embed.set_field_at(
-                                    0,
-                                    name="📊 Status",
-                                    value=f"{base_value}\n\n✅ Fix {idx}/{len(events)}: {event.source.upper()} successful{success_msg}\n📝 {result.get('message', '')[:100]}",
-                                    inline=False
-                                )
+                                self._set_embed_status(exec_embed, "📊 Status", f"{base_value}\n\n✅ Fix {idx}/{len(events)}: {event.source.upper()} successful{success_msg}\n📝 {result.get('message', '')[:100]}")
                                 await exec_message.edit(embed=exec_embed)
                             break  # Success! No more retries needed
                         else:
@@ -1115,14 +1137,8 @@ class ExecutorMixin:
 
                                 # Discord Live Update: Retry info
                                 if exec_message and exec_embed:
-                                    current_field = exec_embed.fields[0]
-                                    base_value = current_field.value.split('\n\n🔧')[0]
-                                    exec_embed.set_field_at(
-                                        0,
-                                        name="📊 Status",
-                                        value=f"{base_value}\n\n⚠️ Attempt {attempt} failed - Retrying...\n🔄 {last_error[:100]}",
-                                        inline=False
-                                    )
+                                    base_value = self._get_embed_text(exec_embed).split('\n\n🔧')[0]
+                                    self._set_embed_status(exec_embed, "📊 Status", f"{base_value}\n\n⚠️ Attempt {attempt} failed - Retrying...\n🔄 {last_error[:100]}")
                                     await exec_message.edit(embed=exec_embed)
 
                                 # Adaptive delay before retry based on success rate
@@ -1141,14 +1157,8 @@ class ExecutorMixin:
 
                         # Discord Live Update: All retries failed
                         if exec_message and exec_embed:
-                            current_field = exec_embed.fields[0]
-                            base_value = current_field.value.split('\n\n🔧')[0]
-                            exec_embed.set_field_at(
-                                0,
-                                name="📊 Status",
-                                value=f"{base_value}\n\n❌ Fix {idx}/{len(events)}: {event.source.upper()} failed\n⚠️ All {max_retries} attempts failed\n💔 {last_error[:80]}",
-                                inline=False
-                            )
+                            base_value = self._get_embed_text(exec_embed).split('\n\n🔧')[0]
+                            self._set_embed_status(exec_embed, "📊 Status", f"{base_value}\n\n❌ Fix {idx}/{len(events)}: {event.source.upper()} failed\n⚠️ All {max_retries} attempts failed\n💔 {last_error[:80]}")
                             await exec_message.edit(embed=exec_embed)
 
                         # If one fix fails after all retries, stop phase execution
@@ -1159,14 +1169,8 @@ class ExecutorMixin:
 
                     # Discord Update: Exception occurred
                     if exec_message and exec_embed:
-                        current_field = exec_embed.fields[0]
-                        base_value = current_field.value.split('\n\n🔧')[0]
-                        exec_embed.set_field_at(
-                            0,
-                            name="📊 Status",
-                            value=f"{base_value}\n\n💥 Exception: {event.source.upper()}\n⚠️ {str(e)[:150]}",
-                            inline=False
-                        )
+                        base_value = self._get_embed_text(exec_embed).split('\n\n🔧')[0]
+                        self._set_embed_status(exec_embed, "📊 Status", f"{base_value}\n\n💥 Exception: {event.source.upper()}\n⚠️ {str(e)[:150]}")
                         await exec_message.edit(embed=exec_embed)
 
                     all_success = False
@@ -1180,12 +1184,7 @@ class ExecutorMixin:
 
             # Discord Update: Phase-level exception
             if exec_message and exec_embed:
-                exec_embed.set_field_at(
-                    0,
-                    name="📊 Status",
-                    value=f"💥 Phase Exception: {phase_name}\n\n⚠️ {str(e)[:200]}",
-                    inline=False
-                )
+                self._set_embed_status(exec_embed, "📊 Status", f"💥 Phase Exception: {phase_name}\n\n⚠️ {str(e)[:200]}")
                 await exec_message.edit(embed=exec_embed)
 
             return False
