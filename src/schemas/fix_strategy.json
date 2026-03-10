@@ -26,6 +26,6 @@
     },
     "estimated_downtime_seconds": { "type": "integer" }
   },
-  "required": ["description", "confidence", "severity_assessment", "analysis", "steps"],
+  "required": ["description", "confidence", "severity_assessment", "analysis", "root_cause", "steps", "affected_services", "estimated_downtime_seconds"],
   "additionalProperties": false
 }

@@ -18,6 +18,6 @@
     "version": { "type": "string" },
     "language": { "type": "string", "enum": ["de", "en"] }
   },
-  "required": ["title", "summary", "changes"],
+  "required": ["title", "summary", "changes", "version", "language"],
   "additionalProperties": false
 }

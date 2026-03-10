@@ -8,6 +8,7 @@ import discord
 from discord.ext import commands, tasks
 from discord import app_commands
 import asyncio
+import logging
 import sys
 import os
 import signal
@@ -379,6 +380,28 @@ class ShadowOpsBot(commands.Bot):
 
         loop = asyncio.get_running_loop()
         loop.add_signal_handler(signal.SIGTERM, _handle_sigterm)
+
+        # SIGUSR1-Handler für Logrotate: Log-Dateien neu öffnen statt Bot zu killen.
+        # Logrotate sendet SIGUSR1 nach Rotation, damit der Bot in die neue Datei schreibt.
+        def _handle_sigusr1():
+            self.logger.info("🔄 SIGUSR1 empfangen — öffne Log-Dateien neu...")
+            root_logger = logging.getLogger('shadowops')
+            for handler in root_logger.handlers[:]:
+                if isinstance(handler, logging.FileHandler):
+                    handler.close()
+                    root_logger.removeHandler(handler)
+            # Neuen FileHandler mit aktuellem Datum erstellen
+            from datetime import datetime as _dt
+            log_file = Path("logs") / f"shadowops_{_dt.now().strftime('%Y%m%d')}.log"
+            new_handler = logging.FileHandler(log_file, encoding='utf-8')
+            new_handler.setLevel(logging.DEBUG)
+            new_handler.setFormatter(logging.Formatter(
+                '%(asctime)s [%(levelname)s] %(name)s (%(filename)s:%(lineno)d): %(message)s'
+            ))
+            root_logger.addHandler(new_handler)
+            self.logger.info(f"✅ Log-Datei neu geöffnet: {log_file}")
+
+        loop.add_signal_handler(signal.SIGUSR1, _handle_sigusr1)
 
         self.logger.info("⏳ Warte auf Discord-Verbindung...")
 

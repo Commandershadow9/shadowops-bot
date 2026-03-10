@@ -36,7 +36,7 @@
           "issue_title": { "type": "string" },
           "issue_body": { "type": "string" }
         },
-        "required": ["severity", "category", "title", "description", "fix_type"],
+        "required": ["severity", "category", "title", "description", "fix_type", "affected_project", "affected_files", "auto_fix_details", "rollback_command", "issue_title", "issue_body"],
         "additionalProperties": false
       },
       "description": "Erkenntnisse und Findings der Session"
@@ -69,6 +69,6 @@
       "description": "Naechste Prioritaet fuer zukuenftige Sessions"
     }
   },
-  "required": ["summary", "topics_investigated", "findings", "knowledge_updates", "health_check_passed"],
+  "required": ["summary", "topics_investigated", "findings", "knowledge_updates", "health_check_passed", "next_priority"],
   "additionalProperties": false
 }
