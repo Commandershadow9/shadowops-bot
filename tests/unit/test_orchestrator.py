@@ -133,7 +133,7 @@ class TestAdaptiveRetryDelays:
         orchestrator = RemediationOrchestrator(mock_self_healing, mock_config)
 
         # Mock knowledge base with high success rate
-        with patch('src.integrations.orchestrator.get_knowledge_base') as mock_kb:
+        with patch('src.integrations.orchestrator.batch_mixin.get_knowledge_base') as mock_kb:
             mock_kb_instance = Mock()
             mock_kb_instance.get_success_rate.return_value = {
                 'success_rate': 0.9,
@@ -152,7 +152,7 @@ class TestAdaptiveRetryDelays:
         mock_self_healing = Mock()
         orchestrator = RemediationOrchestrator(mock_self_healing, mock_config)
 
-        with patch('src.integrations.orchestrator.get_knowledge_base') as mock_kb:
+        with patch('src.integrations.orchestrator.batch_mixin.get_knowledge_base') as mock_kb:
             mock_kb_instance = Mock()
             mock_kb_instance.get_success_rate.return_value = {
                 'success_rate': 0.2,
@@ -171,7 +171,7 @@ class TestAdaptiveRetryDelays:
         mock_self_healing = Mock()
         orchestrator = RemediationOrchestrator(mock_self_healing, mock_config)
 
-        with patch('src.integrations.orchestrator.get_knowledge_base') as mock_kb:
+        with patch('src.integrations.orchestrator.batch_mixin.get_knowledge_base') as mock_kb:
             mock_kb_instance = Mock()
             mock_kb_instance.get_success_rate.return_value = {
                 'success_rate': 0.5,

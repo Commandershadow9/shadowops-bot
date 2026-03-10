@@ -103,9 +103,12 @@ class TestPushEventHandling:
         payload = {
             'repository': {
                 'name': 'test-repo',
-                'full_name': 'user/test-repo'
+                'full_name': 'user/test-repo',
+                'html_url': 'https://github.com/user/test-repo'
             },
             'ref': 'refs/heads/main',
+            'pusher': {'name': 'Tester'},
+            'head_commit': {'id': 'abc123def456'},
             'commits': [
                 {'id': 'abc123def456', 'message': 'Test commit', 'author': {'name': 'Tester'}}
             ]
@@ -125,9 +128,12 @@ class TestPushEventHandling:
         payload = {
             'repository': {
                 'name': 'test-repo',
-                'full_name': 'user/test-repo'
+                'full_name': 'user/test-repo',
+                'html_url': 'https://github.com/user/test-repo'
             },
             'ref': 'refs/heads/feature-branch',
+            'pusher': {'name': 'Dev'},
+            'head_commit': {'id': 'abc123'},
             'commits': [
                 {'id': 'abc123', 'message': 'Feature commit', 'author': {'name': 'Dev'}}
             ]
