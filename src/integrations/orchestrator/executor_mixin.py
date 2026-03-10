@@ -63,9 +63,20 @@ class ExecutorMixin:
                 logger.info("👤 Phase 2: Warte auf User-Approval...")
                 approved = await self._request_approval(batch, plan)
 
-                if not approved:
+                if approved is None:
+                    # Timeout — eskaliere zu GitHub Issue
+                    logger.warning(f"⏰ Batch {batch.batch_id} — Timeout, eskaliere zu GitHub Issue")
+                    batch.status = "escalated"
+                    await self._escalate_to_github(batch, plan)
+                    await self._mark_events_escalated(batch)
+                    self.completed_batches.append(batch)
+                    return
+
+                if approved is False:
+                    # Explizit abgelehnt — nicht neu triggern
                     logger.warning(f"❌ User hat Batch {batch.batch_id} abgelehnt")
                     batch.status = "rejected"
+                    await self._mark_events_escalated(batch)
                     self.completed_batches.append(batch)
                     return
 
@@ -97,6 +108,80 @@ class ExecutorMixin:
                 # Verarbeite nächsten Batch falls vorhanden
                 if self.pending_batches:
                     asyncio.create_task(self._process_next_batch())
+
+    async def _escalate_to_github(self, batch, plan):
+        """Erstellt ein GitHub Issue fuer einen Batch der nicht approved wurde."""
+        import asyncio as _asyncio
+
+        try:
+            # Baue Issue-Body aus Plan-Daten
+            events_summary = []
+            for event in batch.events:
+                events_summary.append(f"- **{event.source.upper()}** ({event.severity}): {event.event_type}")
+
+            phases_summary = []
+            for i, phase in enumerate(plan.phases, 1):
+                steps = phase.get('steps', [])
+                steps_text = "\n".join(f"  - {s}" for s in steps[:5])
+                phases_summary.append(f"### Phase {i}: {phase.get('name', 'N/A')}\n{phase.get('description', '')}\n{steps_text}")
+
+            body = (
+                f"## Automatisch eskaliert\n"
+                f"Dieser Fix-Plan wurde vom ShadowOps Bot erstellt aber nicht innerhalb von 30 Minuten approved.\n\n"
+                f"**Batch ID:** `{batch.batch_id}`\n"
+                f"**Confidence:** {plan.confidence:.0%}\n"
+                f"**Geschaetzte Dauer:** {plan.estimated_duration_minutes} Minuten\n\n"
+                f"## Events\n" + "\n".join(events_summary) + "\n\n"
+                f"## Geplante Phasen\n" + "\n\n".join(phases_summary) + "\n\n"
+                f"## Rollback-Plan\n{plan.rollback_plan}\n\n"
+                f"---\n"
+                f"*Erstellt von ShadowOps Bot — Approval-Timeout Eskalation*"
+            )
+
+            title = f"[ShadowOps] {plan.description[:80]}"
+
+            # gh issue create — keine Shell-Injection da alle Werte intern erzeugt
+            proc = await _asyncio.create_subprocess_exec(
+                'gh', 'issue', 'create',
+                '--repo', 'Commandershadow9/shadowops-bot',
+                '--title', title,
+                '--body', body,
+                stdout=_asyncio.subprocess.PIPE,
+                stderr=_asyncio.subprocess.PIPE,
+            )
+            stdout, stderr = await _asyncio.wait_for(proc.communicate(), timeout=30)
+
+            if proc.returncode == 0:
+                issue_url = stdout.decode().strip()
+                logger.info(f"📋 GitHub Issue erstellt: {issue_url}")
+
+                # Discord-Benachrichtigung
+                if self.discord_logger:
+                    self.discord_logger.log_orchestrator(
+                        f"📋 **Approval-Timeout — GitHub Issue erstellt**\n"
+                        f"🆔 Batch: `{batch.batch_id}`\n"
+                        f"🔗 {issue_url}\n"
+                        f"ℹ️ Events werden nicht erneut getriggert bis Issue geschlossen wird",
+                        severity="warning"
+                    )
+            else:
+                error = stderr.decode().strip()
+                logger.error(f"❌ GitHub Issue Erstellung fehlgeschlagen: {error[:200]}")
+
+        except Exception as e:
+            logger.error(f"❌ Eskalation zu GitHub fehlgeschlagen: {e}", exc_info=True)
+
+    async def _mark_events_escalated(self, batch):
+        """Markiert Batch-Events als eskaliert, damit sie nicht erneut getriggert werden."""
+        try:
+            watcher = getattr(self.bot, 'event_watcher', None) if self.bot else None
+            if watcher:
+                await watcher.escalate_events(batch.events)
+                logger.info(f"🚫 {len(batch.events)} Events als eskaliert markiert — werden nicht erneut getriggert")
+            else:
+                logger.debug("Event-Watcher nicht verfuegbar — Eskalations-Markierung uebersprungen")
+        except Exception as e:
+            logger.warning(f"⚠️ Eskalations-Markierung fehlgeschlagen: {e}")
 
     async def _clear_event_cache_for_batch(self, batch):
         """Entfernt fehlgeschlagene Batch-Events aus dem Event-Cache des Watchers."""

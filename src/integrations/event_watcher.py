@@ -59,11 +59,13 @@ class SecurityEventWatcher:
 
         # Event tracking with persistence
         self.seen_events: Dict[str, float] = {}  # event_signature -> timestamp
+        self.escalated_events: Dict[str, float] = {}  # event_signature -> timestamp (nicht erneut triggern)
         self.seen_events_lock = asyncio.Lock()  # Protect against race conditions
         self.event_history: List[SecurityEvent] = []
         self.max_history = 1000
         # Instance paths default to class-level for easier patching in tests
         self.event_cache_file = Path(self.event_cache_file)
+        self.escalated_cache_file = Path("logs/escalated_events.json")
         self.event_cache_duration = self.event_cache_duration
 
         # Integration references
@@ -112,8 +114,9 @@ class SecurityEventWatcher:
         self.fail2ban = fail2ban
         self.aide = aide
 
-        # Load seen events from persistent storage
+        # Load seen events and escalated events from persistent storage
         self._load_seen_events()
+        self._load_escalated_events()
 
         logger.info("✅ Security Event Watcher initialized")
 
@@ -521,6 +524,20 @@ class SecurityEventWatcher:
         current_time = datetime.now().timestamp()
 
         async with self.seen_events_lock:
+            # ESCALATED EVENTS: Bereits zu GitHub Issue eskaliert — nicht erneut triggern
+            if event_signature in self.escalated_events:
+                escalated_at = self.escalated_events[event_signature]
+                days_ago = (current_time - escalated_at) / 86400
+                # Eskalierte Events 30 Tage lang blockieren
+                if days_ago < 30:
+                    logger.debug(f"Event {event_signature} ist eskaliert (vor {days_ago:.1f} Tagen) — ueberspringe")
+                    return False
+                else:
+                    # Nach 30 Tagen: Eskalierung aufheben
+                    logger.info(f"🔓 Eskalierung abgelaufen fuer {event_signature} ({days_ago:.0f} Tage alt)")
+                    del self.escalated_events[event_signature]
+                    self._save_escalated_events()
+
             # PERSISTENT EVENTS: Cache by signature, but use longer duration
             if event.is_persistent:
                 # Use signature-based caching with 12h duration (2 scan cycles)
@@ -818,6 +835,67 @@ class SecurityEventWatcher:
 
         logger.info(f"🗑️ {cleared}/{len(events)} Events aus Cache entfernt (werden beim naechsten Scan neu erkannt)")
         return cleared
+
+    async def escalate_events(self, events: list) -> int:
+        """
+        Markiert Events als eskaliert (z.B. GitHub Issue erstellt oder User hat rejected).
+
+        Eskalierte Events werden 30 Tage lang nicht erneut getriggert.
+        """
+        escalated = 0
+        async with self.seen_events_lock:
+            current_time = datetime.now().timestamp()
+            for event in events:
+                sig = self._generate_event_signature(event)
+                self.escalated_events[sig] = current_time
+                escalated += 1
+                logger.info(f"🚫 Event eskaliert: {sig}")
+
+            if escalated:
+                self._save_escalated_events()
+
+        logger.info(f"🚫 {escalated} Events als eskaliert markiert (30 Tage blockiert)")
+        return escalated
+
+    def _save_escalated_events(self):
+        """Speichert eskalierte Events persistent."""
+        try:
+            self.escalated_cache_file.parent.mkdir(parents=True, exist_ok=True)
+
+            # Events aelter als 30 Tage entfernen
+            current_time = datetime.now().timestamp()
+            cleaned = {
+                sig: ts for sig, ts in self.escalated_events.items()
+                if current_time - ts < 2592000  # 30 Tage
+            }
+
+            with open(self.escalated_cache_file, 'w') as f:
+                json.dump(cleaned, f, indent=2)
+
+            logger.debug(f"💾 {len(cleaned)} eskalierte Events gespeichert")
+        except Exception as e:
+            logger.error(f"❌ Eskalierte Events speichern fehlgeschlagen: {e}")
+
+    def _load_escalated_events(self):
+        """Laedt eskalierte Events aus persistentem Speicher."""
+        try:
+            if not self.escalated_cache_file.exists():
+                return
+
+            with open(self.escalated_cache_file, 'r') as f:
+                loaded = json.load(f)
+
+            # Nur Events juenger als 30 Tage laden
+            current_time = datetime.now().timestamp()
+            self.escalated_events = {
+                sig: ts for sig, ts in loaded.items()
+                if current_time - ts < 2592000
+            }
+
+            if self.escalated_events:
+                logger.info(f"📂 {len(self.escalated_events)} eskalierte Events geladen (30-Tage-Fenster)")
+        except Exception as e:
+            logger.error(f"❌ Eskalierte Events laden fehlgeschlagen: {e}")
 
     def _save_seen_events(self):
         """

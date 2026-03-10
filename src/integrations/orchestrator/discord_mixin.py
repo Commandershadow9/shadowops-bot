@@ -260,12 +260,12 @@ class DiscordUIMixin:
                 return False
 
             else:
-                # Timeout
+                # Timeout — wird zu GitHub Issue eskaliert
                 embed.color = discord.Color.dark_gray()
-                embed.title = "⏰ Approval Timeout - Plan verworfen"
+                embed.title = "⏰ Approval Timeout — wird zu GitHub Issue eskaliert"
                 await approval_message.edit(embed=embed, view=None)
-                logger.warning(f"⏰ Batch {batch.batch_id} - Approval Timeout")
-                return False
+                logger.warning(f"⏰ Batch {batch.batch_id} - Approval Timeout, eskaliere zu GitHub Issue")
+                return None  # None = Timeout (wird eskaliert), False = Rejected
 
         except Exception as e:
             logger.error(f"❌ Fehler bei Approval-Request: {e}", exc_info=True)
