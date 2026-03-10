@@ -772,8 +772,9 @@ class ShadowOpsBot(commands.Bot):
                     self.web_exporter = PatchNotesWebExporter(default_output)
                     self.github_integration.web_exporter = self.web_exporter
 
-                    # Batcher
-                    self.patch_notes_batcher = PatchNotesBatcher()
+                    # Batcher (braucht data_dir für pending_batch.json)
+                    data_dir = Path.home() / '.shadowops' / 'data'
+                    self.patch_notes_batcher = PatchNotesBatcher(data_dir)
                     self.github_integration.patch_notes_batcher = self.patch_notes_batcher
 
                     self.logger.info("✅ Patch Notes v2: Web Exporter + Batcher initialisiert")
