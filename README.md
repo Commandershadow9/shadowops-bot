@@ -298,7 +298,7 @@ export DISCORD_BOT_TOKEN="DEIN_BOT_TOKEN_HIER"
 ### 3. Systemd Service aktivieren
 
 ```bash
-sudo cp shadowops-bot.service /etc/systemd/system/
+sudo cp deploy/shadowops-bot.service /etc/systemd/system/
 sudo systemctl daemon-reload
 sudo systemctl enable shadowops-bot
 sudo systemctl start shadowops-bot
@@ -523,26 +523,34 @@ shadowops-bot/
 │   ├── DO-NOT-TOUCH.md                 # Safety Rules
 │   ├── INFRASTRUCTURE.md               # Infrastructure Knowledge
 │   └── PROJECT_*.md                    # Project Documentation
-├── context/                            # AI Context Files
-│   ├── git_history/                    # Git History Analysis
-│   └── logs/                           # Log Learning Files
-├── data/                               # Persistent Data
-│   ├── state.json                      # NEU: Dynamic State File
-│   ├── knowledge_base.db               # SQL Learning Database
-│   ├── project_monitor_state.json      # Project Monitor State
-│   └── incidents.json                  # Incident Tracking
-├── backups/                            # Auto-Backups (gitignored)
+├── config/                             # Konfiguration
+│   ├── config.yaml                     # Hauptconfig (gitignored)
+│   ├── config.example.yaml             # Template
+│   ├── config.recommended.yaml         # Empfehlungen
+│   ├── safe_upgrades.yaml              # Upgrade-Pfade
+│   └── logrotate.conf                  # Log-Rotation
+├── deploy/                             # Deployment
+│   └── shadowops-bot.service           # systemd Unit
+├── scripts/                            # Utility-Skripte
+│   ├── restart.sh                      # Bot neustarten (--pull, --logs)
+│   ├── diagnose-bot.sh                 # Diagnose
+│   ├── setup.sh                        # Erstinstallation
+│   └── ...
+├── data/                               # Runtime-Daten (gitignored)
 ├── logs/                               # Log-Dateien (gitignored)
-├── docs/                               # Documentation
-│   ├── API.md                          # API Documentation
-│   ├── SETUP_GUIDE.md                  # Setup Guide
-│   ├── ACTIVE_SECURITY_GUARDIAN.md     # Feature Documentation
-│   └── DOCS_OVERVIEW.md                # Documentation Overview
+├── docs/                               # Dokumentation
+│   ├── API.md                          # API-Referenz
+│   ├── guides/                         # Benutzer-Anleitungen
+│   ├── adr/                            # Architecture Decision Records
+│   ├── plans/                          # Design-Dokumente
+│   └── archive/                        # Historische Doku
+├── .claude/                            # KI-Konfiguration
+│   ├── rules/                          # Pfad-gefilterte Rules
+│   ├── skills/                         # Workflow-Skills
+│   └── agents/                         # Spezialisierte Agents
 ├── requirements.txt                    # Python Dependencies
-├── requirements-dev.txt                # Dev Dependencies
-├── pytest.ini                          # pytest Configuration
-├── safe_upgrades.yaml                  # Upgrade Recommendations
-├── shadowops-bot.service               # Systemd Service
+├── pyproject.toml                      # Projekt-Definition
+├── CLAUDE.md                           # KI-Projektinstruktionen
 ├── CHANGELOG.md                        # Version History
 └── README.md                           # This file
 ```
