@@ -1056,11 +1056,29 @@ class AIEngine:
 
         # Fallback: JSON aus stdout extrahieren
         if stdout:
-            # Suche nach JSON-Objekt das mit {"summary" beginnt
-            match = re.search(r'\{"summary".*', stdout, re.DOTALL)
-            if match:
-                json_str = match.group(0)
-                # Finde das passende schliessende Bracket
+            # 1. Versuche JSON aus Markdown-Codeblöcken zu extrahieren
+            code_blocks = re.findall(r'```(?:json)?\s*\n({.*?})\s*\n```', stdout, re.DOTALL)
+            for block in code_blocks:
+                try:
+                    data = json.loads(block)
+                    if 'summary' in data or 'findings' in data:
+                        logger.debug("Analyst-Ergebnis aus Markdown-Codeblock extrahiert")
+                        return data
+                except json.JSONDecodeError:
+                    continue
+
+            # 2. Suche nach JSON-Objekt mit erwarteten Keys
+            for key in ('"summary"', '"findings"', '"health_check_passed"'):
+                pattern = r'\{[^{]*?' + re.escape(key)
+                match = re.search(pattern + r'.*', stdout, re.DOTALL)
+                if not match:
+                    continue
+                # Gehe zum Anfang des JSON-Objekts zurück
+                start = stdout.rfind('{', 0, match.start() + 1)
+                if start < 0:
+                    start = match.start()
+                json_str = stdout[start:]
+                # Finde das passende schließende Bracket
                 depth = 0
                 end_idx = 0
                 for i, ch in enumerate(json_str):
@@ -1071,14 +1089,19 @@ class AIEngine:
                         if depth == 0:
                             end_idx = i + 1
                             break
-
                 if end_idx > 0:
                     try:
                         data = json.loads(json_str[:end_idx])
-                        logger.debug("Analyst-Ergebnis aus stdout extrahiert")
-                        return data
+                        if 'summary' in data or 'findings' in data:
+                            logger.debug("Analyst-Ergebnis aus stdout extrahiert (Key: %s)", key)
+                            return data
                     except json.JSONDecodeError:
-                        logger.warning("JSON aus stdout nicht parsbar")
+                        continue
+
+            logger.debug(
+                "Analyst stdout ohne JSON-Ergebnis (Länge: %d, Anfang: %.200s...)",
+                len(stdout), stdout[:200]
+            )
 
         return None
 
