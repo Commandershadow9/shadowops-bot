@@ -459,12 +459,16 @@ class SecurityAnalyst:
             logger.warning("Docker-Status konnte nicht abgefragt werden: %s", e)
 
         # User-Services (systemctl --user)
+        # XDG_RUNTIME_DIR nötig weil Bot als System-Service läuft
+        import os as _os
+        user_env = {**_os.environ, 'XDG_RUNTIME_DIR': '/run/user/1000'}
         for svc in USER_SERVICES:
             try:
                 proc = await asyncio.create_subprocess_exec(
                     'systemctl', '--user', 'is-active', svc,
                     stdout=asyncio.subprocess.PIPE,
                     stderr=asyncio.subprocess.PIPE,
+                    env=user_env,
                 )
                 stdout, _ = await asyncio.wait_for(proc.communicate(), timeout=5)
                 services[svc] = stdout.decode().strip()

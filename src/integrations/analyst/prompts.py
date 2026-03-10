@@ -132,7 +132,7 @@ Moegliche Untersuchungsbereiche (nicht limitierend):
 Nach JEDER Aenderung am System fuehre diese Checks durch:
 
 1. `docker ps --format '{{.Names}}:{{.Status}}'` — Alle Container muessen UP sein
-2. `systemctl --user is-active guildscout-bot` — Muss "active" sein
+2. `XDG_RUNTIME_DIR=/run/user/1000 systemctl --user is-active guildscout-bot` — Muss "active" sein
 3. Curl Health-Endpoints (falls bekannt)
 
 **Wenn ein Service DOWN ist:**

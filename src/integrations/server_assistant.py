@@ -270,8 +270,12 @@ class ServerAssistant:
             'seo-agent',
         ]
         running = 0
+        # XDG_RUNTIME_DIR nötig weil Bot als System-Service läuft,
+        # aber User-Services über den User-D-Bus abgefragt werden müssen
         for svc in user_services:
-            status = await self._cmd(f"systemctl --user is-active {svc} 2>/dev/null")
+            status = await self._cmd(
+                f"XDG_RUNTIME_DIR=/run/user/1000 systemctl --user is-active {svc} 2>/dev/null"
+            )
             if status == 'active':
                 running += 1
             else:
@@ -501,7 +505,7 @@ class ServerAssistant:
         for svc, level in services.items():
             if level == 'user':
                 status = await self._cmd(
-                    f"systemctl --user is-active {svc} 2>/dev/null"
+                    f"XDG_RUNTIME_DIR=/run/user/1000 systemctl --user is-active {svc} 2>/dev/null"
                 )
             else:
                 status = await self._cmd(
