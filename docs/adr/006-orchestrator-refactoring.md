@@ -1,61 +1,63 @@
 # ADR-006: Orchestrator + GitHub Integration Refactoring
 
-**Status:** Geplant
+**Status:** Umgesetzt
 **Datum:** 2026-03-10
+**Umgesetzt am:** 2026-03-10
 
 ## Kontext
 
-Zwei Dateien sind auf unkontrollierbare Größe gewachsen:
+Zwei Dateien waren auf unkontrollierbare Größe gewachsen:
 - `orchestrator.py` — 2533 Zeilen, 1 Klasse, 28 Methoden
 - `github_integration.py` — 2691 Zeilen, 1 Klasse, 67 Methoden
 
-Beide verletzen Single Responsibility und sind schwer testbar.
+Beide verletzten Single Responsibility und waren schwer testbar.
 
 ## Entscheidung
 
-Beide Dateien werden in Packages mit klar getrennten Modulen aufgeteilt.
+Beide Dateien wurden in Packages mit Mixin-Pattern aufgeteilt. Die Hauptklasse erbt von mehreren Mixins, die jeweils eine klar abgegrenzte Verantwortung haben. `__init__.py` re-exportiert die Hauptklasse für Import-Kompatibilität.
 
 ### orchestrator.py → orchestrator/
 
 ```
 src/integrations/orchestrator/
-├── __init__.py                  # Re-Export RemediationOrchestrator
-├── models.py                    # SecurityEventBatch, RemediationPlan (~30 Z)
-├── core.py                      # Orchestrator-Shell, submit_event, get_status (~200 Z)
-├── batch_manager.py             # Event-Batching, History-Persistence (~250 Z)
-├── planner.py                   # AI-Planerstellung, Prompt-Building (~400 Z)
-├── discord_ui.py                # Approval-Flow, Status-Embeds (~350 Z)
-├── executor.py                  # Plan-Ausfuehrung, Multi-/Single-Project (~900 Z)
-└── recovery.py                  # Rollback, Verifikation, Image-Lookup (~200 Z)
+├── __init__.py          # Re-Export RemediationOrchestrator, SecurityEventBatch, RemediationPlan
+├── models.py            # SecurityEventBatch, RemediationPlan Dataclasses (~50 Z)
+├── core.py              # RemediationOrchestrator(__init__ + Mixin-Komposition) (~90 Z)
+├── batch_mixin.py       # Event-Batching, History-Persistenz, Adaptive Retry (~230 Z)
+├── planner_mixin.py     # KI-Planerstellung, Prompt-Building, Streaming (~310 Z)
+├── discord_mixin.py     # Status-Messages, Approval-Flow (Discord UI) (~240 Z)
+├── executor_mixin.py    # Plan-Ausführung, Multi-Projekt, Phase-Execution (~660 Z)
+└── recovery_mixin.py    # Rollback, Verifikation, Summary, Status (~380 Z)
 ```
 
-### github_integration.py → github/
+### github_integration.py → github_integration/
 
 ```
-src/integrations/github/
-├── __init__.py                  # Re-Export GitHubIntegration
-├── core.py                      # Haupt-Klasse, Init, Config (~200 Z)
-├── webhook_server.py            # HTTP-Server, Signature-Verify (~200 Z)
-├── event_handlers.py            # Push/PR/Release/Workflow Handler (~500 Z)
-├── ci_manager.py                # CI-Polling, Workflow-Updates (~150 Z)
-├── git_operations.py            # Git-Befehle, Commit-Fetching (~200 Z)
-├── state_tracking.py            # Commit-State, In-Flight, Duplikate (~150 Z)
-├── notifications.py             # Alle Discord-Send-Methoden (~350 Z)
-├── ai_patch_notes.py            # AI Patch-Notes-Generierung (~500 Z)
-└── deployment.py                # Deployment-Trigger (~80 Z)
+src/integrations/github_integration/
+├── __init__.py              # Re-Export GitHubIntegration
+├── core.py                  # GitHubIntegration(__init__ + Mixin-Komposition) (~127 Z)
+├── webhook_mixin.py         # HTTP-Server, Signature-Verify (~341 Z)
+├── polling_mixin.py         # Local Git Polling (~136 Z)
+├── event_handlers_mixin.py  # Push/PR/Release/Workflow Handler (~553 Z)
+├── ci_mixin.py              # CI-Message-Updates, Deployment-Trigger (~209 Z)
+├── state_mixin.py           # Git-State-Tracking, Deduplizierung (~101 Z)
+├── git_ops_mixin.py         # Git-Subprocess-Operationen (~139 Z)
+├── notifications_mixin.py   # Alle Discord-Notifications (~495 Z)
+└── ai_patch_notes_mixin.py  # AI Patch-Notes-Generierung (~708 Z)
 ```
 
-## Migrations-Strategie
+## Migrations-Strategie (wie durchgeführt)
 
-1. Package erstellen, `__init__.py` re-exportiert die Hauptklasse
-2. Alte Datei bleibt als Fallback (Import-Kompatibilitaet)
-3. Module einzeln extrahieren und testen
-4. Alle Imports im Projekt aktualisieren
-5. Alte Datei loeschen
+1. Package-Verzeichnis erstellt, `__init__.py` re-exportiert die Hauptklasse
+2. Methoden logisch in Mixins gruppiert (nach Verantwortung)
+3. Hauptklasse erbt von allen Mixins via MRO
+4. Alle `self._method()`-Aufrufe funktionieren weiter durch Python MRO
+5. Tests angepasst (Patch-Pfade auf Mixin-Module aktualisiert)
+6. Alte Einzeldateien gelöscht
 
-## Risiko
+## Ergebnis
 
-- HOCH: Beide Dateien sind Kern-Logik des Bots
-- Eigener Feature-Branch (`refactor/orchestrator-split`) empfohlen
-- Jedes Modul einzeln testen vor naechstem Split
-- Geschaetzter Aufwand: 2-3 Sessions
+- **5224 Zeilen** in **18 fokussierte Module** aufgeteilt
+- Import-Kompatibilität vollständig erhalten
+- Alle Unit-Tests laufen weiter (Patch-Pfade angepasst)
+- Kein Feature-Branch nötig — direktes Refactoring auf main war sicher

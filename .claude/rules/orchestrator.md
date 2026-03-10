@@ -1,6 +1,6 @@
 ---
 paths:
-  - "src/integrations/orchestrator.py"
+  - "src/integrations/orchestrator/**"
   - "src/integrations/auto_fix_manager.py"
   - "src/integrations/smart_queue.py"
   - "src/integrations/self_healing.py"
@@ -10,6 +10,17 @@ paths:
   - "src/integrations/impact_analyzer.py"
 ---
 # Remediation Orchestrator
+
+## Package-Struktur (`orchestrator/`)
+| Modul | Zweck |
+|-------|-------|
+| `core.py` | RemediationOrchestrator Klasse (__init__ + Mixin-Komposition) |
+| `models.py` | SecurityEventBatch, RemediationPlan Dataclasses |
+| `batch_mixin.py` | Event-Batching, History-Persistenz, Adaptive Retry |
+| `planner_mixin.py` | KI-Planerstellung, Prompt-Building, Streaming |
+| `discord_mixin.py` | Status-Messages, Approval-Flow (Discord UI) |
+| `executor_mixin.py` | Plan-Ausfuehrung, Multi-Projekt, Phase-Execution |
+| `recovery_mixin.py` | Rollback, Verifikation, Summary, Status |
 
 ## SmartQueue
 - **3 parallele Analyse-Slots** (asyncio.Semaphore fuer concurrent Security-Event Analyse)
@@ -24,12 +35,6 @@ paths:
 4. Plan-Validierung: Confidence > 0%, mindestens 1 Phase
 5. Fix-Ausfuehrung: Sequentiell mit Backup vor jedem Schritt
 
-## Auto-Fix Manager
-- Discord Buttons: Approve / Reject / Details
-- Persistent Views (ueberleben Bot-Restart)
-- Timeout: 24h fuer Approval-Entscheidungen
-- Rollback bei Fehler automatisch
-
 ## Safety-Pipeline
 | Schritt | Modul | Zweck |
 |---------|-------|-------|
@@ -39,7 +44,6 @@ paths:
 | 4 | `verification.py` | Post-Fix Verifikation (4 Stufen) |
 
 ## Wichtig
-- `orchestrator.py` ist 112 KB — das groesste Modul. Aenderungen mit Bedacht!
 - Fix-Commands werden NIEMALS mit `shell=True` ausgefuehrt
 - Backups unter `/tmp/shadowops_backups/`
 - Event-History in `logs/event_history.json`

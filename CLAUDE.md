@@ -44,10 +44,17 @@
 | `customer_setup_commands.py` | CustomerSetupCommands | `/setup-customer-server` |
 
 ### Integrationen (`src/integrations/`)
+
+#### Kern-Module (Packages)
+| Package | Module | Zweck |
+|---------|--------|-------|
+| `orchestrator/` | `core`, `batch_mixin`, `planner_mixin`, `discord_mixin`, `executor_mixin`, `recovery_mixin`, `models` | Remediation-Orchestrator (Event-Batching, KI-Analyse, Fix-Ausfuehrung) |
+| `github_integration/` | `core`, `webhook_mixin`, `polling_mixin`, `event_handlers_mixin`, `ci_mixin`, `state_mixin`, `git_ops_mixin`, `notifications_mixin`, `ai_patch_notes_mixin` | GitHub Webhook Server, Patch Notes, CI/CD |
+
+#### Einzelne Module
 | Datei | Zweck |
 |-------|-------|
 | `ai_engine.py` | Dual-Engine AI (Codex Primary + Claude Fallback) |
-| `orchestrator.py` | Remediation-Orchestrator (Event-Batching, KI-Analyse, Fix-Ausfuehrung) |
 | `smart_queue.py` | SmartQueue (3 Analyse-Slots, 1 Fix-Lock, Circuit Breaker) |
 | `auto_fix_manager.py` | Discord Buttons fuer Approve/Reject, Persistent Views |
 | `event_watcher.py` | Periodischer Scanner (Trivy/CrowdSec/Fail2ban/AIDE) |
@@ -58,7 +65,6 @@
 | `aide.py` | AIDE File Integrity Monitoring |
 | `approval_modes.py` | Approval-Modi (paranoid/auto/dry-run) |
 | `context_manager.py` | Project-Context Loader fuer KI-Prompts |
-| `github_integration.py` | GitHub Webhook Server (Push/PR Events) |
 | `project_monitor.py` | Projekt-Health-Monitoring (Uptime, Response Times) |
 | `deployment_manager.py` | Deployment-Verwaltung |
 | `incident_manager.py` | Incident-Tracking und -Management |
@@ -67,29 +73,22 @@
 | `guildscout_alerts.py` | GuildScout Alert-Forwarding (Port 9091) |
 | `server_assistant.py` | Server Assistant (ersetzt Legacy Learning System) |
 | `patch_notes_manager.py` | AI-generierte Patch Notes |
-| `patch_notes_trainer.py` | Patch Notes Training/Finetuning |
-| `patch_notes_feedback.py` | Feedback-Loop fuer Patch Notes Qualitaet |
 | `knowledge_base.py` | SQLite Knowledge Database |
 | `log_analyzer.py` | Log-Analyse und -Auswertung |
 | `code_analyzer.py` | Code-Analyse fuer Fix-Strategien |
 | `git_history_analyzer.py` | Git-History Analyse |
-| `docker_image_analyzer.py` | Docker Image Vulnerability Analyse |
 | `command_executor.py` | Sichere Command-Ausfuehrung (kein shell=True) |
 | `impact_analyzer.py` | Impact-Analyse vor Fix-Ausfuehrung |
 | `backup_manager.py` | Backup vor Fixes (/tmp/shadowops_backups/) |
 | `service_manager.py` | systemd Service Management |
 | `verification.py` | Post-Fix Verifikation |
-| `research_fetcher.py` | Security Research Fetcher (Legacy) |
-| `prompt_auto_tuner.py` | Prompt Auto-Tuning |
-| `prompt_ab_testing.py` | Prompt A/B Testing |
-| `llm_fine_tuning.py` | LLM Fine-Tuning Utilities |
 
-### Integrationen — Unterverzeichnisse
+#### Unterverzeichnisse
 | Verzeichnis | Zweck |
 |-------------|-------|
-| `integrations/fixers/` | Tool-spezifische Fixer (trivy, crowdsec, fail2ban, aide) |
-| `integrations/ai_learning/` | Legacy AI Learning (knowledge_db, knowledge_synthesizer, continuous_learning_agent) |
-| `integrations/analyst/` | Security Analyst (security_analyst, analyst_db, activity_monitor, prompts) |
+| `fixers/` | Tool-spezifische Fixer (trivy, crowdsec, fail2ban, aide) |
+| `ai_learning/` | Legacy AI Learning (knowledge_db, knowledge_synthesizer, continuous_learning_agent) |
+| `analyst/` | Security Analyst (security_analyst, analyst_db, activity_monitor, prompts) |
 
 ### Utils (`src/utils/`)
 | Datei | Zweck |
