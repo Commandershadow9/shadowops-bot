@@ -1,8 +1,9 @@
 #!/usr/bin/env bash
 # ShadowOps Bot — Sauberer Restart / Deploy
 # Nutzt den system-level systemd-service (sudo nötig).
-# Usage: ./restart.sh [--pull] [--logs]
+# Usage: ./restart.sh [--pull] [--test] [--logs]
 #   --pull   git pull vor Restart
+#   --test   Tests vor Restart ausführen (blockiert bei Fehlern)
 #   --logs   Live-Logs nach Start anzeigen
 set -euo pipefail
 
@@ -21,12 +22,14 @@ warn()  { echo -e "${YELLOW}[WARN]${NC}  $*"; }
 fail()  { echo -e "${RED}[FAIL]${NC}  $*"; }
 
 DO_PULL=false
+DO_TEST=false
 DO_LOGS=false
 for arg in "$@"; do
     case "$arg" in
         --pull) DO_PULL=true ;;
+        --test) DO_TEST=true ;;
         --logs) DO_LOGS=true ;;
-        *) echo "Usage: $0 [--pull] [--logs]"; exit 1 ;;
+        *) echo "Usage: $0 [--pull] [--test] [--logs]"; exit 1 ;;
     esac
 done
 
@@ -79,6 +82,27 @@ if $DO_PULL; then
     cd "$BOT_DIR"
     git pull --ff-only || { fail "git pull fehlgeschlagen"; exit 1; }
     ok "Code aktualisiert"
+fi
+
+# ---------------------------------------------------
+# 3b. Optional: Tests ausführen
+# ---------------------------------------------------
+if $DO_TEST; then
+    info "Führe Tests aus ..."
+    if [ -x "$BOT_DIR/scripts/run_tests_with_coverage.sh" ]; then
+        if "$BOT_DIR/scripts/run_tests_with_coverage.sh"; then
+            ok "Tests bestanden"
+        else
+            fail "Tests fehlgeschlagen — Restart abgebrochen!"
+            echo ""
+            if [ -f "$BOT_DIR/data/test_results.json" ]; then
+                cat "$BOT_DIR/data/test_results.json"
+            fi
+            exit 1
+        fi
+    else
+        warn "Test-Script nicht gefunden, überspringe Tests"
+    fi
 fi
 
 # ---------------------------------------------------
