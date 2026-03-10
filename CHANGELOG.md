@@ -41,6 +41,11 @@
 **Config-Template:**
 - `config.example.yaml`: Ollama-Section durch Dual-Engine (Codex CLI + Claude CLI) ersetzt
 
+**Daily Server Check — User-Service-Erkennung:**
+- `systemctl --user` braucht `XDG_RUNTIME_DIR` wenn Bot als System-Service läuft
+- server_assistant, security_analyst und Analyst-Prompts gefixt
+- Behebt: "0/4 User-Services aktiv" obwohl alle 4 laufen
+
 ## [4.0.0] - 2026-03-06
 
 ### Dual-Engine AI System (Codex + Claude CLI)
