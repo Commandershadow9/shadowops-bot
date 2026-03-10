@@ -766,16 +766,9 @@ class ShadowOpsBot(commands.Bot):
                     from integrations.patch_notes_web_exporter import PatchNotesWebExporter
                     from integrations.patch_notes_batcher import PatchNotesBatcher
 
-                    # Web Exporter: pro Projekt aus Config oder Default
-                    projects_config = self.config.get('projects', {})
+                    # Web Exporter: Default-Verzeichnis (projekt-spezifische Dirs
+                    # werden in notifications_mixin.py aus der Config gelesen)
                     default_output = Path.home() / '.shadowops' / 'changelogs'
-                    for proj_name, proj_config in projects_config.items():
-                        pn_config = proj_config.get('patch_notes', {})
-                        output_dir = pn_config.get('changelog_output_dir', '')
-                        if output_dir:
-                            default_output = Path(output_dir).parent
-                            break
-
                     self.web_exporter = PatchNotesWebExporter(default_output)
                     self.github_integration.web_exporter = self.web_exporter
 
