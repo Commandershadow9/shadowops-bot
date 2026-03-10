@@ -29,8 +29,8 @@ logger = logging.getLogger('shadowops.analyst')
 # Konstanten
 # ─────────────────────────────────────────────────────────────────────
 
-# Maximale Anzahl Sessions pro Tag (Token-Kosten begrenzen)
-MAX_SESSIONS_PER_DAY = 1
+# Maximale Anzahl Sessions pro Tag — Default, wird von Config ueberschrieben
+DEFAULT_MAX_SESSIONS_PER_DAY = 3
 
 # Timeout fuer eine einzelne Analyse-Session (30 Minuten)
 SESSION_TIMEOUT = 1800
@@ -92,8 +92,14 @@ class SecurityAnalyst:
         self.config = config
         self.ai_engine = ai_engine
 
+        # Max Sessions aus Config oder Default
+        analyst_cfg = config._config.get('security_analyst', {})
+        self.max_sessions_per_day = analyst_cfg.get(
+            'max_sessions_per_day', DEFAULT_MAX_SESSIONS_PER_DAY
+        )
+
         # Datenbank-DSN aus Config oder Default
-        dsn = config._config.get('security_analyst', {}).get(
+        dsn = analyst_cfg.get(
             'database_dsn',
             'postgresql://security_analyst:sec_analyst_2026@127.0.0.1:5433/security_analyst',
         )
@@ -191,14 +197,14 @@ class SecurityAnalyst:
                 if loop_count % HEARTBEAT_EVERY == 0:
                     logger.info(
                         "Heartbeat: user_active=%s, sessions_today=%d/%d, briefing_pending=%s",
-                        user_active, self._sessions_today, MAX_SESSIONS_PER_DAY,
+                        user_active, self._sessions_today, self.max_sessions_per_day,
                         self._briefing_pending,
                     )
 
                 # Session starten wenn: User idle + Tages-Limit nicht erreicht + keine laufende Session
                 if (
                     not user_active
-                    and self._sessions_today < MAX_SESSIONS_PER_DAY
+                    and self._sessions_today < self.max_sessions_per_day
                     and self._current_session_id is None
                 ):
                     logger.info("User ist idle und Session-Limit nicht erreicht — starte Analyse")
@@ -269,6 +275,12 @@ class SecurityAnalyst:
                 await self._process_results(session_id, result, health_ok)
             else:
                 logger.warning("Session #%d: Kein Ergebnis von der AI erhalten", session_id)
+                # Fehlgeschlagene Session zaehlt NICHT gegen Limit
+                self._sessions_today -= 1
+                logger.info(
+                    "Session #%d ohne Ergebnis — zaehlt nicht gegen Limit (sessions_today=%d/%d)",
+                    session_id, self._sessions_today, self.max_sessions_per_day,
+                )
                 await self.db.end_session(
                     session_id=session_id,
                     summary="Session ohne Ergebnis beendet",
@@ -286,6 +298,12 @@ class SecurityAnalyst:
             raise
         except Exception as e:
             logger.error("Session-Fehler: %s", e, exc_info=True)
+            # Fehlgeschlagene Session zaehlt NICHT gegen Limit
+            self._sessions_today -= 1
+            logger.info(
+                "Session mit Fehler — zaehlt nicht gegen Limit (sessions_today=%d/%d)",
+                self._sessions_today, self.max_sessions_per_day,
+            )
             if session_id:
                 try:
                     await self.db.end_session(

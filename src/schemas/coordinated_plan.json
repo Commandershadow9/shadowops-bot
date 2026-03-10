@@ -1,0 +1,29 @@
+{
+  "type": "object",
+  "properties": {
+    "description": { "type": "string" },
+    "confidence": { "type": "number", "minimum": 0, "maximum": 1 },
+    "estimated_duration_minutes": { "type": "integer" },
+    "requires_restart": { "type": "boolean" },
+    "phases": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "properties": {
+          "name": { "type": "string" },
+          "description": { "type": "string" },
+          "steps": {
+            "type": "array",
+            "items": { "type": "string" }
+          },
+          "estimated_minutes": { "type": "integer" }
+        },
+        "required": ["name", "description", "steps", "estimated_minutes"],
+        "additionalProperties": false
+      }
+    },
+    "rollback_plan": { "type": "string" }
+  },
+  "required": ["description", "confidence", "estimated_duration_minutes", "requires_restart", "phases", "rollback_plan"],
+  "additionalProperties": false
+}

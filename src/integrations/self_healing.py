@@ -369,7 +369,8 @@ class SelfHealingCoordinator:
                 await self._handle_failure(job, f"Confidence zu niedrig ({confidence:.0%} < 85%). Manuelle Prüfung erforderlich.")
                 return
 
-            job.current_strategy = strategy['description']
+            strategy_desc = strategy.get('description', strategy.get('analysis', 'Keine Beschreibung'))
+            job.current_strategy = strategy_desc
 
             # Execute fix based on event source
             result = await self._apply_fix(event, strategy)
@@ -379,7 +380,7 @@ class SelfHealingCoordinator:
                 event_id=event.event_id,
                 attempt_number=attempt_num,
                 timestamp=datetime.now(),
-                strategy=strategy['description'],
+                strategy=strategy_desc,
                 result=result['status'],
                 error_message=result.get('error'),
                 ai_confidence=strategy.get('confidence', 0.0)
@@ -491,7 +492,8 @@ class SelfHealingCoordinator:
 
     async def _fix_trivy(self, event: 'SecurityEvent', strategy: Dict) -> Dict:
         """Fix Docker vulnerability using TrivyFixer"""
-        logger.info(f"🐳 Applying Trivy fix: {strategy['description']}")
+        strategy_desc = strategy.get('description', strategy.get('analysis', 'Trivy Fix'))
+        logger.info(f"🐳 Applying Trivy fix: {strategy_desc}")
 
         # Discord Channel Logger: Fix Start
         if self.discord_logger:
@@ -500,7 +502,7 @@ class SelfHealingCoordinator:
             self.discord_logger.log_code_fix(
                 f"🔧 **Trivy Fix gestartet**\n"
                 f"📂 Projekt: **{project_name}**\n"
-                f"📝 Strategy: {strategy['description'][:100]}",
+                f"📝 Strategy: {strategy_desc[:100]}",
                 severity="info"
             )
 
@@ -551,7 +553,7 @@ class SelfHealingCoordinator:
 
     async def _fix_crowdsec(self, event: 'SecurityEvent', strategy: Dict) -> Dict:
         """Fix CrowdSec threat using CrowdSecFixer"""
-        logger.info(f"🛡️ Applying CrowdSec fix: {strategy['description']}")
+        logger.info(f"🛡️ Applying CrowdSec fix: {strategy.get('description', 'CrowdSec Fix')}")
 
         try:
             # Convert SecurityEvent to dict for fixer
@@ -574,7 +576,7 @@ class SelfHealingCoordinator:
 
     async def _fix_fail2ban(self, event: 'SecurityEvent', strategy: Dict) -> Dict:
         """Fix Fail2ban issue using Fail2banFixer"""
-        logger.info(f"🚫 Applying Fail2ban fix: {strategy['description']}")
+        logger.info(f"🚫 Applying Fail2ban fix: {strategy.get('description', 'Fail2ban Fix')}")
 
         try:
             # Convert SecurityEvent to dict for fixer
@@ -597,7 +599,7 @@ class SelfHealingCoordinator:
 
     async def _fix_aide(self, event: 'SecurityEvent', strategy: Dict) -> Dict:
         """Fix AIDE integrity violation using AideFixer"""
-        logger.info(f"📁 Applying AIDE fix: {strategy['description']}")
+        logger.info(f"📁 Applying AIDE fix: {strategy.get('description', 'AIDE Fix')}")
 
         try:
             # Convert SecurityEvent to dict for fixer

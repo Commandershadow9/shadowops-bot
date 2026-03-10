@@ -511,6 +511,7 @@ class TaskRouter:
         'fix_strategy': 'fix_strategy.json',
         'patch_notes': 'patch_notes.json',
         'incident_analysis': 'incident_analysis.json',
+        'coordinated_plan': 'coordinated_plan.json',
     }
 
     # Standard-Routing wenn kein spezifischer Key gefunden
@@ -765,6 +766,11 @@ class AIEngine:
         """
         severity = context.get('severity', 'HIGH')
         route = self.router.get_route(severity, 'analysis')
+
+        # Koordinierte Plaene brauchen eigenes Schema (nicht fix_strategy)
+        coordinated_schema = self.router._resolve_schema_path('coordinated_plan')
+        if coordinated_schema:
+            route['schema_path'] = coordinated_schema
 
         result = await self._execute_with_fallback(prompt, route)
 

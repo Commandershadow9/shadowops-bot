@@ -146,18 +146,22 @@ class AnalystDB:
         logger.info("Session %d pausiert (User online)", session_id)
 
     async def count_sessions_today(self) -> int:
-        """Anzahl der Sessions die heute bereits gelaufen sind.
+        """Anzahl der ERFOLGREICHEN Sessions die heute bereits gelaufen sind.
 
         Wird beim Start genutzt um _sessions_today korrekt zu initialisieren,
         damit der Counter auch nach Bot-Restarts stimmt.
 
+        Fehlgeschlagene Sessions (0 Findings, 0 Tokens) zaehlen NICHT
+        gegen das Tages-Limit, damit bei AI-Ausfaellen Retries moeglich sind.
+
         Returns:
-            Anzahl Sessions heute (completed + running)
+            Anzahl erfolgreicher Sessions heute
         """
         count = await self.pool.fetchval(
             """SELECT COUNT(*) FROM sessions
                WHERE started_at::date = CURRENT_DATE
-                 AND status IN ('completed', 'running')"""
+                 AND status IN ('completed', 'running')
+                 AND (findings_count > 0 OR tokens_used > 0 OR status = 'running')"""
         )
         return count or 0
 

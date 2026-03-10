@@ -217,39 +217,58 @@ class PlannerMixin:
             return text[:max_chars - 20] + "\n... [gekürzt]"
 
         # Trivy-Events erkennen (CVE-Scans)
-        if 'AffectedImages' in event_details or 'ImageDetails' in event_details or 'vulnerabilities' in event_details:
+        # Event-Keys: 'Stats' (neues Format) oder 'vulnerabilities' (alt), 'ImageDetails' oder 'AffectedImages'
+        if any(k in event_details for k in ['AffectedImages', 'ImageDetails', 'vulnerabilities', 'Stats']):
             summary_parts = []
             summary_parts.append("=== Trivy CVE-Scan Zusammenfassung ===")
 
-            # Vulnerability-Counts
-            vulns = event_details.get('vulnerabilities', {})
-            if vulns:
-                total = sum(v for v in vulns.values() if isinstance(v, (int, float)))
+            # Title und Description falls vorhanden
+            if event_details.get('Title'):
+                summary_parts.append(event_details['Title'])
+            if event_details.get('Description'):
+                summary_parts.append(event_details['Description'])
+
+            # Vulnerability-Counts aus 'Stats' (aktuell) oder 'vulnerabilities' (alt)
+            stats = event_details.get('Stats', event_details.get('vulnerabilities', {}))
+            if stats:
+                total = sum(v for v in stats.values() if isinstance(v, (int, float)))
                 summary_parts.append(f"Gesamt: {total} Vulnerabilities")
                 for sev in ['critical', 'high', 'medium', 'low']:
-                    count = vulns.get(sev, 0)
+                    count = stats.get(sev, 0)
                     if count > 0:
                         summary_parts.append(f"  {sev.upper()}: {count}")
 
-            # Totals auf Top-Level
+            # Totals auf Top-Level (Fallback fuer aeltere Events)
             for key in ['total_critical', 'total_high', 'total_medium', 'total_low']:
                 val = event_details.get(key)
                 if val and val > 0:
                     severity_name = key.replace('total_', '').upper()
                     summary_parts.append(f"  {severity_name}: {val}")
 
-            # Betroffene Images
-            affected = event_details.get('AffectedImages', [])
+            # Betroffene Images — 'ImageDetails' (aktuell) oder 'AffectedImages' (alt)
+            image_details = event_details.get('ImageDetails', {})
+            affected = event_details.get('AffectedImages', list(image_details.keys()))
             if affected:
                 summary_parts.append(f"Betroffene Images ({len(affected)}):")
                 for img in affected[:5]:
-                    img_details = event_details.get('ImageDetails', {}).get(img, {})
-                    critical = img_details.get('critical', 0)
-                    high = img_details.get('high', 0)
-                    project = img_details.get('project', 'unbekannt')
+                    img_info = image_details.get(img, {})
+                    vulns = img_info.get('vulnerabilities', img_info)
+                    critical = vulns.get('critical', vulns.get('CRITICAL', 0))
+                    high = vulns.get('high', vulns.get('HIGH', 0))
+                    project = img_info.get('project', img_info.get('image_info', {}).get('name', 'unbekannt'))
                     summary_parts.append(f"  - {img}: CRITICAL={critical}, HIGH={high} (Projekt: {project})")
                 if len(affected) > 5:
                     summary_parts.append(f"  ... und {len(affected) - 5} weitere Images")
+
+            # Upgradeable Images
+            upgradeable = event_details.get('UpgradeableImages', [])
+            if upgradeable:
+                summary_parts.append(f"Aktualisierbare Images ({len(upgradeable)}):")
+                for img in upgradeable[:5]:
+                    if isinstance(img, dict):
+                        summary_parts.append(f"  - {img.get('name', '?')}: {img.get('current', '?')} -> {img.get('latest', '?')}")
+                    else:
+                        summary_parts.append(f"  - {img}")
 
             # Empfohlene Aktion
             action = event_details.get('recommended_action', event_details.get('action'))

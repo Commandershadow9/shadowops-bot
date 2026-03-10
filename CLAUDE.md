@@ -105,7 +105,8 @@
 ### Schemas (`src/schemas/`)
 | Datei | Zweck |
 |-------|-------|
-| `fix_strategy.json` | Remediation-Plaene (Orchestrator) |
+| `fix_strategy.json` | Remediation-Plaene (Einzelne Events) |
+| `coordinated_plan.json` | Koordinierte Batch-Plaene (Orchestrator) |
 | `incident_analysis.json` | Incident-Analyse (Self-Healing) |
 | `patch_notes.json` | AI-generierte Patch Notes |
 | `analyst_session.json` | Security Analyst Session Output |
