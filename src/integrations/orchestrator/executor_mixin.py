@@ -80,12 +80,15 @@ class ExecutorMixin:
                 else:
                     logger.error(f"❌ Batch {batch.batch_id} fehlgeschlagen")
                     batch.status = "failed"
+                    # Cache clearen damit Events beim naechsten Scan neu erkannt werden
+                    await self._clear_event_cache_for_batch(batch)
 
                 self.completed_batches.append(batch)
 
             except Exception as e:
                 logger.error(f"❌ Orchestrator Error für Batch {batch.batch_id}: {e}", exc_info=True)
                 batch.status = "failed"
+                await self._clear_event_cache_for_batch(batch)
                 self.completed_batches.append(batch)
 
             finally:
@@ -94,6 +97,19 @@ class ExecutorMixin:
                 # Verarbeite nächsten Batch falls vorhanden
                 if self.pending_batches:
                     asyncio.create_task(self._process_next_batch())
+
+    async def _clear_event_cache_for_batch(self, batch):
+        """Entfernt fehlgeschlagene Batch-Events aus dem Event-Cache des Watchers."""
+        try:
+            watcher = getattr(self.bot, 'event_watcher', None) if self.bot else None
+            if watcher:
+                cleared = await watcher.clear_failed_events(batch.events)
+                if cleared:
+                    logger.info(f"🗑️ {cleared} Events aus Cache entfernt — werden beim naechsten Scan neu erkannt")
+            else:
+                logger.debug("Event-Watcher nicht verfuegbar — Cache nicht bereinigt")
+        except Exception as e:
+            logger.warning(f"⚠️ Event-Cache Bereinigung fehlgeschlagen: {e}")
 
     async def _execute_plan(self, batch: SecurityEventBatch, plan: RemediationPlan) -> bool:
         """
@@ -155,8 +171,9 @@ class ExecutorMixin:
 
         # SINGLE PROJECT MODE: Original execution flow
 
-        # Track execution start time for duration calculation
+        # Track execution start time and plan confidence for phase strategy
         self._execution_start_time = datetime.now()
+        self._current_plan_confidence = plan.confidence
 
         # Get execution channel for live updates
         execution_channel = None
@@ -859,17 +876,28 @@ class ExecutorMixin:
                     if previous_attempts:
                         logger.info(f"      📚 Found {len(previous_attempts)} previous attempt(s) for {event_signature}")
 
-                    # Get fix strategy from AI (or use cached from plan)
+                    # Build strategy from coordinated plan's phase data
+                    # Der Plan hat bereits alle Infos — kein zweiter AI-Call noetig!
                     strategy = phase.get('strategy', {})
 
                     if not strategy:
-                        # Generate strategy if not in phase
-                        logger.info(f"      Generating strategy for {event.source}...")
+                        # Construct strategy from phase data (name, description, steps)
+                        strategy = {
+                            'description': phase.get('description', phase.get('name', 'Fix')),
+                            'confidence': getattr(self, '_current_plan_confidence', 0.8),
+                            'steps': phase.get('steps', []),
+                            'phase_name': phase.get('name', 'Unnamed'),
+                            'estimated_minutes': phase.get('estimated_minutes', 5),
+                        }
+                        logger.info(f"      Using plan phase data as strategy: {strategy['description'][:80]}")
 
-                        strategy = await self.ai_service.generate_fix_strategy({
-                            'event': event.to_dict(),
-                            'previous_attempts': previous_attempts
-                        })
+                        # Nur wenn Phase-Daten zu duenn sind (z.B. leere Steps), KI fragen
+                        if not strategy['steps'] and not strategy['description']:
+                            logger.info(f"      Phase hat keine Details — generiere Strategy via KI fuer {event.source}...")
+                            strategy = await self.ai_service.generate_fix_strategy({
+                                'event': event.to_dict(),
+                                'previous_attempts': previous_attempts
+                            })
 
                     # Show planned steps for this fix (for transparency)
                     steps_preview = ""

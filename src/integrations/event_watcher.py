@@ -78,7 +78,7 @@ class SecurityEventWatcher:
 
         # Scan intervals (in seconds) - EFFICIENT mode
         self.intervals = {
-            'trivy': 21600,      # 6 hours (Docker scans are slow)
+            'trivy': 3600,       # 1 hour (bei Failure wird Cache cleared fuer sofortigen Re-Scan)
             'crowdsec': 30,      # 30 seconds (active threats)
             'fail2ban': 30,      # 30 seconds (active bans)
             'aide': 900,         # 15 minutes (file integrity)
@@ -796,6 +796,28 @@ class SecurityEventWatcher:
             'fail2ban': len(results[2]) if isinstance(results[2], list) else 0,
             'aide': len(results[3]) if isinstance(results[3], list) else 0,
         }
+
+    async def clear_failed_events(self, events: list) -> int:
+        """
+        Entfernt Events aus dem Cache, damit sie beim naechsten Scan neu erkannt werden.
+
+        Wird vom Orchestrator aufgerufen wenn ein Batch fehlschlaegt.
+        So muessen Events nicht 12-24h auf Cache-Expiry warten.
+        """
+        cleared = 0
+        async with self.seen_events_lock:
+            for event in events:
+                sig = self._generate_event_signature(event)
+                if sig in self.seen_events:
+                    del self.seen_events[sig]
+                    cleared += 1
+                    logger.info(f"🗑️ Event-Cache cleared: {sig}")
+
+            if cleared:
+                self._save_seen_events()
+
+        logger.info(f"🗑️ {cleared}/{len(events)} Events aus Cache entfernt (werden beim naechsten Scan neu erkannt)")
+        return cleared
 
     def _save_seen_events(self):
         """
