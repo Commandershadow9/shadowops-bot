@@ -760,6 +760,35 @@ class ShadowOpsBot(commands.Bot):
                 else:
                     self.patch_notes_manager = None
 
+                # Initialize Patch Notes v2: Web Exporter + Batcher
+                try:
+                    from pathlib import Path
+                    from integrations.patch_notes_web_exporter import PatchNotesWebExporter
+                    from integrations.patch_notes_batcher import PatchNotesBatcher
+
+                    # Web Exporter: pro Projekt aus Config oder Default
+                    projects_config = self.config.get('projects', {})
+                    default_output = Path.home() / '.shadowops' / 'changelogs'
+                    for proj_name, proj_config in projects_config.items():
+                        pn_config = proj_config.get('patch_notes', {})
+                        output_dir = pn_config.get('changelog_output_dir', '')
+                        if output_dir:
+                            default_output = Path(output_dir).parent
+                            break
+
+                    self.web_exporter = PatchNotesWebExporter(default_output)
+                    self.github_integration.web_exporter = self.web_exporter
+
+                    # Batcher
+                    self.patch_notes_batcher = PatchNotesBatcher()
+                    self.github_integration.patch_notes_batcher = self.patch_notes_batcher
+
+                    self.logger.info("✅ Patch Notes v2: Web Exporter + Batcher initialisiert")
+                except Exception as e:
+                    self.logger.warning(f"⚠️ Patch Notes v2 Komponenten nicht verfügbar: {e}")
+                    self.web_exporter = None
+                    self.patch_notes_batcher = None
+
                 await self.github_integration.start_webhook_server()
                 await self.github_integration.start_local_polling()
                 await self.github_integration.ensure_project_webhooks()

@@ -257,13 +257,28 @@ class NotificationsMixin:
                                      ai_description: Optional[str],
                                      project_config: Dict, language: str) -> None:
         """Exportiere Patch Notes als Web-Changelog (SEO-optimiert)."""
-        web_exporter = getattr(self, 'web_exporter', None)
-        if not web_exporter:
-            return
+        from pathlib import Path
+        from integrations.patch_notes_web_exporter import PatchNotesWebExporter
 
         version = self._extract_version_from_commits(commits)
         if not version:
             return
+
+        # Projekt-spezifisches Output-Verzeichnis aus Config
+        patch_config = project_config.get('patch_notes', {})
+        output_dir = patch_config.get('changelog_output_dir', '')
+
+        if output_dir:
+            # Config hat explizites Verzeichnis (z.B. GuildScout → Go API static)
+            output_path = Path(output_dir)
+            output_path.mkdir(parents=True, exist_ok=True)
+            # Exporter mit Parent-Dir, Projektname wird automatisch angehängt
+            exporter = PatchNotesWebExporter(output_path.parent)
+        else:
+            # Fallback: Default-Exporter
+            exporter = getattr(self, 'web_exporter', None)
+            if not exporter:
+                return
 
         git_stats = getattr(self, '_last_git_stats', None) or {}
 
@@ -286,7 +301,7 @@ class NotificationsMixin:
         title = f"{repo_name} {version}"
 
         try:
-            web_exporter.export(
+            exporter.export(
                 project=repo_name,
                 version=version,
                 title=title,
