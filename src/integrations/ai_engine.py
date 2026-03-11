@@ -801,14 +801,14 @@ class AIEngine:
 
         Args:
             prompt: Der vollstaendige Patch-Notes-Prompt
-            use_critical_model: True = Thinking-Modell (bessere Qualitaet)
+            use_critical_model: Ignoriert — Structured Output nutzt immer standard
 
         Returns:
             Strukturiertes Dict oder None bei Fehler
         """
+        # Structured Output (--output-schema) braucht standard-Modell,
+        # Thinking-Modelle (o3) unterstuetzen kein --output-schema
         model_class = 'standard'
-        if use_critical_model:
-            model_class = 'thinking'
 
         schema_path = self.router._resolve_schema_path('patch_notes')
 
