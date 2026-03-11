@@ -39,6 +39,13 @@
 **Test-Isolation:**
 - Push-Event-Tests mocken jetzt `_reserve_commit_processing` (State-unabhängig)
 
+**Patch Notes Code-Review Fixes:**
+- Race Condition bei `_last_git_stats` behoben (Tuple-Rückgabe statt Instanzattribut)
+- Sync/Async-Mix in WebExporter eliminiert (`post_to_api()` wird vom Aufrufer awaited)
+- Exporter-Dopplung behoben: Immer `self.web_exporter` mit API-Endpoints verwenden
+- Schema-Validierung erweitert: `web_content` wird jetzt geprüft, fehlende Felder geloggt
+- `changes[]` im API-Payload ergänzt, API-Key-Validierung beim Config-Laden
+
 ### Refactoring
 
 **datetime.utcnow() Migration:**
