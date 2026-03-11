@@ -127,6 +127,9 @@ class SecurityAnalyst:
         self._briefing_pending: bool = False
         self._pending_result: Optional[Dict] = None
 
+        # Mutex: Verhindert parallele Sessions (Main-Loop + manual_scan)
+        self._session_lock = asyncio.Lock()
+
         # Failure-Tracking (verhindert Endlos-Retries)
         self._consecutive_failures: int = 0
         self._failure_cooldown_until: float = 0.0
@@ -258,11 +261,21 @@ class SecurityAnalyst:
         bei wiederholten Fehlern zu verhindern.
 
         Jeder Session-Start und jedes Ergebnis wird via Discord gemeldet.
+        Nutzt _session_lock um parallele Sessions zu verhindern.
         """
+        if self._session_lock.locked():
+            logger.debug("Session-Lock aktiv — ueberspringe")
+            return
+
+        async with self._session_lock:
+            await self._run_session_inner(trigger_type='idle_detected')
+
+    async def _run_session_inner(self, trigger_type: str = 'idle_detected'):
+        """Interne Session-Logik (wird unter Lock aufgerufen)."""
         session_id = None
         try:
             # Session in DB starten
-            session_id = await self.db.start_session(trigger_type='idle_detected')
+            session_id = await self.db.start_session(trigger_type=trigger_type)
             self._current_session_id = session_id
             self._sessions_today += 1
             logger.info("Analyse-Session #%d gestartet", session_id)
@@ -280,10 +293,13 @@ class SecurityAnalyst:
             )
             prompt = ANALYST_SYSTEM_PROMPT + "\n\n" + context_section
 
-            # Nochmal pruefen ob User immer noch idle ist
-            if await self.activity_monitor.is_user_active():
+            # Nochmal pruefen ob User immer noch idle ist (nur bei auto-trigger)
+            if trigger_type == 'idle_detected' and await self.activity_monitor.is_user_active():
                 logger.info("User ist wieder aktiv — Session #%d abgebrochen", session_id)
-                await self.db.pause_session(session_id)
+                try:
+                    await self.db.pause_session(session_id)
+                except Exception as pause_err:
+                    logger.warning("pause_session fehlgeschlagen: %s", pause_err)
                 self._current_session_id = None
                 self._sessions_today -= 1  # Abbruch durch User zaehlt nicht
                 return
@@ -340,7 +356,10 @@ class SecurityAnalyst:
 
         except asyncio.CancelledError:
             if session_id:
-                await self.db.pause_session(session_id)
+                try:
+                    await self.db.pause_session(session_id)
+                except Exception:
+                    pass
             raise
         except Exception as e:
             logger.error("Session-Fehler: %s", e, exc_info=True)
@@ -405,6 +424,7 @@ class SecurityAnalyst:
         """Meldet den Start einer Analyst-Session in Discord."""
         channel = self._get_briefing_channel()
         if not channel:
+            logger.warning("Kein Briefing-Channel verfuegbar — Start-Notification uebersprungen")
             return
 
         today_str = date.today().strftime('%d.%m.%Y')
@@ -1015,101 +1035,113 @@ class SecurityAnalyst:
         Returns:
             Strukturiertes Ergebnis-Dict oder None bei Fehler
         """
-        logger.info("Manueller Scan gestartet (Fokus: %s)", focus or "keiner")
-
-        session_id = await self.db.start_session(trigger_type='manual')
-        self._current_session_id = session_id
-
-        # Discord: Manuellen Scan-Start melden
-        channel = self._get_briefing_channel()
-        if channel:
-            embed = discord.Embed(
-                title=f"\U0001f50d Manueller Scan #{session_id} gestartet",
-                description=(
-                    f"**Fokus:** {focus or 'Allgemein'}\n"
-                    f"**Primaer:** `{self.codex_model}` (Codex)\n"
-                    f"**Fallback:** `{self.claude_model}` (Claude)"
-                ),
-                color=discord.Color.blue(),
-                timestamp=datetime.now(timezone.utc),
-            )
-            embed.set_footer(text="SecurityAnalyst — Manuell")
-            try:
-                await channel.send(embed=embed)
-            except Exception:
-                pass
-
-        try:
-            # Health-Snapshot vorher
-            health_before = await self._take_health_snapshot(session_id)
-
-            # Prompt zusammenbauen
-            if focus:
-                prompt = (
-                    f"{ANALYST_SYSTEM_PROMPT}\n\n"
-                    f"## SPEZIFISCHER FOKUS\n\n"
-                    f"Der User hat einen gezielten Scan angefordert.\n"
-                    f"Fokussiere dich auf: **{focus}**\n\n"
-                    f"Untersuche diesen Bereich besonders gruendlich."
-                )
-            else:
-                knowledge_context = await self.db.build_ai_context()
-                context_section = ANALYST_CONTEXT_TEMPLATE.format(
-                    knowledge_context=knowledge_context,
-                )
-                prompt = ANALYST_SYSTEM_PROMPT + "\n\n" + context_section
-
-            # AI-Session (Codex primaer, Claude Fallback)
-            result = await self.ai_engine.run_analyst_session(
-                prompt=prompt,
-                timeout=SESSION_TIMEOUT,
-                max_turns=SESSION_MAX_TURNS,
-                codex_model=self.codex_model,
-                claude_model=self.claude_model,
-            )
-
-            # Health-Snapshot nachher
-            health_after = await self._take_health_snapshot(session_id)
-            health_ok = self._compare_health(health_before, health_after)
-
-            if not health_ok:
-                await self._send_health_alert(health_before, health_after)
-
-            if result:
-                provider = result.pop('_provider', 'unknown')
-                model_used = result.pop('_model', 'unknown')
-                await self._process_results(session_id, result, health_ok, model_used)
-            else:
-                await self._notify_session_failure(session_id)
-                await self.db.end_session(
-                    session_id=session_id,
-                    summary="Manueller Scan ohne Ergebnis",
-                    topics=[],
-                    tokens_used=0,
-                    model=self.codex_model,
-                    findings_count=0,
-                    auto_fixes=0,
-                    issues_created=0,
-                )
-
-            return result
-
-        except Exception as e:
-            logger.error("Manueller Scan fehlgeschlagen: %s", e, exc_info=True)
-            await self._notify_session_failure(session_id, error=str(e)[:200])
-            try:
-                await self.db.end_session(
-                    session_id=session_id,
-                    summary=f"Manueller Scan fehlgeschlagen: {str(e)[:200]}",
-                    topics=[],
-                    tokens_used=0,
-                    model=self.codex_model,
-                    findings_count=0,
-                    auto_fixes=0,
-                    issues_created=0,
-                )
-            except Exception:
-                pass
+        if self._session_lock.locked():
+            logger.warning("Manueller Scan abgelehnt — automatische Session laeuft")
             return None
-        finally:
-            self._current_session_id = None
+
+        async with self._session_lock:
+            logger.info("Manueller Scan gestartet (Fokus: %s)", focus or "keiner")
+
+            session_id = await self.db.start_session(trigger_type='manual')
+            self._current_session_id = session_id
+
+            # Discord: Manuellen Scan-Start melden
+            channel = self._get_briefing_channel()
+            if channel:
+                embed = discord.Embed(
+                    title=f"\U0001f50d Manueller Scan #{session_id} gestartet",
+                    description=(
+                        f"**Fokus:** {focus or 'Allgemein'}\n"
+                        f"**Primaer:** `{self.codex_model}` (Codex)\n"
+                        f"**Fallback:** `{self.claude_model}` (Claude)"
+                    ),
+                    color=discord.Color.blue(),
+                    timestamp=datetime.now(timezone.utc),
+                )
+                embed.set_footer(text="SecurityAnalyst — Manuell")
+                try:
+                    await channel.send(embed=embed)
+                except Exception:
+                    pass
+
+            try:
+                # Health-Snapshot vorher
+                health_before = await self._take_health_snapshot(session_id)
+
+                # Prompt zusammenbauen
+                if focus:
+                    prompt = (
+                        f"{ANALYST_SYSTEM_PROMPT}\n\n"
+                        f"## SPEZIFISCHER FOKUS\n\n"
+                        f"Der User hat einen gezielten Scan angefordert.\n"
+                        f"Fokussiere dich auf: **{focus}**\n\n"
+                        f"Untersuche diesen Bereich besonders gruendlich."
+                    )
+                else:
+                    knowledge_context = await self.db.build_ai_context()
+                    context_section = ANALYST_CONTEXT_TEMPLATE.format(
+                        knowledge_context=knowledge_context,
+                    )
+                    prompt = ANALYST_SYSTEM_PROMPT + "\n\n" + context_section
+
+                # AI-Session (Codex primaer, Claude Fallback)
+                result = await self.ai_engine.run_analyst_session(
+                    prompt=prompt,
+                    timeout=SESSION_TIMEOUT,
+                    max_turns=SESSION_MAX_TURNS,
+                    codex_model=self.codex_model,
+                    claude_model=self.claude_model,
+                )
+
+                # Health-Snapshot nachher
+                health_after = await self._take_health_snapshot(session_id)
+                health_ok = self._compare_health(health_before, health_after)
+
+                if not health_ok:
+                    await self._send_health_alert(health_before, health_after)
+
+                if result:
+                    provider = result.pop('_provider', 'unknown')
+                    model_used = result.pop('_model', 'unknown')
+                    # Manueller Erfolg setzt auch Failure-Counter zurueck
+                    self._consecutive_failures = 0
+                    self._failure_cooldown_until = 0.0
+                    await self._process_results(session_id, result, health_ok, model_used)
+                else:
+                    self._consecutive_failures += 1
+                    self._apply_failure_backoff(session_id)
+                    await self._notify_session_failure(session_id)
+                    await self.db.end_session(
+                        session_id=session_id,
+                        summary="Manueller Scan ohne Ergebnis",
+                        topics=[],
+                        tokens_used=0,
+                        model=self.codex_model,
+                        findings_count=0,
+                        auto_fixes=0,
+                        issues_created=0,
+                    )
+
+                return result
+
+            except Exception as e:
+                logger.error("Manueller Scan fehlgeschlagen: %s", e, exc_info=True)
+                self._consecutive_failures += 1
+                self._apply_failure_backoff(session_id)
+                await self._notify_session_failure(session_id, error=str(e)[:200])
+                try:
+                    await self.db.end_session(
+                        session_id=session_id,
+                        summary=f"Manueller Scan fehlgeschlagen: {str(e)[:200]}",
+                        topics=[],
+                        tokens_used=0,
+                        model=self.codex_model,
+                        findings_count=0,
+                        auto_fixes=0,
+                        issues_created=0,
+                    )
+                except Exception:
+                    pass
+                return None
+            finally:
+                self._current_session_id = None

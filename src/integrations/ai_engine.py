@@ -1067,7 +1067,8 @@ class AIEngine:
 
         Verwendet create_subprocess_exec (kein Shell) mit fester Argumentliste.
         """
-        tmp_path = tempfile.mktemp(suffix='.json', prefix='analyst_')
+        fd, tmp_path = tempfile.mkstemp(suffix='.json', prefix='analyst_')
+        os.close(fd)  # Claude schreibt selbst in die Datei
 
         # Schema-Inhalt laden fuer Prompt-Injection
         try:
