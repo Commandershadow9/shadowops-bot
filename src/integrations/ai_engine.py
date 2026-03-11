@@ -922,33 +922,159 @@ class AIEngine:
         prompt: str,
         timeout: int = 1800,
         max_turns: int = 25,
+        codex_model: str = 'gpt-5.3-codex',
+        claude_model: str = 'claude-opus-4-6',
     ) -> Optional[Dict]:
         """
-        Startet eine autonome Claude Code Session zur Server-Analyse.
+        Startet eine autonome Analyst-Session (Codex primaer, Claude Fallback).
 
-        Die Session kann frei den Server explorieren (Logs, Docker, Configs, etc.)
-        und liefert strukturierte Ergebnisse zurueck.
+        Nutzt asyncio.create_subprocess_exec (NICHT shell=True) fuer sichere
+        Prozesserzeugung ohne Command-Injection-Risiko.
 
         Args:
             prompt: Analyse-Prompt mit Aufgabenbeschreibung
-            timeout: Maximale Laufzeit in Sekunden (Default: 30 Min)
-            max_turns: Maximale Anzahl an Tool-Aufrufen (Default: 25)
+            timeout: Maximale Laufzeit fuer Claude-Fallback (Default: 30 Min)
+            max_turns: Maximale Tool-Aufrufe fuer Claude-Fallback (Default: 25)
+            codex_model: Codex-Modell (Default: gpt-5.3-codex)
+            claude_model: Claude-Fallback-Modell (Default: claude-opus-4-6)
 
         Returns:
-            Dict mit Session-Ergebnissen oder None bei Fehler
+            Dict mit Session-Ergebnissen (inkl. '_provider' Key) oder None
         """
-        # Temp-Datei fuer strukturierten Output
-        tmp_path = tempfile.mktemp(suffix='.json', prefix='analyst_')
         schema_path = os.path.join(
             os.path.dirname(__file__), '..', 'schemas', 'analyst_session.json'
         )
+
+        # 1. Primaer: Codex
+        logger.info("Analyst-Session: Versuche Codex (%s)", codex_model)
+        result = await self._run_analyst_codex(prompt, schema_path, codex_model)
+        if result:
+            result['_provider'] = 'codex'
+            result['_model'] = codex_model
+            return result
+
+        # 2. Fallback: Claude
+        logger.info("Codex-Analyst ohne Ergebnis — Fallback auf Claude (%s)", claude_model)
+        self.stats['codex_failures'] = self.stats.get('codex_failures', 0) + 1
+        result = await self._run_analyst_claude(
+            prompt, schema_path, claude_model, timeout, max_turns,
+        )
+        if result:
+            result['_provider'] = 'claude'
+            result['_model'] = claude_model
+            return result
+
+        self.stats['claude_failures'] = self.stats.get('claude_failures', 0) + 1
+        logger.error("Analyst-Session: Beide Engines (Codex + Claude) ohne Ergebnis")
+        return None
+
+    async def _run_analyst_codex(
+        self,
+        prompt: str,
+        schema_path: str,
+        model: str = 'gpt-5.3-codex',
+        timeout: int = 900,
+    ) -> Optional[Dict]:
+        """Analyst-Session via Codex CLI (primaer).
+
+        Verwendet create_subprocess_exec (kein Shell) mit fester Argumentliste.
+        """
+        env = self.codex._get_clean_env()
+
+        # Alle Argumente als Liste — kein Shell, kein Injection-Risiko
+        args = [
+            'codex', 'exec', '--ephemeral',
+            '--skip-git-repo-check',
+            '-c', 'mcp_servers={}',
+            '-s', 'workspace-write',
+            '-m', model,
+            '--output-schema', schema_path,
+            prompt,
+        ]
+
+        logger.info("Codex-Analyst gestartet (Modell: %s, Timeout: %ds)", model, timeout)
+
+        proc = None
+        try:
+            proc = await asyncio.create_subprocess_exec(
+                *args,
+                stdout=asyncio.subprocess.PIPE,
+                stderr=asyncio.subprocess.PIPE,
+                env=env,
+                cwd='/home/cmdshadow',
+            )
+
+            stdout_bytes, stderr_bytes = await asyncio.wait_for(
+                proc.communicate(), timeout=timeout
+            )
+
+            stdout = stdout_bytes.decode('utf-8', errors='replace') if stdout_bytes else ''
+            stderr = stderr_bytes.decode('utf-8', errors='replace') if stderr_bytes else ''
+
+            if proc.returncode != 0:
+                logger.warning(
+                    "Codex-Analyst fehlgeschlagen (rc=%d): %s",
+                    proc.returncode, stderr[:500],
+                )
+                return None
+
+            if not stdout.strip():
+                logger.warning("Codex-Analyst: Leere Antwort")
+                return None
+
+            # Codex mit --output-schema liefert JSON in stdout
+            result = self.codex._extract_json(stdout)
+            if result and ('summary' in result or 'findings' in result):
+                findings_count = len(result.get('findings', []))
+                knowledge_count = len(result.get('knowledge_updates', []))
+                logger.info(
+                    "Codex-Analyst erfolgreich: %d Findings, %d Knowledge-Updates",
+                    findings_count, knowledge_count,
+                )
+                self.stats['codex_success'] = self.stats.get('codex_success', 0) + 1
+                return result
+
+            logger.warning("Codex-Analyst: Output kein gueltiges Analyst-Schema")
+            return None
+
+        except asyncio.TimeoutError:
+            logger.warning("Codex-Analyst: Timeout nach %ds", timeout)
+            if proc:
+                try:
+                    proc.kill()
+                    await proc.wait()
+                except ProcessLookupError:
+                    pass
+            return None
+
+        except FileNotFoundError:
+            logger.error("Codex CLI nicht gefunden — ist 'codex' installiert?")
+            return None
+
+        except Exception as e:
+            logger.error("Codex-Analyst Fehler: %s", e, exc_info=True)
+            return None
+
+    async def _run_analyst_claude(
+        self,
+        prompt: str,
+        schema_path: str,
+        model: str = 'claude-opus-4-6',
+        timeout: int = 1800,
+        max_turns: int = 25,
+    ) -> Optional[Dict]:
+        """Analyst-Session via Claude CLI (Fallback).
+
+        Verwendet create_subprocess_exec (kein Shell) mit fester Argumentliste.
+        """
+        tmp_path = tempfile.mktemp(suffix='.json', prefix='analyst_')
 
         # Schema-Inhalt laden fuer Prompt-Injection
         try:
             with open(schema_path, 'r', encoding='utf-8') as f:
                 schema_content = f.read()
         except Exception as e:
-            logger.error(f"Analyst-Schema nicht lesbar: {e}")
+            logger.error("Analyst-Schema nicht lesbar: %s", e)
             return None
 
         # Prompt erweitern: Ergebnisse als JSON in Temp-Datei schreiben
@@ -963,45 +1089,23 @@ class AIEngine:
             f"Kein Markdown, nur reines JSON."
         )
 
-        # Erlaubte Tools — Bash-Prefixe + MCP-Tools + Kern-Tools
-        # Format: Bash(command:*) mit Doppelpunkt (NICHT Leerzeichen!)
+        # Erlaubte Tools — Bash-Prefixe + Kern-Tools (keine MCPs noetig)
         allowed_tools = (
-            # Bash-Befehle (kein rm, kein dd)
             'Bash(git:*),Bash(docker:*),Bash(ufw:*),Bash(systemctl:*),'
             'Bash(ss:*),Bash(who:*),Bash(df:*),Bash(free:*),Bash(ps:*),'
             'Bash(cat:*),Bash(ls:*),Bash(find:*),Bash(chmod:*),Bash(chown:*),'
             'Bash(apt:*),Bash(npm:*),Bash(go:*),Bash(curl:*),Bash(head:*),'
             'Bash(tail:*),Bash(wc:*),Bash(grep:*),Bash(trivy:*),Bash(cscli:*),'
             'Bash(aide:*),Bash(certbot:*),Bash(gh:*),Bash(sudo:*),'
-            # Kern-Tools
-            'Read,Glob,Grep,Write,Edit,ToolSearch,'
-            # MCP: Docker (read-only)
-            'mcp__docker__list-containers,mcp__docker__get-logs,'
-            # MCP: Postgres (read-only!)
-            'mcp__postgres-guildscout__execute_sql,'
-            'mcp__postgres-guildscout__list_schemas,'
-            'mcp__postgres-guildscout__list_objects,'
-            'mcp__postgres-guildscout__get_object_details,'
-            'mcp__postgres-guildscout__analyze_db_health,'
-            'mcp__postgres-zerodox__execute_sql,'
-            'mcp__postgres-zerodox__list_schemas,'
-            'mcp__postgres-zerodox__list_objects,'
-            'mcp__postgres-zerodox__get_object_details,'
-            'mcp__postgres-zerodox__analyze_db_health,'
-            # MCP: Redis (read-only)
-            'mcp__redis__info,mcp__redis__scan_keys,mcp__redis__get,'
-            'mcp__redis__hgetall,mcp__redis__lrange,mcp__redis__type,'
-            'mcp__redis__dbsize,mcp__redis__client_list,'
-            # MCP: GitHub (Issues + Read)
-            'mcp__github__list_issues,mcp__github__search_issues,'
-            'mcp__github__search_code,mcp__github__get_file_contents,'
-            'mcp__github__issue_write,mcp__github__issue_read'
+            'Bash(psql:*),Bash(redis-cli:*),'
+            'Read,Glob,Grep,Write,Edit'
         )
 
+        # Alle Argumente als Liste — kein Shell, kein Injection-Risiko
         args = [
             self.claude.cli_path,
             '-p', full_prompt,
-            '--model', 'claude-opus-4-6',
+            '--model', model,
             '--max-turns', str(max_turns),
             '--output-format', 'text',
             '--verbose',
@@ -1011,7 +1115,8 @@ class AIEngine:
         env = self.claude._get_clean_env()
 
         logger.info(
-            f"Analyst-Session gestartet (Timeout: {timeout}s, Max-Turns: {max_turns})"
+            "Claude-Analyst gestartet (Modell: %s, Timeout: %ds, Max-Turns: %d)",
+            model, timeout, max_turns,
         )
 
         proc = None
@@ -1033,28 +1138,28 @@ class AIEngine:
 
             if proc.returncode != 0:
                 logger.error(
-                    f"Analyst-Session fehlgeschlagen (rc={proc.returncode}): "
-                    f"{stderr[:500]}"
+                    "Claude-Analyst fehlgeschlagen (rc=%d): %s",
+                    proc.returncode, stderr[:500],
                 )
                 return None
 
-            # Ergebnis aus Temp-Datei lesen
             result = self._read_analyst_result(tmp_path, stdout)
 
             if result:
                 findings_count = len(result.get('findings', []))
                 knowledge_count = len(result.get('knowledge_updates', []))
                 logger.info(
-                    f"Analyst-Session abgeschlossen: "
-                    f"{findings_count} Findings, {knowledge_count} Knowledge-Updates"
+                    "Claude-Analyst erfolgreich: %d Findings, %d Knowledge-Updates",
+                    findings_count, knowledge_count,
                 )
+                self.stats['claude_success'] = self.stats.get('claude_success', 0) + 1
             else:
-                logger.warning("Analyst-Session: Kein strukturiertes Ergebnis erhalten")
+                logger.warning("Claude-Analyst: Kein strukturiertes Ergebnis")
 
             return result
 
         except asyncio.TimeoutError:
-            logger.warning(f"Analyst-Session Timeout nach {timeout}s — versuche Teilergebnisse")
+            logger.warning("Claude-Analyst: Timeout nach %ds — versuche Teilergebnisse", timeout)
             if proc:
                 try:
                     proc.kill()
@@ -1062,22 +1167,16 @@ class AIEngine:
                 except ProcessLookupError:
                     pass
 
-            # Versuche trotzdem die Temp-Datei zu lesen (wurde evtl. schon geschrieben)
             result = self._read_analyst_result(tmp_path)
             if result:
                 result['summary'] = f"[TIMEOUT] {result.get('summary', 'Session abgebrochen')}"
-                findings_count = len(result.get('findings', []))
-                logger.info(
-                    f"Analyst-Session (Timeout): {findings_count} Findings aus Teilergebnis"
-                )
             return result
 
         except Exception as e:
-            logger.error(f"Analyst-Session Fehler: {e}", exc_info=True)
+            logger.error("Claude-Analyst Fehler: %s", e, exc_info=True)
             return None
 
         finally:
-            # Temp-Datei aufraeumen
             try:
                 if os.path.exists(tmp_path):
                     os.unlink(tmp_path)

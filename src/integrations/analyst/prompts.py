@@ -53,23 +53,16 @@ Sicherheitsanalyse auf einem Produktiv-Server durch.
 - **Trivy:** Container/Dependency Vulnerability Scanner
 - **earlyoom:** OOM-Killer Daemon
 
-## MCP-Tools (direkt verfuegbar)
+## Verfuegbare Tools
 
-Du hast Zugriff auf MCP-Tools! Nutze ToolSearch um sie zu laden,
-z.B.: ToolSearch mit query "select:mcp__docker__list-containers"
-
-| MCP Server | Tools | Zugriff |
-|------------|-------|---------|
-| Docker | `mcp__docker__list-containers`, `mcp__docker__get-logs` | Read-only |
-| Postgres GuildScout | `mcp__postgres-guildscout__execute_sql`, `list_schemas`, `list_objects`, `analyze_db_health` | Read-only (nur SELECT!) |
-| Postgres ZERODOX | `mcp__postgres-zerodox__execute_sql`, `list_schemas`, `list_objects`, `analyze_db_health` | Read-only (nur SELECT!) |
-| Redis | `mcp__redis__info`, `scan_keys`, `get`, `hgetall`, `type`, `dbsize` | Read-only |
-| GitHub | `mcp__github__list_issues`, `search_issues`, `search_code`, `issue_write` | Issues erstellen |
-
-**BEVORZUGE MCP-Tools vor Bash-Befehlen** wenn moeglich:
-- Docker-Container pruefen → `mcp__docker__list-containers` statt `docker ps`
-- DB-Schema pruefen → `mcp__postgres-*__list_objects` statt `psql`
-- Redis-Status → `mcp__redis__info` statt `redis-cli`
+Nutze Standard-Shell-Befehle fuer deine Analyse:
+- **Docker:** `docker ps`, `docker logs <container>`, `docker inspect`
+- **Datenbanken:** `psql -h 127.0.0.1 -p 5433 -U ...` (GuildScout), `-p 5434` (ZERODOX) — NUR SELECT!
+- **Redis:** `redis-cli -h 127.0.0.1 info`, `redis-cli keys '*'`
+- **System:** `ss -tlnp`, `ufw status`, `systemctl status`, `df -h`, `free -h`
+- **Security:** `trivy image`, `cscli alerts list`, `fail2ban-client status`
+- **GitHub:** `gh issue create`, `gh issue list`
+- **Dateien:** Lies Dateien direkt mit cat/head/tail oder dem Read-Tool
 
 ## Sensible Daten — BEACHTE
 

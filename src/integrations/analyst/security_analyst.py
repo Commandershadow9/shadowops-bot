@@ -14,6 +14,7 @@ Hauptkomponenten:
 
 import asyncio
 import logging
+import time
 from datetime import datetime, timezone, date
 from typing import Dict, List, Optional
 
@@ -46,6 +47,13 @@ MAIN_LOOP_INTERVAL = 60
 
 # Heartbeat-Log alle N Loops (10 = alle 10 Minuten bei 60s Intervall)
 HEARTBEAT_EVERY = 10
+
+# Backoff bei konsekutiven Fehlern (grosszuegig um Token zu sparen)
+# Nach 1. Fehler: 30 Min, nach 2.: 2 Stunden, nach 3.+: 6 Stunden
+FAILURE_BACKOFF_SECONDS = [1800, 7200, 21600]
+
+# Nach dieser Anzahl konsekutiver Fehler wird fuer den Tag deaktiviert
+MAX_CONSECUTIVE_FAILURES = 3
 
 # Projekt-zu-Repo Mapping fuer GitHub-Issues
 # Keys werden als Substring-Match in affected_project gesucht
@@ -98,6 +106,10 @@ class SecurityAnalyst:
             'max_sessions_per_day', DEFAULT_MAX_SESSIONS_PER_DAY
         )
 
+        # Modelle aus Config (Codex primaer, Claude Fallback)
+        self.codex_model = analyst_cfg.get('model', 'gpt-5.3-codex')
+        self.claude_model = analyst_cfg.get('fallback_model', 'claude-opus-4-6')
+
         # Datenbank-DSN aus Config oder Default
         dsn = analyst_cfg.get(
             'database_dsn',
@@ -114,6 +126,10 @@ class SecurityAnalyst:
         self._running: bool = False
         self._briefing_pending: bool = False
         self._pending_result: Optional[Dict] = None
+
+        # Failure-Tracking (verhindert Endlos-Retries)
+        self._consecutive_failures: int = 0
+        self._failure_cooldown_until: float = 0.0
 
     # ─────────────────────────────────────────────────────────────────
     # Lifecycle
@@ -171,13 +187,15 @@ class SecurityAnalyst:
             try:
                 loop_count += 1
 
-                # Tages-Reset: Zaehler aus DB laden wenn neuer Tag
+                # Tages-Reset: Zaehler + Failure-State zuruecksetzen
                 today = date.today()
                 if today != self._today:
                     self._today = today
                     self._sessions_today = await self.db.count_sessions_today()
+                    self._consecutive_failures = 0
+                    self._failure_cooldown_until = 0.0
                     logger.info(
-                        "Neuer Tag — Session-Zaehler aus DB: %d",
+                        "Neuer Tag — Session-Zaehler aus DB: %d, Fehler-Counter zurueckgesetzt",
                         self._sessions_today,
                     )
 
@@ -195,11 +213,18 @@ class SecurityAnalyst:
 
                 # Heartbeat alle 10 Minuten auf INFO-Level
                 if loop_count % HEARTBEAT_EVERY == 0:
+                    cooldown_remaining = max(0, self._failure_cooldown_until - time.time())
                     logger.info(
-                        "Heartbeat: user_active=%s, sessions_today=%d/%d, briefing_pending=%s",
+                        "Heartbeat: user_active=%s, sessions_today=%d/%d, "
+                        "consecutive_failures=%d, cooldown=%.0fs, briefing_pending=%s",
                         user_active, self._sessions_today, self.max_sessions_per_day,
+                        self._consecutive_failures, cooldown_remaining,
                         self._briefing_pending,
                     )
+
+                # Failure-Cooldown pruefen
+                if self._failure_cooldown_until > time.time():
+                    continue
 
                 # Session starten wenn: User idle + Tages-Limit nicht erreicht + keine laufende Session
                 if (
@@ -226,7 +251,14 @@ class SecurityAnalyst:
     # ─────────────────────────────────────────────────────────────────
 
     async def _run_session(self):
-        """Fuehrt eine komplette Analyse-Session durch"""
+        """Fuehrt eine komplette Analyse-Session durch.
+
+        Fehlgeschlagene Sessions zaehlen GEGEN das Tages-Limit und
+        loesen einen exponentiellen Backoff aus, um Token-Verschwendung
+        bei wiederholten Fehlern zu verhindern.
+
+        Jeder Session-Start und jedes Ergebnis wird via Discord gemeldet.
+        """
         session_id = None
         try:
             # Session in DB starten
@@ -234,6 +266,9 @@ class SecurityAnalyst:
             self._current_session_id = session_id
             self._sessions_today += 1
             logger.info("Analyse-Session #%d gestartet", session_id)
+
+            # Discord: Session-Start melden
+            await self._notify_session_start(session_id)
 
             # Health-Snapshot VOR der Analyse
             health_before = await self._take_health_snapshot(session_id)
@@ -250,16 +285,20 @@ class SecurityAnalyst:
                 logger.info("User ist wieder aktiv — Session #%d abgebrochen", session_id)
                 await self.db.pause_session(session_id)
                 self._current_session_id = None
-                self._sessions_today -= 1  # Zaehlt nicht als verbrauchte Session
+                self._sessions_today -= 1  # Abbruch durch User zaehlt nicht
                 return
 
-            # Claude-Session starten
-            logger.info("Claude-Session wird gestartet (Timeout: %ds, Max-Turns: %d)",
-                         SESSION_TIMEOUT, SESSION_MAX_TURNS)
+            # AI-Session starten (Codex primaer, Claude Fallback)
+            logger.info(
+                "AI-Session wird gestartet (Codex: %s, Fallback: %s, Timeout: %ds)",
+                self.codex_model, self.claude_model, SESSION_TIMEOUT,
+            )
             result = await self.ai_engine.run_analyst_session(
                 prompt=prompt,
                 timeout=SESSION_TIMEOUT,
                 max_turns=SESSION_MAX_TURNS,
+                codex_model=self.codex_model,
+                claude_model=self.claude_model,
             )
 
             # Health-Snapshot NACH der Analyse
@@ -272,21 +311,28 @@ class SecurityAnalyst:
 
             # Ergebnisse verarbeiten
             if result:
-                await self._process_results(session_id, result, health_ok)
-            else:
-                logger.warning("Session #%d: Kein Ergebnis von der AI erhalten", session_id)
-                # Fehlgeschlagene Session zaehlt NICHT gegen Limit
-                self._sessions_today -= 1
+                # Erfolg — Failure-Counter zuruecksetzen
+                provider = result.pop('_provider', 'unknown')
+                model_used = result.pop('_model', 'unknown')
+                self._consecutive_failures = 0
+                self._failure_cooldown_until = 0.0
                 logger.info(
-                    "Session #%d ohne Ergebnis — zaehlt nicht gegen Limit (sessions_today=%d/%d)",
-                    session_id, self._sessions_today, self.max_sessions_per_day,
+                    "Session #%d erfolgreich via %s/%s",
+                    session_id, provider, model_used,
                 )
+                await self._process_results(session_id, result, health_ok, model_used)
+            else:
+                # Fehlgeschlagen — Backoff aktivieren + Discord-Alert
+                self._consecutive_failures += 1
+                self._apply_failure_backoff(session_id)
+                await self._notify_session_failure(session_id)
+
                 await self.db.end_session(
                     session_id=session_id,
-                    summary="Session ohne Ergebnis beendet",
+                    summary=f"Session ohne Ergebnis (Fehler #{self._consecutive_failures})",
                     topics=[],
                     tokens_used=0,
-                    model='claude-opus-4-6',
+                    model=self.codex_model,
                     findings_count=0,
                     auto_fixes=0,
                     issues_created=0,
@@ -298,12 +344,11 @@ class SecurityAnalyst:
             raise
         except Exception as e:
             logger.error("Session-Fehler: %s", e, exc_info=True)
-            # Fehlgeschlagene Session zaehlt NICHT gegen Limit
-            self._sessions_today -= 1
-            logger.info(
-                "Session mit Fehler — zaehlt nicht gegen Limit (sessions_today=%d/%d)",
-                self._sessions_today, self.max_sessions_per_day,
-            )
+            # Fehler zaehlt gegen Limit + Backoff + Discord
+            self._consecutive_failures += 1
+            self._apply_failure_backoff(session_id)
+            await self._notify_session_failure(session_id, error=str(e)[:200])
+
             if session_id:
                 try:
                     await self.db.end_session(
@@ -311,7 +356,7 @@ class SecurityAnalyst:
                         summary=f"Session mit Fehler beendet: {str(e)[:200]}",
                         topics=[],
                         tokens_used=0,
-                        model='claude-opus-4-6',
+                        model=self.codex_model,
                         findings_count=0,
                         auto_fixes=0,
                         issues_created=0,
@@ -321,13 +366,113 @@ class SecurityAnalyst:
         finally:
             self._current_session_id = None
 
-    async def _process_results(self, session_id: int, result: Dict, health_ok: bool):
+    def _apply_failure_backoff(self, session_id: Optional[int]):
+        """Wendet exponentiellen Backoff bei Fehlern an."""
+        idx = min(self._consecutive_failures - 1, len(FAILURE_BACKOFF_SECONDS) - 1)
+        backoff = FAILURE_BACKOFF_SECONDS[idx]
+        self._failure_cooldown_until = time.time() + backoff
+
+        logger.warning(
+            "Session #%s fehlgeschlagen (Fehler #%d) — "
+            "naechster Versuch in %d Minuten (sessions_today=%d/%d)",
+            session_id, self._consecutive_failures,
+            backoff // 60, self._sessions_today, self.max_sessions_per_day,
+        )
+
+        # Bei zu vielen Fehlern: Tages-Limit erreichen
+        if self._consecutive_failures >= MAX_CONSECUTIVE_FAILURES:
+            logger.error(
+                "Analyst: %d konsekutive Fehler — fuer heute deaktiviert",
+                self._consecutive_failures,
+            )
+            self._sessions_today = self.max_sessions_per_day
+
+    # ─────────────────────────────────────────────────────────────────
+    # Discord-Benachrichtigungen (volle Transparenz)
+    # ─────────────────────────────────────────────────────────────────
+
+    def _get_briefing_channel(self) -> Optional[discord.TextChannel]:
+        """Gibt den Discord-Channel fuer Analyst-Benachrichtigungen zurueck."""
+        channel_id = (
+            self.config.channels.get('security_briefing')
+            or self.config.channels.get('ai_learning', 0)
+        )
+        if not channel_id:
+            return None
+        return self.bot.get_channel(int(channel_id))
+
+    async def _notify_session_start(self, session_id: int):
+        """Meldet den Start einer Analyst-Session in Discord."""
+        channel = self._get_briefing_channel()
+        if not channel:
+            return
+
+        today_str = date.today().strftime('%d.%m.%Y')
+        embed = discord.Embed(
+            title=f"\U0001f50d Analyst Session #{session_id} gestartet",
+            description=(
+                f"**Datum:** {today_str}\n"
+                f"**Primaer:** `{self.codex_model}` (Codex)\n"
+                f"**Fallback:** `{self.claude_model}` (Claude)\n"
+                f"**Sessions heute:** {self._sessions_today}/{self.max_sessions_per_day}\n"
+                f"**Trigger:** User idle"
+            ),
+            color=discord.Color.blue(),
+            timestamp=datetime.now(timezone.utc),
+        )
+        embed.set_footer(text="SecurityAnalyst")
+
+        try:
+            await channel.send(embed=embed)
+        except Exception as e:
+            logger.error("Session-Start-Notification fehlgeschlagen: %s", e)
+
+    async def _notify_session_failure(self, session_id: Optional[int], error: str = ""):
+        """Meldet eine fehlgeschlagene Session in Discord (bei JEDEM Fehler)."""
+        channel = self._get_briefing_channel()
+        if not channel:
+            return
+
+        idx = min(self._consecutive_failures - 1, len(FAILURE_BACKOFF_SECONDS) - 1)
+        next_backoff_min = FAILURE_BACKOFF_SECONDS[idx] // 60
+
+        # Farbe: Orange bei einzelnem Fehler, Rot wenn deaktiviert
+        is_disabled = self._consecutive_failures >= MAX_CONSECUTIVE_FAILURES
+        color = discord.Color.red() if is_disabled else discord.Color.orange()
+        status = "FUR HEUTE DEAKTIVIERT" if is_disabled else f"Naechster Versuch in {next_backoff_min} Min"
+
+        error_detail = f"\n**Fehler:** `{error}`" if error else ""
+
+        embed = discord.Embed(
+            title=f"\u274c Analyst Session #{session_id or '?'} fehlgeschlagen",
+            description=(
+                f"**Konsekutive Fehler:** {self._consecutive_failures}/{MAX_CONSECUTIVE_FAILURES}\n"
+                f"**Sessions heute:** {self._sessions_today}/{self.max_sessions_per_day}\n"
+                f"**Codex:** `{self.codex_model}` — kein Ergebnis\n"
+                f"**Claude:** `{self.claude_model}` — kein Ergebnis\n"
+                f"**Status:** {status}"
+                f"{error_detail}\n\n"
+                f"Logs: `sudo journalctl -u shadowops-bot --since '30m ago' | grep -i analyst`"
+            ),
+            color=color,
+            timestamp=datetime.now(timezone.utc),
+        )
+        embed.set_footer(text="SecurityAnalyst Failure-Alert")
+
+        try:
+            await channel.send(embed=embed)
+            logger.info("Session-Failure-Notification in Discord gesendet")
+        except Exception as e:
+            logger.error("Session-Failure-Notification fehlgeschlagen: %s", e)
+
+    async def _process_results(self, session_id: int, result: Dict, health_ok: bool, model_used: str = 'unknown'):
         """Verarbeitet die AI-Ergebnisse und speichert sie in der DB
 
         Args:
             session_id: Aktuelle Session-ID
             result: Strukturiertes Ergebnis der AI-Session
             health_ok: Ob der Health-Check bestanden wurde
+            model_used: Name des verwendeten AI-Modells
         """
         findings = result.get('findings', [])
         knowledge_updates = result.get('knowledge_updates', [])
@@ -395,7 +540,7 @@ class SecurityAnalyst:
             summary=summary,
             topics=topics,
             tokens_used=0,  # Token-Zaehlung kommt spaeter
-            model='claude-opus-4-6',
+            model=model_used,
             findings_count=len(findings),
             auto_fixes=auto_fixes,
             issues_created=issues_created,
@@ -875,6 +1020,25 @@ class SecurityAnalyst:
         session_id = await self.db.start_session(trigger_type='manual')
         self._current_session_id = session_id
 
+        # Discord: Manuellen Scan-Start melden
+        channel = self._get_briefing_channel()
+        if channel:
+            embed = discord.Embed(
+                title=f"\U0001f50d Manueller Scan #{session_id} gestartet",
+                description=(
+                    f"**Fokus:** {focus or 'Allgemein'}\n"
+                    f"**Primaer:** `{self.codex_model}` (Codex)\n"
+                    f"**Fallback:** `{self.claude_model}` (Claude)"
+                ),
+                color=discord.Color.blue(),
+                timestamp=datetime.now(timezone.utc),
+            )
+            embed.set_footer(text="SecurityAnalyst — Manuell")
+            try:
+                await channel.send(embed=embed)
+            except Exception:
+                pass
+
         try:
             # Health-Snapshot vorher
             health_before = await self._take_health_snapshot(session_id)
@@ -895,11 +1059,13 @@ class SecurityAnalyst:
                 )
                 prompt = ANALYST_SYSTEM_PROMPT + "\n\n" + context_section
 
-            # Claude-Session
+            # AI-Session (Codex primaer, Claude Fallback)
             result = await self.ai_engine.run_analyst_session(
                 prompt=prompt,
                 timeout=SESSION_TIMEOUT,
                 max_turns=SESSION_MAX_TURNS,
+                codex_model=self.codex_model,
+                claude_model=self.claude_model,
             )
 
             # Health-Snapshot nachher
@@ -910,14 +1076,17 @@ class SecurityAnalyst:
                 await self._send_health_alert(health_before, health_after)
 
             if result:
-                await self._process_results(session_id, result, health_ok)
+                provider = result.pop('_provider', 'unknown')
+                model_used = result.pop('_model', 'unknown')
+                await self._process_results(session_id, result, health_ok, model_used)
             else:
+                await self._notify_session_failure(session_id)
                 await self.db.end_session(
                     session_id=session_id,
                     summary="Manueller Scan ohne Ergebnis",
                     topics=[],
                     tokens_used=0,
-                    model='claude-opus-4-6',
+                    model=self.codex_model,
                     findings_count=0,
                     auto_fixes=0,
                     issues_created=0,
@@ -927,13 +1096,14 @@ class SecurityAnalyst:
 
         except Exception as e:
             logger.error("Manueller Scan fehlgeschlagen: %s", e, exc_info=True)
+            await self._notify_session_failure(session_id, error=str(e)[:200])
             try:
                 await self.db.end_session(
                     session_id=session_id,
                     summary=f"Manueller Scan fehlgeschlagen: {str(e)[:200]}",
                     topics=[],
                     tokens_used=0,
-                    model='claude-opus-4-6',
+                    model=self.codex_model,
                     findings_count=0,
                     auto_fixes=0,
                     issues_created=0,
