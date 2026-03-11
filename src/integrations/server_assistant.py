@@ -60,6 +60,9 @@ class ServerAssistant:
         self.disk_crit_pct = 90
         self.mem_warn_pct = 85
 
+        # CLI-Version-Tracking (meldet nur bei Aenderungen)
+        self._last_cli_versions: Dict[str, str] = {}
+
         # Channel (ai_learning ist jetzt frei, oder bot_status)
         self.channel_id = (
             config.channels.get('ai_learning', 0)
@@ -166,6 +169,10 @@ class ServerAssistant:
         # 7. Container-Restart-Checks
         restarts = await self._check_container_restarts()
         issues.extend(restarts.get('issues', []))
+
+        # 8. CLI-Version-Updates (Codex + Claude)
+        cli_updates = await self._check_cli_versions()
+        info.extend(cli_updates.get('info', []))
 
         if issues or actions:
             await self._send_daily_report(issues, info, actions)
@@ -709,6 +716,47 @@ class ServerAssistant:
     async def run_weekly_now(self):
         """Manueller Trigger fuer Weekly Report"""
         await self._generate_weekly_report()
+
+    # ================================================================
+    # CLI-VERSION-TRACKING
+    # ================================================================
+
+    async def _check_cli_versions(self) -> Dict:
+        """Prueft Codex + Claude CLI-Versionen und meldet Aenderungen.
+
+        Laeuft taeglich, meldet aber nur wenn sich eine Version aendert.
+        """
+        result: Dict[str, List] = {'info': []}
+
+        checks = {
+            'codex': 'codex --version 2>/dev/null',
+            'claude': '/home/cmdshadow/.local/bin/claude --version 2>/dev/null',
+        }
+
+        for name, cmd in checks.items():
+            version = await self._cmd(cmd, timeout=10)
+            if not version:
+                continue
+
+            # Nur erste Zeile (z.B. "codex-cli 0.104.0")
+            version = version.split('\n')[0].strip()
+
+            old_version = self._last_cli_versions.get(name)
+            self._last_cli_versions[name] = version
+
+            if old_version and old_version != version:
+                result['info'].append(
+                    f"CLI-Update: **{name}** `{old_version}` -> `{version}`"
+                )
+                logger.info(
+                    "CLI-Update erkannt: %s %s -> %s",
+                    name, old_version, version,
+                )
+            elif not old_version:
+                # Erster Run — nur loggen, nicht melden
+                logger.info("CLI-Version getrackt: %s = %s", name, version)
+
+        return result
 
     # ================================================================
     # HILFSFUNKTIONEN
