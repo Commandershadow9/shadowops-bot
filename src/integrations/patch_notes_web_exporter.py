@@ -103,20 +103,21 @@ class PatchNotesWebExporter:
         # Index aktualisieren (File-Fallback)
         self._update_index(project, version, title, tldr, timestamp)
 
-        # API POST (primärer Modus, async)
-        try:
-            import asyncio
-            loop = asyncio.get_event_loop()
-            if loop.is_running():
-                asyncio.ensure_future(self._post_to_api(project, json_data))
-            else:
-                loop.run_until_complete(self._post_to_api(project, json_data))
-        except Exception as e:
-            logger.debug(f"API-POST übersprungen: {e}")
-
         logger.info(f"📝 Web-Export für {project} v{version}: {json_path}, {md_path}")
 
-        return {'json': json_path, 'markdown': md_path}
+        return {'json': json_path, 'markdown': md_path, 'json_data': json_data}
+
+    async def post_to_api(self, project: str, json_data: Dict) -> bool:
+        """POST changelog to project API. Aufrufer muss await nutzen.
+
+        Args:
+            project: Projektname (Key in api_endpoints)
+            json_data: Vollständiges JSON-Dict aus export()
+
+        Returns:
+            True bei Erfolg, False bei Fehler/Kein Endpoint
+        """
+        return await self._post_to_api(project, json_data)
 
     async def _post_to_api(self, project: str, json_data: Dict) -> bool:
         """POST changelog to project API. Returns True on success."""
@@ -137,6 +138,7 @@ class PatchNotesWebExporter:
                 'title': json_data['title'],
                 'tldr': json_data['tldr'],
                 'content': json_data['content'],
+                'changes': json_data.get('changes', []),
                 'stats': json_data.get('stats', {}),
                 'seo': json_data.get('seo', {}),
                 'language': json_data.get('language', 'en'),

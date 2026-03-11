@@ -393,11 +393,11 @@ class AIPatchNotesMixin:
         Generate professional, user-friendly patch notes using AI.
 
         Returns:
-            Dict (strukturiert) mit discord_highlights + web_content,
-            oder str (Raw-Text Fallback), oder None bei Fehler.
+            Tuple (result, git_stats) wobei result ein Dict (strukturiert),
+            str (Raw-Text Fallback) oder None bei Fehler ist.
         """
         if not self.ai_service or not commits:
-            return None
+            return None, {}
 
         # Try to get CHANGELOG content
         changelog_content = ""
@@ -550,10 +550,6 @@ class AIPatchNotesMixin:
         patch_config = project_config.get('patch_notes', {}) if project_config else {}
         use_critical_model = patch_config.get('use_critical_model', True)
 
-        # Store stats + version fuer Web-Export
-        self._last_git_stats = git_stats
-        self._last_version = version
-
         # === VERSUCH 1: Strukturierter Output (Dual-Format) ===
         try:
             structured_prompt = self._build_structured_prompt(
@@ -577,7 +573,7 @@ class AIPatchNotesMixin:
                     f"({len(structured_result.get('discord_highlights', []))} Highlights, "
                     f"{len(structured_result.get('web_content', ''))} Zeichen Web)"
                 )
-                return structured_result
+                return structured_result, git_stats
 
         except Exception as e:
             self.logger.warning(f"⚠️ Strukturierter Output fehlgeschlagen, Fallback auf Raw-Text: {e}")
@@ -590,7 +586,7 @@ class AIPatchNotesMixin:
             )
 
             if not ai_response:
-                return None
+                return None, git_stats
 
             response = ai_response.strip()
 
@@ -630,11 +626,11 @@ class AIPatchNotesMixin:
                     response = response.rstrip() + f"\n\n{stats_line}"
 
             self.logger.info(f"✅ AI Raw-Text Patch Notes fuer {repo_name} ({len(response)} Zeichen)")
-            return response if response else None
+            return (response if response else None), git_stats
 
         except Exception as e:
             self.logger.error(f"AI Patch Notes Generierung fehlgeschlagen: {e}")
-            return None
+            return None, git_stats
 
     def _build_structured_prompt(self, base_prompt: str, language: str,
                                   project_name: str, num_commits: int) -> str:

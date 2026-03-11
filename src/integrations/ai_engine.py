@@ -822,12 +822,23 @@ class AIEngine:
         result = await self._execute_with_fallback(prompt, route)
 
         if result and isinstance(result, dict):
-            # Validierung: Mindestens die Kern-Felder muessen vorhanden sein
-            if result.get('title') and result.get('tldr') and result.get('discord_highlights'):
+            # Validierung: Kern-Felder fuer Discord + Web muessen vorhanden sein
+            has_discord = result.get('title') and result.get('tldr') and result.get('discord_highlights')
+            has_web = result.get('web_content')
+            if has_discord and has_web:
                 logger.info(f"✅ Strukturierte Patch Notes generiert: {result.get('title')}")
                 return result
             else:
-                logger.warning("⚠️ Strukturiertes Ergebnis unvollstaendig, Fallback auf Raw-Text")
+                missing = []
+                if not result.get('title'):
+                    missing.append('title')
+                if not result.get('tldr'):
+                    missing.append('tldr')
+                if not result.get('discord_highlights'):
+                    missing.append('discord_highlights')
+                if not result.get('web_content'):
+                    missing.append('web_content')
+                logger.warning(f"⚠️ Strukturiertes Ergebnis unvollstaendig (fehlend: {', '.join(missing)}), Fallback auf Raw-Text")
                 return None
 
         return None

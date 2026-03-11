@@ -106,10 +106,11 @@ class NotificationsMixin:
         use_ai = patch_config.get('use_ai', False)
 
         ai_result = None
+        git_stats = {}
         if use_ai and self.ai_service:
             try:
                 self.logger.info(f"🤖 Generiere KI Patch Notes für {repo_name} (Sprache: {language})...")
-                ai_result = await self._generate_ai_patch_notes(commits, language, repo_name, project_config)
+                ai_result, git_stats = await self._generate_ai_patch_notes(commits, language, repo_name, project_config)
                 if ai_result:
                     result_type = "strukturiert" if isinstance(ai_result, dict) else "Raw-Text"
                     self.logger.info(f"✅ KI Patch Notes erfolgreich generiert ({result_type})")
@@ -131,10 +132,10 @@ class NotificationsMixin:
             ai_description = ai_result if isinstance(ai_result, str) else None
             customer_embed = self._build_customer_embed(
                 repo_name, commits_url, project_color, commits, language,
-                ai_description, project_config
+                ai_description, project_config, git_stats
             )
             await self._export_web_changelog(
-                repo_name, commits, ai_description, project_config, language
+                repo_name, commits, ai_description, project_config, language, git_stats
             )
 
         # 1. Send to internal channel (technical embed)
@@ -150,7 +151,8 @@ class NotificationsMixin:
     def _build_customer_embed(self, repo_name: str, commits_url: str,
                                project_color: int, commits: list, language: str,
                                ai_description: Optional[str],
-                               project_config: Dict) -> discord.Embed:
+                               project_config: Dict,
+                               git_stats: Optional[Dict] = None) -> discord.Embed:
         """Baue das Customer-Embed (Kurzformat für Discord)."""
         patch_config = project_config.get('patch_notes', {})
 
@@ -196,8 +198,6 @@ class NotificationsMixin:
         # Footer mit Stats
         footer_parts = [f"{len(commits)} Commit(s)"]
 
-        # Git stats aus dem letzten AI-Aufruf lesen
-        git_stats = getattr(self, '_last_git_stats', None)
         if git_stats:
             files = git_stats.get('files_changed', 0)
             if files > 0:
@@ -280,27 +280,17 @@ class NotificationsMixin:
     async def _export_structured_web_changelog(self, repo_name: str, commits: list,
                                                  ai_data: Dict, project_config: Dict,
                                                  language: str) -> None:
-        """Exportiere strukturierte Patch Notes als Web-Changelog."""
+        """Exportiere strukturierte Patch Notes als Web-Changelog + API POST."""
         version = ai_data.get('version') or self._extract_version_from_commits(commits)
         if not version or version == 'patch':
             return
 
-        patch_config = project_config.get('patch_notes', {})
-        output_dir = patch_config.get('changelog_output_dir', '')
-
-        if output_dir:
-            from pathlib import Path
-            from integrations.patch_notes_web_exporter import PatchNotesWebExporter
-            output_path = Path(output_dir)
-            output_path.mkdir(parents=True, exist_ok=True)
-            exporter = PatchNotesWebExporter(output_path.parent)
-        else:
-            exporter = getattr(self, 'web_exporter', None)
-            if not exporter:
-                return
+        exporter = getattr(self, 'web_exporter', None)
+        if not exporter:
+            return
 
         try:
-            exporter.export(
+            result = exporter.export(
                 project=repo_name,
                 version=version,
                 title=ai_data.get('title', f'{repo_name} {version}'),
@@ -311,6 +301,15 @@ class NotificationsMixin:
                 changes=ai_data.get('changes', []),
             )
             self.logger.info(f"📝 Strukturierter Web-Changelog exportiert: {repo_name} v{version}")
+
+            # API POST (async, vom Exporter entkoppelt)
+            json_data = result.get('json_data') if result else None
+            if json_data:
+                try:
+                    await exporter.post_to_api(repo_name, json_data)
+                except Exception as e:
+                    self.logger.debug(f"API-POST übersprungen: {e}")
+
         except Exception as e:
             self.logger.warning(f"⚠️ Strukturierter Web-Export fehlgeschlagen: {e}")
 
@@ -371,43 +370,27 @@ class NotificationsMixin:
 
     async def _export_web_changelog(self, repo_name: str, commits: list,
                                      ai_description: Optional[str],
-                                     project_config: Dict, language: str) -> None:
-        """Exportiere Patch Notes als Web-Changelog (SEO-optimiert)."""
-        from pathlib import Path
-        from integrations.patch_notes_web_exporter import PatchNotesWebExporter
-
+                                     project_config: Dict, language: str,
+                                     git_stats: Optional[Dict] = None) -> None:
+        """Exportiere Patch Notes als Web-Changelog (SEO-optimiert) + API POST."""
         version = self._extract_version_from_commits(commits)
         if not version:
             return
 
-        # Projekt-spezifisches Output-Verzeichnis aus Config
-        patch_config = project_config.get('patch_notes', {})
-        output_dir = patch_config.get('changelog_output_dir', '')
+        exporter = getattr(self, 'web_exporter', None)
+        if not exporter:
+            return
 
-        if output_dir:
-            # Config hat explizites Verzeichnis (z.B. GuildScout → Go API static)
-            output_path = Path(output_dir)
-            output_path.mkdir(parents=True, exist_ok=True)
-            # Exporter mit Parent-Dir, Projektname wird automatisch angehängt
-            exporter = PatchNotesWebExporter(output_path.parent)
-        else:
-            # Fallback: Default-Exporter
-            exporter = getattr(self, 'web_exporter', None)
-            if not exporter:
-                return
-
-        git_stats = getattr(self, '_last_git_stats', None) or {}
+        git_stats = git_stats or {}
 
         # TL;DR aus AI-Description extrahieren
         tldr = ""
         content = ai_description or ""
         if content:
-            # TL;DR aus dem Text extrahieren (nach "TL;DR:" suchen)
             tldr_match = re.search(r'\*\*TL;DR:\*\*\s*(.+?)(?:\n|$)', content)
             if tldr_match:
                 tldr = tldr_match.group(1).strip()
             else:
-                # Ersten Satz als TL;DR
                 first_line = content.split('\n')[0].strip()
                 if first_line and not first_line.startswith('**'):
                     tldr = first_line
@@ -417,7 +400,7 @@ class NotificationsMixin:
         title = f"{repo_name} {version}"
 
         try:
-            exporter.export(
+            result = exporter.export(
                 project=repo_name,
                 version=version,
                 title=title,
@@ -427,6 +410,15 @@ class NotificationsMixin:
                 language=language,
             )
             self.logger.info(f"📝 Web-Changelog exportiert: {repo_name} v{version}")
+
+            # API POST (async, vom Exporter entkoppelt)
+            json_data = result.get('json_data') if result else None
+            if json_data:
+                try:
+                    await exporter.post_to_api(repo_name, json_data)
+                except Exception as e:
+                    self.logger.debug(f"API-POST übersprungen: {e}")
+
         except Exception as e:
             self.logger.warning(f"⚠️ Web-Export fehlgeschlagen: {e}")
 

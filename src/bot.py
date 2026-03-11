@@ -775,7 +775,7 @@ class ShadowOpsBot(commands.Bot):
                                 continue
                             pn_config = proj_config.get('patch_notes', {})
                             api_config = pn_config.get('api_endpoint', {})
-                            if isinstance(api_config, dict) and api_config.get('url'):
+                            if isinstance(api_config, dict) and api_config.get('url') and api_config.get('api_key', '').strip():
                                 api_endpoints[proj_name] = api_config
 
                     # Web Exporter: Default-Verzeichnis + API-Endpoints
