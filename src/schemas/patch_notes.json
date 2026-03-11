@@ -4,6 +4,15 @@
     "title": { "type": "string" },
     "tldr": { "type": "string" },
     "summary": { "type": "string" },
+    "discord_highlights": {
+      "type": "array",
+      "items": { "type": "string" }
+    },
+    "web_content": { "type": "string" },
+    "breaking_changes": {
+      "type": "array",
+      "items": { "type": "string" }
+    },
     "changes": {
       "type": "array",
       "items": {
@@ -16,7 +25,7 @@
             "items": { "type": "string" }
           }
         },
-        "required": ["type", "description"],
+        "required": ["type", "description", "details"],
         "additionalProperties": false
       }
     },
@@ -31,17 +40,16 @@
           "type": "array",
           "items": { "type": "string" }
         },
-        "tests_passed": { "type": "integer" },
-        "tests_total": { "type": "integer" },
-        "coverage_percent": { "type": "number" }
+        "tests_passed": { "type": ["integer", "null"] },
+        "tests_total": { "type": ["integer", "null"] },
+        "coverage_percent": { "type": ["number", "null"] }
       },
-      "required": ["commits", "files_changed", "lines_added", "lines_removed", "contributors"],
+      "required": ["commits", "files_changed", "lines_added", "lines_removed", "contributors", "tests_passed", "tests_total", "coverage_percent"],
       "additionalProperties": false
     },
     "version": { "type": "string" },
-    "language": { "type": "string", "enum": ["de", "en"] },
-    "web_url": { "type": "string" }
+    "language": { "type": "string", "enum": ["de", "en"] }
   },
-  "required": ["title", "tldr", "summary", "changes", "stats", "version", "language"],
+  "required": ["title", "tldr", "summary", "discord_highlights", "web_content", "breaking_changes", "changes", "stats", "version", "language"],
   "additionalProperties": false
 }

@@ -105,24 +105,37 @@ class NotificationsMixin:
         # === AI-GENERATED PATCH NOTES ===
         use_ai = patch_config.get('use_ai', False)
 
-        ai_description = None
+        ai_result = None
         if use_ai and self.ai_service:
             try:
                 self.logger.info(f"🤖 Generiere KI Patch Notes für {repo_name} (Sprache: {language})...")
-                ai_description = await self._generate_ai_patch_notes(commits, language, repo_name, project_config)
-                if ai_description:
-                    self.logger.info(f"✅ KI Patch Notes erfolgreich generiert")
+                ai_result = await self._generate_ai_patch_notes(commits, language, repo_name, project_config)
+                if ai_result:
+                    result_type = "strukturiert" if isinstance(ai_result, dict) else "Raw-Text"
+                    self.logger.info(f"✅ KI Patch Notes erfolgreich generiert ({result_type})")
             except Exception as e:
                 self.logger.warning(f"⚠️ KI Patch Notes Generierung fehlgeschlagen, verwende Fallback: {e}")
 
-        # === BUILD CUSTOMER EMBED (Dual-Format: Discord kurz) ===
-        customer_embed = self._build_customer_embed(
-            repo_name, commits_url, project_color, commits, language,
-            ai_description, project_config
-        )
-
-        # === WEB EXPORT (SEO-optimiert, ausführlich) ===
-        await self._export_web_changelog(repo_name, commits, ai_description, project_config, language)
+        # === BUILD CUSTOMER EMBED + WEB EXPORT ===
+        if isinstance(ai_result, dict) and ai_result.get('discord_highlights'):
+            # Strukturierter Output: Separater Discord-Embed + Web-Content
+            customer_embed = self._build_structured_customer_embed(
+                repo_name, commits_url, project_color, commits, language,
+                ai_result, project_config
+            )
+            await self._export_structured_web_changelog(
+                repo_name, commits, ai_result, project_config, language
+            )
+        else:
+            # Fallback: Raw-Text für beides (Legacy)
+            ai_description = ai_result if isinstance(ai_result, str) else None
+            customer_embed = self._build_customer_embed(
+                repo_name, commits_url, project_color, commits, language,
+                ai_description, project_config
+            )
+            await self._export_web_changelog(
+                repo_name, commits, ai_description, project_config, language
+            )
 
         # 1. Send to internal channel (technical embed)
         await self._send_to_internal_channel(internal_embed, repo_name)
@@ -197,6 +210,109 @@ class NotificationsMixin:
         customer_embed.set_footer(text=" · ".join(footer_parts))
 
         return customer_embed
+
+    def _build_structured_customer_embed(self, repo_name: str, commits_url: str,
+                                          project_color: int, commits: list, language: str,
+                                          ai_data: Dict, project_config: Dict) -> discord.Embed:
+        """Professionelles Discord-Embed aus strukturiertem AI-Output."""
+        patch_config = project_config.get('patch_notes', {})
+
+        # Titel: Projektname + AI-Titel
+        title = ai_data.get('title', f'Updates für {repo_name}')
+        embed = discord.Embed(
+            title=f"✨ {repo_name} — {title}",
+            url=commits_url,
+            color=project_color,
+            timestamp=datetime.now(timezone.utc)
+        )
+
+        # TL;DR als Description
+        tldr = ai_data.get('tldr', '')
+        if tldr:
+            embed.description = f"**TL;DR:** {tldr}"
+
+        # Discord-Highlights als Hauptfeld
+        highlights = ai_data.get('discord_highlights', [])
+        if highlights:
+            highlights_text = "\n".join(f"• {h}" for h in highlights[:5])
+            embed.add_field(
+                name="🔥 Highlights",
+                value=highlights_text,
+                inline=False
+            )
+
+        # Breaking Changes separat hervorheben
+        breaking = ai_data.get('breaking_changes', [])
+        if breaking:
+            breaking_text = "\n".join(f"⚠️ {b}" for b in breaking[:3])
+            embed.add_field(name="⚠️ Breaking Changes", value=breaking_text, inline=False)
+
+        # Web-Link
+        changelog_url = patch_config.get('changelog_url', '')
+        if changelog_url:
+            v = ai_data.get('version') or self._extract_version_from_commits(commits)
+            if v:
+                full_url = f"{changelog_url}/{v.replace('.', '-')}"
+            else:
+                full_url = changelog_url
+            link_text = "Alle Details auf der Webseite" if language == 'de' else "Full details on the website"
+            embed.add_field(name="📖", value=f"[{link_text}]({full_url})", inline=False)
+
+        # Footer: Version + Stats
+        git_stats = ai_data.get('stats', {})
+        footer_parts = []
+        v = ai_data.get('version')
+        if v and v != 'patch':
+            footer_parts.append(f"v{v}")
+        footer_parts.append(f"{len(commits)} Commit(s)")
+        files = git_stats.get('files_changed', 0)
+        if files > 0:
+            footer_parts.append(f"{files} Dateien")
+        added = git_stats.get('lines_added', 0)
+        removed = git_stats.get('lines_removed', 0)
+        if added > 0:
+            footer_parts.append(f"+{added}/-{removed}")
+
+        embed.set_footer(text=" · ".join(footer_parts))
+
+        return embed
+
+    async def _export_structured_web_changelog(self, repo_name: str, commits: list,
+                                                 ai_data: Dict, project_config: Dict,
+                                                 language: str) -> None:
+        """Exportiere strukturierte Patch Notes als Web-Changelog."""
+        version = ai_data.get('version') or self._extract_version_from_commits(commits)
+        if not version or version == 'patch':
+            return
+
+        patch_config = project_config.get('patch_notes', {})
+        output_dir = patch_config.get('changelog_output_dir', '')
+
+        if output_dir:
+            from pathlib import Path
+            from integrations.patch_notes_web_exporter import PatchNotesWebExporter
+            output_path = Path(output_dir)
+            output_path.mkdir(parents=True, exist_ok=True)
+            exporter = PatchNotesWebExporter(output_path.parent)
+        else:
+            exporter = getattr(self, 'web_exporter', None)
+            if not exporter:
+                return
+
+        try:
+            exporter.export(
+                project=repo_name,
+                version=version,
+                title=ai_data.get('title', f'{repo_name} {version}'),
+                tldr=ai_data.get('tldr', ''),
+                content=ai_data.get('web_content', ai_data.get('summary', '')),
+                stats=ai_data.get('stats', {}),
+                language=language,
+                changes=ai_data.get('changes', []),
+            )
+            self.logger.info(f"📝 Strukturierter Web-Changelog exportiert: {repo_name} v{version}")
+        except Exception as e:
+            self.logger.warning(f"⚠️ Strukturierter Web-Export fehlgeschlagen: {e}")
 
     def _categorize_commits_text(self, commits: list, language: str) -> str:
         """Kategorisiere Commits als Fallback-Text."""
@@ -426,10 +542,6 @@ class NotificationsMixin:
                     value=f"{info['count']} ausstehend (Release bei {self.patch_notes_batcher.batch_threshold})",
                     inline=True
                 )
-
-        for commit in commits[:5]:
-            # Zeige Commit-Titel im Embed
-            pass  # Wird über description schon abgedeckt
 
         try:
             await internal_channel.send(embed=embed)

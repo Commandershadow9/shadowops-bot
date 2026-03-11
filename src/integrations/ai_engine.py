@@ -788,6 +788,50 @@ class AIEngine:
 
         return result
 
+    async def generate_structured_patch_notes(
+        self,
+        prompt: str,
+        use_critical_model: bool = True,
+    ) -> Optional[Dict]:
+        """
+        Generiert strukturierte Patch Notes mit dem patch_notes.json Schema.
+
+        Nutzt _execute_with_fallback() fuer Codex (--output-schema) / Claude (Schema im Prompt).
+        Liefert ein Dict mit title, tldr, discord_highlights, web_content, changes, stats etc.
+
+        Args:
+            prompt: Der vollstaendige Patch-Notes-Prompt
+            use_critical_model: True = Thinking-Modell (bessere Qualitaet)
+
+        Returns:
+            Strukturiertes Dict oder None bei Fehler
+        """
+        model_class = 'standard'
+        if use_critical_model:
+            model_class = 'thinking'
+
+        schema_path = self.router._resolve_schema_path('patch_notes')
+
+        route = {
+            'engine': 'codex',
+            'model': self.router._get_engine_models('codex').get(model_class, model_class),
+            'model_class': model_class,
+            'schema_path': schema_path,
+        }
+
+        result = await self._execute_with_fallback(prompt, route)
+
+        if result and isinstance(result, dict):
+            # Validierung: Mindestens die Kern-Felder muessen vorhanden sein
+            if result.get('title') and result.get('tldr') and result.get('discord_highlights'):
+                logger.info(f"✅ Strukturierte Patch Notes generiert: {result.get('title')}")
+                return result
+            else:
+                logger.warning("⚠️ Strukturiertes Ergebnis unvollstaendig, Fallback auf Raw-Text")
+                return None
+
+        return None
+
     async def get_ai_analysis(
         self,
         prompt: str,

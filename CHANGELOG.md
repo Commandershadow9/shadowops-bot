@@ -1,6 +1,21 @@
 # ShadowOps Bot - Changelog
 
-## [4.0.1] - 2026-03-10
+## [4.0.1] - 2026-03-11
+
+### Features
+
+**Dual-Output Patch Notes + DB-basiertes Changelog-System (Cross-Project):**
+- Strukturierter AI-Output via JSON-Schema: Ein AI-Call → Discord kurz + Web ausführlich
+- Schema `patch_notes.json` mit `discord_highlights`, `web_content`, `changes[]`, `breaking_changes`
+- Konsistenz garantiert: Discord-Highlights sind Subset von `web_content` (gleiche Datenbasis)
+- `generate_structured_patch_notes()` in AIEngine mit Codex Structured Output + Claude Fallback
+- Professionelles Discord-Embed: TL;DR, Highlights, Breaking Changes, Version + Stats Footer
+- SEO-optimierter Web-Export: Frontmatter, strukturierte Changes nach Typ, Stats-Sektion
+- PatchNotesWebExporter postet per HTTP POST an Projekt-APIs (GuildScout + ZERODOX)
+- API-Endpoints konfigurierbar pro Projekt: `patch_notes.api_endpoint.url` + `.api_key`
+- File-Export (JSON + Markdown) bleibt als Fallback wenn kein API-Endpoint konfiguriert
+- Fallback-Chain: Strukturiert → Raw-Text → CHANGELOG → Commit-Kategorisierung
+- Config-Loading gefixt: `projects` ist ein Dict (Keys iterieren), nicht Liste
 
 ### Bugfixes
 

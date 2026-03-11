@@ -29,6 +29,9 @@ class AIPatchNotesMixin:
             'lines_added': 0,
             'lines_removed': 0,
             'contributors': [],
+            'tests_passed': None,
+            'tests_total': None,
+            'coverage_percent': None,
         }
 
         # Contributors aus Commits
@@ -385,27 +388,13 @@ class AIPatchNotesMixin:
         return False
 
     async def _generate_ai_patch_notes(self, commits: list, language: str, repo_name: str,
-                                       project_config: Optional[Dict] = None) -> Optional[str]:
+                                       project_config: Optional[Dict] = None):
         """
-        Generate professional, user-friendly patch notes using AI with training system.
-
-        NEW: Uses CHANGELOG.md + AI Training System for better quality!
-
-        Process:
-        1. Load CHANGELOG.md if available (fullest information source)
-        2. Use PatchNotesTrainer to build enhanced prompt with examples
-        3. Generate patch notes with AI
-        4. Calculate quality score
-        5. Save high-quality examples for future training
-
-        Args:
-            commits: List of commit dictionaries
-            language: 'de' or 'en'
-            repo_name: Repository name for context
-            project_config: Optional project configuration
+        Generate professional, user-friendly patch notes using AI.
 
         Returns:
-            AI-generated patch notes string or None if failed
+            Dict (strukturiert) mit discord_highlights + web_content,
+            oder str (Raw-Text Fallback), oder None bei Fehler.
         """
         if not self.ai_service or not commits:
             return None
@@ -560,6 +549,40 @@ class AIPatchNotesMixin:
         # Call AI Service
         patch_config = project_config.get('patch_notes', {}) if project_config else {}
         use_critical_model = patch_config.get('use_critical_model', True)
+
+        # Store stats + version fuer Web-Export
+        self._last_git_stats = git_stats
+        self._last_version = version
+
+        # === VERSUCH 1: Strukturierter Output (Dual-Format) ===
+        try:
+            structured_prompt = self._build_structured_prompt(
+                prompt, language, repo_name, len(commits)
+            )
+            structured_result = await self.ai_service.generate_structured_patch_notes(
+                prompt=structured_prompt,
+                use_critical_model=use_critical_model,
+            )
+
+            if structured_result and isinstance(structured_result, dict):
+                # Echte Git-Stats einsetzen (AI-Stats sind unzuverlaessig)
+                structured_result['stats'] = git_stats
+                if version:
+                    structured_result['version'] = version
+                structured_result['language'] = language
+
+                self.logger.info(
+                    f"✅ Strukturierte Patch Notes fuer {repo_name}: "
+                    f"'{structured_result.get('title')}' "
+                    f"({len(structured_result.get('discord_highlights', []))} Highlights, "
+                    f"{len(structured_result.get('web_content', ''))} Zeichen Web)"
+                )
+                return structured_result
+
+        except Exception as e:
+            self.logger.warning(f"⚠️ Strukturierter Output fehlgeschlagen, Fallback auf Raw-Text: {e}")
+
+        # === VERSUCH 2: Raw-Text Fallback (bestehender Flow) ===
         try:
             ai_response = await self.ai_service.get_raw_ai_response(
                 prompt=prompt,
@@ -569,10 +592,9 @@ class AIPatchNotesMixin:
             if not ai_response:
                 return None
 
-            # Clean up response
             response = ai_response.strip()
 
-            # Ensure it starts with a category
+            # Sicherstellen dass es mit einer Kategorie anfaengt
             if not response.startswith('**'):
                 lines = response.split('\n')
                 start_idx = 0
@@ -583,99 +605,92 @@ class AIPatchNotesMixin:
                 response = '\n'.join(lines[start_idx:])
 
             if self._is_patch_notes_too_short(response, commits):
-                self.logger.info("⚠️ AI Patch Notes zu kurz, starte zweiten Durchlauf mit striktem Prompt")
+                self.logger.info("⚠️ AI Patch Notes zu kurz, zweiter Durchlauf")
                 strict_prompt = self._build_fallback_prompt(
-                    commits,
-                    language,
-                    repo_name,
-                    changelog_content,
-                    code_changes_context,
-                    project_context,
+                    commits, language, repo_name,
+                    changelog_content, code_changes_context, project_context,
                     strict=True
                 )
                 retry = await self.ai_service.get_raw_ai_response(
-                    prompt=strict_prompt,
-                    use_critical_model=True
+                    prompt=strict_prompt, use_critical_model=True
                 )
                 if retry:
                     retry = retry.strip()
                     if not retry.startswith('**'):
-                        retry_lines = retry.split('\n')
-                        retry_start = 0
-                        for i, line in enumerate(retry_lines):
+                        for i, line in enumerate(retry.split('\n')):
                             if line.startswith('**'):
-                                retry_start = i
+                                retry = '\n'.join(retry.split('\n')[i:])
                                 break
-                        retry = '\n'.join(retry_lines[retry_start:])
                     if retry and len(retry) >= len(response):
                         response = retry
 
-            # Calculate quality score and record A/B test result
-            quality_context = changelog_content or project_context
-            if self.patch_notes_trainer and quality_context:
-                try:
-                    if not version and commits:
-                        version = (commits[-1].get('id') or commits[-1].get('sha') or '')[:7] or None
-                    quality_score = self.patch_notes_trainer.calculate_quality_score(
-                        generated_notes=response,
-                        changelog_content=quality_context
-                    )
-                    self.logger.info(f"📊 Patch Notes Quality Score: {quality_score:.1f}/100")
-
-                    # Record A/B test result if variant was used
-                    if self.prompt_ab_testing and variant_id:
-                        self.prompt_ab_testing.record_result(
-                            variant_id=variant_id,
-                            project=repo_name,
-                            version=version,
-                            quality_score=quality_score,
-                            user_feedback_score=0.0  # Will be updated from reactions
-                        )
-                        self.logger.info(f"🧪 A/B Test result recorded for variant {variant_id}")
-
-                        # Schedule auto-tuning check (runs if conditions met)
-                        if self.prompt_auto_tuner:
-                            try:
-                                self.prompt_auto_tuner.schedule_auto_tuning(
-                                    project=repo_name,
-                                    min_samples=10,
-                                    improvement_threshold=5.0
-                                )
-                            except Exception as e:
-                                self.logger.debug(f"Auto-tuning check skipped: {e}")
-
-                    # Save as training example when a version is available
-                    if version:
-                        self.patch_notes_trainer.save_example(
-                            version=version,
-                            changelog_content=quality_context,
-                            generated_notes=response,
-                            quality_score=quality_score,
-                            project=repo_name
-                        )
-
-                    if quality_score >= 80:
-                        self.logger.info(f"🌟 High-quality patch notes! Saved as training example.")
-                except Exception as e:
-                    self.logger.warning(f"⚠️ Quality scoring failed: {e}")
-
-            # Append stats line to response if substantial release
+            # Stats-Zeile anhaengen
             if stats_line and git_stats.get('commits', 0) >= 5:
-                # Nur anhängen wenn nicht schon im AI-Output enthalten
                 if '📊' not in response:
                     response = response.rstrip() + f"\n\n{stats_line}"
 
-            self.logger.info(f"✅ AI generated patch notes for {repo_name} ({len(response)} chars)")
-
-            # Store stats for web export (accessible via attribute)
-            self._last_git_stats = git_stats
-            self._last_version = version
-
+            self.logger.info(f"✅ AI Raw-Text Patch Notes fuer {repo_name} ({len(response)} Zeichen)")
             return response if response else None
 
         except Exception as e:
-            self.logger.error(f"AI patch notes generation failed: {e}")
+            self.logger.error(f"AI Patch Notes Generierung fehlgeschlagen: {e}")
             return None
+
+    def _build_structured_prompt(self, base_prompt: str, language: str,
+                                  project_name: str, num_commits: int) -> str:
+        """Erweitere den Base-Prompt um strukturierte Feld-Anweisungen."""
+        if language == 'de':
+            prefix = f"""Du generierst strukturierte Patch Notes als JSON fuer "{project_name}".
+
+WICHTIG — KONSISTENZ-REGELN:
+- discord_highlights und web_content muessen die GLEICHEN Aenderungen beschreiben
+- discord_highlights sind KURZE Versionen der wichtigsten Punkte aus web_content
+- Erfinde NICHTS was nicht in den Commits steht
+- Alle Felder beziehen sich auf denselben Release
+
+FELD-ANWEISUNGEN:
+- title: Kurzer, praegananter Titel (z.B. "Performance & Security Update")
+- tldr: EIN praegnanter Satz, der die wichtigste Aenderung zusammenfasst
+- summary: 2-3 Saetze Zusammenfassung fuer die Webseite
+- discord_highlights: 3-5 kurze Bullet-Points fuer Discord (je max 120 Zeichen, mit Emojis)
+  → Das sind die HIGHLIGHTS aus web_content, nicht andere Informationen!
+- web_content: Ausfuehrlicher Markdown-Text mit allen Details (1000-5000 Zeichen)
+  → Subheadings (##), Bullet-Points, technische Details, Nutzer-Impact
+  → Zielgruppe: Interessierte Community-Mitglieder die alles wissen wollen
+- changes: Strukturierte Liste aller Aenderungen mit type (feature/fix/improvement/breaking/docs), description und details-Array
+- breaking_changes: Liste von Breaking Changes (leeres Array wenn keine)
+- stats: Wird nachtraeglich mit echten Git-Stats befuellt, setze commits auf {num_commits}
+- version: Die erkannte Versionsnummer (oder "patch" wenn keine erkannt)
+- language: "{language}"
+
+"""
+        else:
+            prefix = f"""You are generating structured patch notes as JSON for "{project_name}".
+
+IMPORTANT — CONSISTENCY RULES:
+- discord_highlights and web_content MUST describe the SAME changes
+- discord_highlights are SHORT versions of the most important points from web_content
+- Do NOT invent anything not in the commits
+- All fields refer to the same release
+
+FIELD INSTRUCTIONS:
+- title: Short, catchy title (e.g. "Performance & Security Update")
+- tldr: ONE concise sentence summarizing the most important change
+- summary: 2-3 sentence summary for the website
+- discord_highlights: 3-5 short bullet points for Discord (max 120 chars each, with emojis)
+  → These are the HIGHLIGHTS from web_content, not different information!
+- web_content: Detailed markdown text with all details (1000-5000 chars)
+  → Subheadings (##), bullet points, technical details, user impact
+  → Audience: Interested community members who want to know everything
+- changes: Structured list of all changes with type (feature/fix/improvement/breaking/docs), description and details array
+- breaking_changes: List of breaking changes (empty array if none)
+- stats: Will be filled with real git stats afterwards, set commits to {num_commits}
+- version: The detected version number (or "patch" if none detected)
+- language: "{language}"
+
+"""
+
+        return prefix + base_prompt
 
     def _build_fallback_prompt(self, commits: list, language: str, repo_name: str,
                                changelog_content: str = "", code_changes_context: str = "",
@@ -784,7 +799,6 @@ Fasse diese Commits zu professionellen, DETAILLIERTEN Patch Notes zusammen:{deta
 6. Entferne Jargon und technische Präfixe
 7. Zielgruppe: Endkunden die verstehen wollen was sich verbessert hat
 8. Maximal 8000 Zeichen - nutze den Platz aus!
-9. Erfinde keine Details und wiederhole keine Beispiel-Formulierungen.
 9. Erfinde keine Details und verwende keine Beispiel-Formulierungen aus dem Prompt.
 
 FORMAT:
@@ -838,7 +852,6 @@ Summarize these commits into professional, DETAILED patch notes:{detail_instruct
 6. Remove jargon and technical prefixes
 7. Target audience: End customers who want to understand what improved
 8. Maximum 8000 characters - use the space!
-9. Do not invent details or reuse example wording.
 9. Do not invent details and do not reuse example wording from the prompt.
 
 FORMAT:

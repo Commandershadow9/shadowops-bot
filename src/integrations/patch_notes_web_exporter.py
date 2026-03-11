@@ -4,6 +4,7 @@ Patch Notes Web Exporter — Generiert SEO-optimierte Changelog-Dateien.
 Exportiert Patch Notes als JSON und Markdown für die Webseite.
 - JSON: Maschinenlesbar für Frontend-Rendering
 - Markdown: Menschenlesbar, SEO-optimiert mit Keywords
+- API POST: Direkt an Projekt-APIs (DB-basiert, primärer Modus)
 """
 
 import json
@@ -19,13 +20,17 @@ logger = logging.getLogger('shadowops')
 class PatchNotesWebExporter:
     """
     Exportiert Patch Notes als SEO-optimiertes JSON und Markdown.
+    Unterstützt API-POST an Projekt-Backends (primär) mit File-Fallback.
     """
 
-    def __init__(self, base_output_dir: Path):
+    def __init__(self, base_output_dir: Path, api_endpoints: Optional[Dict] = None):
         self.base_output_dir = base_output_dir
         self.base_output_dir.mkdir(parents=True, exist_ok=True)
+        self._api_endpoints = api_endpoints or {}
 
         logger.info(f"✅ PatchNotesWebExporter initialisiert (Output: {self.base_output_dir})")
+        if self._api_endpoints:
+            logger.info(f"   API-Endpoints: {', '.join(self._api_endpoints.keys())}")
 
     def _get_project_dir(self, project: str) -> Path:
         """Projekt-spezifisches Output-Verzeichnis."""
@@ -38,7 +43,7 @@ class PatchNotesWebExporter:
                changes: Optional[List[Dict]] = None,
                seo_keywords: Optional[List[str]] = None) -> Dict[str, Path]:
         """
-        Exportiere Patch Notes als JSON + Markdown.
+        Exportiere Patch Notes als JSON + Markdown + API POST.
 
         Args:
             project: Projektname
@@ -87,23 +92,82 @@ class PatchNotesWebExporter:
 
         # Markdown Export (SEO-optimiert)
         md_content = self._build_seo_markdown(
-            project, version, title, tldr, content, stats, language, seo_keywords
+            project, version, title, tldr, content, stats, language, seo_keywords,
+            changes=changes,
         )
 
         md_path = project_dir / f"v{version}.md"
         with open(md_path, 'w', encoding='utf-8') as f:
             f.write(md_content)
 
-        # Index aktualisieren
+        # Index aktualisieren (File-Fallback)
         self._update_index(project, version, title, tldr, timestamp)
+
+        # API POST (primärer Modus, async)
+        try:
+            import asyncio
+            loop = asyncio.get_event_loop()
+            if loop.is_running():
+                asyncio.ensure_future(self._post_to_api(project, json_data))
+            else:
+                loop.run_until_complete(self._post_to_api(project, json_data))
+        except Exception as e:
+            logger.debug(f"API-POST übersprungen: {e}")
 
         logger.info(f"📝 Web-Export für {project} v{version}: {json_path}, {md_path}")
 
         return {'json': json_path, 'markdown': md_path}
 
+    async def _post_to_api(self, project: str, json_data: Dict) -> bool:
+        """POST changelog to project API. Returns True on success."""
+        config = self._get_api_config(project)
+        if not config:
+            return False
+
+        url = config.get('url', '')
+        api_key = config.get('api_key', '')
+        if not url or not api_key:
+            logger.debug(f"Keine API-Config für {project}, überspringe POST")
+            return False
+
+        try:
+            import aiohttp
+            payload = {
+                'version': json_data['version'],
+                'title': json_data['title'],
+                'tldr': json_data['tldr'],
+                'content': json_data['content'],
+                'stats': json_data.get('stats', {}),
+                'seo': json_data.get('seo', {}),
+                'language': json_data.get('language', 'en'),
+                'published_at': json_data.get('published_at'),
+            }
+            headers = {
+                'Content-Type': 'application/json',
+                'X-API-Key': api_key,
+            }
+            async with aiohttp.ClientSession() as session:
+                async with session.post(url, json=payload, headers=headers,
+                                        timeout=aiohttp.ClientTimeout(total=10)) as resp:
+                    if resp.status in (200, 201):
+                        logger.info(f"✅ Changelog v{json_data['version']} an {project} API gepostet")
+                        return True
+                    else:
+                        body = await resp.text()
+                        logger.warning(f"⚠️ API POST fehlgeschlagen ({resp.status}): {body[:200]}")
+                        return False
+        except Exception as e:
+            logger.warning(f"⚠️ API POST für {project} fehlgeschlagen: {e}")
+            return False
+
+    def _get_api_config(self, project: str) -> Optional[Dict]:
+        """Get API endpoint config for a project."""
+        return self._api_endpoints.get(project)
+
     def _build_seo_markdown(self, project: str, version: str, title: str,
                             tldr: str, content: str, stats: Dict,
-                            language: str, keywords: List[str]) -> str:
+                            language: str, keywords: List[str],
+                            changes: Optional[List[Dict]] = None) -> str:
         """Baue SEO-optimiertes Markdown."""
         # Frontmatter für Static Site Generators
         frontmatter = [
@@ -130,6 +194,39 @@ class PatchNotesWebExporter:
         lines.append(content)
         lines.append('')
 
+        # Strukturierte Changes (wenn vorhanden, ergaenzend zum Content)
+        if changes:
+            type_map = {
+                'feature': ('🆕', 'Neue Features' if language == 'de' else 'New Features'),
+                'fix': ('🐛', 'Bugfixes' if language == 'de' else 'Bug Fixes'),
+                'improvement': ('⚡', 'Verbesserungen' if language == 'de' else 'Improvements'),
+                'breaking': ('⚠️', 'Breaking Changes'),
+                'docs': ('📝', 'Dokumentation' if language == 'de' else 'Documentation'),
+            }
+
+            grouped = {}
+            for change in changes:
+                ctype = change.get('type', 'improvement')
+                grouped.setdefault(ctype, []).append(change)
+
+            if grouped:
+                header = '## Änderungen im Detail' if language == 'de' else '## Changes in Detail'
+                lines.append(header)
+                lines.append('')
+
+                for ctype in ['feature', 'breaking', 'fix', 'improvement', 'docs']:
+                    items = grouped.get(ctype)
+                    if not items:
+                        continue
+                    emoji, label = type_map.get(ctype, ('📦', ctype.title()))
+                    lines.append(f'### {emoji} {label}')
+                    lines.append('')
+                    for item in items:
+                        lines.append(f'- **{item.get("description", "")}**')
+                        for detail in item.get('details', []):
+                            lines.append(f'  - {detail}')
+                    lines.append('')
+
         # Stats-Sektion
         if stats and stats.get('commits', 0) >= 5:
             if language == 'de':
@@ -138,13 +235,13 @@ class PatchNotesWebExporter:
                 lines.append('## 📊 Release Stats')
             lines.append('')
 
-            commits = stats.get('commits', 0)
+            commit_count = stats.get('commits', 0)
             files = stats.get('files_changed', 0)
             added = stats.get('lines_added', 0)
             removed = stats.get('lines_removed', 0)
             contributors = stats.get('contributors', [])
 
-            lines.append(f'- **{commits}** Commits')
+            lines.append(f'- **{commit_count}** Commits')
             lines.append(f'- **{files}** Dateien geändert')
             lines.append(f'- **+{added}** / **-{removed}** Zeilen')
 
@@ -235,8 +332,9 @@ class PatchNotesWebExporter:
         return ''
 
 
-def get_web_exporter(base_output_dir: Path = None) -> PatchNotesWebExporter:
+def get_web_exporter(base_output_dir: Path = None,
+                     api_endpoints: Optional[Dict] = None) -> PatchNotesWebExporter:
     """Factory für PatchNotesWebExporter."""
     if base_output_dir is None:
         base_output_dir = Path.home() / '.shadowops' / 'changelogs'
-    return PatchNotesWebExporter(base_output_dir)
+    return PatchNotesWebExporter(base_output_dir, api_endpoints)

@@ -766,10 +766,21 @@ class ShadowOpsBot(commands.Bot):
                     from integrations.patch_notes_web_exporter import PatchNotesWebExporter
                     from integrations.patch_notes_batcher import PatchNotesBatcher
 
-                    # Web Exporter: Default-Verzeichnis (projekt-spezifische Dirs
-                    # werden in notifications_mixin.py aus der Config gelesen)
+                    # API-Endpoints aus Config laden
+                    api_endpoints = {}
+                    projects = self.config.projects
+                    if isinstance(projects, dict):
+                        for proj_name, proj_config in projects.items():
+                            if not isinstance(proj_config, dict):
+                                continue
+                            pn_config = proj_config.get('patch_notes', {})
+                            api_config = pn_config.get('api_endpoint', {})
+                            if isinstance(api_config, dict) and api_config.get('url'):
+                                api_endpoints[proj_name] = api_config
+
+                    # Web Exporter: Default-Verzeichnis + API-Endpoints
                     default_output = Path.home() / '.shadowops' / 'changelogs'
-                    self.web_exporter = PatchNotesWebExporter(default_output)
+                    self.web_exporter = PatchNotesWebExporter(default_output, api_endpoints)
                     self.github_integration.web_exporter = self.web_exporter
 
                     # Batcher (braucht data_dir für pending_batch.json)

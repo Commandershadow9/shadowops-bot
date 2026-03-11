@@ -54,7 +54,7 @@
 #### Einzelne Module
 | Datei | Zweck |
 |-------|-------|
-| `ai_engine.py` | Dual-Engine AI (Codex Primary + Claude Fallback) |
+| `ai_engine.py` | Dual-Engine AI (Codex Primary + Claude Fallback, Structured Output) |
 | `smart_queue.py` | SmartQueue (3 Analyse-Slots, 1 Fix-Lock, Circuit Breaker) |
 | `auto_fix_manager.py` | Discord Buttons fuer Approve/Reject, Persistent Views |
 | `event_watcher.py` | Periodischer Scanner (Trivy/CrowdSec/Fail2ban/AIDE) |
@@ -74,7 +74,7 @@
 | `server_assistant.py` | Server Assistant (ersetzt Legacy Learning System) |
 | `patch_notes_manager.py` | AI-generierte Patch Notes (v2: Dual-Output, Web-Export) |
 | `patch_notes_batcher.py` | Sammelt kleine Patches, gibt sie gebuendelt frei |
-| `patch_notes_web_exporter.py` | SEO-optimierter Web-Export (JSON + Markdown) |
+| `patch_notes_web_exporter.py` | SEO-optimierter Web-Export (JSON + Markdown + HTTP POST an Projekt-APIs) |
 | `knowledge_base.py` | SQLite Knowledge Database |
 | `log_analyzer.py` | Log-Analyse und -Auswertung |
 | `code_analyzer.py` | Code-Analyse fuer Fix-Strategien |

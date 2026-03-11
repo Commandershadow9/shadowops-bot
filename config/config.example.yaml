@@ -200,6 +200,11 @@ projects:
       # Batching: Kleine Patches sammeln
       batch_threshold: 8       # Ab X gesammelten Commits automatisch veröffentlichen
 
+      # API-Endpoint für DB-basierte Changelogs (primärer Modus)
+      # api_endpoint:
+      #   url: "https://guildscout.eu/api/v2/changelogs"
+      #   api_key: ""
+
       # Code-Diffs in Prompt einbeziehen (optional)
       include_diffs: true
       diff_max_commits: 5
