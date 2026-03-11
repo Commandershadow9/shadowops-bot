@@ -220,7 +220,7 @@ class TestFailureBackoff:
         assert analyst._failure_cooldown_until == 0.0
 
     def test_backoff_escalation(self, analyst):
-        """Backoff soll eskalieren: 30min -> 2h -> 6h"""
+        """Backoff soll eskalieren: 30min -> 2h, danach Tages-Sperre"""
         analyst._consecutive_failures = 1
         analyst._apply_failure_backoff(1)
         backoff_1 = analyst._failure_cooldown_until - time.time()
@@ -229,13 +229,14 @@ class TestFailureBackoff:
         analyst._apply_failure_backoff(2)
         backoff_2 = analyst._failure_cooldown_until - time.time()
 
-        analyst._consecutive_failures = 3
-        analyst._apply_failure_backoff(3)
-        backoff_3 = analyst._failure_cooldown_until - time.time()
-
         assert 1790 < backoff_1 <= 1800   # 30 Min
         assert 7190 < backoff_2 <= 7200   # 2 Stunden
-        assert 21590 < backoff_3 <= 21600  # 6 Stunden
+
+        # 3. Fehler: Kein Cooldown-Timer, stattdessen Tages-Sperre via Counter
+        analyst._consecutive_failures = 3
+        analyst._apply_failure_backoff(3)
+        assert analyst._failure_cooldown_until == 0.0  # Kein Cooldown
+        assert analyst._sessions_today == analyst.max_sessions_per_day  # Tages-Limit
 
 
 # ============================================================================

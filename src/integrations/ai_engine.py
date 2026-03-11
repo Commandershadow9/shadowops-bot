@@ -993,6 +993,7 @@ class AIEngine:
         ]
 
         logger.info("Codex-Analyst gestartet (Modell: %s, Timeout: %ds)", model, timeout)
+        first_attempt = True
 
         proc = None
         try:
@@ -1012,11 +1013,35 @@ class AIEngine:
             stderr = stderr_bytes.decode('utf-8', errors='replace') if stderr_bytes else ''
 
             if proc.returncode != 0:
-                logger.warning(
-                    "Codex-Analyst fehlgeschlagen (rc=%d): %s",
-                    proc.returncode, stderr[:500],
-                )
-                return None
+                # Falls --skip-git-repo-check nicht unterstuetzt: Retry ohne Flag
+                if first_attempt and 'skip-git-repo-check' in stderr:
+                    logger.info("--skip-git-repo-check nicht unterstuetzt, Retry ohne Flag")
+                    first_attempt = False
+                    args = [a for a in args if a != '--skip-git-repo-check']
+                    proc = await asyncio.create_subprocess_exec(
+                        *args,
+                        stdout=asyncio.subprocess.PIPE,
+                        stderr=asyncio.subprocess.PIPE,
+                        env=env,
+                        cwd='/home/cmdshadow',
+                    )
+                    stdout_bytes, stderr_bytes = await asyncio.wait_for(
+                        proc.communicate(), timeout=timeout
+                    )
+                    stdout = stdout_bytes.decode('utf-8', errors='replace') if stdout_bytes else ''
+                    stderr = stderr_bytes.decode('utf-8', errors='replace') if stderr_bytes else ''
+                    if proc.returncode != 0:
+                        logger.warning(
+                            "Codex-Analyst fehlgeschlagen (rc=%d, ohne Flag): %s",
+                            proc.returncode, stderr[:500],
+                        )
+                        return None
+                else:
+                    logger.warning(
+                        "Codex-Analyst fehlgeschlagen (rc=%d): %s",
+                        proc.returncode, stderr[:500],
+                    )
+                    return None
 
             if not stdout.strip():
                 logger.warning("Codex-Analyst: Leere Antwort")
@@ -1209,10 +1234,12 @@ class AIEngine:
             except (json.JSONDecodeError, OSError) as e:
                 logger.warning(f"Temp-Datei nicht parsbar: {e}")
 
-        # Fallback: JSON aus stdout extrahieren
+        # Fallback: JSON aus stdout extrahieren (max 500 KB um CPU-Spikes zu vermeiden)
         if stdout:
+            search_text = stdout[-500_000:] if len(stdout) > 500_000 else stdout
+
             # 1. Versuche JSON aus Markdown-Codeblöcken zu extrahieren
-            code_blocks = re.findall(r'```(?:json)?\s*\n({.*?})\s*\n```', stdout, re.DOTALL)
+            code_blocks = re.findall(r'```(?:json)?\s*\n({.*?})\s*\n```', search_text, re.DOTALL)
             for block in code_blocks:
                 try:
                     data = json.loads(block)
@@ -1225,18 +1252,20 @@ class AIEngine:
             # 2. Suche nach JSON-Objekt mit erwarteten Keys
             for key in ('"summary"', '"findings"', '"health_check_passed"'):
                 pattern = r'\{[^{]*?' + re.escape(key)
-                match = re.search(pattern + r'.*', stdout, re.DOTALL)
+                match = re.search(pattern + r'.*', search_text, re.DOTALL)
                 if not match:
                     continue
                 # Gehe zum Anfang des JSON-Objekts zurück
-                start = stdout.rfind('{', 0, match.start() + 1)
+                start = search_text.rfind('{', 0, match.start() + 1)
                 if start < 0:
                     start = match.start()
-                json_str = stdout[start:]
-                # Finde das passende schließende Bracket
+                json_str = search_text[start:]
+                # Finde das passende schließende Bracket (max 200 KB scannen)
                 depth = 0
                 end_idx = 0
-                for i, ch in enumerate(json_str):
+                scan_limit = min(len(json_str), 200_000)
+                for i in range(scan_limit):
+                    ch = json_str[i]
                     if ch == '{':
                         depth += 1
                     elif ch == '}':
@@ -1254,7 +1283,7 @@ class AIEngine:
                         continue
 
             logger.debug(
-                "Analyst stdout ohne JSON-Ergebnis (Länge: %d, Anfang: %.200s...)",
+                "Analyst stdout ohne JSON-Ergebnis (Laenge: %d, Anfang: %.200s...)",
                 len(stdout), stdout[:200]
             )
 

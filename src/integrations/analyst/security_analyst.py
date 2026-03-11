@@ -386,7 +386,24 @@ class SecurityAnalyst:
             self._current_session_id = None
 
     def _apply_failure_backoff(self, session_id: Optional[int]):
-        """Wendet exponentiellen Backoff bei Fehlern an."""
+        """Wendet exponentiellen Backoff bei Fehlern an.
+
+        Bei >= MAX_CONSECUTIVE_FAILURES wird der Analyst fuer den Tag
+        deaktiviert (sessions_today = max). Der Cooldown-Timer wird
+        dann nicht gesetzt, da der Session-Counter bereits sperrt.
+        """
+        # Bei zu vielen Fehlern: Tages-Limit erreichen (kein Cooldown noetig)
+        if self._consecutive_failures >= MAX_CONSECUTIVE_FAILURES:
+            self._sessions_today = self.max_sessions_per_day
+            self._failure_cooldown_until = 0.0  # Redundant, Counter sperrt
+            logger.error(
+                "Session #%s: %d konsekutive Fehler — Analyst fuer heute deaktiviert "
+                "(sessions_today=%d/%d)",
+                session_id, self._consecutive_failures,
+                self._sessions_today, self.max_sessions_per_day,
+            )
+            return
+
         idx = min(self._consecutive_failures - 1, len(FAILURE_BACKOFF_SECONDS) - 1)
         backoff = FAILURE_BACKOFF_SECONDS[idx]
         self._failure_cooldown_until = time.time() + backoff
@@ -397,14 +414,6 @@ class SecurityAnalyst:
             session_id, self._consecutive_failures,
             backoff // 60, self._sessions_today, self.max_sessions_per_day,
         )
-
-        # Bei zu vielen Fehlern: Tages-Limit erreichen
-        if self._consecutive_failures >= MAX_CONSECUTIVE_FAILURES:
-            logger.error(
-                "Analyst: %d konsekutive Fehler — fuer heute deaktiviert",
-                self._consecutive_failures,
-            )
-            self._sessions_today = self.max_sessions_per_day
 
     # ─────────────────────────────────────────────────────────────────
     # Discord-Benachrichtigungen (volle Transparenz)
