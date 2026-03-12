@@ -2,8 +2,9 @@
 Patch Notes Feedback Collection System.
 
 Collects user feedback through:
-- Discord reactions (emoji scoring)
+- Discord buttons (Like, Rate) — direkt am Patch Notes Embed (v3)
 - Text feedback via Discord Modal
+- Legacy: Discord reactions (emoji scoring)
 """
 
 import asyncio
@@ -90,8 +91,56 @@ class TextFeedbackModal(ui.Modal, title="📝 Patch Notes Feedback"):
         )
 
 
+class PatchNotesView(ui.View):
+    """Discord View mit integrierten Buttons direkt am Patch Notes Embed."""
+
+    def __init__(self, collector: 'PatchNotesFeedbackCollector',
+                 project: str, version: str, changelog_url: str = ''):
+        super().__init__(timeout=604800)  # 7 Tage
+        self.collector = collector
+        self.project = project
+        self.version = version
+        self.like_count = 0
+
+        # URL-Button für Changelog (nur wenn URL vorhanden)
+        if changelog_url:
+            self.add_item(ui.Button(
+                label="🔗 Changelog öffnen",
+                style=discord.ButtonStyle.link,
+                url=changelog_url,
+            ))
+
+    @ui.button(label="👍 Gefällt mir", style=discord.ButtonStyle.success)
+    async def like_button(self, interaction: discord.Interaction, button: ui.Button):
+        """Quick-Reaction, Zähler im Label."""
+        self.like_count += 1
+        button.label = f"👍 Gefällt mir ({self.like_count})"
+        await interaction.response.edit_message(view=self)
+
+        # Feedback aufzeichnen
+        feedback_data = {
+            'emoji': '👍',
+            'score_delta': 10,
+            'user_id': interaction.user.id,
+            'added': True,
+        }
+        if self.collector.trainer:
+            self.collector.trainer.record_feedback(
+                version=self.version,
+                project=self.project,
+                feedback_type='reaction',
+                feedback_data=feedback_data,
+            )
+
+    @ui.button(label="⭐ Bewerten", style=discord.ButtonStyle.secondary)
+    async def rate_button(self, interaction: discord.Interaction, button: ui.Button):
+        """Öffnet TextFeedbackModal."""
+        modal = TextFeedbackModal(self.collector, self.project, self.version)
+        await interaction.response.send_modal(modal)
+
+
 class PatchNotesFeedbackView(ui.View):
-    """Discord View mit Feedback-Button unter Patch Notes."""
+    """Legacy: Discord View mit Feedback-Button unter Patch Notes."""
 
     def __init__(self, collector: 'PatchNotesFeedbackCollector',
                  project: str, version: str):
@@ -109,7 +158,7 @@ class PatchNotesFeedbackView(ui.View):
 
 class PatchNotesFeedbackCollector:
     """
-    Collects user feedback on patch notes through Discord reactions and text.
+    Collects user feedback on patch notes through Discord buttons and text.
     """
 
     def __init__(self, bot: discord.Client, patch_notes_trainer=None):
@@ -120,7 +169,7 @@ class PatchNotesFeedbackCollector:
         # {message_id: {'project': str, 'version': str, 'timestamp': datetime}}
         self.tracked_messages: Dict[int, Dict] = {}
 
-        # Reaction -> Score mapping
+        # Reaction -> Score mapping (Legacy, für bestehende Reaction-Handler)
         self.reaction_scores = {
             '👍': 10,      # Good
             '❤️': 15,      # Love it
@@ -137,45 +186,20 @@ class PatchNotesFeedbackCollector:
         trainer_status = "mit Trainer" if patch_notes_trainer else "standalone, ohne Trainer"
         logger.info(f"✅ Patch Notes Feedback Collector initialized ({trainer_status})")
 
-    async def track_patch_notes_message(self, message: Message, project: str,
-                                         version: str, add_feedback_button: bool = True) -> None:
-        """
-        Start tracking reactions on a patch notes message.
+    def create_view(self, project: str, version: str, changelog_url: str = '') -> PatchNotesView:
+        """Erstellt ein PatchNotesView für die Embed-Nachricht."""
+        return PatchNotesView(self, project, version, changelog_url)
 
-        Args:
-            message: Discord message containing patch notes
-            project: Project name
-            version: Version number
-            add_feedback_button: Whether to add the text feedback button
-        """
+    async def track_patch_notes_message(self, message: Message, project: str,
+                                         version: str, changelog_url: str = '') -> None:
+        """Start tracking a patch notes message. Buttons are now attached by the caller."""
         self.tracked_messages[message.id] = {
             'project': project,
             'version': version,
             'timestamp': datetime.now(timezone.utc),
             'channel_id': message.channel.id,
         }
-
-        # Add reaction buttons
-        try:
-            for emoji in ['👍', '👎', '❤️', '🔥']:
-                await message.add_reaction(emoji)
-
-            logger.info(f"📊 Tracking feedback for {project} v{version} (message {message.id})")
-        except Exception as e:
-            logger.error(f"Failed to add reaction buttons: {e}")
-
-        # Send feedback button as follow-up message
-        if add_feedback_button:
-            try:
-                view = PatchNotesFeedbackView(self, project, version)
-                await message.channel.send(
-                    "💬 *Wie findest du diese Patch Notes?*",
-                    view=view,
-                    reference=message,
-                    mention_author=False,
-                )
-            except Exception as e:
-                logger.warning(f"Could not add feedback button: {e}")
+        logger.info(f"📊 Tracking feedback for {project} v{version} (message {message.id})")
 
     async def on_raw_reaction_add(self, payload: discord.RawReactionActionEvent) -> None:
         """Handle reaction added to tracked message."""

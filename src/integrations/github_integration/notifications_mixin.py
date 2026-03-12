@@ -1,7 +1,7 @@
 """
 Discord notification methods for GitHubIntegration.
 
-v2: Dual-Format (Discord kurz + Web ausführlich), Batching, Stats, Feedback-Buttons
+v3: Teaser-Embed mit Kategorien, integrierte Buttons, Content Sanitizer
 """
 
 import logging
@@ -11,6 +11,8 @@ from pathlib import Path
 from typing import Dict, Optional
 
 import discord
+
+from src.integrations.content_sanitizer import ContentSanitizer
 
 logger = logging.getLogger('shadowops')
 
@@ -117,18 +119,30 @@ class NotificationsMixin:
             except Exception as e:
                 self.logger.warning(f"⚠️ KI Patch Notes Generierung fehlgeschlagen, verwende Fallback: {e}")
 
+        # === CONTENT SANITIZER ===
+        security_config = patch_config.get('security', {})
+        if security_config.get('sanitize', True):  # Default: aktiv
+            sanitizer = ContentSanitizer(
+                custom_patterns=security_config.get('custom_redact_patterns', []),
+                enabled=True,
+            )
+            if isinstance(ai_result, dict):
+                ai_result = sanitizer.sanitize_dict(ai_result)
+            elif isinstance(ai_result, str):
+                ai_result = sanitizer.sanitize(ai_result)
+
         # === BUILD CUSTOMER EMBED + WEB EXPORT ===
         if isinstance(ai_result, dict) and ai_result.get('discord_highlights'):
-            # Strukturierter Output: Separater Discord-Embed + Web-Content
-            customer_embed = self._build_structured_customer_embed(
-                repo_name, commits_url, project_color, commits, language,
+            # v3: Neues Embed-Format mit Teaser-Stil
+            customer_embed = self._build_v3_customer_embed(
+                repo_name, project_color, commits, language,
                 ai_result, project_config
             )
             await self._export_structured_web_changelog(
                 repo_name, commits, ai_result, project_config, language
             )
         else:
-            # Fallback: Raw-Text für beides (Legacy)
+            # Fallback: Legacy-Format
             ai_description = ai_result if isinstance(ai_result, str) else None
             customer_embed = self._build_customer_embed(
                 repo_name, commits_url, project_color, commits, language,
@@ -274,6 +288,117 @@ class NotificationsMixin:
             footer_parts.append(f"+{added}/-{removed}")
 
         embed.set_footer(text=" · ".join(footer_parts))
+
+        return embed
+
+    def _build_v3_customer_embed(self, repo_name: str, project_color: int,
+                                  commits: list, language: str,
+                                  ai_data: Dict, project_config: Dict) -> discord.Embed:
+        """Patch Notes v3: Teaser-Embed mit Author, Blockquote TL;DR, Kategorien."""
+        patch_config = project_config.get('patch_notes', {})
+        changelog_url = patch_config.get('changelog_url', '')
+        version = ai_data.get('version') or self._extract_version_from_commits(commits)
+
+        # Titel: Version + AI-Titel, verlinkt auf Changelog (nicht GitHub!)
+        title = ai_data.get('title', 'Update')
+        version_str = f"v{version} — " if version and version != 'patch' else ''
+
+        changelog_link = ''
+        if changelog_url and version:
+            changelog_link = f"{changelog_url}/{version.replace('.', '-')}"
+
+        embed = discord.Embed(
+            title=f"\U0001f680 {version_str}{title}",
+            url=changelog_link or None,
+            color=project_color,
+            timestamp=datetime.now(timezone.utc),
+        )
+
+        # Author-Feld: Projekt-Name für Wiedererkennung
+        embed.set_author(name=repo_name.upper())
+
+        # TL;DR als Blockquote
+        tldr = ai_data.get('tldr', '')
+        if tldr:
+            embed.description = f"> {tldr}"
+
+        # === Kategorisierte Changes ===
+        changes = ai_data.get('changes', [])
+        features = [c for c in changes if c.get('type') == 'feature']
+        fixes = [c for c in changes if c.get('type') == 'fix']
+        improvements = [c for c in changes if c.get('type') == 'improvement']
+        breaking = ai_data.get('breaking_changes', [])
+
+        # Features ausgeschrieben (max 3)
+        if features:
+            feature_lines = []
+            for f in features[:3]:
+                desc = f.get('description', '')
+                feature_lines.append(f"\u2570 {desc}")
+            if len(features) > 3:
+                feature_lines.append(f"\u2570 *...und {len(features) - 3} weitere*")
+            embed.add_field(
+                name="\U0001f195 Neue Features",
+                value="\n".join(feature_lines),
+                inline=False,
+            )
+
+        # Breaking Changes ausgeschrieben (max 3)
+        if breaking:
+            breaking_lines = [f"\u26a0\ufe0f {b}" for b in breaking[:3]]
+            embed.add_field(
+                name="\u26a0\ufe0f Breaking Changes",
+                value="\n".join(breaking_lines),
+                inline=False,
+            )
+
+        # Fixes + Improvements als Zähler (erzeugt Neugier)
+        counters = []
+        if fixes:
+            counters.append(f"\U0001f41b {len(fixes)} Bugfix{'es' if len(fixes) != 1 else ''}")
+        if improvements:
+            counters.append(f"\u26a1 {len(improvements)} Verbesserung{'en' if len(improvements) != 1 else ''}")
+        if counters:
+            embed.add_field(
+                name="\u200b",  # unsichtbarer Name
+                value=" \u00b7 ".join(counters),
+                inline=False,
+            )
+
+        # Fallback: discord_highlights wenn keine changes
+        if not changes and not breaking:
+            highlights = ai_data.get('discord_highlights', [])
+            if highlights:
+                highlights_text = "\n".join(f"\u2570 {h}" for h in highlights[:4])
+                embed.add_field(name="\U0001f525 Highlights", value=highlights_text, inline=False)
+
+        # === CTA-Block ===
+        if changelog_link:
+            cta_text = (
+                "\u2504\u2504\u2504\u2504\u2504\u2504\u2504\u2504\u2504\u2504\u2504\u2504\u2504\u2504\u2504\u2504\u2504\u2504\u2504\u2504\u2504\u2504\u2504\u2504\u2504\u2504\u2504\u2504\u2504\u2504\u2504\u2504\u2504\u2504\u2504\u2504\u2504\u2504\u2504\u2504\n"
+                "\U0001f4d6 Alle Details, technische Hintergr\u00fcnde\n"
+                "und die vollst\u00e4ndige \u00c4nderungsliste\n"
+                "findest du im Changelog \u2192"
+            ) if language == 'de' else (
+                "\u2504\u2504\u2504\u2504\u2504\u2504\u2504\u2504\u2504\u2504\u2504\u2504\u2504\u2504\u2504\u2504\u2504\u2504\u2504\u2504\u2504\u2504\u2504\u2504\u2504\u2504\u2504\u2504\u2504\u2504\u2504\u2504\u2504\u2504\u2504\u2504\u2504\u2504\u2504\u2504\n"
+                "\U0001f4d6 All details, technical background\n"
+                "and the complete changelog\n"
+                "available at \u2192"
+            )
+            embed.add_field(name="\u200b", value=cta_text, inline=False)
+
+        # === Footer mit Stats ===
+        git_stats = ai_data.get('stats', {})
+        footer_parts = []
+        if version and version != 'patch':
+            footer_parts.append(f"\U0001f4ca v{version}")
+        footer_parts.append(f"{len(commits)} Commits")
+        added = git_stats.get('lines_added', 0)
+        removed = git_stats.get('lines_removed', 0)
+        if added > 0:
+            footer_parts.append(f"+{added}/-{removed}")
+
+        embed.set_footer(text=" \u00b7 ".join(footer_parts))
 
         return embed
 
@@ -454,7 +579,7 @@ class NotificationsMixin:
 
     async def _send_to_customer_channels(self, embed: discord.Embed, repo_name: str,
                                           project_config: Dict, version: Optional[str]) -> None:
-        """Sende Patch Notes an Customer-Channel mit Feedback-Collection."""
+        """Sende Patch Notes an Customer-Channel mit Feedback-Buttons."""
         customer_channel_id = project_config.get('update_channel_id')
         if not customer_channel_id:
             return
@@ -464,12 +589,21 @@ class NotificationsMixin:
             self.logger.warning(f"⚠️ Kunden-Update Channel {customer_channel_id} für {repo_name} nicht gefunden.")
             return
 
+        # Feedback-View erstellen
+        view = None
+        if self.feedback_collector and version:
+            changelog_url = project_config.get('patch_notes', {}).get('changelog_url', '')
+            full_url = ''
+            if changelog_url and version:
+                full_url = f"{changelog_url}/{version.replace('.', '-')}"
+            view = self.feedback_collector.create_view(repo_name, version, full_url)
+
         try:
             description_chunks = self._split_embed_description(embed.description or "")
             sent_message = None
 
             if len(description_chunks) <= 1:
-                sent_message = await customer_channel.send(embed=embed)
+                sent_message = await customer_channel.send(embed=embed, view=view)
             else:
                 for i, chunk in enumerate(description_chunks):
                     embed_copy = discord.Embed(
@@ -481,24 +615,25 @@ class NotificationsMixin:
                     )
                     if i == len(description_chunks) - 1 and embed.footer:
                         embed_copy.set_footer(text=embed.footer.text)
-                    message = await customer_channel.send(embed=embed_copy)
+                    # View nur an die erste Nachricht anhängen
+                    msg_view = view if i == 0 else None
+                    message = await customer_channel.send(embed=embed_copy, view=msg_view)
                     if i == 0:
                         sent_message = message
 
             self.logger.info(f"📢 Patch Notes für {repo_name} im Kunden-Channel gesendet.")
 
-            # Feedback-Collection aktivieren
+            # Tracking aktivieren (ohne Reactions/separate Nachricht)
             if sent_message and self.feedback_collector and version:
                 try:
                     await self.feedback_collector.track_patch_notes_message(
                         message=sent_message,
                         project=repo_name,
                         version=version,
-                        add_feedback_button=True,
                     )
-                    self.logger.info(f"👍 Feedback collection aktiviert für {repo_name} v{version}")
+                    self.logger.info(f"👍 Feedback tracking aktiviert für {repo_name} v{version}")
                 except Exception as e:
-                    self.logger.warning(f"⚠️ Feedback collection fehlgeschlagen: {e}")
+                    self.logger.warning(f"⚠️ Feedback tracking fehlgeschlagen: {e}")
 
         except Exception as e:
             self.logger.error(f"❌ Fehler beim Senden im Kunden-Channel: {e}")
@@ -689,7 +824,7 @@ class NotificationsMixin:
                                                 project_config: Dict, version: str = None):
         """
         Send Git push notifications to external servers (customer guilds)
-        AND activate feedback collection for AI learning.
+        AND activate feedback collection with integrated buttons.
         """
         external_notifs = project_config.get('external_notifications', [])
         if not external_notifs:
@@ -713,11 +848,20 @@ class NotificationsMixin:
                     self.logger.warning(f"⚠️ External channel {channel_id} not found for {repo_name}")
                     continue
 
+                # Feedback-View erstellen
+                view = None
+                if self.feedback_collector and version:
+                    changelog_url = project_config.get('patch_notes', {}).get('changelog_url', '')
+                    full_url = ''
+                    if changelog_url and version:
+                        full_url = f"{changelog_url}/{version.replace('.', '-')}"
+                    view = self.feedback_collector.create_view(repo_name, version, full_url)
+
                 description_chunks = self._split_embed_description(embed.description or "")
                 sent_message = None
 
                 if len(description_chunks) <= 1:
-                    sent_message = await channel.send(embed=embed)
+                    sent_message = await channel.send(embed=embed, view=view)
                 else:
                     for i, chunk in enumerate(description_chunks):
                         embed_copy = discord.Embed(
@@ -729,24 +873,25 @@ class NotificationsMixin:
                         )
                         if i == len(description_chunks) - 1 and embed.footer:
                             embed_copy.set_footer(text=embed.footer.text)
-                        message = await channel.send(embed=embed_copy)
+                        # View nur an die erste Nachricht anhängen
+                        msg_view = view if i == 0 else None
+                        message = await channel.send(embed=embed_copy, view=msg_view)
                         if i == 0:
                             sent_message = message
 
                 self.logger.info(f"📤 Sent git update for {repo_name} to external server")
 
-                # ACTIVATE FEEDBACK COLLECTION
+                # Tracking aktivieren (ohne Reactions/separate Nachricht)
                 if sent_message and self.feedback_collector and version:
                     try:
                         await self.feedback_collector.track_patch_notes_message(
                             message=sent_message,
                             project=repo_name,
                             version=version,
-                            add_feedback_button=True,
                         )
-                        self.logger.info(f"👍 Feedback collection activated for {repo_name} v{version}")
+                        self.logger.info(f"👍 Feedback tracking activated for {repo_name} v{version}")
                     except Exception as e:
-                        self.logger.warning(f"⚠️ Could not activate feedback collection: {e}")
+                        self.logger.warning(f"⚠️ Could not activate feedback tracking: {e}")
 
             except Exception as e:
                 self.logger.error(f"❌ Failed to send external git notification for {repo_name}: {e}")
