@@ -109,6 +109,9 @@ class ShadowOpsBot(commands.Bot):
         # Security Analyst (autonome AI Security Sessions)
         self.security_analyst = None
 
+        # Changelog-DB (Patch Notes v3)
+        self.changelog_db = None
+
         # Queue Management
         self.smart_queue = None
 
@@ -644,6 +647,22 @@ class ShadowOpsBot(commands.Bot):
                 0x3498DB
             )
 
+            # Changelog-DB initialisieren (vor Health-Server)
+            try:
+                from integrations.changelog_db import ChangelogDB
+                self.changelog_db = ChangelogDB()
+                await self.changelog_db.initialize()
+                self.logger.info("✅ Changelog-DB initialisiert")
+            except Exception as e:
+                self.logger.warning(f"⚠️ Changelog-DB konnte nicht initialisiert werden: {e}")
+                self.changelog_db = None
+
+            # Changelog-DB und API-Key an Health-Server weitergeben
+            self.health_server.changelog_db = self.changelog_db
+            changelog_config = self.config._config.get('changelog_api', {})
+            api_key = changelog_config.get('api_key', '')
+            self.health_server.api_key = api_key
+
             # Health-Server frueh starten damit Project-Monitor sich selbst pruefen kann
             try:
                 await self.health_server.start()
@@ -695,9 +714,10 @@ class ShadowOpsBot(commands.Bot):
                         self.patch_notes_trainer = get_patch_notes_trainer()
                         self.github_integration.patch_notes_trainer = self.patch_notes_trainer
 
-                        # 2. Feedback Collector (Discord Reactions)
+                        # 2. Feedback Collector (Discord Buttons, Persistent Views)
                         self.feedback_collector = get_feedback_collector(self, self.patch_notes_trainer)
                         self.github_integration.feedback_collector = self.feedback_collector
+                        self.feedback_collector.register_persistent_view()
 
                         # 3. A/B Testing System
                         self.prompt_ab_testing = get_prompt_ab_testing()
@@ -747,6 +767,20 @@ class ShadowOpsBot(commands.Bot):
                     self.github_integration.prompt_auto_tuner = None
                     self.llm_fine_tuning = None
 
+                # Feedback-Collector unabhängig vom AI Learning initialisieren
+                if not self.feedback_collector:
+                    try:
+                        from integrations.patch_notes_feedback import get_feedback_collector
+                        trainer = getattr(self, 'patch_notes_trainer', None)
+                        self.feedback_collector = get_feedback_collector(self, trainer)
+                        self.github_integration.feedback_collector = self.feedback_collector
+                        self.feedback_collector.register_persistent_view()
+                        self.logger.info("✅ Feedback Collector initialisiert (standalone, ohne AI Learning)")
+                    except Exception as e:
+                        self.logger.warning(f"⚠️ Feedback Collector konnte nicht initialisiert werden: {e}")
+                        self.feedback_collector = None
+                        self.github_integration.feedback_collector = None
+
                 # Initialize Advanced Patch Notes Manager (optional, for approval system)
                 if self.ai_service:
                     try:
@@ -780,7 +814,10 @@ class ShadowOpsBot(commands.Bot):
 
                     # Web Exporter: Default-Verzeichnis + API-Endpoints
                     default_output = Path.home() / '.shadowops' / 'changelogs'
-                    self.web_exporter = PatchNotesWebExporter(default_output, api_endpoints)
+                    self.web_exporter = PatchNotesWebExporter(
+                        default_output, api_endpoints,
+                        changelog_db=self.changelog_db
+                    )
                     self.github_integration.web_exporter = self.web_exporter
 
                     # Batcher (braucht data_dir für pending_batch.json)

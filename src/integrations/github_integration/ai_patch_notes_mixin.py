@@ -638,6 +638,14 @@ class AIPatchNotesMixin:
         if language == 'de':
             prefix = f"""Du generierst strukturierte Patch Notes als JSON fuer "{project_name}".
 
+SICHERHEITSREGELN (STRIKT — bei Verstoß wird der gesamte Output verworfen):
+- NIEMALS Dateipfade, Server-Pfade oder Verzeichnisstrukturen erwaehnen
+- NIEMALS IP-Adressen, Ports oder Netzwerk-Konfigurationen nennen
+- Security-Fixes NUR vage beschreiben: WAS verbessert wurde, nicht WIE oder welche Schwachstelle
+- KEINE alten verwundbaren Dependency-Versionen nennen (nur die neue Version, wenn relevant)
+- KEINE Config-Dateien, deren Pfade oder Inhalte referenzieren
+- KEINE internen Methodennamen, Klassennamen oder Code-Strukturen offenlegen
+
 WICHTIG — KONSISTENZ-REGELN:
 - discord_highlights und web_content muessen die GLEICHEN Aenderungen beschreiben
 - discord_highlights sind KURZE Versionen der wichtigsten Punkte aus web_content
@@ -659,9 +667,28 @@ FELD-ANWEISUNGEN:
 - version: Die erkannte Versionsnummer (oder "patch" wenn keine erkannt)
 - language: "{language}"
 
+SEO-KEYWORDS:
+- Generiere 5-10 spezifische, suchrelevante Keywords fuer dieses Release
+- Keywords muessen zum tatsaechlichen Inhalt passen (nicht generisch wie "update" oder "patch")
+- Mix aus Deutsch und Englisch erlaubt (je nach Zielgruppe)
+- Technische Begriffe bevorzugt (z.B. "oauth2-integration", "api-performance", "rate-limiting")
+- Feld: "seo_keywords" — Array von Strings
+
+SEO-KATEGORIE:
+- Waehle die Hauptkategorie: feature, security, performance, bugfix, maintenance
+- Feld: "seo_category" — ein String
+
 """
         else:
             prefix = f"""You are generating structured patch notes as JSON for "{project_name}".
+
+SECURITY RULES (STRICT — violation causes the entire output to be discarded):
+- NEVER mention file paths, server paths or directory structures
+- NEVER mention IP addresses, ports or network configurations
+- Describe security fixes ONLY vaguely: WHAT was improved, not HOW or which vulnerability
+- Do NOT mention old vulnerable dependency versions (only the new version, if relevant)
+- Do NOT reference config files, their paths or contents
+- Do NOT expose internal method names, class names or code structures
 
 IMPORTANT — CONSISTENCY RULES:
 - discord_highlights and web_content MUST describe the SAME changes
@@ -683,6 +710,16 @@ FIELD INSTRUCTIONS:
 - stats: Will be filled with real git stats afterwards, set commits to {num_commits}
 - version: The detected version number (or "patch" if none detected)
 - language: "{language}"
+
+SEO KEYWORDS:
+- Generate 5-10 specific, search-relevant keywords for this release
+- Keywords must match the actual content (not generic like "update" or "patch")
+- Technical terms preferred (e.g. "oauth2-integration", "api-performance", "rate-limiting")
+- Field: "seo_keywords" — Array of strings
+
+SEO CATEGORY:
+- Choose the main category: feature, security, performance, bugfix, maintenance
+- Field: "seo_category" — a string
 
 """
 
@@ -765,6 +802,14 @@ FIELD INSTRUCTIONS:
         if language == 'de':
             prompt = f"""Du bist ein professioneller Technical Writer. Erstelle benutzerfreundliche Patch Notes für das Projekt "{repo_name}".
 
+SICHERHEITSREGELN (STRIKT — bei Verstoß wird der gesamte Output verworfen):
+- NIEMALS Dateipfade, Server-Pfade oder Verzeichnisstrukturen erwähnen
+- NIEMALS IP-Adressen, Ports oder Netzwerk-Konfigurationen nennen
+- Security-Fixes NUR vage beschreiben: WAS verbessert wurde, nicht WIE oder welche Schwachstelle
+- KEINE alten verwundbaren Dependency-Versionen nennen (nur die neue Version, wenn relevant)
+- KEINE Config-Dateien, deren Pfade oder Inhalte referenzieren
+- KEINE internen Methodennamen, Klassennamen oder Code-Strukturen offenlegen
+
 COMMITS (VOLLSTÄNDIGE LISTE):
 {commits_text}
 {extra_context}
@@ -817,6 +862,14 @@ FORMAT-BEISPIEL:
 Erstelle JETZT die DETAILLIERTEN Patch Notes basierend auf den ECHTEN Commits oben (nur die Kategorien + Bulletpoints, keine Einleitung):"""
         else:  # English
             prompt = f"""You are a professional Technical Writer. Create user-friendly patch notes for the project "{repo_name}".
+
+SECURITY RULES (STRICT — violation causes the entire output to be discarded):
+- NEVER mention file paths, server paths or directory structures
+- NEVER mention IP addresses, ports or network configurations
+- Describe security fixes ONLY vaguely: WHAT was improved, not HOW or which vulnerability
+- Do NOT mention old vulnerable dependency versions (only the new version, if relevant)
+- Do NOT reference config files, their paths or contents
+- Do NOT expose internal method names, class names or code structures
 
 COMMITS (COMPLETE LIST):
 {commits_text}

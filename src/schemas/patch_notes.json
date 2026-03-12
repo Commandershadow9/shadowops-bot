@@ -48,8 +48,18 @@
       "additionalProperties": false
     },
     "version": { "type": "string" },
-    "language": { "type": "string", "enum": ["de", "en"] }
+    "language": { "type": "string", "enum": ["de", "en"] },
+    "seo_keywords": {
+      "type": "array",
+      "items": { "type": "string" },
+      "description": "5-10 spezifische, suchrelevante Keywords für SEO"
+    },
+    "seo_category": {
+      "type": "string",
+      "enum": ["feature", "security", "performance", "bugfix", "maintenance"],
+      "description": "Hauptkategorie dieses Releases"
+    }
   },
-  "required": ["title", "tldr", "summary", "discord_highlights", "web_content", "breaking_changes", "changes", "stats", "version", "language"],
+  "required": ["title", "tldr", "summary", "discord_highlights", "web_content", "breaking_changes", "changes", "stats", "version", "language", "seo_keywords", "seo_category"],
   "additionalProperties": false
 }

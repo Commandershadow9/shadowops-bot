@@ -4,15 +4,15 @@
 - **Runtime:** Python 3.12, discord.py 2.7
 - **AI:** Dual-Engine (Codex CLI Primary + Claude CLI Fallback)
 - **Monitoring:** Trivy, CrowdSec, Fail2ban, AIDE
-- **Data:** SQLite (Knowledge DB), JSON State Files
+- **Data:** SQLite (Knowledge DB + Changelog DB), JSON State Files
 - **Deploy:** systemd (system-level), logrotate
-- **Version:** v4.0.1
+- **Version:** v4.1.0
 
 ## Services & Ports
 | Service | Port | Zweck |
 |---------|------|-------|
 | Discord Bot | — | Gateway-Connection |
-| Health Check | 8766 | systemd/Uptime Monitoring |
+| Health Check + Changelog API | 8766 | Health, REST API, RSS Feed, Sitemap |
 | GitHub Webhook | 9090 | Push/PR Events |
 | GuildScout Alerts | 9091 | Alert Forwarding |
 
@@ -72,9 +72,12 @@
 | `customer_server_setup.py` | Auto-Setup von Kunden-Discord-Servern |
 | `guildscout_alerts.py` | GuildScout Alert-Forwarding (Port 9091) |
 | `server_assistant.py` | Server Assistant (ersetzt Legacy Learning System) |
-| `patch_notes_manager.py` | AI-generierte Patch Notes (v2: Dual-Output, Web-Export) |
+| `changelog_db.py` | Zentrale Changelog-DB (SQLite, alle Projekte, Upsert + Paginierung) |
+| `content_sanitizer.py` | Security-Filter fuer Patch Notes (Pfade, IPs, Ports, Secrets) |
+| `patch_notes_manager.py` | AI-generierte Patch Notes (v3: Zentrale DB, Discord Teaser, SEO) |
 | `patch_notes_batcher.py` | Sammelt kleine Patches, gibt sie gebuendelt frei |
-| `patch_notes_web_exporter.py` | SEO-optimierter Web-Export (JSON + Markdown + HTTP POST an Projekt-APIs) |
+| `patch_notes_feedback.py` | Discord Feedback (Persistent Buttons: Like + Bewerten, Text-Modal) |
+| `patch_notes_web_exporter.py` | Web-Export (zentrale DB Upsert + File-Backup + optional HTTP POST) |
 | `knowledge_base.py` | SQLite Knowledge Database |
 | `log_analyzer.py` | Log-Analyse und -Auswertung |
 | `code_analyzer.py` | Code-Analyse fuer Fix-Strategien |
@@ -99,7 +102,7 @@
 | `logger.py` | `setup_logger()` — Logging-Setup mit Rotation |
 | `embeds.py` | `EmbedBuilder` + `Severity` — Discord Embed Templates |
 | `discord_logger.py` | `DiscordChannelLogger` — Logging in Discord Channels |
-| `health_server.py` | `HealthCheckServer` — aiohttp auf Port 8766 |
+| `health_server.py` | `HealthCheckServer` — aiohttp auf Port 8766 (+ Changelog REST API, RSS, Sitemap) |
 | `state_manager.py` | `StateManager` — Persistenter Bot-State (`data/state.json`) |
 | `message_handler.py` | `MessageHandler` — Sicheres Senden (Split bei >2000 Zeichen) |
 | `changelog_parser.py` | `ChangelogParser` — CHANGELOG.md Parser fuer Patch Notes |
@@ -110,7 +113,7 @@
 | `fix_strategy.json` | Remediation-Plaene (Einzelne Events) |
 | `coordinated_plan.json` | Koordinierte Batch-Plaene (Orchestrator) |
 | `incident_analysis.json` | Incident-Analyse (Self-Healing) |
-| `patch_notes.json` | AI-generierte Patch Notes |
+| `patch_notes.json` | AI-generierte Patch Notes (v3: + seo_keywords, seo_category) |
 | `analyst_session.json` | Security Analyst Session Output |
 
 ### Konfiguration
@@ -123,6 +126,7 @@
 | `config/logrotate.conf` | Logrotate-Konfiguration |
 | `data/state.json` | Dynamischer Bot-State (Channel IDs, etc.) |
 | `data/knowledge_base.db` | SQLite Learning Database |
+| `data/changelogs.db` | Zentrale Changelog-DB (alle Projekte, wird zur Laufzeit erstellt) |
 
 ### Deploy
 | Datei | Zweck |
@@ -139,6 +143,7 @@
 | `get_bot_invite.py` | Discord Bot Invite-URL generieren |
 | `test_alerts.py` | Test-Plan fuer Discord Alert Channels |
 | `run_tests_with_coverage.sh` | Tests mit Coverage ausfuehren, Ergebnisse nach data/test_results.json |
+| `migrate_changelogs.py` | Migration: ZERODOX + GuildScout PG-Changelogs → zentrale SQLite DB |
 
 ### Dokumentation
 | Pfad | Inhalt |
