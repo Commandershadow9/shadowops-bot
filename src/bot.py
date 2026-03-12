@@ -821,8 +821,15 @@ class ShadowOpsBot(commands.Bot):
                     self.github_integration.web_exporter = self.web_exporter
 
                     # Batcher (braucht data_dir für pending_batch.json)
+                    # Minimalen Batch-Threshold aus allen Projekt-Configs lesen
                     data_dir = Path.home() / '.shadowops' / 'data'
-                    self.patch_notes_batcher = PatchNotesBatcher(data_dir)
+                    batch_threshold = 8
+                    for proj_cfg in self.config.projects.values():
+                        if isinstance(proj_cfg, dict):
+                            bt = proj_cfg.get('patch_notes', {}).get('batch_threshold')
+                            if bt is not None:
+                                batch_threshold = min(batch_threshold, int(bt))
+                    self.patch_notes_batcher = PatchNotesBatcher(data_dir, batch_threshold=batch_threshold)
                     self.github_integration.patch_notes_batcher = self.patch_notes_batcher
 
                     self.logger.info("✅ Patch Notes v2: Web Exporter + Batcher initialisiert")

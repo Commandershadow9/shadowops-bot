@@ -72,7 +72,8 @@ class PatchNotesBatcher:
         # Commits mit Version-Bump werden nie gesammelt
         for commit in commits:
             msg = commit.get('message', '')
-            if re.search(r'v?(?:ersion|elease)?\s*[0-9]+\.[0-9]+\.[0-9]+', msg, re.IGNORECASE):
+            # Negative Lookahead: Kein 4. Oktett (→ IP-Adressen ausschließen)
+            if re.search(r'v?(?:ersion|elease)?\s*[0-9]{1,3}\.[0-9]{1,3}\.[0-9]{1,4}(?!\.[0-9])', msg, re.IGNORECASE):
                 return False
 
         # Wenige Commits ohne Version → sammeln

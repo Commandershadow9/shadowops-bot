@@ -512,10 +512,14 @@ class NotificationsMixin:
         return "\n\n".join(description_parts) if description_parts else default_desc
 
     def _extract_version_from_commits(self, commits: list) -> Optional[str]:
-        """Extrahiere Version aus Commit-Messages."""
+        """Extrahiere Version aus Commit-Messages (schließt IP-Adressen aus)."""
         for commit in commits:
             msg = commit.get('message', '')
-            match = re.search(r'v?(?:ersion|elease)?\s*([0-9]+\.[0-9]+\.[0-9]+)', msg, re.IGNORECASE)
+            # Negative Lookahead: Kein 4. Oktett (→ IP-Adresse ausschließen)
+            match = re.search(
+                r'v?(?:ersion|elease)?\s*([0-9]{1,3}\.[0-9]{1,3}\.[0-9]{1,4})(?!\.[0-9])',
+                msg, re.IGNORECASE
+            )
             if match:
                 return match.group(1)
         return None

@@ -151,7 +151,10 @@ class PatchNotesManager:
         for commit in commits:
             msg = commit.get('message', '')
             # Match patterns like: "v2.3.0", "Version 2.3.0", "Release 2.3.0"
-            match = re.search(r'v?(?:ersion|elease)?\s*([0-9]+\.[0-9]+\.[0-9]+)', msg, re.IGNORECASE)
+            match = re.search(
+                r'v?(?:ersion|elease)?\s*([0-9]{1,3}\.[0-9]{1,3}\.[0-9]{1,4})(?!\.[0-9])',
+                msg, re.IGNORECASE
+            )
             if match:
                 return match.group(1)
 
@@ -189,7 +192,7 @@ class PatchNotesManager:
 
         # Generate with AI
         patch_notes_config = project_config.get('patch_notes', {})
-        language = patch_notes_config.get('language', 'en')
+        language = patch_notes_config.get('language', 'de')
 
         prompt = self._create_changelog_format_prompt(context, language, project_name)
 

@@ -414,7 +414,10 @@ class AIPatchNotesMixin:
                     # Detect version from commits
                     for commit in commits:
                         msg = commit.get('message', '')
-                        match = re.search(r'v?(?:ersion|elease)?\s*([0-9]+\.[0-9]+\.[0-9]+)', msg, re.IGNORECASE)
+                        match = re.search(
+                            r'v?(?:ersion|elease)?\s*([0-9]{1,3}\.[0-9]{1,3}\.[0-9]{1,4})(?!\.[0-9])',
+                            msg, re.IGNORECASE
+                        )
                         if match:
                             version = match.group(1)
                             break
