@@ -23,14 +23,18 @@ class PatchNotesWebExporter:
     Unterstützt API-POST an Projekt-Backends (primär) mit File-Fallback.
     """
 
-    def __init__(self, base_output_dir: Path, api_endpoints: Optional[Dict] = None):
+    def __init__(self, base_output_dir: Path, api_endpoints: Optional[Dict] = None,
+                 changelog_db=None):
         self.base_output_dir = base_output_dir
         self.base_output_dir.mkdir(parents=True, exist_ok=True)
         self._api_endpoints = api_endpoints or {}
+        self.changelog_db = changelog_db
 
         logger.info(f"✅ PatchNotesWebExporter initialisiert (Output: {self.base_output_dir})")
         if self._api_endpoints:
             logger.info(f"   API-Endpoints: {', '.join(self._api_endpoints.keys())}")
+        if self.changelog_db:
+            logger.info("   Zentrale Changelog-DB: aktiv")
 
     def _get_project_dir(self, project: str) -> Path:
         """Projekt-spezifisches Output-Verzeichnis."""
@@ -106,6 +110,78 @@ class PatchNotesWebExporter:
         logger.info(f"📝 Web-Export für {project} v{version}: {json_path}, {md_path}")
 
         return {'json': json_path, 'markdown': md_path, 'json_data': json_data}
+
+    async def export_and_store(self, project: str, version: str, title: str,
+                               tldr: str, content: str, stats: Dict,
+                               language: str = 'de',
+                               changes: Optional[List[Dict]] = None,
+                               seo_keywords: Optional[List[str]] = None,
+                               seo_description: str = '') -> Dict:
+        """
+        Exportiere Patch Notes in zentrale Changelog-DB + File-Backup + API POST.
+
+        Primär: Schreibt in die zentrale ChangelogDB (SQLite).
+        Sekundär: File-Export als Backup (bestehende export() Methode).
+        Optional: API POST falls konfiguriert.
+
+        Args:
+            project: Projektname
+            version: Versionsnummer
+            title: Patch Notes Titel
+            tldr: Kurzzusammenfassung
+            content: Vollständiger Inhalt (Markdown)
+            stats: Git/CI Stats Dict
+            language: Sprache (de/en)
+            changes: Strukturierte Änderungen (optional)
+            seo_keywords: SEO-Keywords (optional)
+            seo_description: SEO Meta-Beschreibung (optional)
+
+        Returns:
+            Dict mit Pfaden aus File-Export: {'json': Path, 'markdown': Path, 'json_data': dict}
+        """
+        # 1. Primär: In zentrale Changelog-DB schreiben
+        if self.changelog_db:
+            try:
+                entry = {
+                    'project': project,
+                    'version': version,
+                    'title': title,
+                    'tldr': tldr,
+                    'content': content,
+                    'changes': changes or [],
+                    'stats': stats or {},
+                    'seo_keywords': seo_keywords or [],
+                    'seo_description': seo_description,
+                    'language': language,
+                    'published_at': datetime.now(timezone.utc).isoformat(),
+                }
+                await self.changelog_db.upsert(entry)
+                logger.info(f"📋 Changelog in DB gespeichert: {project} v{version}")
+            except Exception as e:
+                logger.warning(f"⚠️ Changelog-DB Schreibfehler: {e}")
+
+        # 2. Sekundär: File-Export als Backup (bestehende Logik)
+        result = self.export(
+            project=project,
+            version=version,
+            title=title,
+            tldr=tldr,
+            content=content,
+            stats=stats,
+            language=language,
+            changes=changes,
+            seo_keywords=seo_keywords,
+        )
+
+        # 3. Optional: API POST falls konfiguriert
+        json_data = result.get('json_data') if result else None
+        if json_data:
+            try:
+                await self.post_to_api(project, json_data)
+            except Exception as e:
+                logger.debug(f"API-POST übersprungen: {e}")
+
+        return result
 
     async def post_to_api(self, project: str, json_data: Dict) -> bool:
         """POST changelog to project API. Aufrufer muss await nutzen.

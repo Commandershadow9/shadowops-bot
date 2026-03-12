@@ -425,25 +425,42 @@ class NotificationsMixin:
             return
 
         try:
-            result = exporter.export(
-                project=repo_name,
-                version=version,
-                title=ai_data.get('title', f'{repo_name} {version}'),
-                tldr=ai_data.get('tldr', ''),
-                content=ai_data.get('web_content', ai_data.get('summary', '')),
-                stats=ai_data.get('stats', {}),
-                language=language,
-                changes=ai_data.get('changes', []),
-            )
-            self.logger.info(f"📝 Strukturierter Web-Changelog exportiert: {repo_name} v{version}")
+            if hasattr(exporter, 'export_and_store'):
+                # v3: Zentrale DB + File-Backup + API POST in einem Schritt
+                await exporter.export_and_store(
+                    project=repo_name,
+                    version=version,
+                    title=ai_data.get('title', f'{repo_name} {version}'),
+                    tldr=ai_data.get('tldr', ''),
+                    content=ai_data.get('web_content', ai_data.get('summary', '')),
+                    stats=ai_data.get('stats', {}),
+                    language=language,
+                    changes=ai_data.get('changes', []),
+                    seo_keywords=ai_data.get('seo_keywords', []),
+                    seo_description=ai_data.get('seo_description', ''),
+                )
+                self.logger.info(f"📝 Strukturierter Web-Changelog exportiert (v3): {repo_name} v{version}")
+            else:
+                # Fallback: Legacy export() + separater API POST
+                result = exporter.export(
+                    project=repo_name,
+                    version=version,
+                    title=ai_data.get('title', f'{repo_name} {version}'),
+                    tldr=ai_data.get('tldr', ''),
+                    content=ai_data.get('web_content', ai_data.get('summary', '')),
+                    stats=ai_data.get('stats', {}),
+                    language=language,
+                    changes=ai_data.get('changes', []),
+                )
+                self.logger.info(f"📝 Strukturierter Web-Changelog exportiert: {repo_name} v{version}")
 
-            # API POST (async, vom Exporter entkoppelt)
-            json_data = result.get('json_data') if result else None
-            if json_data:
-                try:
-                    await exporter.post_to_api(repo_name, json_data)
-                except Exception as e:
-                    self.logger.debug(f"API-POST übersprungen: {e}")
+                # API POST (async, vom Exporter entkoppelt)
+                json_data = result.get('json_data') if result else None
+                if json_data:
+                    try:
+                        await exporter.post_to_api(repo_name, json_data)
+                    except Exception as e:
+                        self.logger.debug(f"API-POST übersprungen: {e}")
 
         except Exception as e:
             self.logger.warning(f"⚠️ Strukturierter Web-Export fehlgeschlagen: {e}")
@@ -535,24 +552,38 @@ class NotificationsMixin:
         title = f"{repo_name} {version}"
 
         try:
-            result = exporter.export(
-                project=repo_name,
-                version=version,
-                title=title,
-                tldr=tldr,
-                content=content,
-                stats=git_stats,
-                language=language,
-            )
-            self.logger.info(f"📝 Web-Changelog exportiert: {repo_name} v{version}")
+            if hasattr(exporter, 'export_and_store'):
+                # v3: Zentrale DB + File-Backup + API POST in einem Schritt
+                await exporter.export_and_store(
+                    project=repo_name,
+                    version=version,
+                    title=title,
+                    tldr=tldr,
+                    content=content,
+                    stats=git_stats,
+                    language=language,
+                )
+                self.logger.info(f"📝 Web-Changelog exportiert (v3): {repo_name} v{version}")
+            else:
+                # Fallback: Legacy export() + separater API POST
+                result = exporter.export(
+                    project=repo_name,
+                    version=version,
+                    title=title,
+                    tldr=tldr,
+                    content=content,
+                    stats=git_stats,
+                    language=language,
+                )
+                self.logger.info(f"📝 Web-Changelog exportiert: {repo_name} v{version}")
 
-            # API POST (async, vom Exporter entkoppelt)
-            json_data = result.get('json_data') if result else None
-            if json_data:
-                try:
-                    await exporter.post_to_api(repo_name, json_data)
-                except Exception as e:
-                    self.logger.debug(f"API-POST übersprungen: {e}")
+                # API POST (async, vom Exporter entkoppelt)
+                json_data = result.get('json_data') if result else None
+                if json_data:
+                    try:
+                        await exporter.post_to_api(repo_name, json_data)
+                    except Exception as e:
+                        self.logger.debug(f"API-POST übersprungen: {e}")
 
         except Exception as e:
             self.logger.warning(f"⚠️ Web-Export fehlgeschlagen: {e}")

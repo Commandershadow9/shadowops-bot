@@ -814,7 +814,10 @@ class ShadowOpsBot(commands.Bot):
 
                     # Web Exporter: Default-Verzeichnis + API-Endpoints
                     default_output = Path.home() / '.shadowops' / 'changelogs'
-                    self.web_exporter = PatchNotesWebExporter(default_output, api_endpoints)
+                    self.web_exporter = PatchNotesWebExporter(
+                        default_output, api_endpoints,
+                        changelog_db=self.changelog_db
+                    )
                     self.github_integration.web_exporter = self.web_exporter
 
                     # Batcher (braucht data_dir für pending_batch.json)
