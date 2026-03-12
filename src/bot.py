@@ -109,6 +109,9 @@ class ShadowOpsBot(commands.Bot):
         # Security Analyst (autonome AI Security Sessions)
         self.security_analyst = None
 
+        # Changelog-DB (Patch Notes v3)
+        self.changelog_db = None
+
         # Queue Management
         self.smart_queue = None
 
@@ -643,6 +646,22 @@ class ShadowOpsBot(commands.Bot):
                 "⏳ **Phase 5/6:** Initialisiere Multi-Project Management...",
                 0x3498DB
             )
+
+            # Changelog-DB initialisieren (vor Health-Server)
+            try:
+                from integrations.changelog_db import ChangelogDB
+                self.changelog_db = ChangelogDB()
+                await self.changelog_db.initialize()
+                self.logger.info("✅ Changelog-DB initialisiert")
+            except Exception as e:
+                self.logger.warning(f"⚠️ Changelog-DB konnte nicht initialisiert werden: {e}")
+                self.changelog_db = None
+
+            # Changelog-DB und API-Key an Health-Server weitergeben
+            self.health_server.changelog_db = self.changelog_db
+            changelog_config = self.config._config.get('changelog_api', {})
+            api_key = changelog_config.get('api_key', '')
+            self.health_server.api_key = api_key
 
             # Health-Server frueh starten damit Project-Monitor sich selbst pruefen kann
             try:

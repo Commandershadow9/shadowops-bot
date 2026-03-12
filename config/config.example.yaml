@@ -289,6 +289,15 @@ permissions:
     - 0  # Deine Discord User ID hier eintragen
 
 # ╔═══════════════════════════════════════════════════════════════════════════╗
+# ║ ZENTRALE CHANGELOG-API                                                    ║
+# ║ ShadowOps Bot stellt eine zentrale REST API fuer Changelogs bereit.      ║
+# ║ Alle Projekte koennen per GET lesen, POST erfordert den API-Key.         ║
+# ╚═══════════════════════════════════════════════════════════════════════════╝
+changelog_api:
+  enabled: true
+  api_key: "CHANGE_ME_RANDOM_STRING"  # Authentifizierung fuer POST Requests
+
+# ╔═══════════════════════════════════════════════════════════════════════════╗
 # ║ ENDE DER KONFIGURATION                                                   ║
 # ║                                                                           ║
 # ║ NÄCHSTE SCHRITTE:                                                        ║
