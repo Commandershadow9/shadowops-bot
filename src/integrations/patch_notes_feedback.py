@@ -64,12 +64,13 @@ class TextFeedbackModal(ui.Modal, title="📝 Patch Notes Feedback"):
             'user_name': str(interaction.user),
         }
 
-        self.collector.trainer.record_feedback(
-            version=self.version,
-            project=self.project,
-            feedback_type='text',
-            feedback_data=feedback_data
-        )
+        if self.collector.trainer:
+            self.collector.trainer.record_feedback(
+                version=self.version,
+                project=self.project,
+                feedback_type='text',
+                feedback_data=feedback_data
+            )
 
         # Score-Delta berechnen (für A/B Testing)
         score_delta = 0
@@ -111,7 +112,7 @@ class PatchNotesFeedbackCollector:
     Collects user feedback on patch notes through Discord reactions and text.
     """
 
-    def __init__(self, bot: discord.Client, patch_notes_trainer):
+    def __init__(self, bot: discord.Client, patch_notes_trainer=None):
         self.bot = bot
         self.trainer = patch_notes_trainer
 
@@ -133,7 +134,8 @@ class PatchNotesFeedbackCollector:
         self.bot.event(self.on_raw_reaction_add)
         self.bot.event(self.on_raw_reaction_remove)
 
-        logger.info("✅ Patch Notes Feedback Collector initialized (mit Text-Feedback)")
+        trainer_status = "mit Trainer" if patch_notes_trainer else "standalone, ohne Trainer"
+        logger.info(f"✅ Patch Notes Feedback Collector initialized ({trainer_status})")
 
     async def track_patch_notes_message(self, message: Message, project: str,
                                          version: str, add_feedback_button: bool = True) -> None:
@@ -202,12 +204,13 @@ class PatchNotesFeedbackCollector:
             'added': True,
         }
 
-        self.trainer.record_feedback(
-            version=message_data['version'],
-            project=message_data['project'],
-            feedback_type='reaction',
-            feedback_data=feedback_data
-        )
+        if self.trainer:
+            self.trainer.record_feedback(
+                version=message_data['version'],
+                project=message_data['project'],
+                feedback_type='reaction',
+                feedback_data=feedback_data
+            )
 
         logger.info(f"👍 Feedback recorded: {emoji} on {message_data['project']} v{message_data['version']} (score delta: {score_delta:+d})")
 
@@ -238,12 +241,13 @@ class PatchNotesFeedbackCollector:
             'added': False,
         }
 
-        self.trainer.record_feedback(
-            version=message_data['version'],
-            project=message_data['project'],
-            feedback_type='reaction',
-            feedback_data=feedback_data
-        )
+        if self.trainer:
+            self.trainer.record_feedback(
+                version=message_data['version'],
+                project=message_data['project'],
+                feedback_type='reaction',
+                feedback_data=feedback_data
+            )
 
         logger.debug(f"Feedback removed: {emoji} on {message_data['project']} v{message_data['version']}")
 
@@ -274,6 +278,9 @@ class PatchNotesFeedbackCollector:
         Returns:
             Dict with total_score, reaction_counts, user_count, text_feedbacks
         """
+        if not self.trainer:
+            return {'total_score': 0, 'reactions': {}, 'user_count': 0, 'text_feedbacks': []}
+
         # Read feedback from trainer's feedback file
         feedback_file = self.trainer.feedback_file
 
@@ -328,6 +335,6 @@ class PatchNotesFeedbackCollector:
         }
 
 
-def get_feedback_collector(bot: discord.Client, trainer) -> PatchNotesFeedbackCollector:
+def get_feedback_collector(bot: discord.Client, trainer=None) -> PatchNotesFeedbackCollector:
     """Get or create PatchNotesFeedbackCollector instance."""
     return PatchNotesFeedbackCollector(bot, trainer)

@@ -766,6 +766,19 @@ class ShadowOpsBot(commands.Bot):
                     self.github_integration.prompt_auto_tuner = None
                     self.llm_fine_tuning = None
 
+                # Feedback-Collector unabhängig vom AI Learning initialisieren
+                if not self.feedback_collector:
+                    try:
+                        from integrations.patch_notes_feedback import get_feedback_collector
+                        trainer = getattr(self, 'patch_notes_trainer', None)
+                        self.feedback_collector = get_feedback_collector(self, trainer)
+                        self.github_integration.feedback_collector = self.feedback_collector
+                        self.logger.info("✅ Feedback Collector initialisiert (standalone, ohne AI Learning)")
+                    except Exception as e:
+                        self.logger.warning(f"⚠️ Feedback Collector konnte nicht initialisiert werden: {e}")
+                        self.feedback_collector = None
+                        self.github_integration.feedback_collector = None
+
                 # Initialize Advanced Patch Notes Manager (optional, for approval system)
                 if self.ai_service:
                     try:
