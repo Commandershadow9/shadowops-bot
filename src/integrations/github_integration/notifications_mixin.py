@@ -12,7 +12,7 @@ from typing import Dict, Optional
 
 import discord
 
-from src.integrations.content_sanitizer import ContentSanitizer
+from integrations.content_sanitizer import ContentSanitizer
 
 logger = logging.getLogger('shadowops')
 
