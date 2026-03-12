@@ -714,9 +714,10 @@ class ShadowOpsBot(commands.Bot):
                         self.patch_notes_trainer = get_patch_notes_trainer()
                         self.github_integration.patch_notes_trainer = self.patch_notes_trainer
 
-                        # 2. Feedback Collector (Discord Reactions)
+                        # 2. Feedback Collector (Discord Buttons, Persistent Views)
                         self.feedback_collector = get_feedback_collector(self, self.patch_notes_trainer)
                         self.github_integration.feedback_collector = self.feedback_collector
+                        self.feedback_collector.register_persistent_view()
 
                         # 3. A/B Testing System
                         self.prompt_ab_testing = get_prompt_ab_testing()
@@ -773,6 +774,7 @@ class ShadowOpsBot(commands.Bot):
                         trainer = getattr(self, 'patch_notes_trainer', None)
                         self.feedback_collector = get_feedback_collector(self, trainer)
                         self.github_integration.feedback_collector = self.feedback_collector
+                        self.feedback_collector.register_persistent_view()
                         self.logger.info("✅ Feedback Collector initialisiert (standalone, ohne AI Learning)")
                     except Exception as e:
                         self.logger.warning(f"⚠️ Feedback Collector konnte nicht initialisiert werden: {e}")

@@ -73,13 +73,6 @@ class TextFeedbackModal(ui.Modal, title="📝 Patch Notes Feedback"):
                 feedback_data=feedback_data
             )
 
-        # Score-Delta berechnen (für A/B Testing)
-        score_delta = 0
-        if rating_value:
-            # 1=schlecht, 5=super → Mapping zu Score
-            score_map = {1: -15, 2: -5, 3: 0, 4: 10, 5: 20}
-            score_delta = score_map.get(rating_value, 0)
-
         logger.info(
             f"📝 Text-Feedback für {self.project} v{self.version}: "
             f"Rating={rating_value}, Text='{feedback_text[:50]}...'"
@@ -92,15 +85,18 @@ class TextFeedbackModal(ui.Modal, title="📝 Patch Notes Feedback"):
 
 
 class PatchNotesView(ui.View):
-    """Discord View mit integrierten Buttons direkt am Patch Notes Embed."""
+    """Persistent Discord View mit Buttons direkt am Patch Notes Embed.
+
+    Überlebt Bot-Restarts dank statischer custom_id + Lookup in tracked_messages.
+    Gleicher Ansatz wie auto_fix_manager.py ProposalView.
+    """
 
     def __init__(self, collector: 'PatchNotesFeedbackCollector',
-                 project: str, version: str, changelog_url: str = ''):
-        super().__init__(timeout=604800)  # 7 Tage
+                 changelog_url: str = ''):
+        super().__init__(timeout=None)  # Persistent View — kein Timeout
         self.collector = collector
-        self.project = project
-        self.version = version
         self.like_count = 0
+        self._liked_users: set = set()
 
         # URL-Button für Changelog (nur wenn URL vorhanden)
         if changelog_url:
@@ -110,32 +106,53 @@ class PatchNotesView(ui.View):
                 url=changelog_url,
             ))
 
-    @ui.button(label="👍 Gefällt mir", style=discord.ButtonStyle.success)
+    def _get_message_data(self, interaction: discord.Interaction) -> Optional[Dict]:
+        """Hole Projekt/Version aus tracked_messages via message_id."""
+        if not self.collector:
+            return None
+        return self.collector.tracked_messages.get(interaction.message.id)
+
+    @ui.button(label="👍 Gefällt mir", style=discord.ButtonStyle.success,
+               custom_id="patchnotes_like")
     async def like_button(self, interaction: discord.Interaction, button: ui.Button):
-        """Quick-Reaction, Zähler im Label."""
+        """Quick-Reaction, Zähler im Label. Jeder User nur einmal."""
+        user_id = interaction.user.id
+
+        if user_id in self._liked_users:
+            await interaction.response.send_message(
+                "Du hast bereits geliked! 👍", ephemeral=True
+            )
+            return
+
+        self._liked_users.add(user_id)
         self.like_count += 1
         button.label = f"👍 Gefällt mir ({self.like_count})"
         await interaction.response.edit_message(view=self)
 
-        # Feedback aufzeichnen
-        feedback_data = {
-            'emoji': '👍',
-            'score_delta': 10,
-            'user_id': interaction.user.id,
-            'added': True,
-        }
-        if self.collector.trainer:
+        # Feedback aufzeichnen (Projekt/Version aus tracked_messages)
+        msg_data = self._get_message_data(interaction)
+        if msg_data and self.collector and self.collector.trainer:
             self.collector.trainer.record_feedback(
-                version=self.version,
-                project=self.project,
+                version=msg_data['version'],
+                project=msg_data['project'],
                 feedback_type='reaction',
-                feedback_data=feedback_data,
+                feedback_data={
+                    'emoji': '👍',
+                    'score_delta': 10,
+                    'user_id': user_id,
+                    'added': True,
+                },
             )
 
-    @ui.button(label="⭐ Bewerten", style=discord.ButtonStyle.secondary)
+    @ui.button(label="⭐ Bewerten", style=discord.ButtonStyle.secondary,
+               custom_id="patchnotes_rate")
     async def rate_button(self, interaction: discord.Interaction, button: ui.Button):
         """Öffnet TextFeedbackModal."""
-        modal = TextFeedbackModal(self.collector, self.project, self.version)
+        msg_data = self._get_message_data(interaction)
+        project = msg_data['project'] if msg_data else 'unknown'
+        version = msg_data['version'] if msg_data else 'unknown'
+
+        modal = TextFeedbackModal(self.collector, project, version)
         await interaction.response.send_modal(modal)
 
 
@@ -186,9 +203,17 @@ class PatchNotesFeedbackCollector:
         trainer_status = "mit Trainer" if patch_notes_trainer else "standalone, ohne Trainer"
         logger.info(f"✅ Patch Notes Feedback Collector initialized ({trainer_status})")
 
-    def create_view(self, project: str, version: str, changelog_url: str = '') -> PatchNotesView:
+    def create_view(self, changelog_url: str = '') -> PatchNotesView:
         """Erstellt ein PatchNotesView für die Embed-Nachricht."""
-        return PatchNotesView(self, project, version, changelog_url)
+        return PatchNotesView(self, changelog_url)
+
+    def register_persistent_view(self):
+        """Registriere Persistent View damit Buttons nach Bot-Restart funktionieren."""
+        try:
+            self.bot.add_view(PatchNotesView(self))
+            logger.info("✅ Persistent view für Patch Notes Buttons registriert")
+        except Exception as e:
+            logger.warning(f"Could not register persistent view: {e}")
 
     async def track_patch_notes_message(self, message: Message, project: str,
                                          version: str, changelog_url: str = '') -> None:

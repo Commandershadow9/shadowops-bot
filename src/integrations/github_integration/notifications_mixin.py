@@ -128,6 +128,16 @@ class NotificationsMixin:
             )
             if isinstance(ai_result, dict):
                 ai_result = sanitizer.sanitize_dict(ai_result)
+                # Verschachtelte Felder: changes[].description und breaking_changes[]
+                if 'changes' in ai_result:
+                    for change in ai_result['changes']:
+                        if isinstance(change, dict) and 'description' in change:
+                            change['description'] = sanitizer.sanitize(change['description'])
+                if 'breaking_changes' in ai_result:
+                    ai_result['breaking_changes'] = [
+                        sanitizer.sanitize(b) if isinstance(b, str) else b
+                        for b in ai_result['breaking_changes']
+                    ]
             elif isinstance(ai_result, str):
                 ai_result = sanitizer.sanitize(ai_result)
 
@@ -596,7 +606,7 @@ class NotificationsMixin:
             full_url = ''
             if changelog_url and version:
                 full_url = f"{changelog_url}/{version.replace('.', '-')}"
-            view = self.feedback_collector.create_view(repo_name, version, full_url)
+            view = self.feedback_collector.create_view(full_url)
 
         try:
             description_chunks = self._split_embed_description(embed.description or "")
@@ -855,7 +865,7 @@ class NotificationsMixin:
                     full_url = ''
                     if changelog_url and version:
                         full_url = f"{changelog_url}/{version.replace('.', '-')}"
-                    view = self.feedback_collector.create_view(repo_name, version, full_url)
+                    view = self.feedback_collector.create_view(full_url)
 
                 description_chunks = self._split_embed_description(embed.description or "")
                 sent_message = None
