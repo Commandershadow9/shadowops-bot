@@ -20,7 +20,8 @@ logger = logging.getLogger('shadowops')
 class NotificationsMixin:
 
     async def _send_push_notification(
-        self, repo_name: str, repo_url: str, branch: str, pusher: str, commits: list
+        self, repo_name: str, repo_url: str, branch: str, pusher: str, commits: list,
+        skip_batcher: bool = False
     ):
         """Send detailed Discord notification for a push event."""
         # Find project config to get color and potential customer channel (case-insensitive)
@@ -41,8 +42,8 @@ class NotificationsMixin:
         patch_config = project_config.get('patch_notes', {})
         language = patch_config.get('language', 'de')
 
-        # === BATCHING CHECK ===
-        if hasattr(self, 'patch_notes_batcher') and self.patch_notes_batcher:
+        # === BATCHING CHECK (skip bei manuellen/Cron-Releases) ===
+        if not skip_batcher and hasattr(self, 'patch_notes_batcher') and self.patch_notes_batcher:
             if self.patch_notes_batcher.should_batch(commits, repo_name):
                 result = self.patch_notes_batcher.add_commits(repo_name, commits)
 

@@ -1275,6 +1275,7 @@ class ShadowOpsBot(commands.Bot):
                         branch='main',
                         pusher=pusher,
                         commits=commits,
+                        skip_batcher=True,
                     )
                 except Exception as e:
                     self.logger.error(
