@@ -160,5 +160,142 @@ class AdminCog(commands.Cog):
             await interaction.followup.send("❌ Fehler beim Neu-Laden des Context", ephemeral=True)
 
 
+    @app_commands.command(
+        name="release-notes",
+        description="Gesammelte Commits als Patch Notes veröffentlichen"
+    )
+    @app_commands.describe(project="Projektname (z.B. guildscout, zerodox)")
+    @app_commands.checks.has_permissions(administrator=True)
+    async def release_notes_command(self, interaction: discord.Interaction, project: str):
+        """Slash Command: /release-notes <projekt> — Manueller Batch-Release."""
+        await interaction.response.defer()
+
+        try:
+            batcher = getattr(self.bot, 'patch_notes_batcher', None)
+            gh = getattr(self.bot, 'github_integration', None)
+
+            if not batcher:
+                await interaction.followup.send(
+                    "❌ Patch-Notes-Batcher nicht initialisiert", ephemeral=True
+                )
+                return
+
+            # Projekt-Name normalisieren (case-insensitive)
+            project_key = None
+            project_config = {}
+            for key, cfg in self.bot.config.projects.items():
+                if key.lower() == project.lower():
+                    project_key = key
+                    project_config = cfg
+                    break
+
+            if not project_key:
+                available = ", ".join(self.bot.config.projects.keys())
+                await interaction.followup.send(
+                    f"❌ Projekt **{project}** nicht gefunden.\n"
+                    f"Verfügbar: {available}",
+                    ephemeral=True
+                )
+                return
+
+            # Pending Commits prüfen
+            if not batcher.has_pending(project_key):
+                await interaction.followup.send(
+                    f"📭 Keine gesammelten Commits für **{project_key}**.",
+                    ephemeral=True
+                )
+                return
+
+            summary = batcher.get_pending_summary()
+            info = summary.get(project_key, {})
+            count = info.get('count', 0)
+            first = info.get('first_added', '')[:10]
+
+            # Release durchführen
+            commits = batcher.release_batch(project_key)
+            if not commits:
+                await interaction.followup.send("❌ Release fehlgeschlagen", ephemeral=True)
+                return
+
+            self.logger.info(
+                f"🚀 Manueller Release: {project_key} ({len(commits)} Commits) "
+                f"von {interaction.user}"
+            )
+
+            # Bestätigung senden
+            await interaction.followup.send(
+                f"🚀 **{len(commits)} Commits** für **{project_key}** released!\n"
+                f"Gesammelt seit: {first}\n"
+                f"Patch Notes werden jetzt generiert..."
+            )
+
+            # Patch Notes generieren (async, blockiert nicht den Command)
+            if gh:
+                repo_url = (
+                    project_config.get('repo_url')
+                    or project_config.get('repository_url')
+                    or ''
+                )
+                pusher = commits[-1].get('author', {}).get('name', 'manual-release')
+
+                await gh._send_push_notification(
+                    repo_name=project_key,
+                    repo_url=repo_url,
+                    branch='main',
+                    pusher=pusher,
+                    commits=commits,
+                )
+
+        except Exception as e:
+            self.logger.error(f"❌ Fehler in /release-notes: {e}", exc_info=True)
+            await interaction.followup.send(
+                f"❌ Fehler: {e}", ephemeral=True
+            )
+
+    @app_commands.command(
+        name="pending-notes",
+        description="Zeige gesammelte Commits die auf Release warten"
+    )
+    @app_commands.checks.has_permissions(administrator=True)
+    async def pending_notes_command(self, interaction: discord.Interaction):
+        """Slash Command: /pending-notes — Übersicht aller ausstehenden Batches."""
+        batcher = getattr(self.bot, 'patch_notes_batcher', None)
+        if not batcher:
+            await interaction.response.send_message(
+                "❌ Batcher nicht initialisiert", ephemeral=True
+            )
+            return
+
+        summary = batcher.get_pending_summary()
+        if not summary:
+            await interaction.response.send_message(
+                "📭 Keine ausstehenden Commits.", ephemeral=True
+            )
+            return
+
+        embed = discord.Embed(
+            title="📦 Ausstehende Patch Notes",
+            color=0x3498DB,
+            timestamp=datetime.now()
+        )
+
+        for project, info in summary.items():
+            count = info.get('count', 0)
+            first = info.get('first_added', '')[:10]
+            last = info.get('last_added', '')[:10]
+            embed.add_field(
+                name=f"**{project}**",
+                value=(
+                    f"{count} Commit(s)\n"
+                    f"Seit: {first}\n"
+                    f"Letzter: {last}"
+                ),
+                inline=True
+            )
+
+        embed.set_footer(text="Release mit /release-notes <projekt>")
+        await interaction.response.send_message(embed=embed)
+
+
 async def setup(bot):
     await bot.add_cog(AdminCog(bot))

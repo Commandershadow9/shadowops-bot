@@ -829,7 +829,30 @@ class ShadowOpsBot(commands.Bot):
                             bt = proj_cfg.get('patch_notes', {}).get('batch_threshold')
                             if bt is not None:
                                 batch_threshold = min(batch_threshold, int(bt))
-                    self.patch_notes_batcher = PatchNotesBatcher(data_dir, batch_threshold=batch_threshold)
+                    # Cron-Config lesen (Default: Sonntag 20:00, min 3 Commits)
+                    cron_day = 'sunday'
+                    cron_hour = 20
+                    cron_min_commits = 3
+                    emergency_threshold = 20
+                    for proj_cfg in self.config.projects.values():
+                        if isinstance(proj_cfg, dict):
+                            pn = proj_cfg.get('patch_notes', {})
+                            if pn.get('cron_day'):
+                                cron_day = pn['cron_day']
+                            if pn.get('cron_hour') is not None:
+                                cron_hour = int(pn['cron_hour'])
+                            if pn.get('cron_min_commits') is not None:
+                                cron_min_commits = int(pn['cron_min_commits'])
+                            if pn.get('emergency_threshold') is not None:
+                                emergency_threshold = int(pn['emergency_threshold'])
+                    self.patch_notes_batcher = PatchNotesBatcher(
+                        data_dir,
+                        batch_threshold=batch_threshold,
+                        emergency_threshold=emergency_threshold,
+                        cron_day=cron_day,
+                        cron_hour=cron_hour,
+                        cron_min_commits=cron_min_commits,
+                    )
                     self.github_integration.patch_notes_batcher = self.patch_notes_batcher
 
                     self.logger.info("✅ Patch Notes v2: Web Exporter + Batcher initialisiert")
@@ -958,6 +981,8 @@ class ShadowOpsBot(commands.Bot):
             self.daily_health_check.start()
         if not self.update_dashboard.is_running():
             self.update_dashboard.start()
+        if not self.weekly_patch_notes_release.is_running():
+            self.weekly_patch_notes_release.start()
 
         # Setze Status
         await self.change_presence(
@@ -1193,6 +1218,81 @@ class ShadowOpsBot(commands.Bot):
         """Warte bis Bot bereit ist"""
         await self.wait_until_ready()
         self.logger.info("⏰ Daily Health-Check Task gestartet (läuft täglich um 06:00 Uhr)")
+
+    @tasks.loop(hours=1)
+    async def weekly_patch_notes_release(self):
+        """Wöchentlicher Patch-Notes-Release (prüft stündlich ob Cron-Tag + Uhrzeit passt)."""
+        try:
+            batcher = getattr(self, 'patch_notes_batcher', None)
+            gh = getattr(self, 'github_integration', None)
+            if not batcher or not gh:
+                return
+
+            now = datetime.now()
+            day_names = {
+                'monday': 0, 'tuesday': 1, 'wednesday': 2, 'thursday': 3,
+                'friday': 4, 'saturday': 5, 'sunday': 6,
+            }
+            target_day = day_names.get(batcher.cron_day, 6)
+
+            if now.weekday() != target_day or now.hour != batcher.cron_hour:
+                return
+
+            releasable = batcher.get_cron_releasable_projects()
+            if not releasable:
+                self.logger.info("📅 Wöchentlicher Patch-Notes-Check: Keine Projekte mit genug Commits")
+                return
+
+            self.logger.info(f"📅 Wöchentlicher Patch-Notes-Release: {len(releasable)} Projekt(e)")
+
+            for project_name in releasable:
+                try:
+                    commits = batcher.release_batch(project_name)
+                    if not commits:
+                        continue
+
+                    self.logger.info(
+                        f"🚀 Wöchentlicher Release: {project_name} ({len(commits)} Commits)"
+                    )
+
+                    # Projekt-Config holen
+                    project_config = {}
+                    for key, cfg in self.config.projects.items():
+                        if key.lower() == project_name.lower():
+                            project_config = cfg
+                            break
+
+                    repo_url = (
+                        project_config.get('repo_url')
+                        or project_config.get('repository_url')
+                        or ''
+                    )
+                    pusher = commits[-1].get('author', {}).get('name', 'weekly-cron')
+
+                    await gh._send_push_notification(
+                        repo_name=project_name,
+                        repo_url=repo_url,
+                        branch='main',
+                        pusher=pusher,
+                        commits=commits,
+                    )
+                except Exception as e:
+                    self.logger.error(
+                        f"❌ Wöchentlicher Release für {project_name} fehlgeschlagen: {e}",
+                        exc_info=True
+                    )
+        except Exception as e:
+            self.logger.error(f"❌ Wöchentlicher Patch-Notes-Cron Fehler: {e}", exc_info=True)
+
+    @weekly_patch_notes_release.before_loop
+    async def before_weekly_patch_notes(self):
+        """Warte bis Bot bereit ist"""
+        await self.wait_until_ready()
+        cron_info = "Sonntag 20:00"
+        batcher = getattr(self, 'patch_notes_batcher', None)
+        if batcher:
+            cron_info = f"{batcher.cron_day.capitalize()} {batcher.cron_hour}:00"
+        self.logger.info(f"📅 Wöchentlicher Patch-Notes-Cron gestartet ({cron_info})")
 
     @tasks.loop(minutes=5)
     async def update_dashboard(self):

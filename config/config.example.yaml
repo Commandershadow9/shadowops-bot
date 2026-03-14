@@ -197,8 +197,13 @@ projects:
       # Web-Export: SEO-optimiertes JSON + Markdown
       changelog_output_dir: "" # Leer = Default (~/.shadowops/changelogs/guildscout/)
 
-      # Batching: Kleine Patches sammeln
-      batch_threshold: 8       # Ab X gesammelten Commits automatisch veröffentlichen
+      # === RELEASE-STEUERUNG ===
+      # Commits ohne Version-Bump werden gesammelt und per Cron/manuell released
+      batch_threshold: 8       # Legacy (nicht mehr für auto-release genutzt)
+      emergency_threshold: 20  # Notbremse: Auto-Release bei ≥20 Commits
+      cron_day: sunday          # Wöchentlicher Release-Tag
+      cron_hour: 20             # Uhrzeit (UTC)
+      cron_min_commits: 3       # Minimum Commits für wöchentlichen Release
 
       # API-Endpoint für DB-basierte Changelogs (primärer Modus)
       # api_endpoint:

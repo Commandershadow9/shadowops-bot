@@ -45,21 +45,20 @@ class NotificationsMixin:
         if hasattr(self, 'patch_notes_batcher') and self.patch_notes_batcher:
             if self.patch_notes_batcher.should_batch(commits, repo_name):
                 result = self.patch_notes_batcher.add_commits(repo_name, commits)
-                self.logger.info(
-                    f"📦 Commits für {repo_name} gesammelt: "
-                    f"{result['total_pending']} ausstehend (Ready: {result['ready']})"
-                )
 
                 if result['ready']:
-                    # Batch ist voll — alle gesammelten Commits freigeben
+                    # Batch-Threshold erreicht — alle gesammelten Commits freigeben
                     all_commits = self.patch_notes_batcher.release_batch(repo_name)
                     if all_commits:
-                        self.logger.info(f"🚀 Batch-Release: {len(all_commits)} gesammelte Commits")
+                        self.logger.info(f"🚀 Batch-Release: {len(all_commits)} Commits")
                         commits = all_commits
                     # Weiter mit normaler Verarbeitung
                 else:
-                    # Noch nicht genug — nur interne Notification, keine Patch Notes
-                    await self._send_internal_only(repo_name, repo_url, branch, pusher, commits, project_color)
+                    # Noch nicht genug — nur loggen, KEIN Discord-Spam
+                    self.logger.info(
+                        f"📦 {result['total_pending']}/{self.patch_notes_batcher.batch_threshold} "
+                        f"Commits für {repo_name} gesammelt (kein Release)"
+                    )
                     return
 
         # === INTERNAL EMBED (Technical, for developers) - DEUTSCH ===
@@ -162,8 +161,9 @@ class NotificationsMixin:
                 repo_name, commits, ai_description, project_config, language, git_stats
             )
 
-        # 1. Send to internal channel (technical embed)
+        # 1. Send to internal channel (technical embed + AI preview)
         await self._send_to_internal_channel(internal_embed, repo_name)
+        await self._send_ai_preview_to_internal(customer_embed, repo_name)
 
         # 2. Send to customer-facing channels with feedback collection
         version = self._extract_version_from_commits(commits)
@@ -304,14 +304,29 @@ class NotificationsMixin:
     def _build_v3_customer_embed(self, repo_name: str, project_color: int,
                                   commits: list, language: str,
                                   ai_data: Dict, project_config: Dict) -> discord.Embed:
-        """Patch Notes v3: Teaser-Embed mit Author, Blockquote TL;DR, Kategorien."""
+        """Patch Notes v3: Detailliertes Embed mit allen Kategorien und Beschreibungen."""
         patch_config = project_config.get('patch_notes', {})
         changelog_url = patch_config.get('changelog_url', '')
         version = ai_data.get('version') or self._extract_version_from_commits(commits)
 
-        # Titel: Version + AI-Titel, verlinkt auf Changelog (nicht GitHub!)
+        # Version "0.0.0" oder "patch" nicht anzeigen
+        if version and version in ('0.0.0', 'patch', '0.0.1'):
+            version = None
+
+        # Titel: Version + AI-Titel
         title = ai_data.get('title', 'Update')
-        version_str = f"v{version} — " if version and version != 'patch' else ''
+        # Doppelte Version im Titel vermeiden (z.B. "v1.0.0 — GuildScout 1.0.0: ...")
+        if version:
+            # Entferne Version aus dem AI-Titel falls doppelt
+            import re as _re
+            title = _re.sub(
+                rf'(?:GuildScout|ZERODOX|ShadowOps)?\s*v?{_re.escape(version)}[:\s—-]*',
+                '', title, flags=_re.IGNORECASE
+            ).strip(' :—-')
+            if not title:
+                title = 'Update'
+
+        version_str = f"v{version} — " if version else ''
 
         changelog_link = ''
         if changelog_url and version:
@@ -324,36 +339,47 @@ class NotificationsMixin:
             timestamp=datetime.now(timezone.utc),
         )
 
-        # Author-Feld: Projekt-Name für Wiedererkennung
+        # Author-Feld: Projekt-Name
         embed.set_author(name=repo_name.upper())
 
-        # TL;DR als Blockquote
+        # TL;DR als Beschreibung
         tldr = ai_data.get('tldr', '')
         if tldr:
             embed.description = f"> {tldr}"
 
-        # === Kategorisierte Changes ===
+        # === Kategorisierte Changes mit Beschreibungen ===
         changes = ai_data.get('changes', [])
         features = [c for c in changes if c.get('type') == 'feature']
         fixes = [c for c in changes if c.get('type') == 'fix']
         improvements = [c for c in changes if c.get('type') == 'improvement']
         breaking = ai_data.get('breaking_changes', [])
 
-        # Features ausgeschrieben (max 3)
+        is_major = len(commits) >= 15 or (version and version.endswith('.0.0'))
+
+        # Features mit Details (mehr bei Major Releases)
         if features:
+            max_features = 6 if is_major else 4
             feature_lines = []
-            for f in features[:3]:
+            for f in features[:max_features]:
                 desc = f.get('description', '')
-                feature_lines.append(f"\u2570 {desc}")
-            if len(features) > 3:
-                feature_lines.append(f"\u2570 *...und {len(features) - 3} weitere*")
+                details = f.get('details', [])
+                feature_lines.append(f"\u2022 **{desc}**")
+                # Sub-Details bei Major Releases
+                if is_major and details:
+                    for detail in details[:2]:
+                        feature_lines.append(f"  \u2514 {detail}")
+            if len(features) > max_features:
+                feature_lines.append(f"  *+{len(features) - max_features} weitere*")
+            text = "\n".join(feature_lines)
+            if len(text) > 1024:
+                text = text[:1020] + "..."
             embed.add_field(
                 name="\U0001f195 Neue Features",
-                value="\n".join(feature_lines),
+                value=text,
                 inline=False,
             )
 
-        # Breaking Changes ausgeschrieben (max 3)
+        # Breaking Changes
         if breaking:
             breaking_lines = [f"\u26a0\ufe0f {b}" for b in breaking[:3]]
             embed.add_field(
@@ -362,51 +388,95 @@ class NotificationsMixin:
                 inline=False,
             )
 
-        # Fixes + Improvements als Zähler (erzeugt Neugier)
-        counters = []
+        # Bugfixes MIT Beschreibungen (nicht nur Zähler)
         if fixes:
-            counters.append(f"\U0001f41b {len(fixes)} Bugfix{'es' if len(fixes) != 1 else ''}")
-        if improvements:
-            counters.append(f"\u26a1 {len(improvements)} Verbesserung{'en' if len(improvements) != 1 else ''}")
-        if counters:
-            embed.add_field(
-                name="\u200b",  # unsichtbarer Name
-                value=" \u00b7 ".join(counters),
-                inline=False,
-            )
+            if len(fixes) <= 4:
+                fix_lines = [f"\u2022 {f.get('description', '')}" for f in fixes]
+                text = "\n".join(fix_lines)
+                if len(text) > 1024:
+                    text = text[:1020] + "..."
+                embed.add_field(
+                    name=f"\U0001f41b {len(fixes)} Bugfix{'es' if len(fixes) != 1 else ''}",
+                    value=text,
+                    inline=False,
+                )
+            else:
+                # Viele Fixes: Top 3 zeigen + Zähler
+                fix_lines = [f"\u2022 {f.get('description', '')}" for f in fixes[:3]]
+                if len(fixes) > 3:
+                    fix_lines.append(f"  *+{len(fixes) - 3} weitere Fixes*")
+                text = "\n".join(fix_lines)
+                if len(text) > 1024:
+                    text = text[:1020] + "..."
+                embed.add_field(
+                    name=f"\U0001f41b {len(fixes)} Bugfixes",
+                    value=text,
+                    inline=False,
+                )
 
-        # Fallback: discord_highlights wenn keine changes
+        # Verbesserungen MIT Beschreibungen
+        if improvements:
+            if len(improvements) <= 3:
+                imp_lines = [f"\u2022 {i.get('description', '')}" for i in improvements]
+                text = "\n".join(imp_lines)
+                if len(text) > 1024:
+                    text = text[:1020] + "..."
+                embed.add_field(
+                    name=f"\u26a1 {len(improvements)} Verbesserung{'en' if len(improvements) != 1 else ''}",
+                    value=text,
+                    inline=False,
+                )
+            else:
+                imp_lines = [f"\u2022 {i.get('description', '')}" for i in improvements[:3]]
+                if len(improvements) > 3:
+                    imp_lines.append(f"  *+{len(improvements) - 3} weitere*")
+                text = "\n".join(imp_lines)
+                if len(text) > 1024:
+                    text = text[:1020] + "..."
+                embed.add_field(
+                    name=f"\u26a1 {len(improvements)} Verbesserungen",
+                    value=text,
+                    inline=False,
+                )
+
+        # Fallback: discord_highlights wenn keine strukturierten changes
         if not changes and not breaking:
             highlights = ai_data.get('discord_highlights', [])
             if highlights:
-                highlights_text = "\n".join(f"\u2570 {h}" for h in highlights[:4])
+                highlights_text = "\n".join(f"\u2022 {h}" for h in highlights[:5])
                 embed.add_field(name="\U0001f525 Highlights", value=highlights_text, inline=False)
 
-        # === CTA-Block ===
+        # === Changelog-Link (kompakt) ===
         if changelog_link:
-            cta_text = (
-                "\u2504\u2504\u2504\u2504\u2504\u2504\u2504\u2504\u2504\u2504\u2504\u2504\u2504\u2504\u2504\u2504\u2504\u2504\u2504\u2504\u2504\u2504\u2504\u2504\u2504\u2504\u2504\u2504\u2504\u2504\u2504\u2504\u2504\u2504\u2504\u2504\u2504\u2504\u2504\u2504\n"
-                "\U0001f4d6 Alle Details, technische Hintergr\u00fcnde\n"
-                "und die vollst\u00e4ndige \u00c4nderungsliste\n"
-                "findest du im Changelog \u2192"
-            ) if language == 'de' else (
-                "\u2504\u2504\u2504\u2504\u2504\u2504\u2504\u2504\u2504\u2504\u2504\u2504\u2504\u2504\u2504\u2504\u2504\u2504\u2504\u2504\u2504\u2504\u2504\u2504\u2504\u2504\u2504\u2504\u2504\u2504\u2504\u2504\u2504\u2504\u2504\u2504\u2504\u2504\u2504\u2504\n"
-                "\U0001f4d6 All details, technical background\n"
-                "and the complete changelog\n"
-                "available at \u2192"
+            link_text = "\U0001f4d6 [Alle Details im Changelog]" if language == 'de' else "\U0001f4d6 [Full changelog]"
+            embed.add_field(
+                name="\u200b",
+                value=f"{link_text}({changelog_link})",
+                inline=False,
             )
-            embed.add_field(name="\u200b", value=cta_text, inline=False)
 
-        # === Footer mit Stats ===
+        # === Footer mit Stats (inkl. Coverage wenn vorhanden) ===
         git_stats = ai_data.get('stats', {})
         footer_parts = []
-        if version and version != 'patch':
-            footer_parts.append(f"\U0001f4ca v{version}")
+        if version:
+            footer_parts.append(f"v{version}")
         footer_parts.append(f"{len(commits)} Commits")
+        files = git_stats.get('files_changed', 0)
+        if files > 0:
+            footer_parts.append(f"{files} Dateien")
         added = git_stats.get('lines_added', 0)
         removed = git_stats.get('lines_removed', 0)
         if added > 0:
             footer_parts.append(f"+{added}/-{removed}")
+
+        # Coverage + Tests (nur wenn gute Zahlen)
+        tests_total = git_stats.get('tests_total')
+        tests_passed = git_stats.get('tests_passed')
+        coverage = git_stats.get('coverage_percent')
+        if tests_total and tests_total > 0 and tests_passed == tests_total:
+            footer_parts.append(f"\u2705 {tests_total} Tests")
+        if coverage is not None and coverage >= 50:
+            footer_parts.append(f"{coverage:.0f}% Coverage")
 
         embed.set_footer(text=" \u00b7 ".join(footer_parts))
 
@@ -517,7 +587,7 @@ class NotificationsMixin:
             msg = commit.get('message', '')
             # Negative Lookahead: Kein 4. Oktett (→ IP-Adresse ausschließen)
             match = re.search(
-                r'v?(?:ersion|elease)?\s*([0-9]{1,3}\.[0-9]{1,3}\.[0-9]{1,4})(?!\.[0-9])',
+                r'v?(?:ersion|elease)?\s*(?<![0-9.])([0-9]{1,3}\.[0-9]{1,3}\.[0-9]{1,4})(?!\.[0-9])',
                 msg, re.IGNORECASE
             )
             if match:
@@ -591,6 +661,43 @@ class NotificationsMixin:
 
         except Exception as e:
             self.logger.warning(f"⚠️ Web-Export fehlgeschlagen: {e}")
+
+    async def _send_ai_preview_to_internal(self, customer_embed: discord.Embed,
+                                               repo_name: str) -> None:
+        """Sende AI-Patch-Notes-Preview an den internen Channel."""
+        internal_channel = self.bot.get_channel(self.deployment_channel_id)
+        if not internal_channel:
+            return
+
+        # Nur senden wenn es tatsächlich AI-Content gibt
+        if not customer_embed or not customer_embed.description:
+            return
+
+        try:
+            # Preview-Embed erstellen (Kopie des Customer-Embeds mit Hinweis)
+            preview = discord.Embed(
+                title=f"\U0001f4e2 Veröffentlicht: {customer_embed.title or repo_name}",
+                url=customer_embed.url,
+                description=customer_embed.description,
+                color=customer_embed.color,
+                timestamp=customer_embed.timestamp,
+            )
+            if customer_embed.author:
+                preview.set_author(name=customer_embed.author.name)
+
+            # Alle Fields übernehmen (max 5 für Kürze)
+            for field in customer_embed.fields[:5]:
+                preview.add_field(name=field.name, value=field.value, inline=field.inline)
+
+            footer_text = "\u2191 Im Update-Channel gepostet"
+            if customer_embed.footer and customer_embed.footer.text:
+                footer_text = f"{footer_text} \u00b7 {customer_embed.footer.text}"
+            preview.set_footer(text=footer_text)
+
+            await internal_channel.send(embed=preview)
+            self.logger.info(f"\U0001f4e2 AI-Preview für {repo_name} im internen Channel gesendet")
+        except Exception as e:
+            self.logger.warning(f"\u26a0\ufe0f AI-Preview Fehler: {e}")
 
     async def _send_to_internal_channel(self, embed: discord.Embed, repo_name: str) -> None:
         """Sende technische Notification an internen Channel."""
