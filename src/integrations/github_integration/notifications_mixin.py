@@ -305,29 +305,28 @@ class NotificationsMixin:
     def _build_v3_customer_embed(self, repo_name: str, project_color: int,
                                   commits: list, language: str,
                                   ai_data: Dict, project_config: Dict) -> discord.Embed:
-        """Patch Notes v3: Detailliertes Embed mit allen Kategorien und Beschreibungen."""
+        """Patch Notes v4: Fließendes Design — alles in Description statt viele Fields."""
+        import re as _re
+
         patch_config = project_config.get('patch_notes', {})
         changelog_url = patch_config.get('changelog_url', '')
         version = ai_data.get('version') or self._extract_version_from_commits(commits)
 
-        # Version "0.0.0" oder "patch" nicht anzeigen
+        # Ungültige Versionen filtern
         if version and version in ('0.0.0', 'patch', '0.0.1'):
             version = None
 
-        # Titel: Version + AI-Titel
+        # Titel: Version + AI-Titel (ohne Dopplung)
         title = ai_data.get('title', 'Update')
-        # Doppelte Version im Titel vermeiden (z.B. "v1.0.0 — GuildScout 1.0.0: ...")
         if version:
-            # Entferne Version aus dem AI-Titel falls doppelt
-            import re as _re
             title = _re.sub(
-                rf'(?:GuildScout|ZERODOX|ShadowOps)?\s*v?{_re.escape(version)}[:\s—-]*',
+                rf'(?:GuildScout|ZERODOX|ShadowOps)?\s*v?{_re.escape(version)}[:\s\u2014-]*',
                 '', title, flags=_re.IGNORECASE
-            ).strip(' :—-')
+            ).strip(' :\u2014-')
             if not title:
                 title = 'Update'
 
-        version_str = f"v{version} — " if version else ''
+        version_str = f"v{version} \u2014 " if version else ''
 
         changelog_link = ''
         if changelog_url and version:
@@ -339,124 +338,86 @@ class NotificationsMixin:
             color=project_color,
             timestamp=datetime.now(timezone.utc),
         )
-
-        # Author-Feld: Projekt-Name
         embed.set_author(name=repo_name.upper())
 
-        # TL;DR als Beschreibung
+        # === Fließende Description bauen (kein Field-Spam) ===
+        parts = []
+
+        # TL;DR
         tldr = ai_data.get('tldr', '')
         if tldr:
-            embed.description = f"> {tldr}"
+            parts.append(f"> {tldr}")
+            parts.append("")  # Leerzeile
 
-        # === Kategorisierte Changes mit Beschreibungen ===
+        # Changes sammeln
         changes = ai_data.get('changes', [])
         features = [c for c in changes if c.get('type') == 'feature']
         fixes = [c for c in changes if c.get('type') == 'fix']
         improvements = [c for c in changes if c.get('type') == 'improvement']
         breaking = ai_data.get('breaking_changes', [])
-
         is_major = len(commits) >= 15 or (version and version.endswith('.0.0'))
 
-        # Features mit Details (mehr bei Major Releases)
+        # Features
         if features:
-            max_features = 6 if is_major else 4
-            feature_lines = []
-            for f in features[:max_features]:
+            max_show = 6 if is_major else 4
+            parts.append("**\U0001f195 Neue Features**")
+            for f in features[:max_show]:
                 desc = f.get('description', '')
                 details = f.get('details', [])
-                feature_lines.append(f"\u2022 **{desc}**")
-                # Sub-Details bei Major Releases
+                parts.append(f"\u2192 {desc}")
                 if is_major and details:
-                    for detail in details[:2]:
-                        feature_lines.append(f"  \u2514 {detail}")
-            if len(features) > max_features:
-                feature_lines.append(f"  *+{len(features) - max_features} weitere*")
-            text = "\n".join(feature_lines)
-            if len(text) > 1024:
-                text = text[:1020] + "..."
-            embed.add_field(
-                name="\U0001f195 Neue Features",
-                value=text,
-                inline=False,
-            )
+                    for d in details[:2]:
+                        parts.append(f"  *{d}*")
+            if len(features) > max_show:
+                parts.append(f"  *+{len(features) - max_show} weitere*")
+            parts.append("")
 
         # Breaking Changes
         if breaking:
-            breaking_lines = [f"\u26a0\ufe0f {b}" for b in breaking[:3]]
-            embed.add_field(
-                name="\u26a0\ufe0f Breaking Changes",
-                value="\n".join(breaking_lines),
-                inline=False,
-            )
+            parts.append("**\u26a0\ufe0f Breaking Changes**")
+            for b in breaking[:3]:
+                parts.append(f"\u26a0\ufe0f {b}")
+            parts.append("")
 
-        # Bugfixes MIT Beschreibungen (nicht nur Zähler)
+        # Bugfixes
         if fixes:
-            if len(fixes) <= 4:
-                fix_lines = [f"\u2022 {f.get('description', '')}" for f in fixes]
-                text = "\n".join(fix_lines)
-                if len(text) > 1024:
-                    text = text[:1020] + "..."
-                embed.add_field(
-                    name=f"\U0001f41b {len(fixes)} Bugfix{'es' if len(fixes) != 1 else ''}",
-                    value=text,
-                    inline=False,
-                )
-            else:
-                # Viele Fixes: Top 3 zeigen + Zähler
-                fix_lines = [f"\u2022 {f.get('description', '')}" for f in fixes[:3]]
-                if len(fixes) > 3:
-                    fix_lines.append(f"  *+{len(fixes) - 3} weitere Fixes*")
-                text = "\n".join(fix_lines)
-                if len(text) > 1024:
-                    text = text[:1020] + "..."
-                embed.add_field(
-                    name=f"\U0001f41b {len(fixes)} Bugfixes",
-                    value=text,
-                    inline=False,
-                )
+            parts.append(f"**\U0001f41b Bugfixes**")
+            for f in fixes[:4]:
+                parts.append(f"\u2192 {f.get('description', '')}")
+            if len(fixes) > 4:
+                parts.append(f"  *+{len(fixes) - 4} weitere*")
+            parts.append("")
 
-        # Verbesserungen MIT Beschreibungen
+        # Verbesserungen
         if improvements:
-            if len(improvements) <= 3:
-                imp_lines = [f"\u2022 {i.get('description', '')}" for i in improvements]
-                text = "\n".join(imp_lines)
-                if len(text) > 1024:
-                    text = text[:1020] + "..."
-                embed.add_field(
-                    name=f"\u26a1 {len(improvements)} Verbesserung{'en' if len(improvements) != 1 else ''}",
-                    value=text,
-                    inline=False,
-                )
-            else:
-                imp_lines = [f"\u2022 {i.get('description', '')}" for i in improvements[:3]]
-                if len(improvements) > 3:
-                    imp_lines.append(f"  *+{len(improvements) - 3} weitere*")
-                text = "\n".join(imp_lines)
-                if len(text) > 1024:
-                    text = text[:1020] + "..."
-                embed.add_field(
-                    name=f"\u26a1 {len(improvements)} Verbesserungen",
-                    value=text,
-                    inline=False,
-                )
+            parts.append(f"**\u26a1 Verbesserungen**")
+            for i in improvements[:3]:
+                parts.append(f"\u2192 {i.get('description', '')}")
+            if len(improvements) > 3:
+                parts.append(f"  *+{len(improvements) - 3} weitere*")
+            parts.append("")
 
-        # Fallback: discord_highlights wenn keine strukturierten changes
+        # Fallback: Highlights wenn keine strukturierten Changes
         if not changes and not breaking:
             highlights = ai_data.get('discord_highlights', [])
             if highlights:
-                highlights_text = "\n".join(f"\u2022 {h}" for h in highlights[:5])
-                embed.add_field(name="\U0001f525 Highlights", value=highlights_text, inline=False)
+                parts.append("**\U0001f525 Highlights**")
+                for h in highlights[:5]:
+                    parts.append(f"\u2192 {h}")
+                parts.append("")
 
-        # === Changelog-Link (kompakt) ===
+        # Changelog-Link am Ende der Description
         if changelog_link:
-            link_text = "\U0001f4d6 [Alle Details im Changelog]" if language == 'de' else "\U0001f4d6 [Full changelog]"
-            embed.add_field(
-                name="\u200b",
-                value=f"{link_text}({changelog_link})",
-                inline=False,
-            )
+            link_text = "Alle Details im Changelog" if language == 'de' else "Full changelog"
+            parts.append(f"\U0001f4d6 [{link_text}]({changelog_link})")
 
-        # === Footer mit Stats (inkl. Coverage wenn vorhanden) ===
+        # Description zusammenbauen (max 4096 Zeichen)
+        description = "\n".join(parts)
+        if len(description) > 4096:
+            description = description[:4090] + "\n..."
+        embed.description = description
+
+        # === Footer mit Stats ===
         git_stats = ai_data.get('stats', {})
         footer_parts = []
         if version:
@@ -470,7 +431,6 @@ class NotificationsMixin:
         if added > 0:
             footer_parts.append(f"+{added}/-{removed}")
 
-        # Coverage + Tests (nur wenn gute Zahlen)
         tests_total = git_stats.get('tests_total')
         tests_passed = git_stats.get('tests_passed')
         coverage = git_stats.get('coverage_percent')
