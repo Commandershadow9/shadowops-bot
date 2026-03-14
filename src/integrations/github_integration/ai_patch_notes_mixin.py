@@ -435,16 +435,17 @@ class AIPatchNotesMixin:
                         else:
                             self.logger.info(f"⚠️ Version {version} not found in CHANGELOG, using commits only")
                     else:
-                        # Fallback: use latest version from CHANGELOG
+                        # Kein Version-Bump in Commits erkannt.
+                        # CHANGELOG-Content als Kontext nutzen, aber Version NICHT übernehmen
+                        # (sonst bekommen kleine Fix-Batches die letzte Release-Version)
                         latest = parser.get_latest_version()
                         if latest:
-                            version = latest
-                            version_data = parser.get_version_section(version)
+                            version_data = parser.get_version_section(latest)
                             if version_data:
                                 changelog_content = version_data['content']
                                 self.logger.info(
-                                    f"📖 Using latest CHANGELOG.md section for v{version} "
-                                    f"({len(changelog_content)} chars)"
+                                    f"📖 Using latest CHANGELOG.md as context (v{latest}), "
+                                    f"but NOT setting version ({len(changelog_content)} chars)"
                                 )
                         if not changelog_content:
                             self.logger.info("⚠️ No version detected in commits, using commits only")
