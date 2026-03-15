@@ -168,6 +168,9 @@ class NotificationsMixin:
 
         # 2. Send to customer-facing channels with feedback collection
         version = self._extract_version_from_commits(commits)
+        if not version:
+            # Auto-Version für Feedback-Tracking (gleich wie im Web-Export)
+            version = f"patch.{datetime.now(timezone.utc).strftime('%Y.%m.%d')}"
         await self._send_to_customer_channels(customer_embed, repo_name, project_config, version)
 
         # 3. Send to external notification channels (customer servers) WITH feedback collection
