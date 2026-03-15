@@ -455,7 +455,7 @@ class NotificationsMixin:
         version = ai_data.get('version') or self._extract_version_from_commits(commits)
         if not version or version == 'patch':
             # Auto-Version für Batch-Releases ohne expliziten Version-Tag
-            version = f"patch-{datetime.now(timezone.utc).strftime('%Y-%m-%d')}"
+            version = f"patch.{datetime.now(timezone.utc).strftime('%Y.%m.%d')}"
             ai_data['version'] = version
             self.logger.info(f"📝 Keine Version erkannt, nutze Auto-Version: {version}")
 
@@ -571,7 +571,7 @@ class NotificationsMixin:
         version = self._extract_version_from_commits(commits)
         if not version:
             # Auto-Version für Batch-Releases ohne expliziten Version-Tag
-            version = f"patch-{datetime.now(timezone.utc).strftime('%Y-%m-%d')}"
+            version = f"patch.{datetime.now(timezone.utc).strftime('%Y.%m.%d')}"
             self.logger.info(f"📝 Keine Version in Commits, nutze Auto-Version: {version}")
 
         exporter = getattr(self, 'web_exporter', None)
