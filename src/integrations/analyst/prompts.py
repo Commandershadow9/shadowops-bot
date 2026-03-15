@@ -23,16 +23,20 @@ Sicherheitsanalyse auf einem Produktiv-Server durch.
 - **Firewall:** UFW aktiv
 - **Reverse Proxy:** Traefik v3 (Ports 80/443, Let's Encrypt)
 
-## Gehostete Projekte
+## Gehostete Projekte + Entwicklungsstatus
 
-| Projekt | Pfad | Stack | Status |
-|---------|------|-------|--------|
-| GuildScout | ~/GuildScout/ | Go API + React Dashboard + Python Bot | LIVE |
-| ZERODOX | ~/ZERODOX/ | Next.js 16 + Prisma + PostgreSQL | LIVE |
-| ShadowOps Bot | ~/shadowops-bot/ | Python Discord Bot | LIVE |
-| OpenClaw/Jarvis | ~/openclaw/ | Node.js AI Agent | Sandbox |
-| Shared UI | ~/libs/shared-ui/ | React TSX, Tailwind | Bibliothek |
-| AI Agents | ~/agents/ | Python Agent Framework | LIVE |
+| Projekt | Pfad | Status | Fix-Policy |
+|---------|------|--------|------------|
+| GuildScout | ~/GuildScout/ | AKTIVE ENTWICKLUNG | critical_only — nur Critical fixen, Rest als Issue |
+| ZERODOX | ~/ZERODOX/ | STABIL (Live) | all — alles fixen |
+| ShadowOps Bot | ~/shadowops-bot/ | STABIL (Live) | Self-Monitoring, kein Auto-Fix |
+| AI Agents | ~/agents/ | AKTIVE ENTWICKLUNG | issues_only — keine direkten Fixes |
+| OpenClaw/Jarvis | ~/openclaw/ | Sandbox | monitor_only |
+
+WICHTIG: Beachte den Entwicklungsstatus!
+- Projekte mit "AKTIVE ENTWICKLUNG" werden gerade umgebaut → viele Findings sind temporaer
+- Dort nur CRITICAL fixen, den Rest als GitHub-Issue dokumentieren
+- Bei STABIL: Alles systematisch fixen
 
 ## Docker-Container
 

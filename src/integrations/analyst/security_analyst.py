@@ -549,6 +549,25 @@ class SecurityAnalyst:
                 fix_type = finding.get('fix_type', 'info_only')
                 github_issue_url = None
 
+                # Fix-Policy pro Projekt berücksichtigen
+                affected_project = finding.get('affected_project', '')
+                project_cfg = self.config.projects.get(affected_project, {}) if hasattr(self.config, 'projects') else {}
+                fix_policy = project_cfg.get('fix_policy', 'all') if isinstance(project_cfg, dict) else 'all'
+
+                if fix_policy == 'critical_only' and finding.get('severity') not in ('critical',):
+                    # Aktives Projekt → nur Critical auto-fixen, Rest als Issue
+                    if fix_type == 'auto_fixed':
+                        fix_type = 'issue_needed'
+                        logger.info("Fix-Policy '%s' für %s: auto_fix → issue (severity: %s)",
+                                    fix_policy, affected_project, finding.get('severity'))
+                elif fix_policy == 'issues_only':
+                    # Nur Issues, keine Auto-Fixes
+                    if fix_type == 'auto_fixed':
+                        fix_type = 'issue_needed'
+                elif fix_policy == 'monitor_only':
+                    # Nur dokumentieren
+                    fix_type = 'info_only'
+
                 # GitHub-Issue erstellen fuer Code-Findings und wichtige Entscheidungen
                 should_create_issue = (
                     fix_type == 'issue_needed'
