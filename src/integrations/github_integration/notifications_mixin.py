@@ -1,13 +1,12 @@
 """
 Discord notification methods for GitHubIntegration.
 
-v3: Teaser-Embed mit Kategorien, integrierte Buttons, Content Sanitizer
+v5: Unified Pipeline — ein Embed-Builder, ein Web-Export, ein Version-Resolver
 """
 
 import logging
 import re
 from datetime import datetime, timezone
-from pathlib import Path
 from typing import Dict, Optional
 
 import discord
@@ -90,20 +89,6 @@ class NotificationsMixin:
         else:
             internal_embed.description = "Keine neuen Commits in diesem Push."
 
-        # === ADVANCED PATCH NOTES SYSTEM (if available) ===
-        if self.patch_notes_manager and patch_config.get('use_advanced_system', False):
-            try:
-                self.logger.info(f"🎯 Using advanced patch notes system for {repo_name}")
-                await self.patch_notes_manager.handle_git_push(
-                    project_name=repo_name,
-                    project_config=project_config,
-                    commits=commits,
-                    repo_name=repo_name
-                )
-                return
-            except Exception as e:
-                self.logger.warning(f"⚠️ Advanced system failed, falling back to legacy: {e}", exc_info=True)
-
         # === AI-GENERATED PATCH NOTES ===
         use_ai = patch_config.get('use_ai', False)
 
@@ -141,90 +126,138 @@ class NotificationsMixin:
             elif isinstance(ai_result, str):
                 ai_result = sanitizer.sanitize(ai_result)
 
-        # === BUILD CUSTOMER EMBED + WEB EXPORT ===
-        if isinstance(ai_result, dict) and ai_result.get('discord_highlights'):
-            # v3: Neues Embed-Format mit Teaser-Stil
-            customer_embed = self._build_v3_customer_embed(
-                repo_name, project_color, commits, language,
-                ai_result, project_config
-            )
-            await self._export_structured_web_changelog(
-                repo_name, commits, ai_result, project_config, language
-            )
-        else:
-            # Fallback: Legacy-Format
-            ai_description = ai_result if isinstance(ai_result, str) else None
-            customer_embed = self._build_customer_embed(
-                repo_name, commits_url, project_color, commits, language,
-                ai_description, project_config, git_stats
-            )
-            await self._export_web_changelog(
-                repo_name, commits, ai_description, project_config, language, git_stats
-            )
+        # === UNIFIED EMBED + WEB EXPORT ===
+        version = self._resolve_version(ai_result, commits)
+        customer_embed = self._build_unified_embed(
+            repo_name, project_color, commits, language,
+            ai_result, project_config, git_stats
+        )
+        await self._unified_web_export(
+            repo_name, commits, ai_result, project_config, language, git_stats, version
+        )
 
-        # 1. Send to internal channel (technical embed + AI preview)
+        # 1. Internal
         await self._send_to_internal_channel(internal_embed, repo_name)
         await self._send_ai_preview_to_internal(customer_embed, repo_name)
 
-        # 2. Send to customer-facing channels with feedback collection
-        version = self._extract_version_from_commits(commits)
-        if not version:
-            # Auto-Version für Feedback-Tracking (gleich wie im Web-Export)
-            version = f"patch.{datetime.now(timezone.utc).strftime('%Y.%m.%d')}"
+        # 2. Customer + Feedback (version ist IMMER gesetzt)
         await self._send_to_customer_channels(customer_embed, repo_name, project_config, version)
 
-        # 3. Send to external notification channels (customer servers) WITH feedback collection
+        # 3. External
         await self._send_external_git_notifications(repo_name, customer_embed, project_config, version)
 
-    def _build_customer_embed(self, repo_name: str, commits_url: str,
-                               project_color: int, commits: list, language: str,
-                               ai_description: Optional[str],
-                               project_config: Dict,
-                               git_stats: Optional[Dict] = None) -> discord.Embed:
-        """Baue das Customer-Embed (Kurzformat für Discord)."""
-        patch_config = project_config.get('patch_notes', {})
+    # ── Unified Embed + Version + Web-Export (v5) ──────────────────────
 
-        # Language-specific texts
-        if language == 'en':
-            title_text = f"✨ Updates for {repo_name}"
+    def _resolve_version(self, ai_result, commits: list) -> str:
+        """Bestimme Version: Commits > AI > Auto-Version. NIE None."""
+        # 1. Aus Commits (expliziter Version-Tag)
+        v = self._extract_version_from_commits(commits)
+        if v:
+            return v
+
+        # 2. Aus AI-Ergebnis (nur echte Versionen)
+        if isinstance(ai_result, dict):
+            ai_v = ai_result.get('version')
+            if ai_v and ai_v != 'patch' and not ai_v.startswith('0.0.'):
+                return ai_v
+
+        # 3. Auto-Version (Fallback, IMMER)
+        return f"patch.{datetime.now(timezone.utc).strftime('%Y.%m.%d')}"
+
+    def _resolve_title(self, ai_result, version: str) -> str:
+        """Titel aus AI oder Fallback. Doppelte Version entfernen."""
+        title = 'Update'
+        if isinstance(ai_result, dict):
+            title = ai_result.get('title', 'Update')
+        elif isinstance(ai_result, str) and ai_result.strip():
+            # Erste Zeile als Titel-Kandidat (nur wenn kurz genug)
+            first = ai_result.strip().split('\n')[0].strip()
+            if first and len(first) < 100 and not first.startswith('**'):
+                title = first
+
+        # Version aus Titel entfernen (Dopplung vermeiden)
+        if version:
+            title = re.sub(
+                rf'(?:GuildScout|ZERODOX|ShadowOps)?\s*v?{re.escape(version)}[:\s\u2014-]*',
+                '', title, flags=re.IGNORECASE
+            ).strip(' :\u2014-')
+        if not title:
+            title = 'Update'
+        return title
+
+    def _build_description(self, ai_result, commits: list, language: str) -> str:
+        """Baut Description aus AI-Ergebnis (dict/str/None)."""
+        if isinstance(ai_result, dict):
+            return self._description_from_structured(ai_result, commits, language)
+        elif isinstance(ai_result, str) and ai_result.strip():
+            return ai_result.strip()
         else:
-            title_text = f"✨ Updates für {repo_name}"
+            return self._categorize_commits_text(commits, language)
 
-        customer_embed = discord.Embed(
-            title=title_text,
-            url=commits_url,
-            color=project_color,
-            timestamp=datetime.now(timezone.utc)
-        )
+    def _description_from_structured(self, ai_data: dict, commits: list, language: str) -> str:
+        """Strukturierte AI-Daten → fließende Discord Description."""
+        parts = []
 
-        if ai_description:
-            customer_embed.description = ai_description
-        else:
-            # Fallback: Changelog oder Kategorisierung
-            changelog_fallback = self._build_changelog_fallback_description(project_config, language)
-            if changelog_fallback:
-                customer_embed.description = changelog_fallback
-            else:
-                customer_embed.description = self._categorize_commits_text(commits, language)
+        tldr = ai_data.get('tldr', '')
+        if tldr:
+            parts.append(f"> {tldr}")
+            parts.append("")
 
-        # Web-Link hinzufügen (falls konfiguriert)
-        changelog_url = patch_config.get('changelog_url', '')
-        if changelog_url:
-            if language == 'de':
-                customer_embed.add_field(
-                    name="📖 Alle Details",
-                    value=f"[Vollständige Patch Notes auf der Webseite]({changelog_url})",
-                    inline=False
-                )
-            else:
-                customer_embed.add_field(
-                    name="📖 Full Details",
-                    value=f"[Complete patch notes on the website]({changelog_url})",
-                    inline=False
-                )
+        changes = ai_data.get('changes', [])
+        features = [c for c in changes if c.get('type') == 'feature']
+        fixes = [c for c in changes if c.get('type') == 'fix']
+        improvements = [c for c in changes if c.get('type') == 'improvement']
+        breaking = ai_data.get('breaking_changes', [])
+        is_major = len(commits) >= 15
 
-        # Footer mit Stats
-        footer_parts = [f"{len(commits)} Commit(s)"]
+        if features:
+            max_show = 6 if is_major else 4
+            parts.append("**\U0001f195 Neue Features**")
+            for f in features[:max_show]:
+                parts.append(f"\u2192 {f.get('description', '')}")
+            if len(features) > max_show:
+                parts.append(f"  *+{len(features) - max_show} weitere*")
+            parts.append("")
+
+        if breaking:
+            parts.append("**\u26a0\ufe0f Breaking Changes**")
+            for b in breaking[:3]:
+                parts.append(f"\u26a0\ufe0f {b}")
+            parts.append("")
+
+        if fixes:
+            parts.append("**\U0001f41b Bugfixes**")
+            for f in fixes[:4]:
+                parts.append(f"\u2192 {f.get('description', '')}")
+            if len(fixes) > 4:
+                parts.append(f"  *+{len(fixes) - 4} weitere*")
+            parts.append("")
+
+        if improvements:
+            parts.append("**\u26a1 Verbesserungen**")
+            for i in improvements[:3]:
+                parts.append(f"\u2192 {i.get('description', '')}")
+            if len(improvements) > 3:
+                parts.append(f"  *+{len(improvements) - 3} weitere*")
+            parts.append("")
+
+        # Fallback wenn keine changes
+        if not changes and not breaking:
+            highlights = ai_data.get('discord_highlights', [])
+            if highlights:
+                parts.append("**\U0001f525 Highlights**")
+                for h in highlights[:5]:
+                    parts.append(f"\u2192 {h}")
+                parts.append("")
+
+        return "\n".join(parts)
+
+    def _build_footer(self, version: str, commits: list, git_stats: Optional[dict] = None) -> str:
+        """Footer mit Version, Stats, Coverage, Tests."""
+        footer_parts = []
+        if version:
+            footer_parts.append(f"v{version}")
+        footer_parts.append(f"{len(commits)} Commits")
 
         if git_stats:
             files = git_stats.get('files_changed', 0)
@@ -235,111 +268,34 @@ class NotificationsMixin:
             if added > 0:
                 footer_parts.append(f"+{added}/-{removed}")
 
-        customer_embed.set_footer(text=" · ".join(footer_parts))
+            tests_total = git_stats.get('tests_total')
+            tests_passed = git_stats.get('tests_passed')
+            coverage = git_stats.get('coverage_percent')
+            if tests_total and tests_total > 0 and tests_passed == tests_total:
+                footer_parts.append(f"\u2705 {tests_total} Tests")
+            if coverage is not None and coverage >= 50:
+                footer_parts.append(f"{coverage:.0f}% Coverage")
 
-        return customer_embed
+        return " \u00b7 ".join(footer_parts)
 
-    def _build_structured_customer_embed(self, repo_name: str, commits_url: str,
-                                          project_color: int, commits: list, language: str,
-                                          ai_data: Dict, project_config: Dict) -> discord.Embed:
-        """Professionelles Discord-Embed aus strukturiertem AI-Output."""
-        patch_config = project_config.get('patch_notes', {})
+    def _build_unified_embed(self, repo_name: str, project_color: int,
+                              commits: list, language: str, ai_result,
+                              project_config: Dict,
+                              git_stats: Optional[Dict] = None) -> discord.Embed:
+        """EIN Embed-Builder für alle Fälle (dict/str/None)."""
+        version = self._resolve_version(ai_result, commits)
+        title = self._resolve_title(ai_result, version)
+        changelog_url = project_config.get('patch_notes', {}).get('changelog_url', '')
 
-        # Titel: Projektname + AI-Titel
-        title = ai_data.get('title', f'Updates für {repo_name}')
-        embed = discord.Embed(
-            title=f"✨ {repo_name} — {title}",
-            url=commits_url,
-            color=project_color,
-            timestamp=datetime.now(timezone.utc)
-        )
-
-        # TL;DR als Description
-        tldr = ai_data.get('tldr', '')
-        if tldr:
-            embed.description = f"**TL;DR:** {tldr}"
-
-        # Discord-Highlights als Hauptfeld
-        highlights = ai_data.get('discord_highlights', [])
-        if highlights:
-            highlights_text = "\n".join(f"• {h}" for h in highlights[:5])
-            embed.add_field(
-                name="🔥 Highlights",
-                value=highlights_text,
-                inline=False
-            )
-
-        # Breaking Changes separat hervorheben
-        breaking = ai_data.get('breaking_changes', [])
-        if breaking:
-            breaking_text = "\n".join(f"⚠️ {b}" for b in breaking[:3])
-            embed.add_field(name="⚠️ Breaking Changes", value=breaking_text, inline=False)
-
-        # Web-Link
-        changelog_url = patch_config.get('changelog_url', '')
+        # Changelog-Link
+        is_real_version = version and not version.startswith('patch.')
         if changelog_url:
-            v = ai_data.get('version') or self._extract_version_from_commits(commits)
-            if v:
-                full_url = f"{changelog_url}/{v.replace('.', '-')}"
-            else:
-                full_url = changelog_url
-            link_text = "Alle Details auf der Webseite" if language == 'de' else "Full details on the website"
-            embed.add_field(name="📖", value=f"[{link_text}]({full_url})", inline=False)
+            changelog_link = f"{changelog_url}/{version.replace('.', '-')}" if is_real_version else changelog_url
+        else:
+            changelog_link = ''
 
-        # Footer: Version + Stats
-        git_stats = ai_data.get('stats', {})
-        footer_parts = []
-        v = ai_data.get('version')
-        if v and v != 'patch':
-            footer_parts.append(f"v{v}")
-        footer_parts.append(f"{len(commits)} Commit(s)")
-        files = git_stats.get('files_changed', 0)
-        if files > 0:
-            footer_parts.append(f"{files} Dateien")
-        added = git_stats.get('lines_added', 0)
-        removed = git_stats.get('lines_removed', 0)
-        if added > 0:
-            footer_parts.append(f"+{added}/-{removed}")
-
-        embed.set_footer(text=" · ".join(footer_parts))
-
-        return embed
-
-    def _build_v3_customer_embed(self, repo_name: str, project_color: int,
-                                  commits: list, language: str,
-                                  ai_data: Dict, project_config: Dict) -> discord.Embed:
-        """Patch Notes v4: Fließendes Design — alles in Description statt viele Fields."""
-        import re as _re
-
-        patch_config = project_config.get('patch_notes', {})
-        changelog_url = patch_config.get('changelog_url', '')
-        version = ai_data.get('version') or self._extract_version_from_commits(commits)
-
-        # Ungültige Versionen filtern
-        if version and version in ('0.0.0', 'patch', '0.0.1'):
-            version = None
-
-        # Titel: Version + AI-Titel (ohne Dopplung)
-        title = ai_data.get('title', 'Update')
-        if version:
-            title = _re.sub(
-                rf'(?:GuildScout|ZERODOX|ShadowOps)?\s*v?{_re.escape(version)}[:\s\u2014-]*',
-                '', title, flags=_re.IGNORECASE
-            ).strip(' :\u2014-')
-            if not title:
-                title = 'Update'
-
-        # Auto-Versions (patch-YYYY-MM-DD) nicht im Titel anzeigen
-        is_real_version = version and not version.startswith('patch-')
+        # Embed erstellen
         version_str = f"v{version} \u2014 " if is_real_version else ''
-
-        changelog_link = ''
-        if changelog_url:
-            if is_real_version:
-                changelog_link = f"{changelog_url}/{version.replace('.', '-')}"
-            else:
-                changelog_link = changelog_url  # Link auf Hauptseite
-
         embed = discord.Embed(
             title=f"\U0001f680 {version_str}{title}",
             url=changelog_link or None,
@@ -348,164 +304,78 @@ class NotificationsMixin:
         )
         embed.set_author(name=repo_name.upper())
 
-        # === Fließende Description bauen (kein Field-Spam) ===
-        parts = []
+        # Description bauen — EIN Weg für alle Inputs
+        description = self._build_description(ai_result, commits, language)
 
-        # TL;DR
-        tldr = ai_data.get('tldr', '')
-        if tldr:
-            parts.append(f"> {tldr}")
-            parts.append("")  # Leerzeile
-
-        # Changes sammeln
-        changes = ai_data.get('changes', [])
-        features = [c for c in changes if c.get('type') == 'feature']
-        fixes = [c for c in changes if c.get('type') == 'fix']
-        improvements = [c for c in changes if c.get('type') == 'improvement']
-        breaking = ai_data.get('breaking_changes', [])
-        is_major = len(commits) >= 15 or (version and version.endswith('.0.0'))
-
-        # Features
-        if features:
-            max_show = 6 if is_major else 4
-            parts.append("**\U0001f195 Neue Features**")
-            for f in features[:max_show]:
-                desc = f.get('description', '')
-                details = f.get('details', [])
-                parts.append(f"\u2192 {desc}")
-                if is_major and details:
-                    for d in details[:2]:
-                        parts.append(f"  *{d}*")
-            if len(features) > max_show:
-                parts.append(f"  *+{len(features) - max_show} weitere*")
-            parts.append("")
-
-        # Breaking Changes
-        if breaking:
-            parts.append("**\u26a0\ufe0f Breaking Changes**")
-            for b in breaking[:3]:
-                parts.append(f"\u26a0\ufe0f {b}")
-            parts.append("")
-
-        # Bugfixes
-        if fixes:
-            parts.append(f"**\U0001f41b Bugfixes**")
-            for f in fixes[:4]:
-                parts.append(f"\u2192 {f.get('description', '')}")
-            if len(fixes) > 4:
-                parts.append(f"  *+{len(fixes) - 4} weitere*")
-            parts.append("")
-
-        # Verbesserungen
-        if improvements:
-            parts.append(f"**\u26a1 Verbesserungen**")
-            for i in improvements[:3]:
-                parts.append(f"\u2192 {i.get('description', '')}")
-            if len(improvements) > 3:
-                parts.append(f"  *+{len(improvements) - 3} weitere*")
-            parts.append("")
-
-        # Fallback: Highlights wenn keine strukturierten Changes
-        if not changes and not breaking:
-            highlights = ai_data.get('discord_highlights', [])
-            if highlights:
-                parts.append("**\U0001f525 Highlights**")
-                for h in highlights[:5]:
-                    parts.append(f"\u2192 {h}")
-                parts.append("")
-
-        # Changelog-Link am Ende der Description
+        # Changelog-Link am Ende
         if changelog_link:
-            link_text = "Alle Details im Changelog" if language == 'de' else "Full changelog"
-            parts.append(f"\U0001f4d6 [{link_text}]({changelog_link})")
+            link_text = "Alle Details & vollständige Patch Notes" if language == 'de' else "Full details & complete patch notes"
+            description += f"\n\n\U0001f4d6 [{link_text}]({changelog_link})"
 
-        # Description zusammenbauen (max 4096 Zeichen)
-        description = "\n".join(parts)
-        if len(description) > 4096:
-            description = description[:4090] + "\n..."
-        embed.description = description
+        embed.description = description[:4096]
 
-        # === Footer mit Stats ===
-        git_stats = ai_data.get('stats', {})
-        footer_parts = []
-        if version:
-            footer_parts.append(f"v{version}")
-        footer_parts.append(f"{len(commits)} Commits")
-        files = git_stats.get('files_changed', 0)
-        if files > 0:
-            footer_parts.append(f"{files} Dateien")
-        added = git_stats.get('lines_added', 0)
-        removed = git_stats.get('lines_removed', 0)
-        if added > 0:
-            footer_parts.append(f"+{added}/-{removed}")
-
-        tests_total = git_stats.get('tests_total')
-        tests_passed = git_stats.get('tests_passed')
-        coverage = git_stats.get('coverage_percent')
-        if tests_total and tests_total > 0 and tests_passed == tests_total:
-            footer_parts.append(f"\u2705 {tests_total} Tests")
-        if coverage is not None and coverage >= 50:
-            footer_parts.append(f"{coverage:.0f}% Coverage")
-
-        embed.set_footer(text=" \u00b7 ".join(footer_parts))
+        # Footer
+        embed.set_footer(text=self._build_footer(version, commits, git_stats))
 
         return embed
 
-    async def _export_structured_web_changelog(self, repo_name: str, commits: list,
-                                                 ai_data: Dict, project_config: Dict,
-                                                 language: str) -> None:
-        """Exportiere strukturierte Patch Notes als Web-Changelog + API POST."""
-        version = ai_data.get('version') or self._extract_version_from_commits(commits)
-        if not version or version == 'patch':
-            # Auto-Version für Batch-Releases ohne expliziten Version-Tag
-            version = f"patch.{datetime.now(timezone.utc).strftime('%Y.%m.%d')}"
-            ai_data['version'] = version
-            self.logger.info(f"📝 Keine Version erkannt, nutze Auto-Version: {version}")
+    def _extract_web_content(self, ai_result, repo_name: str, version: str):
+        """Extrahiere Titel, TL;DR, Content, Changes, SEO aus jedem AI-Ergebnis."""
+        if isinstance(ai_result, dict):
+            title = ai_result.get('title', f'{repo_name} Update')
+            tldr = ai_result.get('tldr', '')
+            content = ai_result.get('web_content', ai_result.get('summary', ''))
+            changes = ai_result.get('changes', [])
+            seo_keywords = ai_result.get('seo_keywords', [])
+            return title, tldr, content, changes, seo_keywords
 
+        elif isinstance(ai_result, str) and ai_result.strip():
+            # TL;DR aus erstem Satz extrahieren
+            text = ai_result.strip()
+            tldr_match = re.search(r'\*\*TL;DR:\*\*\s*(.+?)(?:\n|$)', text)
+            if tldr_match:
+                tldr = tldr_match.group(1).strip()
+            else:
+                first_line = text.split('\n')[0].strip()
+                tldr = first_line[:200] if first_line and not first_line.startswith('**') else f"{repo_name} Update"
+
+            title = f"{repo_name} Update"
+            content = text
+            changes = []
+            seo_keywords = []
+            return title, tldr, content, changes, seo_keywords
+
+        else:
+            return f"{repo_name} Update", '', '', [], []
+
+    async def _unified_web_export(self, repo_name: str, commits: list, ai_result,
+                                   project_config: Dict, language: str,
+                                   git_stats: Optional[Dict], version: str) -> None:
+        """Web-Export — IMMER, mit SEO, egal welches AI-Ergebnis."""
         exporter = getattr(self, 'web_exporter', None)
         if not exporter:
             return
 
+        # Titel + TL;DR extrahieren (aus dict oder str)
+        title, tldr, content, changes, seo_keywords = self._extract_web_content(
+            ai_result, repo_name, version
+        )
+
         try:
-            if hasattr(exporter, 'export_and_store'):
-                # v3: Zentrale DB + File-Backup + API POST in einem Schritt
-                await exporter.export_and_store(
-                    project=repo_name,
-                    version=version,
-                    title=ai_data.get('title', f'{repo_name} {version}'),
-                    tldr=ai_data.get('tldr', ''),
-                    content=ai_data.get('web_content', ai_data.get('summary', '')),
-                    stats=ai_data.get('stats', {}),
-                    language=language,
-                    changes=ai_data.get('changes', []),
-                    seo_keywords=ai_data.get('seo_keywords', []),
-                    seo_description=ai_data.get('seo_description', ''),
-                )
-                self.logger.info(f"📝 Strukturierter Web-Changelog exportiert (v3): {repo_name} v{version}")
-            else:
-                # Fallback: Legacy export() + separater API POST
-                result = exporter.export(
-                    project=repo_name,
-                    version=version,
-                    title=ai_data.get('title', f'{repo_name} {version}'),
-                    tldr=ai_data.get('tldr', ''),
-                    content=ai_data.get('web_content', ai_data.get('summary', '')),
-                    stats=ai_data.get('stats', {}),
-                    language=language,
-                    changes=ai_data.get('changes', []),
-                )
-                self.logger.info(f"📝 Strukturierter Web-Changelog exportiert: {repo_name} v{version}")
-
-                # API POST (async, vom Exporter entkoppelt)
-                json_data = result.get('json_data') if result else None
-                if json_data:
-                    try:
-                        await exporter.post_to_api(repo_name, json_data)
-                    except Exception as e:
-                        self.logger.debug(f"API-POST übersprungen: {e}")
-
+            await exporter.export_and_store(
+                project=repo_name,
+                version=version,
+                title=title,
+                tldr=tldr,
+                content=content,
+                stats=git_stats or {},
+                language=language,
+                changes=changes,
+                seo_keywords=seo_keywords,
+            )
+            self.logger.info(f"\U0001f4dd Web-Export: {repo_name} v{version}")
         except Exception as e:
-            self.logger.warning(f"⚠️ Strukturierter Web-Export fehlgeschlagen: {e}")
+            self.logger.warning(f"\u26a0\ufe0f Web-Export fehlgeschlagen: {e}")
 
     def _categorize_commits_text(self, commits: list, language: str) -> str:
         """Kategorisiere Commits als Fallback-Text."""
@@ -565,76 +435,6 @@ class NotificationsMixin:
             if match:
                 return match.group(1)
         return None
-
-    async def _export_web_changelog(self, repo_name: str, commits: list,
-                                     ai_description: Optional[str],
-                                     project_config: Dict, language: str,
-                                     git_stats: Optional[Dict] = None) -> None:
-        """Exportiere Patch Notes als Web-Changelog (SEO-optimiert) + API POST."""
-        version = self._extract_version_from_commits(commits)
-        if not version:
-            # Auto-Version für Batch-Releases ohne expliziten Version-Tag
-            version = f"patch.{datetime.now(timezone.utc).strftime('%Y.%m.%d')}"
-            self.logger.info(f"📝 Keine Version in Commits, nutze Auto-Version: {version}")
-
-        exporter = getattr(self, 'web_exporter', None)
-        if not exporter:
-            return
-
-        git_stats = git_stats or {}
-
-        # TL;DR aus AI-Description extrahieren
-        tldr = ""
-        content = ai_description or ""
-        if content:
-            tldr_match = re.search(r'\*\*TL;DR:\*\*\s*(.+?)(?:\n|$)', content)
-            if tldr_match:
-                tldr = tldr_match.group(1).strip()
-            else:
-                first_line = content.split('\n')[0].strip()
-                if first_line and not first_line.startswith('**'):
-                    tldr = first_line
-                else:
-                    tldr = f"{repo_name} {version} Update"
-
-        title = f"{repo_name} {version}"
-
-        try:
-            if hasattr(exporter, 'export_and_store'):
-                # v3: Zentrale DB + File-Backup + API POST in einem Schritt
-                await exporter.export_and_store(
-                    project=repo_name,
-                    version=version,
-                    title=title,
-                    tldr=tldr,
-                    content=content,
-                    stats=git_stats,
-                    language=language,
-                )
-                self.logger.info(f"📝 Web-Changelog exportiert (v3): {repo_name} v{version}")
-            else:
-                # Fallback: Legacy export() + separater API POST
-                result = exporter.export(
-                    project=repo_name,
-                    version=version,
-                    title=title,
-                    tldr=tldr,
-                    content=content,
-                    stats=git_stats,
-                    language=language,
-                )
-                self.logger.info(f"📝 Web-Changelog exportiert: {repo_name} v{version}")
-
-                # API POST (async, vom Exporter entkoppelt)
-                json_data = result.get('json_data') if result else None
-                if json_data:
-                    try:
-                        await exporter.post_to_api(repo_name, json_data)
-                    except Exception as e:
-                        self.logger.debug(f"API-POST übersprungen: {e}")
-
-        except Exception as e:
-            self.logger.warning(f"⚠️ Web-Export fehlgeschlagen: {e}")
 
     async def _send_ai_preview_to_internal(self, customer_embed: discord.Embed,
                                                repo_name: str) -> None:

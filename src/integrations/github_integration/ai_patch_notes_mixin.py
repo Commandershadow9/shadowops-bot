@@ -321,45 +321,6 @@ class AIPatchNotesMixin:
 
         return "PROJECT CONTEXT (REFERENCE):\n\n" + "\n\n".join(sections)
 
-    def _build_changelog_fallback_description(self, project_config: Optional[Dict], language: str) -> str:
-        """Build a user-facing description from CHANGELOG.md if present."""
-        if not project_config:
-            return ""
-
-        project_path = project_config.get('path')
-        if not project_path:
-            return ""
-
-        changelog_path = Path(project_path) / 'CHANGELOG.md'
-        if not changelog_path.exists():
-            return ""
-
-        try:
-            from utils.changelog_parser import get_changelog_parser
-            parser = get_changelog_parser(Path(project_path))
-            version = parser.get_latest_version()
-            if not version:
-                return ""
-            version_data = parser.get_version_section(version)
-            if not version_data:
-                return ""
-
-            header = f"**Version {version}**"
-            if version_data.get('title'):
-                header = f"{header} — {version_data['title']}"
-
-            content = version_data.get('content', '').strip()
-            if not content:
-                return ""
-
-            # Keep changelog content as the primary source (already structured).
-            if language == 'de':
-                return f"{header}\n\n{content}"
-            return f"{header}\n\n{content}"
-        except Exception as e:
-            self.logger.warning(f"⚠️ CHANGELOG Fallback failed: {e}")
-            return ""
-
     def _is_patch_notes_too_short(self, response: str, commits: list) -> bool:
         """Heuristic to detect underspecified AI output."""
         if not response:

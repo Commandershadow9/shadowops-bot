@@ -781,19 +781,6 @@ class ShadowOpsBot(commands.Bot):
                         self.feedback_collector = None
                         self.github_integration.feedback_collector = None
 
-                # Initialize Advanced Patch Notes Manager (optional, for approval system)
-                if self.ai_service:
-                    try:
-                        from integrations.patch_notes_manager import get_patch_notes_manager
-                        self.patch_notes_manager = get_patch_notes_manager(self, self.ai_service)
-                        self.github_integration.patch_notes_manager = self.patch_notes_manager
-                        self.logger.info("✅ Advanced Patch Notes Manager initialisiert (optional)")
-                    except Exception as e:
-                        self.logger.debug(f"Advanced Patch Notes Manager nicht verfügbar: {e}")
-                        self.patch_notes_manager = None
-                else:
-                    self.patch_notes_manager = None
-
                 # Initialize Patch Notes v2: Web Exporter + Batcher
                 try:
                     from pathlib import Path

@@ -74,7 +74,6 @@
 | `server_assistant.py` | Server Assistant (ersetzt Legacy Learning System) |
 | `changelog_db.py` | Zentrale Changelog-DB (SQLite, alle Projekte, Upsert + Paginierung) |
 | `content_sanitizer.py` | Security-Filter fuer Patch Notes (Pfade, IPs, Ports, Secrets) |
-| `patch_notes_manager.py` | AI-generierte Patch Notes (v3: Zentrale DB, Discord Teaser, SEO) |
 | `patch_notes_batcher.py` | Sammelt Commits, Release via Cron (Sonntag), manuell (/release-notes) oder Notbremse (≥20) |
 | `patch_notes_feedback.py` | Discord Feedback (Persistent Buttons: Like + Bewerten, Text-Modal) |
 | `patch_notes_web_exporter.py` | Web-Export (zentrale DB Upsert + File-Backup + optional HTTP POST) |

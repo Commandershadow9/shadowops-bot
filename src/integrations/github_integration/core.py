@@ -107,9 +107,6 @@ class GitHubIntegration(WebhookMixin, PollingMixin, EventHandlersMixin, CIMixin,
         # Deployment manager (will be set by bot)
         self.deployment_manager = None
 
-        # Advanced Patch Notes Manager (will be set by bot)
-        self.patch_notes_manager = None
-
         # AI Learning System (will be set by bot)
         self.patch_notes_trainer = None
         self.feedback_collector = None
