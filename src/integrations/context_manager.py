@@ -466,27 +466,19 @@ class ContextManager:
         return ""
 
     def _determine_relevant_projects(self, event_source: str, event_type: str) -> List[str]:
-        """Determine which projects are relevant for this event"""
-        relevant = []
+        """Bestimmt welche Projekte für ein Event relevant sind.
 
-        # Docker vulnerabilities - all projects that use Docker
-        if event_source == 'trivy':
-            relevant.append('sicherheitstool')  # Uses Docker in future
-            # Add more if they use Docker
-
-        # AIDE file changes - check what was modified
-        elif event_source == 'aide':
-            relevant.append('sicherheitstool')  # Most likely production code
-            relevant.append('shadowops-bot')    # Bot code changes
-            relevant.append('guildscout')       # GuildScout code changes
-
-        # CrowdSec/Fail2ban - network attacks could target any service
-        elif event_source in ['crowdsec', 'fail2ban']:
-            relevant.append('sicherheitstool')  # Production API (port 3001)
-            # Bots don't expose network services, but include for awareness
-            relevant.append('shadowops-bot')
-
-        return relevant
+        Nur aktive Projekte zurückgeben — sicherheitstool ist AUF EIS.
+        """
+        # Event→Projekt Mapping (nur aktive Projekte!)
+        source_map = {
+            'trivy': ['guildscout', 'zerodox'],  # Docker-Container dieser Projekte
+            'aide': ['guildscout', 'zerodox', 'ai-agent-framework'],  # Datei-Integrität
+            'crowdsec': [],  # Server-Level, kein spezifisches Projekt
+            'fail2ban': [],  # Server-Level
+            'analyst': ['guildscout', 'zerodox', 'ai-agent-framework'],  # Security-Scan
+        }
+        return source_map.get(event_source, [])
 
     def _extract_summary(self, full_context: str) -> str:
         """Extract a brief summary from full context"""
