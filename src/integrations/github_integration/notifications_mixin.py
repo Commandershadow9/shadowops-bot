@@ -326,11 +326,16 @@ class NotificationsMixin:
             if not title:
                 title = 'Update'
 
-        version_str = f"v{version} \u2014 " if version else ''
+        # Auto-Versions (patch-YYYY-MM-DD) nicht im Titel anzeigen
+        is_real_version = version and not version.startswith('patch-')
+        version_str = f"v{version} \u2014 " if is_real_version else ''
 
         changelog_link = ''
-        if changelog_url and version:
-            changelog_link = f"{changelog_url}/{version.replace('.', '-')}"
+        if changelog_url:
+            if is_real_version:
+                changelog_link = f"{changelog_url}/{version.replace('.', '-')}"
+            else:
+                changelog_link = changelog_url  # Link auf Hauptseite
 
         embed = discord.Embed(
             title=f"\U0001f680 {version_str}{title}",
@@ -449,7 +454,10 @@ class NotificationsMixin:
         """Exportiere strukturierte Patch Notes als Web-Changelog + API POST."""
         version = ai_data.get('version') or self._extract_version_from_commits(commits)
         if not version or version == 'patch':
-            return
+            # Auto-Version für Batch-Releases ohne expliziten Version-Tag
+            version = f"patch-{datetime.now(timezone.utc).strftime('%Y-%m-%d')}"
+            ai_data['version'] = version
+            self.logger.info(f"📝 Keine Version erkannt, nutze Auto-Version: {version}")
 
         exporter = getattr(self, 'web_exporter', None)
         if not exporter:
@@ -562,7 +570,9 @@ class NotificationsMixin:
         """Exportiere Patch Notes als Web-Changelog (SEO-optimiert) + API POST."""
         version = self._extract_version_from_commits(commits)
         if not version:
-            return
+            # Auto-Version für Batch-Releases ohne expliziten Version-Tag
+            version = f"patch-{datetime.now(timezone.utc).strftime('%Y-%m-%d')}"
+            self.logger.info(f"📝 Keine Version in Commits, nutze Auto-Version: {version}")
 
         exporter = getattr(self, 'web_exporter', None)
         if not exporter:
