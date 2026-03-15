@@ -6,7 +6,7 @@
 - **Monitoring:** Trivy, CrowdSec, Fail2ban, AIDE
 - **Data:** SQLite (Knowledge DB + Changelog DB), JSON State Files
 - **Deploy:** systemd (system-level), logrotate
-- **Version:** v4.1.0
+- **Version:** v5.0.0
 
 ## Services & Ports
 | Service | Port | Zweck |
