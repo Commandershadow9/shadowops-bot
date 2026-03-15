@@ -124,6 +124,33 @@ class ServiceManager:
                 stop_command="systemctl stop postgresql",
                 health_check="systemctl is-active postgresql",
                 graceful_shutdown_timeout=30
+            ),
+            'guildscout-feedback-agent': ServiceInfo(
+                name='guildscout-feedback-agent',
+                project='ai-agent-framework',
+                command="systemctl --user is-active guildscout-feedback-agent",
+                start_command="systemctl --user start guildscout-feedback-agent",
+                stop_command="systemctl --user stop guildscout-feedback-agent",
+                health_check="systemctl --user is-active guildscout-feedback-agent",
+                graceful_shutdown_timeout=20
+            ),
+            'zerodox-support-agent': ServiceInfo(
+                name='zerodox-support-agent',
+                project='ai-agent-framework',
+                command="systemctl --user is-active zerodox-support-agent",
+                start_command="systemctl --user start zerodox-support-agent",
+                stop_command="systemctl --user stop zerodox-support-agent",
+                health_check="systemctl --user is-active zerodox-support-agent",
+                graceful_shutdown_timeout=20
+            ),
+            'seo-agent': ServiceInfo(
+                name='seo-agent',
+                project='ai-agent-framework',
+                command="systemctl --user is-active seo-agent",
+                start_command="systemctl --user start seo-agent",
+                stop_command="systemctl --user stop seo-agent",
+                health_check="systemctl --user is-active seo-agent",
+                graceful_shutdown_timeout=20
             )
         }
 

@@ -13,7 +13,7 @@ from datetime import datetime, timedelta, timezone
 from pathlib import Path
 import discord
 
-logger = logging.getLogger(__name__)
+logger = logging.getLogger('shadowops.project_monitor')
 
 
 class ProjectStatus:
@@ -30,6 +30,9 @@ class ProjectStatus:
         self.log_file = config.get('log_file')
         self.log_pattern = config.get('log_pattern')
         self.log_tail_bytes = config.get('log_tail_bytes', 50000)
+
+        # Systemd-basiertes Health-Checking (für Services ohne HTTP-Endpoint)
+        self.systemd_services = config.get('systemd_services', [])
 
         # Current status
         self.is_online = False
@@ -342,9 +345,18 @@ class ProjectMonitor:
         """
         Perform health check for a project
 
+        Supports two modes:
+        - HTTP health check (when project.url is set)
+        - systemd service check (when project.systemd_services is set)
+
         Args:
             project: ProjectStatus instance to check
         """
+        # Systemd-basiertes Health-Checking (für Services ohne HTTP-Endpoint)
+        if project.systemd_services:
+            await self._check_systemd_health(project)
+            return
+
         if not project.url:
             self.logger.debug(f"ℹ️ No health check URL for {project.name}")
             return
@@ -451,6 +463,65 @@ class ProjectMonitor:
                 f"❌ Error reading log file for {project.name}: {e}",
                 exc_info=True
             )
+
+    async def _check_systemd_health(self, project: ProjectStatus):
+        """
+        Check health via systemd service status.
+        All configured services must be active for the project to be online.
+        """
+        start_time = time.time()
+        failed_services = []
+
+        for svc_config in project.systemd_services:
+            svc_name = svc_config if isinstance(svc_config, str) else svc_config.get('name', '')
+            is_user = svc_config.get('user', False) if isinstance(svc_config, dict) else False
+
+            if not svc_name:
+                continue
+
+            try:
+                cmd = ['systemctl']
+                if is_user:
+                    cmd.extend(['--user'])
+                cmd.extend(['is-active', svc_name])
+
+                proc = await asyncio.create_subprocess_exec(
+                    *cmd,
+                    stdout=asyncio.subprocess.PIPE,
+                    stderr=asyncio.subprocess.PIPE,
+                )
+                stdout, _ = await asyncio.wait_for(
+                    proc.communicate(), timeout=project.timeout
+                )
+                status = stdout.decode().strip()
+
+                if status != 'active':
+                    failed_services.append(f"{svc_name}: {status}")
+
+            except asyncio.TimeoutError:
+                failed_services.append(f"{svc_name}: timeout")
+            except Exception as e:
+                failed_services.append(f"{svc_name}: {e}")
+
+        response_time_ms = (time.time() - start_time) * 1000
+
+        if not failed_services:
+            was_recovering = project.update_online(response_time_ms)
+            svc_count = len(project.systemd_services)
+            self.logger.info(
+                f"✅ {project.name} healthy ({svc_count} services active, {response_time_ms:.0f}ms)"
+            )
+            if was_recovering:
+                await self._send_recovery_alert(project)
+        else:
+            error = f"Services down: {', '.join(failed_services)}"
+            was_new_incident = project.update_offline(error)
+            self.logger.warning(f"⚠️ {project.name}: {error}")
+            if was_new_incident:
+                await self._send_incident_alert(project, error)
+            await self._attempt_remediation(project, error)
+
+        self._save_state()
 
     async def _attempt_remediation(self, project: ProjectStatus, error: str):
         """Attempt automatic remediation after repeated failures."""

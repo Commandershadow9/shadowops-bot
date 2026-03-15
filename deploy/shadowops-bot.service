@@ -40,6 +40,8 @@ Environment="PYTHONUTF8=1"
 UnsetEnvironment=CLAUDECODE
 # PATH fuer Codex und Claude CLI
 Environment="PATH=/home/cmdshadow/.nvm/versions/node/v25.2.1/bin:/home/cmdshadow/.local/bin:/usr/local/bin:/usr/bin:/bin"
+# XDG_RUNTIME_DIR für systemctl --user Zugriff auf Agent-Services
+Environment="XDG_RUNTIME_DIR=/run/user/1000"
 
 [Install]
 WantedBy=multi-user.target

@@ -65,7 +65,7 @@
 | `aide.py` | AIDE File Integrity Monitoring |
 | `approval_modes.py` | Approval-Modi (paranoid/auto/dry-run) |
 | `context_manager.py` | Project-Context Loader fuer KI-Prompts |
-| `project_monitor.py` | Projekt-Health-Monitoring (Uptime, Response Times) |
+| `project_monitor.py` | Projekt-Health-Monitoring (Uptime, Response Times, systemd-Service-Checks) |
 | `deployment_manager.py` | Deployment-Verwaltung |
 | `incident_manager.py` | Incident-Tracking und -Management |
 | `customer_notifications.py` | Kunden-Benachrichtigungen (Patch Notes etc.) |
@@ -84,7 +84,7 @@
 | `command_executor.py` | Sichere Command-Ausfuehrung (kein shell=True) |
 | `impact_analyzer.py` | Impact-Analyse vor Fix-Ausfuehrung |
 | `backup_manager.py` | Backup vor Fixes (/tmp/shadowops_backups/) |
-| `service_manager.py` | systemd Service Management |
+| `service_manager.py` | systemd Service Management (8 Services: shadowops, guildscout, sicherheitstool, nexus, postgresql + 3 AI-Agent-Services) |
 | `verification.py` | Post-Fix Verifikation |
 
 #### Unterverzeichnisse
@@ -127,11 +127,12 @@
 | `data/knowledge_base.db` | SQLite Learning Database (nicht vorhanden → wird per `data/ai_knowledge.db` erstellt) |
 | `data/ai_knowledge.db` | SQLite Knowledge DB (Fixes, Strategien, Plaene mit Erfahrungslernen) |
 | `data/changelogs.db` | Zentrale Changelog-DB (alle Projekte, wird zur Laufzeit erstellt) |
+| `data/project_monitor_state.json` | Persistenter Monitor-State (Uptime-Stats pro Projekt) |
 
 ### Deploy
 | Datei | Zweck |
 |-------|-------|
-| `deploy/shadowops-bot.service` | systemd Unit-File (Quelle fuer /etc/systemd/system/) |
+| `deploy/shadowops-bot.service` | systemd Unit-File (Quelle fuer /etc/systemd/system/), setzt XDG_RUNTIME_DIR fuer User-Service-Zugriff |
 
 ### Scripts (`scripts/`)
 | Datei | Zweck |
