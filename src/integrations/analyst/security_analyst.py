@@ -594,9 +594,17 @@ class SecurityAnalyst:
             issues_created=issues_created,
         )
 
+        # Auto-Close: Veraltete Findings schliessen (>30 Tage offen, kein Issue)
+        try:
+            stale_closed = await self.db.close_stale_findings(days=30)
+        except Exception:
+            stale_closed = 0
+
         logger.info(
-            "Session #%d abgeschlossen: %d Findings, %d Auto-Fixes, %d Issues, %d Duplikate übersprungen",
-            session_id, len(findings), auto_fixes, issues_created, duplicates_skipped,
+            "Session #%d abgeschlossen: %d Findings, %d Auto-Fixes, %d Issues, "
+            "%d Duplikate übersprungen, %d veraltete Findings geschlossen",
+            session_id, len(findings), auto_fixes, issues_created,
+            duplicates_skipped, stale_closed,
         )
 
         # Briefing erstellen

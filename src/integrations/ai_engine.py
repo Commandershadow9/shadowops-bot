@@ -1021,15 +1021,13 @@ class AIEngine:
         """
         env = self.codex._get_clean_env()
 
-        # Alle Argumente als Liste — kein Shell, kein Injection-Risiko
+        # Prompt via stdin (ARG_MAX Limit bei grossen Prompts vermeiden)
         args = [
             'codex', 'exec', '--ephemeral',
             '--skip-git-repo-check',
-            '-c', 'mcp_servers={}',
             '-s', 'workspace-write',
             '-m', model,
             '--output-schema', schema_path,
-            prompt,
         ]
 
         logger.info("Codex-Analyst gestartet (Modell: %s, Timeout: %ds)", model, timeout)
@@ -1039,6 +1037,7 @@ class AIEngine:
         try:
             proc = await asyncio.create_subprocess_exec(
                 *args,
+                stdin=asyncio.subprocess.PIPE,
                 stdout=asyncio.subprocess.PIPE,
                 stderr=asyncio.subprocess.PIPE,
                 env=env,
@@ -1046,7 +1045,7 @@ class AIEngine:
             )
 
             stdout_bytes, stderr_bytes = await asyncio.wait_for(
-                proc.communicate(), timeout=timeout
+                proc.communicate(input=prompt.encode('utf-8')), timeout=timeout
             )
 
             stdout = stdout_bytes.decode('utf-8', errors='replace') if stdout_bytes else ''
@@ -1167,15 +1166,15 @@ class AIEngine:
             'Read,Glob,Grep,Write,Edit'
         )
 
-        # Alle Argumente als Liste — kein Shell, kein Injection-Risiko
+        # Prompt via stdin (ARG_MAX), skip-permissions (damit Tools ohne Approval laufen)
         args = [
             self.claude.cli_path,
-            '-p', full_prompt,
+            '-p', '-',
             '--model', model,
             '--max-turns', str(max_turns),
             '--output-format', 'text',
             '--verbose',
-            '--allowedTools', allowed_tools,
+            '--dangerously-skip-permissions',
         ]
 
         env = self.claude._get_clean_env()
@@ -1189,6 +1188,7 @@ class AIEngine:
         try:
             proc = await asyncio.create_subprocess_exec(
                 *args,
+                stdin=asyncio.subprocess.PIPE,
                 stdout=asyncio.subprocess.PIPE,
                 stderr=asyncio.subprocess.PIPE,
                 env=env,
@@ -1196,7 +1196,8 @@ class AIEngine:
             )
 
             stdout_bytes, stderr_bytes = await asyncio.wait_for(
-                proc.communicate(), timeout=timeout
+                proc.communicate(input=full_prompt.encode('utf-8')),
+                timeout=timeout,
             )
 
             stdout = stdout_bytes.decode('utf-8', errors='replace') if stdout_bytes else ''

@@ -198,6 +198,33 @@ class AnalystDB:
         )
         return [dict(r) for r in rows]
 
+    async def close_finding(self, finding_id: int, resolution: str = "auto-resolved") -> None:
+        """Schliesst ein Finding als behoben."""
+        await self.pool.execute(
+            "UPDATE findings SET status = 'fixed', fixed_at = NOW() WHERE id = $1",
+            finding_id,
+        )
+        logger.info("Finding #%d geschlossen: %s", finding_id, resolution)
+
+    async def close_stale_findings(self, days: int = 30) -> int:
+        """Schliesst Findings die älter als N Tage sind und nie bestätigt wurden.
+
+        Findings die seit 30+ Tagen offen sind und keine GitHub-Issue haben,
+        sind wahrscheinlich durch Updates/Patches automatisch behoben.
+        """
+        result = await self.pool.execute(
+            """UPDATE findings SET status = 'fixed', fixed_at = NOW()
+               WHERE status = 'open'
+                 AND github_issue_url IS NULL
+                 AND created_at < NOW() - make_interval(days => $1)""",
+            days,
+        )
+        # Anzahl der geschlossenen Findings aus dem Command-Tag extrahieren
+        count = int(result.split()[-1]) if result else 0
+        if count > 0:
+            logger.info("Auto-Close: %d veraltete Findings geschlossen (>%d Tage)", count, days)
+        return count
+
     async def get_last_session(self) -> Optional[Dict]:
         """Letzte abgeschlossene Session abrufen
 

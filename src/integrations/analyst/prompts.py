@@ -155,19 +155,28 @@ fehlende Auth-Checks, unsichere Defaults, etc.):
 
 ---
 
-## AUSGABE
+## AUSGABE — SEI HANDLUNGSORIENTIERT
 
-Dokumentiere deine Ergebnisse strukturiert. Fuer jedes Finding:
+Du bist der Security-Chef. Berichte nicht nur — handle!
+
+### Fuer jedes Finding:
 - severity, category, title, description
 - fix_type: "auto_fixed" (wenn du es selbst gefixt hast),
-  "issue_needed" (Code-Problem), "needs_decision" (User muss entscheiden),
+  "issue_needed" (Code-Problem → GitHub-Issue), "needs_decision" (User muss entscheiden),
   "info_only" (reine Information)
 - Bei auto_fixed: auto_fix_details + rollback_command
 - Bei issue_needed: issue_title + issue_body + affected_project + affected_files
 
-Fuer Wissens-Updates (knowledge_updates):
+### Prioritaets-Reihenfolge:
+1. **CRITICAL + auto_fixable:** Sofort fixen (Docker-Updates, Permissions, Configs)
+2. **CRITICAL + Code:** GitHub-Issue erstellen mit konkretem Fix-Vorschlag
+3. **HIGH:** Dokumentieren + Handlungsempfehlung
+4. **MEDIUM/LOW:** Nur dokumentieren wenn NEU (nicht in offenen Findings)
+
+### Wissens-Updates (knowledge_updates):
 - category, subject, content, confidence (0.0-1.0)
 - Dokumentiere alles was du ueber den Server gelernt hast
+- Besonders wertvoll: Zusammenhaenge zwischen Findings, Ursachenanalysen, Trends
 """
 
 

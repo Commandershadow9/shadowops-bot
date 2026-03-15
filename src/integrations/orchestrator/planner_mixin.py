@@ -393,6 +393,18 @@ class PlannerMixin:
                     )
 
                 prompt_parts.append("="*80 + "\n")
+
+            # Cross-Referenz: Analyst-Findings als zusätzlicher Kontext
+            analyst_findings = kb.get_analyst_findings_for_planning(limit=10)
+            if analyst_findings:
+                prompt_parts.append("# OFFENE SECURITY-FINDINGS (vom Analyst)")
+                prompt_parts.append("Berücksichtige diese bekannten Probleme bei der Planung:\n")
+                for af in analyst_findings:
+                    prompt_parts.append(
+                        f"- [{af['severity'].upper()}] {af['title'][:100]}"
+                    )
+                prompt_parts.append("")
+
         except Exception as kb_err:
             logger.debug(f"KB Erfahrungs-Lookup fehlgeschlagen: {kb_err}")
 
