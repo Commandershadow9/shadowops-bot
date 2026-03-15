@@ -184,6 +184,20 @@ class AnalystDB:
         )
         return dict(row) if row else None
 
+    async def get_open_findings_summary(self, limit: int = 30) -> list:
+        """Holt offene Findings als Kurzübersicht für den Analyst-Prompt.
+
+        Damit der Analyst weiß was schon gemeldet wurde und nicht
+        dieselben Probleme erneut reported.
+        """
+        rows = await self.pool.fetch(
+            """SELECT id, severity, title, category
+               FROM findings WHERE status = 'open'
+               ORDER BY created_at DESC LIMIT $1""",
+            limit,
+        )
+        return [dict(r) for r in rows]
+
     async def get_last_session(self) -> Optional[Dict]:
         """Letzte abgeschlossene Session abrufen
 

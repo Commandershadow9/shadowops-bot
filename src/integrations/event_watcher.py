@@ -128,7 +128,6 @@ class SecurityEventWatcher:
 
         self.running = True
         logger.info("🔍 Starting Security Event Watcher (EFFICIENT Mode)...")
-        logger.info("🔍 Starting Security Event Watcher (EFFICIENT Mode)...")
 
         # Start individual watchers
         self.watcher_tasks = [

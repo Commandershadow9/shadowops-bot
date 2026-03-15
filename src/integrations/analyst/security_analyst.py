@@ -286,10 +286,16 @@ class SecurityAnalyst:
             # Health-Snapshot VOR der Analyse
             health_before = await self._take_health_snapshot(session_id)
 
-            # AI-Kontext aus DB zusammenstellen
+            # AI-Kontext aus DB zusammenstellen + offene Findings laden
             knowledge_context = await self.db.build_ai_context()
+            open_findings = await self.db.get_open_findings_summary()
+            open_findings_text = "\n".join(
+                f"- [{f['severity'].upper()}] {f['title']}" for f in open_findings[:20]
+            ) if open_findings else "(keine offenen Findings)"
+
             context_section = ANALYST_CONTEXT_TEMPLATE.format(
                 knowledge_context=knowledge_context,
+                open_findings=open_findings_text,
             )
             prompt = ANALYST_SYSTEM_PROMPT + "\n\n" + context_section
 
@@ -524,9 +530,22 @@ class SecurityAnalyst:
         # Findings verarbeiten
         auto_fixes = 0
         issues_created = 0
+        duplicates_skipped = 0
 
         for finding in findings:
             try:
+                title = finding.get('title', 'Unbenannt')
+
+                # Duplikat-Check: Gleicher Titel schon als offenes Finding?
+                existing = await self.db.find_similar_open_finding(title)
+                if existing:
+                    logger.info(
+                        "Finding-Duplikat übersprungen: '%s' (existiert als #%d)",
+                        title[:50], existing['id'],
+                    )
+                    duplicates_skipped += 1
+                    continue
+
                 fix_type = finding.get('fix_type', 'info_only')
                 github_issue_url = None
 
@@ -576,8 +595,8 @@ class SecurityAnalyst:
         )
 
         logger.info(
-            "Session #%d abgeschlossen: %d Findings, %d Auto-Fixes, %d Issues",
-            session_id, len(findings), auto_fixes, issues_created,
+            "Session #%d abgeschlossen: %d Findings, %d Auto-Fixes, %d Issues, %d Duplikate übersprungen",
+            session_id, len(findings), auto_fixes, issues_created, duplicates_skipped,
         )
 
         # Briefing erstellen
@@ -1088,8 +1107,13 @@ class SecurityAnalyst:
                     )
                 else:
                     knowledge_context = await self.db.build_ai_context()
+                    open_findings = await self.db.get_open_findings_summary()
+                    open_findings_text = "\n".join(
+                        f"- [{f['severity'].upper()}] {f['title']}" for f in open_findings[:20]
+                    ) if open_findings else "(keine offenen Findings)"
                     context_section = ANALYST_CONTEXT_TEMPLATE.format(
                         knowledge_context=knowledge_context,
+                        open_findings=open_findings_text,
                     )
                     prompt = ANALYST_SYSTEM_PROMPT + "\n\n" + context_section
 

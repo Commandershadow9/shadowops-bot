@@ -180,6 +180,13 @@ ANALYST_CONTEXT_TEMPLATE = """
 
 {knowledge_context}
 
+## OFFENE FINDINGS (NICHT erneut melden!)
+
+Die folgenden Findings sind bereits dokumentiert. Melde sie NICHT nochmal.
+Konzentriere dich auf NEUE Probleme die hier NICHT aufgelistet sind.
+
+{open_findings}
+
 ## FOKUS-EMPFEHLUNG
 
 Basierend auf deinen bisherigen Untersuchungen und offenen Findings,

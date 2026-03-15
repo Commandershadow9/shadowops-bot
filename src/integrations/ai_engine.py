@@ -668,6 +668,12 @@ class AIEngine:
         self.claude = ClaudeProvider(fallback_cfg)
         self.router = TaskRouter(ai_cfg)
 
+        # Globales Token-Budget (über alle AI-Calls des Tages)
+        from datetime import datetime
+        self._daily_max_tokens = ai_cfg.get('daily_token_budget', 100000)
+        self._daily_tokens_used = 0
+        self._token_budget_date = datetime.utcnow().date()
+
         # Stats-Tracking
         self.stats = {
             'codex_calls': 0,
@@ -695,6 +701,28 @@ class AIEngine:
     async def get_raw_ai_response(self, prompt: str, use_critical_model: bool = False) -> Optional[str]:
         """Alias fuer get_ai_analysis (Abwaertskompatibilitaet mit PatchNotesManager)"""
         return await self.get_ai_analysis(prompt=prompt, use_critical_model=use_critical_model)
+
+    # ------------------------------------------------------------------
+    # Token-Budget-Management
+    # ------------------------------------------------------------------
+
+    def _track_tokens(self, prompt: str) -> None:
+        """Trackt geschätzten Token-Verbrauch."""
+        from datetime import datetime
+        today = datetime.utcnow().date()
+        if today != self._token_budget_date:
+            self._daily_tokens_used = 0
+            self._token_budget_date = today
+        estimated = len(prompt) // 4
+        self._daily_tokens_used += estimated
+
+    def is_budget_exhausted(self) -> bool:
+        """Prüft ob das tägliche Token-Budget erschöpft ist."""
+        from datetime import datetime
+        today = datetime.utcnow().date()
+        if today != self._token_budget_date:
+            return False
+        return self._daily_tokens_used >= self._daily_max_tokens
 
     # ------------------------------------------------------------------
     # Oeffentliche Methoden
@@ -1320,9 +1348,18 @@ class AIEngine:
         Returns:
             Ergebnis-Dict oder None
         """
+        # Token-Budget-Check (zentral, gilt für alle AI-Calls)
+        if self.is_budget_exhausted():
+            logger.warning("Token-Budget erschöpft (%d/%d) — AI-Call übersprungen",
+                           self._daily_tokens_used, self._daily_max_tokens)
+            return None
+
         primary_engine = route.get('engine', 'codex')
         model_class = route.get('model_class', 'standard')
         schema_path = route.get('schema_path')
+
+        # Token-Tracking
+        self._track_tokens(prompt)
 
         # Primary Engine
         if primary_engine == 'codex':
