@@ -222,14 +222,14 @@ class AdminCog(commands.Cog):
                 f"von {interaction.user}"
             )
 
-            # Bestätigung senden
-            await interaction.followup.send(
-                f"🚀 **{len(commits)} Commits** für **{project_key}** released!\n"
+            # Status-Nachricht senden
+            status_msg = await interaction.followup.send(
+                f"⏳ **{len(commits)} Commits** für **{project_key}** released\n"
                 f"Gesammelt seit: {first}\n"
-                f"Patch Notes werden jetzt generiert..."
+                f"KI generiert Patch Notes..."
             )
 
-            # Patch Notes generieren (async, blockiert nicht den Command)
+            # Patch Notes generieren
             if gh:
                 repo_url = (
                     project_config.get('repo_url')
@@ -238,20 +238,49 @@ class AdminCog(commands.Cog):
                 )
                 pusher = commits[-1].get('author', {}).get('name', 'manual-release')
 
-                await gh._send_push_notification(
-                    repo_name=project_key,
-                    repo_url=repo_url,
-                    branch='main',
-                    pusher=pusher,
-                    commits=commits,
-                    skip_batcher=True,
+                try:
+                    await gh._send_push_notification(
+                        repo_name=project_key,
+                        repo_url=repo_url,
+                        branch='main',
+                        pusher=pusher,
+                        commits=commits,
+                        skip_batcher=True,
+                    )
+                    # Erfolg — Status-Nachricht aktualisieren
+                    await status_msg.edit(
+                        content=(
+                            f"✅ **{len(commits)} Commits** für **{project_key}** veröffentlicht!\n"
+                            f"Gesammelt seit: {first}\n"
+                            f"Patch Notes wurden in den Update-Channel gepostet."
+                        )
+                    )
+                except Exception as e:
+                    self.logger.error(f"❌ Patch Notes Generierung fehlgeschlagen: {e}", exc_info=True)
+                    await status_msg.edit(
+                        content=(
+                            f"⚠️ **{len(commits)} Commits** für **{project_key}** released, "
+                            f"aber Patch Notes Generierung fehlgeschlagen:\n"
+                            f"```{str(e)[:500]}```\n"
+                            f"Commits wurden trotzdem freigegeben."
+                        )
+                    )
+            else:
+                await status_msg.edit(
+                    content=(
+                        f"⚠️ **{len(commits)} Commits** released, "
+                        f"aber GitHub Integration nicht verfügbar."
+                    )
                 )
 
         except Exception as e:
             self.logger.error(f"❌ Fehler in /release-notes: {e}", exc_info=True)
-            await interaction.followup.send(
-                f"❌ Fehler: {e}", ephemeral=True
-            )
+            try:
+                await interaction.followup.send(
+                    f"❌ Fehler: {e}", ephemeral=True
+                )
+            except Exception:
+                pass
 
     @app_commands.command(
         name="pending-notes",
