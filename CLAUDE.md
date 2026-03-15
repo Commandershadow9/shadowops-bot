@@ -48,13 +48,13 @@
 #### Kern-Module (Packages)
 | Package | Module | Zweck |
 |---------|--------|-------|
-| `orchestrator/` | `core`, `batch_mixin`, `planner_mixin`, `discord_mixin`, `executor_mixin`, `recovery_mixin`, `models` | Remediation-Orchestrator (Event-Batching, KI-Analyse, Fix-Ausfuehrung) |
+| `orchestrator/` | `core`, `batch_mixin`, `planner_mixin`, `discord_mixin`, `executor_mixin`, `recovery_mixin`, `models` | Remediation-Orchestrator (Event-Batching, KI-Analyse, Fix-Ausfuehrung, Erfahrungslernen via KB) |
 | `github_integration/` | `core`, `webhook_mixin`, `polling_mixin`, `event_handlers_mixin`, `ci_mixin`, `state_mixin`, `git_ops_mixin`, `notifications_mixin`, `ai_patch_notes_mixin` | GitHub Webhook Server, Patch Notes, CI/CD |
 
 #### Einzelne Module
 | Datei | Zweck |
 |-------|-------|
-| `ai_engine.py` | Dual-Engine AI (Codex Primary + Claude Fallback, Structured Output) |
+| `ai_engine.py` | Dual-Engine AI (Codex Primary + Claude Fallback, Structured Output, Markdown-Fence-Parser) |
 | `smart_queue.py` | SmartQueue (3 Analyse-Slots, 1 Fix-Lock, Circuit Breaker) |
 | `auto_fix_manager.py` | Discord Buttons fuer Approve/Reject, Persistent Views |
 | `event_watcher.py` | Periodischer Scanner (Trivy/CrowdSec/Fail2ban/AIDE) |
@@ -77,7 +77,7 @@
 | `patch_notes_batcher.py` | Sammelt Commits, Release via Cron (Sonntag), manuell (/release-notes) oder Notbremse (≥20) |
 | `patch_notes_feedback.py` | Discord Feedback (Persistent Buttons: Like + Bewerten, Text-Modal) |
 | `patch_notes_web_exporter.py` | Web-Export (zentrale DB Upsert + File-Backup + optional HTTP POST) |
-| `knowledge_base.py` | SQLite Knowledge Database |
+| `knowledge_base.py` | SQLite Knowledge Database (Fixes, Strategien, Pläne mit Erfahrungslernen) |
 | `log_analyzer.py` | Log-Analyse und -Auswertung |
 | `code_analyzer.py` | Code-Analyse fuer Fix-Strategien |
 | `git_history_analyzer.py` | Git-History Analyse |
@@ -124,7 +124,8 @@
 | `config/safe_upgrades.yaml` | Curated Upgrade-Pfade fuer Packages |
 | `config/logrotate.conf` | Logrotate-Konfiguration |
 | `data/state.json` | Dynamischer Bot-State (Channel IDs, etc.) |
-| `data/knowledge_base.db` | SQLite Learning Database |
+| `data/knowledge_base.db` | SQLite Learning Database (nicht vorhanden → wird per `data/ai_knowledge.db` erstellt) |
+| `data/ai_knowledge.db` | SQLite Knowledge DB (Fixes, Strategien, Plaene mit Erfahrungslernen) |
 | `data/changelogs.db` | Zentrale Changelog-DB (alle Projekte, wird zur Laufzeit erstellt) |
 
 ### Deploy

@@ -130,12 +130,33 @@ class KnowledgeBase:
             )
         """)
 
+        # Table: plans - Koordinierte Remediations-Pläne (AI-generiert)
+        cursor.execute("""
+            CREATE TABLE IF NOT EXISTS plans (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                timestamp DATETIME DEFAULT CURRENT_TIMESTAMP,
+                batch_id TEXT NOT NULL,
+                event_sources TEXT NOT NULL,
+                event_types TEXT,
+                description TEXT NOT NULL,
+                confidence REAL,
+                phases TEXT NOT NULL,
+                rollback_plan TEXT,
+                estimated_minutes INTEGER,
+                result TEXT CHECK(result IN ('success', 'failure', 'partial', 'pending')),
+                ai_model TEXT,
+                duration_seconds REAL
+            )
+        """)
+
         # Create indexes for faster queries
         cursor.execute("CREATE INDEX IF NOT EXISTS idx_fixes_signature ON fixes(event_signature)")
         cursor.execute("CREATE INDEX IF NOT EXISTS idx_fixes_source ON fixes(event_source)")
         cursor.execute("CREATE INDEX IF NOT EXISTS idx_fixes_result ON fixes(result)")
         cursor.execute("CREATE INDEX IF NOT EXISTS idx_vulnerabilities_cve ON vulnerabilities(cve_id)")
         cursor.execute("CREATE INDEX IF NOT EXISTS idx_strategies_type ON strategies(event_type)")
+        cursor.execute("CREATE INDEX IF NOT EXISTS idx_plans_sources ON plans(event_sources)")
+        cursor.execute("CREATE INDEX IF NOT EXISTS idx_plans_result ON plans(result)")
 
         self.conn.commit()
         logger.info("✅ Knowledge Base schema initialized")
@@ -410,6 +431,115 @@ class KnowledgeBase:
             ],
             'total_vulnerabilities': total_vulns
         }
+
+    def record_plan(self, batch_id: str, event_sources: List[str],
+                    event_types: List[str], plan: Dict[str, Any],
+                    ai_model: str = 'unknown') -> int:
+        """
+        Speichert einen koordinierten Remediations-Plan
+
+        Args:
+            batch_id: Batch-ID
+            event_sources: Quellen (fail2ban, crowdsec, trivy, ...)
+            event_types: Event-Typen (ban, threat, vulnerability, ...)
+            plan: Der vollstaendige Plan (description, phases, confidence, ...)
+            ai_model: Welches AI-Modell den Plan erstellt hat
+
+        Returns:
+            Plan-ID
+        """
+        cursor = self.conn.cursor()
+
+        cursor.execute("""
+            INSERT INTO plans (
+                batch_id, event_sources, event_types, description,
+                confidence, phases, rollback_plan, estimated_minutes,
+                result, ai_model
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, 'pending', ?)
+        """, (
+            batch_id,
+            ','.join(event_sources),
+            ','.join(event_types),
+            plan.get('description', ''),
+            plan.get('confidence', 0.0),
+            json.dumps(plan.get('phases', []), ensure_ascii=False),
+            plan.get('rollback_plan', ''),
+            plan.get('estimated_duration_minutes', 0),
+            ai_model,
+        ))
+
+        plan_id = cursor.lastrowid
+        self.conn.commit()
+
+        logger.info(f"📋 Plan #{plan_id} gespeichert: {plan.get('description', '')[:80]}")
+        return plan_id
+
+    def update_plan_result(self, plan_id: int, result: str,
+                           duration_seconds: float = 0.0):
+        """Aktualisiert das Ergebnis eines Plans nach Ausfuehrung"""
+        cursor = self.conn.cursor()
+        cursor.execute(
+            "UPDATE plans SET result = ?, duration_seconds = ? WHERE id = ?",
+            (result, duration_seconds, plan_id)
+        )
+        self.conn.commit()
+
+    def get_similar_plans(self, event_sources: List[str], limit: int = 3,
+                          days: int = 90) -> List[Dict[str, Any]]:
+        """
+        Findet aehnliche fruehere Plaene basierend auf Event-Quellen.
+
+        Args:
+            event_sources: Aktuelle Event-Quellen
+            limit: Max Anzahl zurueckgegebener Plaene
+            days: Zeitraum in Tagen
+
+        Returns:
+            Liste der relevantesten frueheren Plaene
+        """
+        cursor = self.conn.cursor()
+        since = (datetime.now() - timedelta(days=days)).isoformat()
+
+        # Suche nach Plaenen die mindestens eine gemeinsame Quelle haben
+        conditions = " OR ".join(["event_sources LIKE ?" for _ in event_sources])
+        params = [f"%{src}%" for src in event_sources]
+        params.append(since)
+
+        cursor.execute(f"""
+            SELECT id, batch_id, event_sources, event_types, description,
+                   confidence, phases, result, ai_model, estimated_minutes,
+                   duration_seconds, timestamp
+            FROM plans
+            WHERE ({conditions}) AND timestamp >= ?
+            ORDER BY
+                CASE result WHEN 'success' THEN 0 WHEN 'partial' THEN 1 ELSE 2 END,
+                confidence DESC
+            LIMIT ?
+        """, params + [limit])
+
+        plans = []
+        for row in cursor.fetchall():
+            try:
+                phases = json.loads(row[6]) if row[6] else []
+            except (json.JSONDecodeError, ValueError):
+                phases = []
+
+            plans.append({
+                'id': row[0],
+                'batch_id': row[1],
+                'event_sources': row[2],
+                'event_types': row[3],
+                'description': row[4],
+                'confidence': row[5],
+                'phases': phases,
+                'result': row[7],
+                'ai_model': row[8],
+                'estimated_minutes': row[9],
+                'actual_duration': row[10],
+                'timestamp': row[11],
+            })
+
+        return plans
 
     def close(self):
         """Close database connection"""

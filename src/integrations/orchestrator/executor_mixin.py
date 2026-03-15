@@ -147,6 +147,18 @@ class ExecutorMixin:
                     # Cache clearen damit Events beim naechsten Scan neu erkannt werden
                     await self._clear_event_cache_for_batch(batch)
 
+                # Plan-Ergebnis in Knowledge Base updaten
+                if plan and hasattr(plan, '_kb_plan_id') and plan._kb_plan_id:
+                    try:
+                        from ..knowledge_base import get_knowledge_base
+                        kb = get_knowledge_base()
+                        kb.update_plan_result(
+                            plan._kb_plan_id,
+                            'success' if success else 'failure',
+                        )
+                    except Exception:
+                        pass
+
                 self.completed_batches.append(batch)
 
             except Exception as e:

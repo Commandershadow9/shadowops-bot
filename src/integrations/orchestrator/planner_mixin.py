@@ -94,11 +94,12 @@ class PlannerMixin:
 
             # Validierung: Leerer Plan mit 0% Confidence ist ein Fehler
             if plan.confidence == 0 and len(plan.phases) == 0:
+                raw_dump = json.dumps(result, default=str, ensure_ascii=False)
                 logger.error(
                     f"KI konnte keinen verwertbaren Plan erstellen "
                     f"(Confidence: 0%, keine Phasen). "
                     f"Prompt-Länge: {len(prompt)} Zeichen. "
-                    f"AI-Rohantwort: {json.dumps(result, default=str, ensure_ascii=False)[:500]}"
+                    f"AI-Rohantwort: {raw_dump}"
                 )
                 status_text = (
                     "KI konnte keinen verwertbaren Plan erstellen "
@@ -107,6 +108,21 @@ class PlannerMixin:
                 )
                 await self._send_batch_status(batch, status_text, 0xE74C3C)  # Rot
                 return None
+
+            # Plan in Knowledge Base speichern (Lernen aus Erfahrung)
+            try:
+                kb = get_knowledge_base()
+                event_sources = list({e.source for e in batch.events})
+                event_types = list({e.event_type for e in batch.events})
+                plan._kb_plan_id = kb.record_plan(
+                    batch_id=batch.batch_id,
+                    event_sources=event_sources,
+                    event_types=event_types,
+                    plan=result,
+                    ai_model=plan.ai_model,
+                )
+            except Exception as kb_err:
+                logger.debug(f"KB Plan-Tracking fehlgeschlagen: {kb_err}")
 
             # Sende finale Discord-Message: Plan erstellt
             phase_names = "\n".join([f"• **Phase {i+1}**: {p['name']}" for i, p in enumerate(plan.phases)])
@@ -349,6 +365,36 @@ class PlannerMixin:
                     break  # Only add context once (same for all events in batch)
 
             prompt_parts.append("\n" + "="*80 + "\n")
+
+        # Erfahrungswissen aus Knowledge Base einbauen
+        try:
+            kb = get_knowledge_base()
+            event_sources = list({e['source'] for e in context['events']})
+            similar_plans = kb.get_similar_plans(event_sources, limit=3)
+            if similar_plans:
+                prompt_parts.append("# ERFAHRUNG AUS FRÜHEREN REMEDIATIONS")
+                prompt_parts.append("Die folgenden Pläne wurden bei ähnlichen Vorfällen erstellt. Nutze erfolgreiche Strategien als Referenz.\n")
+                for sp in similar_plans:
+                    result_icon = "✅" if sp['result'] == 'success' else "⚠️" if sp['result'] == 'partial' else "❌" if sp['result'] == 'failure' else "⏳"
+                    phase_summary = ", ".join(p.get('name', '?') for p in sp['phases'][:5]) if sp['phases'] else "N/A"
+                    prompt_parts.append(
+                        f"- {result_icon} **{sp['event_sources']}** ({sp['timestamp'][:10]}): "
+                        f"{sp['description'][:150]} | Confidence: {sp['confidence']:.0%} | "
+                        f"Phasen: {phase_summary}"
+                    )
+                prompt_parts.append("")
+
+                # Erfolgsrate fuer diese Quellen
+                stats = kb.get_success_rate(event_source=event_sources[0])
+                if stats['total_attempts'] > 0:
+                    prompt_parts.append(
+                        f"📊 Bisherige Erfolgsrate für {event_sources[0]}: "
+                        f"{stats['success_rate']:.0%} ({stats['successful_attempts']}/{stats['total_attempts']} Fixes)\n"
+                    )
+
+                prompt_parts.append("="*80 + "\n")
+        except Exception as kb_err:
+            logger.debug(f"KB Erfahrungs-Lookup fehlgeschlagen: {kb_err}")
 
         # Main coordination prompt
         prompt_parts.append(f"""# Koordinierte Security Remediation

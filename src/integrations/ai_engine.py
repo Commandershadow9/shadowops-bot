@@ -338,12 +338,24 @@ class ClaudeProvider:
         # Pruefe ob es ein {"result": "..."} Wrapper ist
         if isinstance(parsed, dict) and 'result' in parsed and isinstance(parsed['result'], str):
             inner_text = parsed['result']
+            # Markdown-Codefences strippen (Claude wrapped JSON oft in ```json ... ```)
+            stripped = re.sub(r'^```(?:json)?\s*\n?', '', inner_text.strip())
+            stripped = re.sub(r'\n?```\s*$', '', stripped).strip()
             try:
-                inner = json.loads(inner_text)
+                inner = json.loads(stripped)
                 if isinstance(inner, dict):
                     return inner
             except (json.JSONDecodeError, ValueError):
                 pass
+            # Fallback: JSON-Objekt aus dem result-String extrahieren
+            match = re.search(r'\{.*\}', inner_text, re.DOTALL)
+            if match:
+                try:
+                    inner = json.loads(match.group(0))
+                    if isinstance(inner, dict):
+                        return inner
+                except (json.JSONDecodeError, ValueError):
+                    pass
             # Wenn inner kein JSON ist, gib den Wrapper selbst zurueck
             return parsed
 
