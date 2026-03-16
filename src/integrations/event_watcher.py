@@ -299,10 +299,28 @@ class SecurityEventWatcher:
         interval = self.intervals['fail2ban']
         logger.info(f"🔍 Starting Fail2ban Realtime Watcher ({interval}s intervals)")
 
-        # Recidive-Tracking: IP → Anzahl Bans (persistiert über Polls)
+        # Recidive-Tracking: Initialisiere aus fail2ban.log History
         if not hasattr(self, '_ban_counts'):
             self._ban_counts: dict[str, int] = {}
             self._permanent_blocked: set[str] = set()
+            # Ban-History aus Log laden (überlebt Bot-Restart)
+            try:
+                log_path = Path('/var/log/fail2ban.log')
+                if log_path.exists():
+                    for line in log_path.read_text().splitlines():
+                        if 'Ban ' in line and 'Unban' not in line:
+                            parts = line.split('Ban ')
+                            if len(parts) >= 2:
+                                ip = parts[-1].strip()
+                                self._ban_counts[ip] = self._ban_counts.get(ip, 0) + 1
+                    if self._ban_counts:
+                        repeat_offenders = {ip: c for ip, c in self._ban_counts.items() if c >= 3}
+                        logger.info(
+                            "Recidive-Init: %d IPs aus Log geladen, %d Wiederholungstäter",
+                            len(self._ban_counts), len(repeat_offenders),
+                        )
+            except Exception:
+                pass
 
         while self.running:
             try:
