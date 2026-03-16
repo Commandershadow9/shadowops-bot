@@ -169,30 +169,44 @@ class CrowdSecFixer:
             }
 
     async def _extract_threat_ips(self, event: Dict) -> List[str]:
-        """Extract IP addresses from event"""
+        """Extract IP addresses from event.
+
+        SecurityEvent.to_dict() liefert 'details' (nicht 'event_details').
+        CrowdSec-Decisions haben 'ip', 'reason', 'scenario' in details.
+        """
 
         ips = []
 
-        event_details = event.get('event_details', {})
+        # SecurityEvent.to_dict() → 'details', Fallback auf 'event_details'
+        event_details = event.get('details', {}) or event.get('event_details', {})
 
-        # Check for IP in event details
+        # Check for IP in event details (CrowdSec Decision-Format)
         if 'ip' in event_details:
             ips.append(event_details['ip'])
+
+        # Check for value field (raw CrowdSec decision format)
+        if 'value' in event_details:
+            ips.append(event_details['value'])
 
         if 'ips' in event_details:
             ips.extend(event_details['ips'])
 
-        # Check in description
-        description = event.get('description', '')
-
-        # Extract IPs using regex
+        # Extract IPs from text fields via regex
         ip_pattern = r'\b(?:\d{1,3}\.){3}\d{1,3}\b'
-        found_ips = re.findall(ip_pattern, description)
 
-        ips.extend(found_ips)
+        # Check description (top-level and in details)
+        for text_field in [
+            event.get('description', ''),
+            event_details.get('reason', ''),
+            event_details.get('scenario', ''),
+            event_details.get('description', ''),
+        ]:
+            if text_field:
+                found_ips = re.findall(ip_pattern, text_field)
+                ips.extend(found_ips)
 
-        # Remove duplicates
-        ips = list(set(ips))
+        # Remove duplicates and filter invalid
+        ips = list(set(ip for ip in ips if ip and ip != 'Unknown'))
 
         logger.info(f"   Extracted {len(ips)} IP(s) from event")
 

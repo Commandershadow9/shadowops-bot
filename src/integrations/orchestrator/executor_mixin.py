@@ -144,8 +144,9 @@ class ExecutorMixin:
                 else:
                     logger.error(f"❌ Batch {batch.batch_id} fehlgeschlagen")
                     batch.status = "failed"
-                    # Cache clearen damit Events beim naechsten Scan neu erkannt werden
-                    await self._clear_event_cache_for_batch(batch)
+                    # Events als eskaliert markieren, NICHT aus Cache entfernen.
+                    # Cache-Clear führt zu Endlos-Loop: Event → Fail → Clear → Re-Detect → Fail
+                    await self._mark_events_escalated(batch)
 
                 # Plan-Ergebnis in Knowledge Base updaten
                 if plan and hasattr(plan, '_kb_plan_id') and plan._kb_plan_id:
@@ -164,7 +165,8 @@ class ExecutorMixin:
             except Exception as e:
                 logger.error(f"❌ Orchestrator Error für Batch {batch.batch_id}: {e}", exc_info=True)
                 batch.status = "failed"
-                await self._clear_event_cache_for_batch(batch)
+                # Eskalieren statt Cache-Clear — verhindert Endlos-Loop
+                await self._mark_events_escalated(batch)
                 self.completed_batches.append(batch)
 
             finally:

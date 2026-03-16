@@ -349,17 +349,28 @@ class BackupManager:
 
         backup_path = os.path.join(self.config.backup_root, f"{backup_id}_{backup_filename}")
 
-        # Copy file
+        # Copy file — Systemdateien (/etc/) brauchen sudo zum Lesen
+        needs_sudo = source.startswith('/etc/')
         if self.config.compression:
             # Use gzip compression (shlex.quote prevents command injection)
             result = await self.executor.execute(
                 f"gzip -c {shlex.quote(source)} > {shlex.quote(backup_path)}",
+                sudo=needs_sudo,
                 timeout=300
             )
             if not result.success:
                 raise RuntimeError(f"Backup failed: {result.error_message}")
         else:
-            shutil.copy2(source, backup_path)
+            if needs_sudo:
+                result = await self.executor.execute(
+                    f"cp --preserve=timestamps {shlex.quote(source)} {shlex.quote(backup_path)}",
+                    sudo=True,
+                    timeout=300
+                )
+                if not result.success:
+                    raise RuntimeError(f"Backup failed: {result.error_message}")
+            else:
+                shutil.copy2(source, backup_path)
 
         # Get size
         size_bytes = os.path.getsize(backup_path)
@@ -485,16 +496,26 @@ class BackupManager:
     async def _restore_file(self, backup_info: BackupInfo) -> bool:
         """Restore a file backup"""
         try:
+            needs_sudo = backup_info.source_path.startswith('/etc/')
             if backup_info.backup_path.endswith('.gz'):
                 # Decompress (shlex.quote prevents command injection)
                 result = await self.executor.execute(
                     f"gzip -dc {shlex.quote(backup_info.backup_path)} > {shlex.quote(backup_info.source_path)}",
+                    sudo=needs_sudo,
                     timeout=300
                 )
                 return result.success
             else:
-                shutil.copy2(backup_info.backup_path, backup_info.source_path)
-                return True
+                if needs_sudo:
+                    result = await self.executor.execute(
+                        f"cp --preserve=timestamps {shlex.quote(backup_info.backup_path)} {shlex.quote(backup_info.source_path)}",
+                        sudo=True,
+                        timeout=300
+                    )
+                    return result.success
+                else:
+                    shutil.copy2(backup_info.backup_path, backup_info.source_path)
+                    return True
         except Exception as e:
             logger.error(f"File restore error: {e}")
             return False
