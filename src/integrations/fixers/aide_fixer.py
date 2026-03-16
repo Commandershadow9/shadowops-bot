@@ -185,7 +185,8 @@ class AideFixer:
 
         changes = []
 
-        event_details = event.get('event_details', {})
+        # SecurityEvent.to_dict() → 'details', Fallback auf 'event_details'
+        event_details = event.get('details', {}) or event.get('event_details', {})
 
         # Parse file changes from event details
         if 'changed_files' in event_details:

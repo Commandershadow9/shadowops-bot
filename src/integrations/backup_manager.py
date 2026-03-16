@@ -349,15 +349,23 @@ class BackupManager:
 
         backup_path = os.path.join(self.config.backup_root, f"{backup_id}_{backup_filename}")
 
-        # Copy file — Systemdateien (/etc/) brauchen sudo zum Lesen
+        # Copy file — Systemdateien (/etc/) brauchen sudo zum Lesen.
+        # WICHTIG: 'sudo cmd > file' funktioniert NICHT, weil '>' vom
+        # unprivilegierten Shell ausgeführt wird. Stattdessen:
+        # 'sudo bash -c "cmd > file"' damit der Redirect auch als root läuft.
         needs_sudo = source.startswith('/etc/')
         if self.config.compression:
-            # Use gzip compression (shlex.quote prevents command injection)
-            result = await self.executor.execute(
-                f"gzip -c {shlex.quote(source)} > {shlex.quote(backup_path)}",
-                sudo=needs_sudo,
-                timeout=300
-            )
+            if needs_sudo:
+                result = await self.executor.execute(
+                    f"bash -c {shlex.quote(f'gzip -c {shlex.quote(source)} > {shlex.quote(backup_path)}')}",
+                    sudo=True,
+                    timeout=300
+                )
+            else:
+                result = await self.executor.execute(
+                    f"gzip -c {shlex.quote(source)} > {shlex.quote(backup_path)}",
+                    timeout=300
+                )
             if not result.success:
                 raise RuntimeError(f"Backup failed: {result.error_message}")
         else:
@@ -498,12 +506,18 @@ class BackupManager:
         try:
             needs_sudo = backup_info.source_path.startswith('/etc/')
             if backup_info.backup_path.endswith('.gz'):
-                # Decompress (shlex.quote prevents command injection)
-                result = await self.executor.execute(
-                    f"gzip -dc {shlex.quote(backup_info.backup_path)} > {shlex.quote(backup_info.source_path)}",
-                    sudo=needs_sudo,
-                    timeout=300
-                )
+                if needs_sudo:
+                    # sudo bash -c '...' damit der Redirect als root läuft
+                    result = await self.executor.execute(
+                        f"bash -c {shlex.quote(f'gzip -dc {shlex.quote(backup_info.backup_path)} > {shlex.quote(backup_info.source_path)}')}",
+                        sudo=True,
+                        timeout=300
+                    )
+                else:
+                    result = await self.executor.execute(
+                        f"gzip -dc {shlex.quote(backup_info.backup_path)} > {shlex.quote(backup_info.source_path)}",
+                        timeout=300
+                    )
                 return result.success
             else:
                 if needs_sudo:

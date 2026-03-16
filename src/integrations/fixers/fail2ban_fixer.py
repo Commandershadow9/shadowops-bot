@@ -162,14 +162,14 @@ class Fail2banFixer:
     async def _detect_jail_name(self, event: Dict, strategy: Dict) -> str:
         """Detect jail name from event or strategy"""
 
-        # Check event details
-        event_details = event.get('event_details', {})
+        # SecurityEvent.to_dict() → 'details', Fallback auf 'event_details'
+        event_details = event.get('details', {}) or event.get('event_details', {})
 
         if 'jail' in event_details:
             return event_details['jail']
 
-        # Parse from description
-        description = event.get('description', '')
+        # Parse from description (top-level and in details)
+        description = event.get('description', '') or event_details.get('reason', '')
 
         # Look for jail names like 'sshd', 'nginx-limit-req', etc.
         jail_pattern = r'\[(\w+(?:-\w+)*)\]'
@@ -502,11 +502,16 @@ findtime = {new_findtime}
             return None
 
     async def _extract_ips_from_event(self, event: Dict) -> List[str]:
-        """Extract IP addresses from event"""
+        """Extract IP addresses from event.
+
+        SecurityEvent.to_dict() liefert 'details' (nicht 'event_details').
+        Fail2ban-Events haben 'ip', 'jail' in details.
+        """
 
         ips = []
 
-        event_details = event.get('event_details', {})
+        # SecurityEvent.to_dict() → 'details', Fallback auf 'event_details'
+        event_details = event.get('details', {}) or event.get('event_details', {})
 
         # Check for IP in event details
         if 'ip' in event_details:
@@ -515,17 +520,29 @@ findtime = {new_findtime}
         if 'ips' in event_details:
             ips.extend(event_details['ips'])
 
-        # Check in description
-        description = event.get('description', '')
+        # Batch-Events: IPs aus Stats extrahieren
+        if 'Stats' in event_details:
+            stats = event_details['Stats']
+            if 'ips' in stats:
+                ips.extend(stats['ips'])
+            # Bans-Liste durchsuchen
+            for ban in event_details.get('Bans', []):
+                if 'ip' in ban:
+                    ips.append(ban['ip'])
 
-        # Extract IPs using regex
+        # Extract IPs from text fields via regex
         ip_pattern = r'\b(?:\d{1,3}\.){3}\d{1,3}\b'
-        found_ips = re.findall(ip_pattern, description)
+        for text_field in [
+            event.get('description', ''),
+            event_details.get('reason', ''),
+            event_details.get('description', ''),
+        ]:
+            if text_field:
+                found_ips = re.findall(ip_pattern, text_field)
+                ips.extend(found_ips)
 
-        ips.extend(found_ips)
-
-        # Remove duplicates
-        ips = list(set(ips))
+        # Remove duplicates and filter invalid
+        ips = list(set(ip for ip in ips if ip and ip != 'Unknown'))
 
         return ips
 
