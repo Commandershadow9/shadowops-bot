@@ -174,6 +174,102 @@ class SecurityEventWatcher:
 
         logger.info("✅ Event Watcher stopped")
 
+    # ─── Security-DB Methoden ───
+
+    _db_pool = None
+
+    async def _get_db_pool(self):
+        """Lazy DB-Pool für Security-Events."""
+        if self._db_pool is None:
+            import asyncpg
+            self._db_pool = await asyncpg.create_pool(
+                'postgresql://security_analyst:sec_analyst_2026@127.0.0.1:5433/security_analyst',
+                min_size=1, max_size=2,
+            )
+        return self._db_pool
+
+    async def _init_recidive_from_db(self):
+        """Lädt Ban-History aus der DB beim Start."""
+        try:
+            pool = await self._get_db_pool()
+            # Alle Bans pro IP zählen
+            rows = await pool.fetch(
+                """SELECT ip_address::TEXT, total_bans, permanent_blocked
+                   FROM ip_reputation WHERE total_bans > 0"""
+            )
+            for r in rows:
+                ip = r['ip_address']
+                self._ban_counts[ip] = r['total_bans']
+                if r['permanent_blocked']:
+                    self._permanent_blocked.add(ip)
+            if self._ban_counts:
+                logger.info(
+                    "Recidive-Init (DB): %d IPs, %d permanent geblockt",
+                    len(self._ban_counts), len(self._permanent_blocked),
+                )
+
+            # Fallback: Wenn DB leer, aus Log laden
+            if not self._ban_counts:
+                log_path = Path('/var/log/fail2ban.log')
+                if log_path.exists():
+                    for line in log_path.read_text().splitlines():
+                        if 'Ban ' in line and 'Unban' not in line:
+                            parts = line.split('Ban ')
+                            if len(parts) >= 2:
+                                ip = parts[-1].strip()
+                                self._ban_counts[ip] = self._ban_counts.get(ip, 0) + 1
+                    if self._ban_counts:
+                        logger.info("Recidive-Init (Log-Fallback): %d IPs", len(self._ban_counts))
+        except Exception as e:
+            logger.debug("Recidive-Init fehlgeschlagen: %s", e)
+
+    async def _save_security_event(
+        self, event_type: str, source: str, ip: str, jail: str, severity: str,
+    ):
+        """Speichert ein Security-Event in der DB."""
+        try:
+            pool = await self._get_db_pool()
+            subnet = '.'.join(ip.split('.')[:3]) + '.0/24' if ip else None
+            await pool.execute(
+                """INSERT INTO security_events (event_type, source, ip_address, subnet, jail, severity)
+                   VALUES ($1, $2, $3::INET, $4::CIDR, $5, $6)""",
+                event_type, source, ip, subnet, jail, severity,
+            )
+            # IP Reputation aktualisieren
+            if event_type == 'ban':
+                await pool.execute(
+                    """INSERT INTO ip_reputation (ip_address, total_bans, last_seen)
+                       VALUES ($1::INET, 1, NOW())
+                       ON CONFLICT (ip_address) DO UPDATE
+                       SET total_bans = ip_reputation.total_bans + 1,
+                           last_seen = NOW(),
+                           threat_score = LEAST(100, (ip_reputation.total_bans + 1) * 20)""",
+                    ip,
+                )
+            elif event_type == 'permanent_block':
+                await pool.execute(
+                    """UPDATE ip_reputation
+                       SET permanent_blocked = TRUE, blocked_at = NOW(), block_reason = $2
+                       WHERE ip_address = $1::INET""",
+                    ip, f'Recidive: {self._ban_counts.get(ip, 0)}x banned',
+                )
+        except Exception as e:
+            logger.debug("Security-Event DB-Fehler: %s", e)
+
+    async def _save_remediation(
+        self, action: str, target: str, reason: str, rollback: str = "",
+    ):
+        """Loggt eine automatische Remediation-Aktion."""
+        try:
+            pool = await self._get_db_pool()
+            await pool.execute(
+                """INSERT INTO remediation_log (action, target, reason, rollback_command)
+                   VALUES ($1, $2, $3, $4)""",
+                action, target, reason, rollback,
+            )
+        except Exception as e:
+            logger.debug("Remediation-Log DB-Fehler: %s", e)
+
     def _log_activity(self, source: str, message: str, severity: str = "info", force: bool = False) -> None:
         """Send throttled activity logs to the bot status channel."""
         if not self.activity_logs_enabled:
@@ -299,28 +395,11 @@ class SecurityEventWatcher:
         interval = self.intervals['fail2ban']
         logger.info(f"🔍 Starting Fail2ban Realtime Watcher ({interval}s intervals)")
 
-        # Recidive-Tracking: Initialisiere aus fail2ban.log History
+        # Recidive-Tracking: Aus PostgreSQL laden (persistent über Restarts)
         if not hasattr(self, '_ban_counts'):
             self._ban_counts: dict[str, int] = {}
             self._permanent_blocked: set[str] = set()
-            # Ban-History aus Log laden (überlebt Bot-Restart)
-            try:
-                log_path = Path('/var/log/fail2ban.log')
-                if log_path.exists():
-                    for line in log_path.read_text().splitlines():
-                        if 'Ban ' in line and 'Unban' not in line:
-                            parts = line.split('Ban ')
-                            if len(parts) >= 2:
-                                ip = parts[-1].strip()
-                                self._ban_counts[ip] = self._ban_counts.get(ip, 0) + 1
-                    if self._ban_counts:
-                        repeat_offenders = {ip: c for ip, c in self._ban_counts.items() if c >= 3}
-                        logger.info(
-                            "Recidive-Init: %d IPs aus Log geladen, %d Wiederholungstäter",
-                            len(self._ban_counts), len(repeat_offenders),
-                        )
-            except Exception:
-                pass
+            asyncio.ensure_future(self._init_recidive_from_db())
 
         while self.running:
             try:
@@ -370,12 +449,17 @@ class SecurityEventWatcher:
                         if await self._is_new_event(summary_event):
                             await self._handle_new_event(summary_event)
 
-                    # Recidive-Erkennung: Wiederholungstäter permanent blocken
+                    # Recidive-Erkennung + DB-Persistierung
                     for ban in bans:
                         ip = ban.get('ip', '')
                         if not ip or ip in self._permanent_blocked:
                             continue
                         self._ban_counts[ip] = self._ban_counts.get(ip, 0) + 1
+
+                        # Event in DB speichern
+                        await self._save_security_event(
+                            'ban', 'fail2ban', ip, ban.get('jail', 'sshd'), 'high',
+                        )
 
                         if self._ban_counts[ip] >= 3:
                             # 3+ Bans → Permanent in UFW blocken
@@ -392,6 +476,15 @@ class SecurityEventWatcher:
                                     logger.warning(
                                         "RECIDIVE: IP %s permanent geblockt (UFW) — %dx von fail2ban gebannt",
                                         ip, self._ban_counts[ip],
+                                    )
+                                    # In DB persistieren
+                                    await self._save_security_event(
+                                        'permanent_block', 'ufw', ip, 'recidive', 'critical',
+                                    )
+                                    await self._save_remediation(
+                                        'ufw_block', ip,
+                                        f'Recidive: {self._ban_counts[ip]}x banned',
+                                        f'sudo ufw delete deny from {ip} to any',
                                     )
                                     self._log_activity(
                                         "fail2ban",
