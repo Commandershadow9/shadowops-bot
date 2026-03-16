@@ -4,7 +4,7 @@
 - **Runtime:** Python 3.12, discord.py 2.7
 - **AI:** Dual-Engine (Codex CLI Primary + Claude CLI Fallback)
 - **Monitoring:** Trivy, CrowdSec, Fail2ban, AIDE
-- **Data:** SQLite (Knowledge DB + Changelog DB), JSON State Files
+- **Data:** PostgreSQL (Knowledge + Findings, konsolidiert), SQLite (Changelog DB), JSON State Files
 - **Deploy:** systemd (system-level), logrotate
 - **Version:** v5.0.0
 
@@ -77,7 +77,7 @@
 | `patch_notes_batcher.py` | Sammelt Commits, Release via Cron (Sonntag), manuell (/release-notes) oder Notbremse (≥20) |
 | `patch_notes_feedback.py` | Discord Feedback (Persistent Buttons: Like + Bewerten, Text-Modal) |
 | `patch_notes_web_exporter.py` | Web-Export (zentrale DB Upsert + File-Backup + optional HTTP POST) |
-| `knowledge_base.py` | SQLite Knowledge Database (Fixes, Strategien, Pläne mit Erfahrungslernen) |
+| `knowledge_base.py` | PostgreSQL Knowledge Database (konsolidiert: Fixes, Strategien, Pläne, Analyst-Cross-Referenz) |
 | `log_analyzer.py` | Log-Analyse und -Auswertung |
 | `code_analyzer.py` | Code-Analyse fuer Fix-Strategien |
 | `git_history_analyzer.py` | Git-History Analyse |
@@ -91,8 +91,8 @@
 | Verzeichnis | Zweck |
 |-------------|-------|
 | `fixers/` | Tool-spezifische Fixer (trivy, crowdsec, fail2ban, aide) |
-| `ai_learning/` | Legacy AI Learning (knowledge_db, knowledge_synthesizer, continuous_learning_agent) |
-| `analyst/` | Security Analyst (security_analyst, analyst_db, activity_monitor, prompts) |
+| `ai_learning/` | Legacy AI Learning (DEAKTIVIERT — knowledge_db, knowledge_synthesizer, continuous_learning_agent) |
+| `analyst/` | Security Analyst (security_analyst, analyst_db, activity_monitor, prompts) — Anti-Duplikat, Token-Budget, Entwicklungs-Awareness |
 
 ### Utils (`src/utils/`)
 | Datei | Zweck |
@@ -124,8 +124,7 @@
 | `config/safe_upgrades.yaml` | Curated Upgrade-Pfade fuer Packages |
 | `config/logrotate.conf` | Logrotate-Konfiguration |
 | `data/state.json` | Dynamischer Bot-State (Channel IDs, etc.) |
-| `data/knowledge_base.db` | SQLite Learning Database (nicht vorhanden → wird per `data/ai_knowledge.db` erstellt) |
-| `data/ai_knowledge.db` | SQLite Knowledge DB (Fixes, Strategien, Plaene mit Erfahrungslernen) |
+| `data/ai_knowledge.db` | LEGACY SQLite (Daten nach PostgreSQL migriert, wird nicht mehr aktiv genutzt) |
 | `data/changelogs.db` | Zentrale Changelog-DB (alle Projekte, wird zur Laufzeit erstellt) |
 | `data/project_monitor_state.json` | Persistenter Monitor-State (Uptime-Stats pro Projekt) |
 
@@ -154,3 +153,28 @@
 | `docs/plans/` | Design- und Implementierungsdokumente |
 | `docs/adr/` | Architecture Decision Records (6 ADRs) |
 | `docs/archive/` | Veraltete Dokumentation (historisch) |
+
+## Architektur-Entscheidungen (seit 15.03.2026)
+
+### Knowledge-Konsolidierung (3 DBs → 1 PostgreSQL)
+- **Vorher:** 3 separate DBs (SQLite ai_knowledge.db, SQLite knowledge.db, PostgreSQL security_analyst)
+- **Nachher:** 1 PostgreSQL DB (`security_analyst`) mit allen Tabellen
+- **Tabellen:** `findings`, `sessions`, `knowledge`, `learned_patterns`, `health_snapshots`, `orchestrator_fixes`, `orchestrator_strategies`, `orchestrator_plans`, `threat_patterns`
+- **knowledge_base.py:** psycopg2 statt sqlite3 (sync, gleiche API)
+- **Cross-Referenz:** Analyst-Findings fliessen in Orchestrator-Planung, Orchestrator-Fixes erscheinen im Analyst-Kontext
+
+### Security Analyst — Anti-Duplikat + Entwicklungs-Awareness
+- **Finding-Dedup:** Keyword-Match (CVE-Nummern, lange Wörter) statt nur exakter Titel
+- **Offene Findings im Prompt:** "Diese sind bereits dokumentiert — NICHT erneut melden"
+- **Auto-Close:** Findings >30 Tage ohne GitHub-Issue → automatisch geschlossen
+- **fix_policy pro Projekt:** active→critical_only, stable→all, frozen→monitor_only
+
+### Token-Budget (global)
+- **daily_token_budget:** 100K Token/Tag (konfigurierbar in config.yaml)
+- **Budget-Check:** Zentral in `_execute_with_fallback()` vor jedem AI-Call
+- **Token-Tracking:** Geschaetzt aus Prompt-Laenge
+
+### AI-Call Sicherheit
+- **Codex Analyst:** Prompt via stdin statt CLI-Argument (ARG_MAX Fix)
+- **Claude Analyst:** Prompt via stdin + `--dangerously-skip-permissions`
+- **Context Manager:** Nur aktive Projekte (sicherheitstool entfernt)
