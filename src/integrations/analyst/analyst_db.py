@@ -166,23 +166,48 @@ class AnalystDB:
         return count or 0
 
     async def find_similar_open_finding(self, title: str) -> Optional[Dict]:
-        """Sucht ein offenes Finding mit aehnlichem Titel (case-insensitive).
+        """Sucht ein offenes Finding mit ähnlichem Titel.
 
-        Verhindert doppelte GitHub-Issues fuer das gleiche Problem.
+        Prüft auf:
+        1. Exakter Match (case-insensitive)
+        2. Enthaltener Match (neuer Titel enthält alten oder umgekehrt)
+        3. Gleiche CVE/Keyword-Referenz (z.B. CVE-2026-1234 in beiden)
 
         Args:
             title: Titel des neuen Findings
 
         Returns:
-            Dict des aehnlichen Findings oder None
+            Dict des ähnlichen Findings oder None
         """
+        # 1. Exakter Match
         row = await self.pool.fetchrow(
             """SELECT id, title, github_issue_url FROM findings
                WHERE status = 'open'
                  AND LOWER(title) = LOWER($1)""",
             title,
         )
-        return dict(row) if row else None
+        if row:
+            return dict(row)
+
+        # 2. Enthaltener Match (Substring in beide Richtungen)
+        # z.B. "CVE-2026-1234 in postgres" matches "CVE-2026-1234 bleibt aktiv"
+        title_lower = title.lower()
+        # Kernwörter extrahieren (>= 8 Zeichen, keine Füllwörter)
+        keywords = [w for w in title_lower.split() if len(w) >= 8]
+        if keywords:
+            # Suche nach Findings die mindestens ein langes Keyword teilen
+            for kw in keywords[:3]:
+                row = await self.pool.fetchrow(
+                    """SELECT id, title, github_issue_url FROM findings
+                       WHERE status = 'open'
+                         AND LOWER(title) LIKE '%' || $1 || '%'
+                       LIMIT 1""",
+                    kw,
+                )
+                if row:
+                    return dict(row)
+
+        return None
 
     async def get_open_findings_summary(self, limit: int = 30) -> list:
         """Holt offene Findings als Kurzübersicht für den Analyst-Prompt.
@@ -199,11 +224,8 @@ class AnalystDB:
         return [dict(r) for r in rows]
 
     async def close_finding(self, finding_id: int, resolution: str = "auto-resolved") -> None:
-        """Schliesst ein Finding als behoben."""
-        await self.pool.execute(
-            "UPDATE findings SET status = 'fixed', fixed_at = NOW() WHERE id = $1",
-            finding_id,
-        )
+        """Schliesst ein Finding als behoben (Alias für mark_finding_fixed)."""
+        await self.mark_finding_fixed(finding_id)
         logger.info("Finding #%d geschlossen: %s", finding_id, resolution)
 
     async def close_stale_findings(self, days: int = 30) -> int:
@@ -363,9 +385,9 @@ class AnalystDB:
         """
         rows = await self.pool.fetch(
             """SELECT * FROM findings
-               WHERE found_at >= NOW() - ($1 || ' days')::INTERVAL
+               WHERE found_at >= NOW() - make_interval(days => $1)
                ORDER BY found_at DESC""",
-            str(days),
+            days,
         )
         return [dict(r) for r in rows]
 
@@ -516,28 +538,8 @@ class AnalystDB:
                     parts.append(f"- **{e['subject']}** ({confidence_pct}%): {e['content']}")
                 parts.append("")  # Leerzeile
 
-        # ── Offene Findings (Top 20) ──
-        open_findings = await self.get_open_findings()
-        if open_findings:
-            top_findings = open_findings[:20]
-            parts.append(f"## Offene Findings ({len(open_findings)} gesamt, Top 20)\n")
-            for f in top_findings:
-                severity_icon = {
-                    'critical': '🔴',
-                    'high': '🟠',
-                    'medium': '🟡',
-                    'low': '🔵',
-                    'info': '⚪',
-                }.get(f['severity'], '⚪')
-                project = f" [{f['affected_project']}]" if f['affected_project'] else ""
-                parts.append(f"- {severity_icon} **{f['severity'].upper()}**{project}: {f['title']}")
-                if f['description']:
-                    # Beschreibung kürzen auf 150 Zeichen
-                    desc = f['description'][:150]
-                    if len(f['description']) > 150:
-                        desc += "..."
-                    parts.append(f"  {desc}")
-            parts.append("")
+        # Offene Findings werden NICHT hier geladen — sie kommen über
+        # ANALYST_CONTEXT_TEMPLATE.{open_findings} in den Prompt (keine Dopplung)
 
         # ── Letzte Session ──
         last_session = await self.get_last_session()
@@ -570,6 +572,23 @@ class AnalystDB:
             for p in top_patterns:
                 parts.append(f"- **{p['pattern_type']}** ({p['times_seen']}x): {p['description']}")
             parts.append("")
+
+        # ── Orchestrator-Fixes (was wurde automatisch behoben?) ──
+        try:
+            recent_fixes = await self.pool.fetch(
+                """SELECT event_type, event_source, fix_description, success, created_at
+                   FROM orchestrator_fixes
+                   WHERE created_at >= NOW() - INTERVAL '14 days'
+                   ORDER BY created_at DESC LIMIT 10"""
+            )
+            if recent_fixes:
+                parts.append("## Orchestrator-Fixes (letzte 14 Tage)\n")
+                for fix in recent_fixes:
+                    icon = "✅" if fix['success'] else "❌"
+                    parts.append(f"- {icon} [{fix['event_source']}] {fix.get('fix_description', '?')[:100]}")
+                parts.append("")
+        except Exception:
+            pass  # Tabelle existiert vielleicht noch nicht
 
         # ── 30-Tage-Statistik ──
         stats = await self._get_30day_stats()
