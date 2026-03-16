@@ -76,7 +76,7 @@
 | `content_sanitizer.py` | Security-Filter fuer Patch Notes (Pfade, IPs, Ports, Secrets) |
 | `patch_notes_batcher.py` | Sammelt Commits, Release via Cron (Sonntag), manuell (/release-notes) oder Notbremse (≥20) |
 | `patch_notes_feedback.py` | Discord Feedback (Persistent Buttons: Like + Bewerten, Text-Modal) |
-| `patch_notes_web_exporter.py` | Web-Export (zentrale DB Upsert + File-Backup + optional HTTP POST) |
+| `patch_notes_web_exporter.py` | Web-Export (zentrale DB Upsert + File-Backup + optional HTTP POST). Frontend: shared-ui v0.2.0 Changelog-Komponenten |
 | `knowledge_base.py` | PostgreSQL Knowledge Database (konsolidiert: Fixes, Strategien, Pläne, Analyst-Cross-Referenz) |
 | `log_analyzer.py` | Log-Analyse und -Auswertung |
 | `code_analyzer.py` | Code-Analyse fuer Fix-Strategien |
@@ -193,3 +193,14 @@
 - Ban-History beim Start aus DB geladen (überlebt Restarts)
 - IP-Reputation im Analyst-Prompt (Top-Bedrohungen)
 - Remediation-Log mit Rollback-Command für jeden Auto-Block
+
+### Changelog-Seiten Redesign (shared-ui v0.2.0, 16.03.2026)
+- **shared-ui:** 11 neue/überarbeitete Changelog-Komponenten (Hero, Card, Timeline, Markdown, Stats-Balken, Badge mit Glow, KeywordCloud)
+- **Theming:** CSS-Variablen (`--cl-*`) — Projekte überschreiben nur Farben, Rest kommt automatisch
+- **GuildScout:** Gold-Theme, Hero-Bild (Guild Hall), OG-Images, `/changelog` + `/changelog/[version]`
+- **ZERODOX:** Cyan-Theme, reiner CSS-Gradient, OG-Images, `/changelog` + `/changelog/[version]`
+- **API-Flow Client:** Relative URL `""` → Next.js Rewrites → Go API/Proxy → ShadowOps Bot (Port 8766)
+- **API-Flow Server (SSR):** Docker-interner Hostname direkt → ShadowOps Bot
+- **URL-Slugs:** Versions-Dots werden zu Dashes (`1.0.0` → `1-0-0`), Detail-Page konvertiert zurück
+- **Design-Doc:** `docs/plans/2026-03-16-changelog-redesign-design.md`
+- **Implementierungsplan:** `docs/plans/2026-03-16-changelog-redesign.md`
