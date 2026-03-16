@@ -669,10 +669,10 @@ class AIEngine:
         self.router = TaskRouter(ai_cfg)
 
         # Globales Token-Budget (über alle AI-Calls des Tages)
-        from datetime import datetime
+        from datetime import datetime, timezone
         self._daily_max_tokens = ai_cfg.get('daily_token_budget', 100000)
         self._daily_tokens_used = 0
-        self._token_budget_date = datetime.utcnow().date()
+        self._token_budget_date = datetime.now(timezone.utc).date()
 
         # Stats-Tracking
         self.stats = {
@@ -708,8 +708,8 @@ class AIEngine:
 
     def _track_tokens(self, prompt: str) -> None:
         """Trackt geschätzten Token-Verbrauch."""
-        from datetime import datetime
-        today = datetime.utcnow().date()
+        from datetime import datetime, timezone
+        today = datetime.now(timezone.utc).date()
         if today != self._token_budget_date:
             self._daily_tokens_used = 0
             self._token_budget_date = today
@@ -718,8 +718,8 @@ class AIEngine:
 
     def is_budget_exhausted(self) -> bool:
         """Prüft ob das tägliche Token-Budget erschöpft ist."""
-        from datetime import datetime
-        today = datetime.utcnow().date()
+        from datetime import datetime, timezone
+        today = datetime.now(timezone.utc).date()
         if today != self._token_budget_date:
             return False
         return self._daily_tokens_used >= self._daily_max_tokens
@@ -1022,9 +1022,11 @@ class AIEngine:
         env = self.codex._get_clean_env()
 
         # Prompt via stdin (ARG_MAX Limit bei grossen Prompts vermeiden)
+        # -c mcp_servers={}: Keine MCP-Server laden (schneller, keine Auth-Fehler)
         args = [
             'codex', 'exec', '--ephemeral',
             '--skip-git-repo-check',
+            '-c', 'mcp_servers={}',
             '-s', 'workspace-write',
             '-m', model,
             '--output-schema', schema_path,
@@ -1052,6 +1054,14 @@ class AIEngine:
             stderr = stderr_bytes.decode('utf-8', errors='replace') if stderr_bytes else ''
 
             if proc.returncode != 0:
+                # Quota-/Limit-Erkennung (Fehlermeldung steht oft am Ende von stderr)
+                if 'usage limit' in stderr.lower() or 'rate limit' in stderr.lower():
+                    logger.error(
+                        "Codex-Analyst: API-Quota erreicht: %s",
+                        stderr[-300:],
+                    )
+                    return None
+
                 # Falls --skip-git-repo-check nicht unterstuetzt: Retry ohne Flag
                 if first_attempt and 'skip-git-repo-check' in stderr:
                     logger.info("--skip-git-repo-check nicht unterstuetzt, Retry ohne Flag")
@@ -1059,26 +1069,27 @@ class AIEngine:
                     args = [a for a in args if a != '--skip-git-repo-check']
                     proc = await asyncio.create_subprocess_exec(
                         *args,
+                        stdin=asyncio.subprocess.PIPE,
                         stdout=asyncio.subprocess.PIPE,
                         stderr=asyncio.subprocess.PIPE,
                         env=env,
                         cwd='/home/cmdshadow',
                     )
                     stdout_bytes, stderr_bytes = await asyncio.wait_for(
-                        proc.communicate(), timeout=timeout
+                        proc.communicate(input=prompt.encode('utf-8')), timeout=timeout
                     )
                     stdout = stdout_bytes.decode('utf-8', errors='replace') if stdout_bytes else ''
                     stderr = stderr_bytes.decode('utf-8', errors='replace') if stderr_bytes else ''
                     if proc.returncode != 0:
                         logger.warning(
                             "Codex-Analyst fehlgeschlagen (rc=%d, ohne Flag): %s",
-                            proc.returncode, stderr[:500],
+                            proc.returncode, stderr[-1500:],
                         )
                         return None
                 else:
                     logger.warning(
                         "Codex-Analyst fehlgeschlagen (rc=%d): %s",
-                        proc.returncode, stderr[:500],
+                        proc.returncode, stderr[-1500:],
                     )
                     return None
 
@@ -1167,6 +1178,7 @@ class AIEngine:
         )
 
         # Prompt via stdin (ARG_MAX), skip-permissions (damit Tools ohne Approval laufen)
+        # --allowed-tools: Nur Security-relevante Bash-Prefixe + Kern-Tools (keine MCPs)
         args = [
             self.claude.cli_path,
             '-p', '-',
@@ -1175,6 +1187,7 @@ class AIEngine:
             '--output-format', 'text',
             '--verbose',
             '--dangerously-skip-permissions',
+            '--allowed-tools', allowed_tools,
         ]
 
         env = self.claude._get_clean_env()
@@ -1204,10 +1217,14 @@ class AIEngine:
             stderr = stderr_bytes.decode('utf-8', errors='replace') if stderr_bytes else ''
 
             if proc.returncode != 0:
-                logger.error(
-                    "Claude-Analyst fehlgeschlagen (rc=%d): %s",
-                    proc.returncode, stderr[:500],
-                )
+                # Quota-Erkennung fuer Anthropic API
+                if 'overloaded' in stderr.lower() or 'rate limit' in stderr.lower():
+                    logger.error("Claude-Analyst: API-Limit erreicht: %s", stderr[-300:])
+                else:
+                    logger.error(
+                        "Claude-Analyst fehlgeschlagen (rc=%d): %s",
+                        proc.returncode, stderr[-1500:],
+                    )
                 return None
 
             result = self._read_analyst_result(tmp_path, stdout)
@@ -1221,7 +1238,15 @@ class AIEngine:
                 )
                 self.stats['claude_success'] = self.stats.get('claude_success', 0) + 1
             else:
-                logger.warning("Claude-Analyst: Kein strukturiertes Ergebnis")
+                # Detailliertes Logging fuer Debugging
+                stdout_len = len(stdout)
+                tmp_exists = os.path.exists(tmp_path)
+                tmp_size = os.path.getsize(tmp_path) if tmp_exists else 0
+                logger.warning(
+                    "Claude-Analyst: Kein strukturiertes Ergebnis "
+                    "(stdout=%d Bytes, tmp_exists=%s, tmp_size=%d)",
+                    stdout_len, tmp_exists, tmp_size,
+                )
 
             return result
 

@@ -175,8 +175,9 @@
 - **Token-Tracking:** Geschaetzt aus Prompt-Laenge
 
 ### AI-Call Sicherheit
-- **Codex Analyst:** Prompt via stdin statt CLI-Argument (ARG_MAX Fix)
-- **Claude Analyst:** Prompt via stdin + `--dangerously-skip-permissions`
+- **Codex Analyst:** Prompt via stdin statt CLI-Argument (ARG_MAX Fix), `-c mcp_servers={}` (kein MCP-Laden)
+- **Claude Analyst:** Prompt via stdin + `--dangerously-skip-permissions` + `--allowed-tools` (nur Security-Bash-Prefixe + Read/Write/Grep/Glob, keine MCPs)
+- **API-Quota-Erkennung:** Codex (OpenAI usage limit) + Claude (overloaded/rate limit) in stderr erkannt und geloggt
 - **Context Manager:** Nur aktive Projekte (sicherheitstool entfernt)
 
 ### Security-DB (PostgreSQL, Enterprise-Level)

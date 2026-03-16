@@ -214,10 +214,10 @@ class SecurityAnalyst:
                 # Activity-Check
                 user_active = await self.activity_monitor.is_user_active()
 
-                # Heartbeat alle 10 Minuten auf INFO-Level
+                # Heartbeat alle 10 Minuten auf DEBUG-Level
                 if loop_count % HEARTBEAT_EVERY == 0:
                     cooldown_remaining = max(0, self._failure_cooldown_until - time.time())
-                    logger.info(
+                    logger.debug(
                         "Heartbeat: user_active=%s, sessions_today=%d/%d, "
                         "consecutive_failures=%d, cooldown=%.0fs, briefing_pending=%s",
                         user_active, self._sessions_today, self.max_sessions_per_day,
@@ -227,6 +227,7 @@ class SecurityAnalyst:
 
                 # Failure-Cooldown pruefen
                 if self._failure_cooldown_until > time.time():
+                    await asyncio.sleep(MAIN_LOOP_INTERVAL)
                     continue
 
                 # Session starten wenn: User idle + Tages-Limit nicht erreicht + keine laufende Session
