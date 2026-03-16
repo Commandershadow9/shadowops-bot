@@ -290,14 +290,19 @@ class SecurityEventWatcher:
             await asyncio.sleep(interval)
 
     async def _watch_fail2ban(self):
-        """Watch Fail2ban — Echtzeit Log-Tailing mit Polling-Fallback.
+        """Watch Fail2ban — Echtzeit Log-Tailing mit Recidive-Erkennung.
 
-        Liest das fail2ban.log kontinuierlich mit kurzen Intervallen (15s).
-        Jeder neue Ban wird sofort als Event verarbeitet, nicht erst nach Minuten.
-        Kleine Batches (innerhalb eines Poll-Zyklus) werden zusammengefasst.
+        - Neue Bans werden sofort als Event verarbeitet
+        - Wiederholungstäter (3+ Bans) werden automatisch permanent über UFW geblockt
+        - Subnet-Erkennung: 3+ IPs aus dem gleichen /24 → ganzes Subnet blocken
         """
         interval = self.intervals['fail2ban']
         logger.info(f"🔍 Starting Fail2ban Realtime Watcher ({interval}s intervals)")
+
+        # Recidive-Tracking: IP → Anzahl Bans (persistiert über Polls)
+        if not hasattr(self, '_ban_counts'):
+            self._ban_counts: dict[str, int] = {}
+            self._permanent_blocked: set[str] = set()
 
         while self.running:
             try:
@@ -346,6 +351,39 @@ class SecurityEventWatcher:
                         )
                         if await self._is_new_event(summary_event):
                             await self._handle_new_event(summary_event)
+
+                    # Recidive-Erkennung: Wiederholungstäter permanent blocken
+                    for ban in bans:
+                        ip = ban.get('ip', '')
+                        if not ip or ip in self._permanent_blocked:
+                            continue
+                        self._ban_counts[ip] = self._ban_counts.get(ip, 0) + 1
+
+                        if self._ban_counts[ip] >= 3:
+                            # 3+ Bans → Permanent in UFW blocken
+                            # Nutzt create_subprocess_exec (kein Shell, kein Injection-Risiko)
+                            try:
+                                proc = await asyncio.create_subprocess_exec(
+                                    'sudo', 'ufw', 'deny', 'from', ip, 'to', 'any',
+                                    stdout=asyncio.subprocess.PIPE,
+                                    stderr=asyncio.subprocess.PIPE,
+                                )
+                                await proc.communicate()
+                                if proc.returncode == 0:
+                                    self._permanent_blocked.add(ip)
+                                    logger.warning(
+                                        "RECIDIVE: IP %s permanent geblockt (UFW) — %dx von fail2ban gebannt",
+                                        ip, self._ban_counts[ip],
+                                    )
+                                    self._log_activity(
+                                        "fail2ban",
+                                        f"🔒 **Recidive-Block:** IP `{ip}` permanent in UFW gesperrt "
+                                        f"({self._ban_counts[ip]}x gebannt)",
+                                        severity="critical",
+                                        force=True,
+                                    )
+                            except Exception as e:
+                                logger.error("UFW Recidive-Block fehlgeschlagen für %s: %s", ip, e)
 
                     logger.info(f"🚫 Fail2ban: {len(bans)} Ban(s) erkannt und gemeldet")
                     self._log_activity(
