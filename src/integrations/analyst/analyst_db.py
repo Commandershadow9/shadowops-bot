@@ -193,7 +193,7 @@ class AnalystDB:
         rows = await self.pool.fetch(
             """SELECT id, severity, title, category
                FROM findings WHERE status = 'open'
-               ORDER BY created_at DESC LIMIT $1""",
+               ORDER BY found_at DESC LIMIT $1""",
             limit,
         )
         return [dict(r) for r in rows]
@@ -216,7 +216,7 @@ class AnalystDB:
             """UPDATE findings SET status = 'fixed', fixed_at = NOW()
                WHERE status = 'open'
                  AND github_issue_url IS NULL
-                 AND created_at < NOW() - make_interval(days => $1)""",
+                 AND found_at < NOW() - make_interval(days => $1)""",
             days,
         )
         # Anzahl der geschlossenen Findings aus dem Command-Tag extrahieren
