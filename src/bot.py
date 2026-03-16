@@ -614,6 +614,40 @@ class ShadowOpsBot(commands.Bot):
             else:
                 self.logger.info("⏸️ Event Watcher deaktiviert")
 
+            # Pending Approvals aus DB prüfen (überlebten Bot-Restart?)
+            try:
+                import asyncpg
+                pool = await asyncpg.create_pool(
+                    'postgresql://security_analyst:sec_analyst_2026@127.0.0.1:5433/security_analyst',
+                    min_size=1, max_size=1,
+                )
+                pending = await pool.fetch(
+                    "SELECT batch_id, plan_description, channel_id FROM pending_approvals WHERE status = 'pending'"
+                )
+                await pool.close()
+                if pending:
+                    self.logger.warning("⚠️ %d Pending Approval(s) aus vorherigem Run gefunden", len(pending))
+                    for p in pending:
+                        channel = self.get_channel(p['channel_id'])
+                        if channel:
+                            await channel.send(
+                                f"⚠️ **Pending Approval aus vorherigem Run**\n"
+                                f"Batch `{p['batch_id']}`: {p['plan_description'][:200]}\n"
+                                f"Der Bot wurde während der Approval-Phase neugestartet.\n"
+                                f"Bitte manuell prüfen und bei Bedarf `/scan` starten."
+                            )
+                    # Pending Approvals als expired markieren
+                    pool = await asyncpg.create_pool(
+                        'postgresql://security_analyst:sec_analyst_2026@127.0.0.1:5433/security_analyst',
+                        min_size=1, max_size=1,
+                    )
+                    await pool.execute(
+                        "UPDATE pending_approvals SET status = 'expired_restart', resolved_at = NOW() WHERE status = 'pending'"
+                    )
+                    await pool.close()
+            except Exception as e:
+                self.logger.debug("Pending Approvals Check fehlgeschlagen: %s", e)
+
             self.logger.info("=" * 60)
             self.logger.info("✅ Auto-Remediation System vollständig aktiv")
             self.logger.info("=" * 60)

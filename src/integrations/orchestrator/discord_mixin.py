@@ -238,34 +238,70 @@ class DiscordUIMixin:
             approval_message = await channel.send(embed=embed, view=view)
             logger.info(f"📬 Approval-Request gesendet an Channel {channel.name}")
 
+            # Approval in DB persistieren (überlebt Bot-Restart)
+            try:
+                import asyncpg
+                pool = await asyncpg.create_pool(
+                    'postgresql://security_analyst:sec_analyst_2026@127.0.0.1:5433/security_analyst',
+                    min_size=1, max_size=1,
+                )
+                await pool.execute(
+                    """INSERT INTO pending_approvals (batch_id, plan_description, message_id, channel_id)
+                       VALUES ($1, $2, $3, $4)
+                       ON CONFLICT (batch_id) DO UPDATE SET message_id = $3, status = 'pending'""",
+                    batch.batch_id, plan.description,
+                    approval_message.id, channel.id,
+                )
+                await pool.close()
+            except Exception as db_err:
+                logger.debug(f"Approval DB-Persist fehlgeschlagen: {db_err}")
+
             # Wait for user interaction
             logger.info(f"⏳ Warte auf User-Approval (Timeout: 30min)...")
             await view.wait()
 
-            # Update message to show result
+            # Update message to show result + DB aktualisieren
+            resolution = "timeout"
             if view.approved is True:
-                # Update embed color to green
                 embed.color = discord.Color.green()
                 embed.title = "✅ Plan Approved - Wird ausgeführt"
                 await approval_message.edit(embed=embed, view=None)
                 logger.info(f"✅ Batch {batch.batch_id} wurde approved")
-                return True
-
+                resolution = "approved"
             elif view.approved is False:
-                # Update embed color to red
                 embed.color = discord.Color.red()
                 embed.title = "❌ Plan Rejected"
                 await approval_message.edit(embed=embed, view=None)
                 logger.warning(f"❌ Batch {batch.batch_id} wurde rejected")
-                return False
-
+                resolution = "rejected"
             else:
-                # Timeout — wird zu GitHub Issue eskaliert
                 embed.color = discord.Color.dark_gray()
                 embed.title = "⏰ Approval Timeout — wird zu GitHub Issue eskaliert"
                 await approval_message.edit(embed=embed, view=None)
-                logger.warning(f"⏰ Batch {batch.batch_id} - Approval Timeout, eskaliere zu GitHub Issue")
-                return None  # None = Timeout (wird eskaliert), False = Rejected
+                logger.warning(f"⏰ Batch {batch.batch_id} - Approval Timeout")
+                resolution = "timeout"
+
+            # DB-Status aktualisieren
+            try:
+                import asyncpg
+                pool = await asyncpg.create_pool(
+                    'postgresql://security_analyst:sec_analyst_2026@127.0.0.1:5433/security_analyst',
+                    min_size=1, max_size=1,
+                )
+                await pool.execute(
+                    "UPDATE pending_approvals SET status = $1, resolved_at = NOW() WHERE batch_id = $2",
+                    resolution, batch.batch_id,
+                )
+                await pool.close()
+            except Exception:
+                pass
+
+            if resolution == "approved":
+                return True
+            elif resolution == "rejected":
+                return False
+            else:
+                return None
 
         except Exception as e:
             logger.error(f"❌ Fehler bei Approval-Request: {e}", exc_info=True)
