@@ -674,6 +674,10 @@ class AIEngine:
         self._daily_tokens_used = 0
         self._token_budget_date = datetime.now(timezone.utc).date()
 
+        # Codex-Quota-Cache: Überspringt Codex wenn Quota erschöpft
+        # Wird gesetzt wenn "usage limit" Fehler erkannt wird
+        self._codex_quota_exhausted_until: float = 0.0
+
         # Stats-Tracking
         self.stats = {
             'codex_calls': 0,
@@ -985,16 +989,24 @@ class AIEngine:
             os.path.dirname(__file__), '..', 'schemas', 'analyst_session.json'
         )
 
-        # 1. Primaer: Codex
-        logger.info("Analyst-Session: Versuche Codex (%s)", codex_model)
-        result = await self._run_analyst_codex(prompt, schema_path, codex_model)
-        if result:
-            result['_provider'] = 'codex'
-            result['_model'] = codex_model
-            return result
+        # 1. Primaer: Codex (überspringen wenn Quota erschöpft)
+        import time as _time
+        if _time.time() < self._codex_quota_exhausted_until:
+            remaining_h = (self._codex_quota_exhausted_until - _time.time()) / 3600
+            logger.info(
+                "Analyst-Session: Codex-Quota erschöpft (noch %.1fh) — direkt Claude (%s)",
+                remaining_h, claude_model,
+            )
+        else:
+            logger.info("Analyst-Session: Versuche Codex (%s)", codex_model)
+            result = await self._run_analyst_codex(prompt, schema_path, codex_model)
+            if result:
+                result['_provider'] = 'codex'
+                result['_model'] = codex_model
+                return result
+            logger.info("Codex-Analyst ohne Ergebnis — Fallback auf Claude (%s)", claude_model)
 
         # 2. Fallback: Claude
-        logger.info("Codex-Analyst ohne Ergebnis — Fallback auf Claude (%s)", claude_model)
         self.stats['codex_failures'] = self.stats.get('codex_failures', 0) + 1
         result = await self._run_analyst_claude(
             prompt, schema_path, claude_model, timeout, max_turns,
@@ -1056,8 +1068,15 @@ class AIEngine:
             if proc.returncode != 0:
                 # Quota-/Limit-Erkennung (Fehlermeldung steht oft am Ende von stderr)
                 if 'usage limit' in stderr.lower() or 'rate limit' in stderr.lower():
+                    # Quota-Cache: Codex für 6h überspringen (oder bis Reset-Datum aus Meldung)
+                    import time as _time
+                    self._codex_quota_exhausted_until = _time.time() + 6 * 3600
+                    # Versuche Reset-Datum aus Fehlermeldung zu parsen
+                    reset_match = re.search(r'try again at (.+?)\.', stderr)
+                    if reset_match:
+                        logger.info("Codex-Quota-Reset laut API: %s", reset_match.group(1))
                     logger.error(
-                        "Codex-Analyst: API-Quota erreicht: %s",
+                        "Codex-Analyst: API-Quota erreicht (Skip für 6h): %s",
                         stderr[-300:],
                     )
                     return None
@@ -1242,10 +1261,16 @@ class AIEngine:
                 stdout_len = len(stdout)
                 tmp_exists = os.path.exists(tmp_path)
                 tmp_size = os.path.getsize(tmp_path) if tmp_exists else 0
+                # stdout-Preview für Debugging (was kam zurück?)
+                stdout_preview = stdout[:200].strip() if stdout else '(leer)'
+                stderr_preview = stderr[-500:].strip() if stderr else '(leer)'
                 logger.warning(
                     "Claude-Analyst: Kein strukturiertes Ergebnis "
-                    "(stdout=%d Bytes, tmp_exists=%s, tmp_size=%d)",
+                    "(stdout=%d Bytes, tmp_exists=%s, tmp_size=%d)\n"
+                    "   stdout-Preview: %s\n"
+                    "   stderr-Tail: %s",
                     stdout_len, tmp_exists, tmp_size,
+                    stdout_preview, stderr_preview,
                 )
 
             return result
@@ -1399,21 +1424,26 @@ class AIEngine:
             primary_name = 'claude'
             fallback_name = 'codex'
 
-        # Primary Versuch
-        self.stats[f'{primary_name}_calls'] += 1
-        result = await primary.query(
-            prompt,
-            model=model_class,
-            schema_path=schema_path,
-        )
+        # Codex-Quota-Cache: direkt Fallback wenn Quota erschöpft
+        import time as _time
+        if primary_name == 'codex' and _time.time() < self._codex_quota_exhausted_until:
+            logger.info("Codex-Quota erschöpft — direkt %s", fallback_name.capitalize())
+        else:
+            # Primary Versuch
+            self.stats[f'{primary_name}_calls'] += 1
+            result = await primary.query(
+                prompt,
+                model=model_class,
+                schema_path=schema_path,
+            )
 
-        if result:
-            self.stats[f'{primary_name}_success'] += 1
-            return result
+            if result:
+                self.stats[f'{primary_name}_success'] += 1
+                return result
 
-        # Primary fehlgeschlagen
-        self.stats[f'{primary_name}_failures'] += 1
-        logger.warning(f"{primary_name.capitalize()} fehlgeschlagen, Fallback auf {fallback_name.capitalize()}")
+            # Primary fehlgeschlagen
+            self.stats[f'{primary_name}_failures'] += 1
+            logger.warning(f"{primary_name.capitalize()} fehlgeschlagen, Fallback auf {fallback_name.capitalize()}")
 
         # Fallback
         self.stats[f'{fallback_name}_calls'] += 1
