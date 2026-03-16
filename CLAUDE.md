@@ -178,3 +178,17 @@
 - **Codex Analyst:** Prompt via stdin statt CLI-Argument (ARG_MAX Fix)
 - **Claude Analyst:** Prompt via stdin + `--dangerously-skip-permissions`
 - **Context Manager:** Nur aktive Projekte (sicherheitstool entfernt)
+
+### Security-DB (PostgreSQL, Enterprise-Level)
+- **security_events:** Jeder Ban/Block/Alert persistent (IP, Subnet, Severity)
+- **ip_reputation:** Akkumulierter Threat-Score pro IP (20 Punkte pro Ban, max 100)
+- **subnet_tracking:** Angriffe pro /24 Subnet
+- **remediation_log:** Audit-Trail aller Auto-Fixes (mit Rollback-Command)
+- **pending_approvals:** Überlebt Bot-Restart (Approval-State persistent)
+
+### Recidive-Erkennung
+- 3+ Bans derselben IP → automatisch permanent in UFW geblockt
+- Kein Approval nötig (automatische Eskalation)
+- Ban-History beim Start aus DB geladen (überlebt Restarts)
+- IP-Reputation im Analyst-Prompt (Top-Bedrohungen)
+- Remediation-Log mit Rollback-Command für jeden Auto-Block

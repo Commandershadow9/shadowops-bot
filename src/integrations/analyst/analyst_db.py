@@ -590,6 +590,25 @@ class AnalystDB:
         except Exception:
             pass  # Tabelle existiert vielleicht noch nicht
 
+        # ── IP-Reputation (Angreifer-Übersicht) ──
+        try:
+            top_threats = await self.pool.fetch(
+                """SELECT ip_address::TEXT, total_bans, threat_score, permanent_blocked
+                   FROM ip_reputation WHERE total_bans >= 2
+                   ORDER BY threat_score DESC LIMIT 5"""
+            )
+            if top_threats:
+                parts.append("## Top-Bedrohungen (IP-Reputation)\n")
+                for t in top_threats:
+                    icon = "🔒" if t['permanent_blocked'] else "⚠️"
+                    parts.append(
+                        f"- {icon} `{t['ip_address']}` — {t['total_bans']}x gebannt, "
+                        f"Score: {t['threat_score']}/100"
+                    )
+                parts.append("")
+        except Exception:
+            pass
+
         # ── 30-Tage-Statistik ──
         stats = await self._get_30day_stats()
         parts.append("## 30-Tage-Statistik\n")
