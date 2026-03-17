@@ -30,13 +30,30 @@ logger = logging.getLogger('shadowops.analyst')
 # Konstanten
 # ─────────────────────────────────────────────────────────────────────
 
-# Maximale Anzahl Sessions pro Tag — Default, wird von Config ueberschrieben
+# Session-Limits — werden dynamisch angepasst basierend auf Workload
 DEFAULT_MAX_SESSIONS_PER_DAY = 1
 
-# Timeout fuer Scan-Session (45 Minuten — read-only Analyse)
+# Session-Modi mit unterschiedlicher Intensitaet
+# Format: (timeout_seconds, max_turns, beschreibung)
+SESSION_MODES = {
+    'full_scan':    (2700, 60, 'Voller Scan aller Bereiche'),
+    'quick_scan':   (1200, 30, 'Schnellcheck der kritischsten Bereiche'),
+    'fix_only':     (7200, 200, 'Nur Findings abarbeiten, kein Scan'),
+    'maintenance':  (600, 15, 'Nur Verifikation + Maintenance, kein Scan/Fix'),
+}
+
+# Workload-Schwellenwerte fuer adaptive Steuerung
+WORKLOAD_THRESHOLDS = {
+    'heavy':   20,  # >=20 offene Findings → fix_only, bis zu 3 Sessions
+    'normal':  5,   # 5-19 offene Findings → full_scan + fix, 1-2 Sessions
+    'light':   1,   # 1-4 offene Findings  → quick_scan + fix, 1 Session
+    'clean':   0,   # 0 offene Findings    → maintenance oder full_scan (selten)
+}
+
+# Timeout fuer Scan-Session (wird durch SESSION_MODES ueberschrieben)
 SESSION_TIMEOUT = 2700
 
-# Maximale Tool-Aufrufe Scan-Session
+# Maximale Tool-Aufrufe Scan-Session (wird durch SESSION_MODES ueberschrieben)
 SESSION_MAX_TURNS = 60
 
 # Timeout fuer User-Approval-Anfragen (5 Minuten)
@@ -489,14 +506,29 @@ class SecurityAnalyst:
                     await asyncio.sleep(MAIN_LOOP_INTERVAL)
                     continue
 
-                # Session starten wenn: User idle + Tages-Limit nicht erreicht + keine laufende Session
+                # Session starten wenn: User idle + Limit nicht erreicht + keine laufende Session
+                # Dynamisches Limit: Workload bestimmt max_sessions
                 if (
                     not user_active
-                    and self._sessions_today < self.max_sessions_per_day
                     and self._current_session_id is None
                 ):
-                    logger.info("User ist idle und Session-Limit nicht erreicht — starte Analyse")
-                    await self._run_session()
+                    # Dynamisches Session-Limit berechnen
+                    try:
+                        fixable = await self.db.get_fixable_findings()
+                        plan = self._plan_session(len(fixable))
+                        effective_limit = min(
+                            plan['max_sessions'],
+                            self.max_sessions_per_day + plan['max_sessions'] - 1,
+                        )
+                    except Exception:
+                        effective_limit = self.max_sessions_per_day
+
+                    if self._sessions_today < effective_limit:
+                        logger.info(
+                            "User idle, Sessions %d/%d — starte Analyse",
+                            self._sessions_today, effective_limit,
+                        )
+                        await self._run_session()
 
             except asyncio.CancelledError:
                 logger.info("Main-Loop abgebrochen")
@@ -530,25 +562,95 @@ class SecurityAnalyst:
         async with self._session_lock:
             await self._run_session_inner(trigger_type='idle_detected')
 
+    def _plan_session(self, open_count: int) -> dict:
+        """Intelligenter Session-Planner — entscheidet Modus und Intensitaet.
+
+        Denkt wie ein Agent: Viel Arbeit → fokussiert fixen.
+        Wenig Arbeit → kurz scannen. Nichts offen → nur Maintenance.
+
+        Args:
+            open_count: Anzahl offener Findings
+
+        Returns:
+            Dict mit mode, max_sessions, scan, fix, reason
+        """
+        if open_count >= WORKLOAD_THRESHOLDS['heavy']:
+            return {
+                'mode': 'fix_only',
+                'max_sessions': 3,
+                'scan': False,
+                'fix': True,
+                'reason': f'{open_count} offene Findings — fokussiert fixen',
+            }
+        elif open_count >= WORKLOAD_THRESHOLDS['normal']:
+            return {
+                'mode': 'full_scan',
+                'max_sessions': 2,
+                'scan': True,
+                'fix': True,
+                'reason': f'{open_count} offene Findings — Scan + Fix',
+            }
+        elif open_count >= WORKLOAD_THRESHOLDS['light']:
+            return {
+                'mode': 'quick_scan',
+                'max_sessions': 1,
+                'scan': True,
+                'fix': True,
+                'reason': f'{open_count} offene Findings — Quickcheck + Fix',
+            }
+        else:
+            # 0 Findings — Maintenance oder seltener Full-Scan
+            # Full-Scan nur wenn letzte Session >3 Tage her
+            return {
+                'mode': 'maintenance',
+                'max_sessions': 1,
+                'scan': False,
+                'fix': False,
+                'reason': 'Alles clean — nur Maintenance',
+            }
+
     async def _run_session_inner(self, trigger_type: str = 'idle_detected'):
-        """Interne Session-Logik — entscheidet autonom ob Scan oder Fix nötig ist."""
+        """Interne Session-Logik — plant und fuehrt die optimale Session durch."""
         session_id = None
         try:
             # ── Schritt 0: Pre-Session Maintenance ──
-            # Git-Sync, Fix-Verifikation, Knowledge-Decay
             await self._pre_session_maintenance()
 
-            # ── Schritt 1: Backlog checken — was liegt an? ──
+            # ── Schritt 1: Backlog checken + Session planen ──
             fixable = await self.db.get_fixable_findings()
             open_count = len(fixable)
+            plan = self._plan_session(open_count)
 
-            # ── Schritt 2: Entscheidung — Scan oder Fix? ──
-            if open_count >= 20:
-                # Viel Backlog → kein neuer Scan, direkt fixen
-                logger.info(
-                    "Backlog: %d offene Findings → überspringe Scan, starte Fix-Phase direkt",
-                    open_count,
-                )
+            # Dynamisches Session-Limit anpassen
+            effective_max = min(plan['max_sessions'], self.max_sessions_per_day + plan['max_sessions'] - 1)
+            mode_config = SESSION_MODES[plan['mode']]
+
+            logger.info(
+                "Session-Plan: %s (Backlog: %d, Max-Sessions: %d, Reason: %s)",
+                plan['mode'], open_count, effective_max, plan['reason'],
+            )
+
+            # ── Schritt 2: Maintenance-Modus — kein Scan, kein Fix ──
+            if plan['mode'] == 'maintenance':
+                # Pruefen ob ein Full-Scan ueberfaellig ist
+                last_session = await self.db.get_last_session()
+                days_since_scan = 99
+                if last_session and last_session.get('ended_at'):
+                    days_since_scan = (datetime.now(timezone.utc) - last_session['ended_at']).days
+
+                if days_since_scan >= 3:
+                    # Laenger als 3 Tage kein Scan → doch Full-Scan
+                    plan['mode'] = 'full_scan'
+                    plan['scan'] = True
+                    plan['reason'] = f'Letzter Scan vor {days_since_scan} Tagen — ueberfaellig'
+                    mode_config = SESSION_MODES['full_scan']
+                    logger.info("Maintenance → Full-Scan hochgestuft (letzter Scan: %d Tage)", days_since_scan)
+                else:
+                    logger.info("Maintenance-Modus: Alles clean, letzter Scan vor %d Tagen — ueberspringe", days_since_scan)
+                    return
+
+            # ── Schritt 3: Fix-Only Modus ──
+            if plan['mode'] == 'fix_only':
                 session_id = await self.db.start_session(trigger_type='fix_backlog')
                 self._current_session_id = session_id
                 self._sessions_today += 1
@@ -557,7 +659,7 @@ class SecurityAnalyst:
 
                 await self.db.end_session(
                     session_id=session_id,
-                    summary=f"Fix-Session: {open_count} Findings im Backlog bearbeitet",
+                    summary=f"Fix-Session ({plan['reason']}): {open_count} Findings bearbeitet",
                     topics=['backlog_fix'],
                     tokens_used=0,
                     model=self.claude_model,
@@ -568,15 +670,15 @@ class SecurityAnalyst:
                 self._consecutive_failures = 0
                 return
 
-            # ── Schritt 3: Wenig Backlog → Scan + Fix ──
+            # ── Schritt 4: Scan (full oder quick) + optional Fix ──
             session_id = await self.db.start_session(trigger_type=trigger_type)
             self._current_session_id = session_id
             self._sessions_today += 1
 
-            if open_count > 0:
-                logger.info("Backlog: %d offene Findings → Scan + Fix", open_count)
-            else:
-                logger.info("Backlog leer → voller Scan")
+            logger.info(
+                "%s-Session startet (Timeout: %ds, Max-Turns: %d)",
+                plan['mode'], mode_config[0], mode_config[1],
+            )
 
             await self._notify_session_start(session_id, mode='scan')
 
@@ -607,15 +709,17 @@ class SecurityAnalyst:
                 self._sessions_today -= 1
                 return
 
-            # Scan-Session starten
+            # Scan-Session starten (Timeout/Turns aus Session-Plan)
+            scan_timeout = mode_config[0]
+            scan_max_turns = mode_config[1]
             logger.info(
-                "Scan-Session wird gestartet (Codex: %s, Fallback: %s, Timeout: %ds)",
-                self.codex_model, self.claude_model, SESSION_TIMEOUT,
+                "Scan-Session wird gestartet (Codex: %s, Fallback: %s, Timeout: %ds, Turns: %d)",
+                self.codex_model, self.claude_model, scan_timeout, scan_max_turns,
             )
             result = await self.ai_engine.run_analyst_session(
                 prompt=prompt,
-                timeout=SESSION_TIMEOUT,
-                max_turns=SESSION_MAX_TURNS,
+                timeout=scan_timeout,
+                max_turns=scan_max_turns,
                 codex_model=self.codex_model,
                 claude_model=self.claude_model,
             )
