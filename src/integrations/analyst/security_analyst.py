@@ -79,6 +79,15 @@ SYSTEM_SERVICES = [
     'earlyoom',
 ]
 
+# Geschuetzte Port-Bindings — muessen auf 0.0.0.0 binden (Docker-Bridge Zugriff)
+# Format: {port: beschreibung}
+# Vorfall 2026-03-17: Analyst aenderte auf 127.0.0.1 → 11h Ausfall
+PROTECTED_PORT_BINDINGS = {
+    8766: 'Health/Changelog API (GuildScout+ZERODOX Proxy)',
+    9090: 'GitHub Webhook (Traefik→Host)',
+    9091: 'GuildScout Alerts (Docker→Host)',
+}
+
 
 class SecurityAnalyst:
     """Autonomer Security Analyst Agent
@@ -924,6 +933,28 @@ class SecurityAnalyst:
         except Exception:
             resources['memory'] = 'unknown'
 
+        # Port-Bindings pruefen (geschuetzte Ports)
+        port_bindings = {}
+        try:
+            proc = await asyncio.create_subprocess_exec(
+                'ss', '-tlnp',
+                stdout=asyncio.subprocess.PIPE,
+                stderr=asyncio.subprocess.PIPE,
+            )
+            stdout, _ = await asyncio.wait_for(proc.communicate(), timeout=5)
+            for line in stdout.decode().strip().split('\n'):
+                for port in PROTECTED_PORT_BINDINGS:
+                    if f':{port}' in line:
+                        # Bind-Adresse extrahieren (z.B. "0.0.0.0:8766" oder "127.0.0.1:8766")
+                        parts = line.split()
+                        for part in parts:
+                            if f':{port}' in part:
+                                bind_addr = part.rsplit(':', 1)[0]
+                                port_bindings[str(port)] = bind_addr
+                                break
+        except Exception as e:
+            logger.warning("Port-Binding-Check fehlgeschlagen: %s", e)
+
         # In DB speichern
         await self.db.save_health_snapshot(
             session_id=session_id,
@@ -936,6 +967,7 @@ class SecurityAnalyst:
             'containers': containers,
             'services': services,
             'resources': resources,
+            'port_bindings': port_bindings,
         }
 
     def _compare_health(self, before: Dict, after: Dict) -> bool:
@@ -977,6 +1009,25 @@ class SecurityAnalyst:
                         name, status_after,
                     )
                     all_ok = False
+
+        # Port-Bindings pruefen: Geschuetzte Ports muessen auf 0.0.0.0 bleiben
+        after_bindings = after.get('port_bindings', {})
+        before_bindings = before.get('port_bindings', {})
+        for port_str, description in {str(p): d for p, d in PROTECTED_PORT_BINDINGS.items()}.items():
+            bind_after = after_bindings.get(port_str, '')
+            bind_before = before_bindings.get(port_str, '')
+            if bind_before == '0.0.0.0' and bind_after != '0.0.0.0' and bind_after:
+                logger.critical(
+                    "PORT-BINDING-REGRESSION: Port %s (%s) war 0.0.0.0, jetzt: %s "
+                    "— Docker-Container koennen Host nicht mehr erreichen!",
+                    port_str, description, bind_after,
+                )
+                all_ok = False
+            elif bind_after and bind_after != '0.0.0.0':
+                logger.warning(
+                    "Port %s (%s) bindet auf %s statt 0.0.0.0 — Docker-Zugriff moeglicherweise blockiert",
+                    port_str, description, bind_after,
+                )
 
         if all_ok:
             logger.info("Health-Check bestanden — alle Services stabil")
