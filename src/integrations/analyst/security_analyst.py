@@ -698,6 +698,17 @@ class SecurityAnalyst:
             )
             prompt = ANALYST_SYSTEM_PROMPT + "\n\n" + context_section
 
+            # Bei Quick-Scan: Fokus-Anweisung anhaengen
+            if plan['mode'] == 'quick_scan':
+                prompt += (
+                    "\n\n## QUICK-SCAN MODUS\n"
+                    "Du hast weniger Zeit als normal. Fokussiere dich auf:\n"
+                    "1. Bereiche die sich seit dem letzten Scan geaendert haben (siehe project_activity)\n"
+                    "2. Bereiche aus den Scan-Luecken (oben gelistet)\n"
+                    "3. Critical/High Severity zuerst\n"
+                    "Ueberspringe Low/Info und Bereiche die kuerzlich gecheckt wurden.\n"
+                )
+
             # Nochmal pruefen ob User immer noch idle ist (nur bei auto-trigger)
             if trigger_type == 'idle_detected' and await self.activity_monitor.is_user_active():
                 logger.info("User ist wieder aktiv — Session #%d abgebrochen", session_id)
@@ -935,22 +946,58 @@ class SecurityAnalyst:
 
             logger.info("Fix-Phase: %d Findings zum Abarbeiten", len(fixable))
 
-            # Findings-Liste für den Prompt formatieren
+            # Findings-Liste fuer den Prompt formatieren — inkl. vorheriger Fix-Versuche
             findings_text = []
             for f in fixable:
                 files = ', '.join(f.get('affected_files') or []) or '(keine Dateien)'
                 issue_url = f.get('github_issue_url', '')
                 issue_info = f" (Issue: {issue_url})" if issue_url else ''
+
+                # Vorherige Fix-Versuche fuer dieses Finding laden
+                prior_attempts = ''
+                try:
+                    attempts = await self.db.pool.fetch(
+                        """SELECT approach, result, error_message, created_at
+                           FROM fix_attempts
+                           WHERE finding_id = $1
+                           ORDER BY created_at DESC LIMIT 3""",
+                        f['id'],
+                    )
+                    if attempts:
+                        lines = []
+                        for a in attempts:
+                            icon = "✅" if a['result'] == 'success' else "❌"
+                            err = f" — {a['error_message'][:80]}" if a['error_message'] else ""
+                            lines.append(f"  {icon} {a['approach'][:100]}{err}")
+                        prior_attempts = (
+                            "\n**Vorherige Versuche (waehle einen ANDEREN Ansatz!):**\n"
+                            + "\n".join(lines) + "\n"
+                        )
+                except Exception:
+                    pass
+
                 findings_text.append(
                     f"### Finding #{f['id']} [{f['severity'].upper()}] — {f['category']}\n"
                     f"**{f['title']}**\n"
                     f"{f['description']}\n"
-                    f"Projekt: {f.get('affected_project', '?')} | Dateien: {files}{issue_info}\n"
+                    f"Projekt: {f.get('affected_project', '?')} | Dateien: {files}{issue_info}"
+                    f"{prior_attempts}\n"
                 )
+
+            # Knowledge-Kontext aus DB laden — Fix-AI braucht das gelernte Wissen
+            knowledge_context = ''
+            try:
+                knowledge_context = await self.db.build_ai_context()
+            except Exception:
+                pass
 
             prompt = FIX_SESSION_PROMPT.format(
                 findings_list='\n'.join(findings_text),
             )
+
+            # Knowledge-Kontext NACH dem Fix-Prompt anhaengen (schlank)
+            if knowledge_context:
+                prompt += "\n\n## DEIN GELERNTES WISSEN\n\n" + knowledge_context
 
             # Discord-Notification: Fix-Phase startet
             await self._notify_fix_phase_start(len(fixable))
