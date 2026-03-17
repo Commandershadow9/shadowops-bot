@@ -92,7 +92,7 @@
 |-------------|-------|
 | `fixers/` | Tool-spezifische Fixer (trivy, crowdsec, fail2ban, aide) |
 | `ai_learning/` | Legacy AI Learning (DEAKTIVIERT — knowledge_db, knowledge_synthesizer, continuous_learning_agent) |
-| `analyst/` | Security Analyst (security_analyst, analyst_db, activity_monitor, prompts) — Anti-Duplikat, Token-Budget, Entwicklungs-Awareness |
+| `analyst/` | Security Analyst (security_analyst, analyst_db, activity_monitor, prompts) — Full Learning Pipeline, Adaptive Sessions, Fix-Verifikation, Coverage-Tracking |
 
 ### Utils (`src/utils/`)
 | Datei | Zweck |
@@ -163,19 +163,31 @@
 - **knowledge_base.py:** psycopg2 statt sqlite3 (sync, gleiche API)
 - **Cross-Referenz:** Analyst-Findings fliessen in Orchestrator-Planung, Orchestrator-Fixes erscheinen im Analyst-Kontext
 
-### Security Analyst — 2-Phasen-Architektur (seit 2026-03-17)
-- **Autonome Entscheidung:** DB-Backlog prüfen → ≥20 offen: direkt Fix / <20: Scan+Fix / 0: voller Scan
-- **1 Session/Tag** (idle-triggered), reicht aus weil Fix-Phase gründlich arbeitet
-- **Phase 1 (Scan):** Reine Analyse (read-only), Findings in DB, 60 max_turns, 45min Timeout
-- **Phase 2 (Fix):** ALLE offenen Findings aus DB abarbeiten, 200 max_turns, 2h Timeout
+### Security Analyst — Lernende 2-Phasen-Architektur (seit 2026-03-18)
+- **Adaptive Session-Steuerung:**
+  - ≥20 Findings → fix_only (bis 3 Sessions/Tag, nur Fixen)
+  - 5-19 Findings → full_scan + fix (bis 2 Sessions/Tag)
+  - 1-4 Findings → quick_scan + fix (1 Session, 20min statt 45min)
+  - 0 Findings → maintenance (nur wenn letzter Scan >3 Tage her)
+- **Pre-Session Maintenance:** Git-Activity-Sync, Fix-Verifikation (14 Tage), Knowledge-Decay
+- **Phase 1 (Scan):** Reine Analyse, Findings + Coverage + Quality-Assessment in DB
+- **Phase 2 (Fix):** Findings abarbeiten mit vollem Knowledge-Kontext + vorherigen Fix-Versuchen
   - Sichere Fixes direkt ausführen (Permissions, Configs, Firewall, Docker)
   - Code-Änderungen als PR (1 Branch `fix/security-findings` pro Projekt)
-  - Kein Überspringen — alles wird gefixt oder als PR angelegt
-  - Ergebnis-DB: mark_finding_fixed() schließt auch Duplikate mit
+  - Geschützte Infrastruktur nur als Issue/PR (Bind-Adressen, Ports, Docker-Netzwerk)
+  - Fehlversuche werden gespeichert → nächstes Mal anderer Ansatz
+- **Full Learning Pipeline (4 DB-Tabellen):**
+  - `fix_attempts`: Jeden Fix-Versuch mit Ansatz/Commands/Ergebnis aufzeichnen
+  - `fix_verifications`: Prüfung ob Fixes noch aktiv sind, Regressionen → re-open
+  - `finding_quality`: Selbstbewertung (confidence, false_positive, discovery_method)
+  - `scan_coverage`: Welche Bereiche gecheckt, Lücken >7 Tage im Kontext sichtbar
+- **Kontext-Injektionen:** Fix-Effektivität, Coverage-Gaps, Finding-Qualität, Git-Activity
+- **Knowledge-Decay:** Confidence -5%/Lauf bei >14 Tage altem Wissen (Min: 20%)
 - **Finding-Dedup:** DISTINCT ON Titel-Präfix + Keyword-Match bei Duplikat-Close
 - **Auto-Close:** Findings >30 Tage ohne GitHub-Issue → automatisch geschlossen
 - **fix_policy pro Projekt:** active→critical_only, stable→all, frozen→monitor_only
 - **Codex-Quota-Cache:** Nach Quota-Fehler wird Codex 6h übersprungen
+- **Design-Doc:** `docs/plans/2026-03-18-analyst-learning-pipeline-design.md`
 
 ### Token-Budget (global)
 - **daily_token_budget:** 100K Token/Tag (konfigurierbar in config.yaml)
