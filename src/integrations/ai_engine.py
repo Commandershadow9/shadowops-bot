@@ -1192,19 +1192,18 @@ class AIEngine:
         )
 
         # Erlaubte Tools — Bash-Prefixe + Kern-Tools (keine MCPs noetig)
+        # Analyst = reine Analyse (read-only Bash + Write für Ergebnis-Datei)
         allowed_tools = (
-            'Bash(git:*),Bash(docker:*),Bash(ufw:*),Bash(systemctl:*),'
-            'Bash(ss:*),Bash(who:*),Bash(df:*),Bash(free:*),Bash(ps:*),'
-            'Bash(cat:*),Bash(ls:*),Bash(find:*),Bash(chmod:*),Bash(chown:*),'
-            'Bash(apt:*),Bash(npm:*),Bash(go:*),Bash(curl:*),Bash(head:*),'
+            'Bash(docker:*),Bash(systemctl:*),Bash(ss:*),Bash(df:*),Bash(free:*),'
+            'Bash(ps:*),Bash(cat:*),Bash(ls:*),Bash(find:*),Bash(head:*),'
             'Bash(tail:*),Bash(wc:*),Bash(grep:*),Bash(trivy:*),Bash(cscli:*),'
-            'Bash(aide:*),Bash(certbot:*),Bash(gh:*),Bash(sudo:*),'
-            'Bash(psql:*),Bash(redis-cli:*),'
-            'Read,Glob,Grep,Write,Edit'
+            'Bash(fail2ban-client:*),Bash(aide:*),Bash(ufw:*),Bash(who:*),'
+            'Bash(curl:*),Bash(sudo:*),Bash(git:*),'
+            'Read,Glob,Grep,Write'
         )
 
         # Prompt via stdin (ARG_MAX), skip-permissions (damit Tools ohne Approval laufen)
-        # --allowed-tools: Nur Security-relevante Bash-Prefixe + Kern-Tools (keine MCPs)
+        # --allowed-tools: Read-only Bash + Write (nur für Ergebnis-Datei)
         args = [
             self.claude.cli_path,
             '-p', '-',

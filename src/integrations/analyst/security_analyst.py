@@ -548,6 +548,10 @@ class SecurityAnalyst:
                     continue
 
                 fix_type = finding.get('fix_type', 'info_only')
+                # Analyst ist reine Analyse — auto_fixed kommt nicht mehr vor,
+                # aber falls die KI es trotzdem schickt → als issue_needed behandeln
+                if fix_type == 'auto_fixed':
+                    fix_type = 'issue_needed'
                 github_issue_url = None
 
                 # Fix-Policy pro Projekt berücksichtigen
