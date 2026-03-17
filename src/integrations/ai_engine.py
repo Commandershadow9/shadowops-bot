@@ -1020,6 +1020,143 @@ class AIEngine:
         logger.error("Analyst-Session: Beide Engines (Codex + Claude) ohne Ergebnis")
         return None
 
+    async def run_fix_session(
+        self,
+        prompt: str,
+        timeout: int = 3600,
+        max_turns: int = 80,
+        model: str = 'claude-sonnet-4-6',
+    ) -> Optional[Dict]:
+        """Fix-Session: Arbeitet Findings aus der DB ab.
+
+        Direkt via Claude CLI (kein Codex — Fixes brauchen Tool-Aufrufe).
+        Mehr Turns und Timeout als Analyse-Session.
+        """
+
+        tmp_path = tempfile.mktemp(
+            suffix='_fix_results.json',
+            prefix='analyst_fix_',
+            dir='/tmp',
+        )
+
+        schema_content = json.dumps({
+            "type": "object",
+            "properties": {
+                "results": {
+                    "type": "array",
+                    "items": {
+                        "type": "object",
+                        "properties": {
+                            "finding_id": {"type": "integer"},
+                            "action": {"type": "string", "enum": ["fixed", "pr_created", "skipped"]},
+                            "details": {"type": "string"}
+                        },
+                        "required": ["finding_id", "action", "details"]
+                    }
+                },
+                "summary": {"type": "string"}
+            },
+            "required": ["results", "summary"]
+        }, indent=2)
+
+        full_prompt = (
+            f"{prompt}\n\n"
+            f"--- AUSGABE ---\n"
+            f"Schreibe deine Ergebnisse als JSON in: {tmp_path}\n"
+            f"Schema:\n```json\n{schema_content}\n```\n"
+            f"Nutze Write um die Datei zu erstellen. PFLICHT fuer JEDES Finding."
+        )
+
+        # Fix-Session braucht Schreibrechte (chmod, config-edits, git, gh)
+        allowed_tools = (
+            'Bash(git:*),Bash(docker:*),Bash(ufw:*),Bash(systemctl:*),'
+            'Bash(ss:*),Bash(df:*),Bash(free:*),Bash(ps:*),'
+            'Bash(cat:*),Bash(ls:*),Bash(find:*),Bash(chmod:*),Bash(chown:*),'
+            'Bash(apt:*),Bash(npm:*),Bash(go:*),Bash(curl:*),Bash(head:*),'
+            'Bash(tail:*),Bash(wc:*),Bash(grep:*),Bash(trivy:*),Bash(cscli:*),'
+            'Bash(fail2ban-client:*),Bash(aide:*),Bash(gh:*),Bash(sudo:*),'
+            'Bash(cp:*),Bash(mv:*),Bash(mkdir:*),Bash(sed:*),'
+            'Read,Glob,Grep,Write,Edit'
+        )
+
+        args = [
+            self.claude.cli_path,
+            '-p', '-',
+            '--model', model,
+            '--max-turns', str(max_turns),
+            '--output-format', 'text',
+            '--verbose',
+            '--dangerously-skip-permissions',
+            '--allowed-tools', allowed_tools,
+        ]
+
+        env = self.claude._get_clean_env()
+
+        logger.info(
+            "Fix-Session gestartet (Modell: %s, Timeout: %ds, Max-Turns: %d)",
+            model, timeout, max_turns,
+        )
+
+        proc = None
+        try:
+            proc = await asyncio.create_subprocess_exec(
+                *args,
+                stdin=asyncio.subprocess.PIPE,
+                stdout=asyncio.subprocess.PIPE,
+                stderr=asyncio.subprocess.PIPE,
+                env=env,
+                cwd='/home/cmdshadow',
+            )
+
+            stdout_bytes, stderr_bytes = await asyncio.wait_for(
+                proc.communicate(input=full_prompt.encode('utf-8')),
+                timeout=timeout,
+            )
+
+            stdout = stdout_bytes.decode('utf-8', errors='replace') if stdout_bytes else ''
+            stderr = stderr_bytes.decode('utf-8', errors='replace') if stderr_bytes else ''
+
+            if proc.returncode != 0:
+                logger.error("Fix-Session fehlgeschlagen (rc=%d): %s", proc.returncode, stderr[-500:])
+                return None
+
+            result = self._read_analyst_result(tmp_path, stdout)
+
+            if result:
+                results_count = len(result.get('results', []))
+                fixed_count = sum(1 for r in result.get('results', []) if r.get('action') == 'fixed')
+                pr_count = sum(1 for r in result.get('results', []) if r.get('action') == 'pr_created')
+                logger.info(
+                    "Fix-Session erfolgreich: %d Ergebnisse (%d fixed, %d PRs)",
+                    results_count, fixed_count, pr_count,
+                )
+            else:
+                logger.warning(
+                    "Fix-Session: Kein strukturiertes Ergebnis (stdout=%d Bytes)",
+                    len(stdout),
+                )
+
+            return result
+
+        except asyncio.TimeoutError:
+            logger.warning("Fix-Session: Timeout nach %ds", timeout)
+            if proc:
+                try:
+                    proc.kill()
+                    await proc.wait()
+                except ProcessLookupError:
+                    pass
+            return self._read_analyst_result(tmp_path)
+        except Exception as e:
+            logger.error("Fix-Session Fehler: %s", e, exc_info=True)
+            return None
+        finally:
+            try:
+                if os.path.exists(tmp_path):
+                    os.unlink(tmp_path)
+            except OSError:
+                pass
+
     async def _run_analyst_codex(
         self,
         prompt: str,

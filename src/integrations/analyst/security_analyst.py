@@ -344,6 +344,9 @@ class SecurityAnalyst:
                     session_id, provider, model_used,
                 )
                 await self._process_results(session_id, result, health_ok, model_used)
+
+                # Phase 2: Fix-Session — offene Findings abarbeiten
+                await self._run_fix_phase(session_id)
             else:
                 # Fehlgeschlagen — Backoff aktivieren + Discord-Alert
                 self._consecutive_failures += 1
@@ -500,6 +503,142 @@ class SecurityAnalyst:
             logger.info("Session-Failure-Notification in Discord gesendet")
         except Exception as e:
             logger.error("Session-Failure-Notification fehlgeschlagen: %s", e)
+
+    async def _run_fix_phase(self, scan_session_id: int):
+        """Phase 2: Offene Findings aus DB holen und systematisch abarbeiten.
+
+        Wird automatisch nach erfolgreicher Scan-Session aufgerufen.
+        Startet eine Claude-Session die Findings fixt, PRs erstellt oder Issues anlegt.
+        """
+        from .prompts import FIX_SESSION_PROMPT
+
+        try:
+            # Fixbare Findings aus DB holen
+            fixable = await self.db.get_fixable_findings(limit=15)
+
+            if not fixable:
+                logger.info("Fix-Phase: Keine fixbaren Findings vorhanden")
+                return
+
+            logger.info("Fix-Phase: %d Findings zum Abarbeiten", len(fixable))
+
+            # Findings-Liste für den Prompt formatieren
+            findings_text = []
+            for f in fixable:
+                files = ', '.join(f.get('affected_files') or []) or '(keine Dateien)'
+                issue_url = f.get('github_issue_url', '')
+                issue_info = f" (Issue: {issue_url})" if issue_url else ''
+                findings_text.append(
+                    f"### Finding #{f['id']} [{f['severity'].upper()}] — {f['category']}\n"
+                    f"**{f['title']}**\n"
+                    f"{f['description']}\n"
+                    f"Projekt: {f.get('affected_project', '?')} | Dateien: {files}{issue_info}\n"
+                )
+
+            prompt = FIX_SESSION_PROMPT.format(
+                findings_list='\n'.join(findings_text),
+            )
+
+            # Discord-Notification: Fix-Phase startet
+            await self._notify_fix_phase_start(len(fixable))
+
+            # Fix-Session starten (Claude direkt, kein Codex)
+            fix_result = await self.ai_engine.run_fix_session(
+                prompt=prompt,
+                timeout=3600,
+                max_turns=80,
+                model=self.claude_model,
+            )
+
+            if not fix_result:
+                logger.warning("Fix-Phase: Kein Ergebnis von Claude")
+                return
+
+            # Ergebnisse verarbeiten — Findings in DB aktualisieren
+            results = fix_result.get('results', [])
+            fixed_count = 0
+            pr_count = 0
+            skipped_count = 0
+
+            for r in results:
+                finding_id = r.get('finding_id')
+                action = r.get('action', 'skipped')
+                details = r.get('details', '')
+
+                if not finding_id:
+                    continue
+
+                if action == 'fixed':
+                    await self.db.mark_finding_fixed(finding_id)
+                    fixed_count += 1
+                    logger.info("Finding #%d gefixt: %s", finding_id, details[:100])
+                elif action == 'pr_created':
+                    # PR-URL in Finding speichern
+                    try:
+                        await self.db.pool.execute(
+                            "UPDATE findings SET github_issue_url = $1 WHERE id = $2",
+                            details, finding_id,
+                        )
+                    except Exception:
+                        pass
+                    pr_count += 1
+                    logger.info("Finding #%d PR erstellt: %s", finding_id, details[:100])
+                else:
+                    skipped_count += 1
+                    logger.info("Finding #%d übersprungen: %s", finding_id, details[:80])
+
+            logger.info(
+                "Fix-Phase abgeschlossen: %d fixed, %d PRs, %d skipped (von %d)",
+                fixed_count, pr_count, skipped_count, len(fixable),
+            )
+
+            # Discord-Notification: Ergebnisse
+            await self._notify_fix_phase_complete(
+                fixed_count, pr_count, skipped_count, fix_result.get('summary', ''),
+            )
+
+        except Exception as e:
+            logger.error("Fix-Phase Fehler: %s", e, exc_info=True)
+
+    async def _notify_fix_phase_start(self, count: int):
+        """Discord-Notification: Fix-Phase startet"""
+        try:
+            channel_id = self.bot.config.get_channel_for_alert('analyst') if self.bot else None
+            if not channel_id or not self.bot:
+                return
+            import discord
+            embed = discord.Embed(
+                title="🔧 Fix-Phase gestartet",
+                description=f"Arbeite {count} offene Findings ab...",
+                color=0x3498db,
+            )
+            channel = self.bot.get_channel(int(channel_id))
+            if channel:
+                await channel.send(embed=embed)
+        except Exception:
+            pass
+
+    async def _notify_fix_phase_complete(self, fixed: int, prs: int, skipped: int, summary: str):
+        """Discord-Notification: Fix-Phase Ergebnis"""
+        try:
+            channel_id = self.bot.config.get_channel_for_alert('analyst') if self.bot else None
+            if not channel_id or not self.bot:
+                return
+            import discord
+            color = 0x2ecc71 if fixed > 0 else 0xe74c3c
+            embed = discord.Embed(
+                title="✅ Fix-Phase abgeschlossen" if fixed > 0 else "⚠️ Fix-Phase abgeschlossen",
+                description=summary[:500] if summary else "Keine Zusammenfassung",
+                color=color,
+            )
+            embed.add_field(name="Gefixt", value=str(fixed), inline=True)
+            embed.add_field(name="PRs", value=str(prs), inline=True)
+            embed.add_field(name="Übersprungen", value=str(skipped), inline=True)
+            channel = self.bot.get_channel(int(channel_id))
+            if channel:
+                await channel.send(embed=embed)
+        except Exception:
+            pass
 
     async def _process_results(self, session_id: int, result: Dict, health_ok: bool, model_used: str = 'unknown'):
         """Verarbeitet die AI-Ergebnisse und speichert sie in der DB

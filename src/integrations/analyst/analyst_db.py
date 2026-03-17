@@ -406,6 +406,35 @@ class AnalystDB:
         )
         logger.info("Finding #%d als behoben markiert", finding_id)
 
+    async def get_fixable_findings(self, limit: int = 15) -> List[Dict]:
+        """Offene Findings die gefixt werden können, priorisiert.
+
+        Gibt Findings zurück die:
+        - Status 'open' haben
+        - fix_type != 'info_only' (die sind rein informativ)
+        - Nach Severity sortiert (critical zuerst)
+        """
+        rows = await self.pool.fetch(
+            """SELECT id, severity, category, title, description,
+                      fix_type, affected_project, affected_files,
+                      github_issue_url
+               FROM findings
+               WHERE status = 'open'
+                 AND fix_type != 'info_only'
+               ORDER BY
+                   CASE severity
+                       WHEN 'critical' THEN 0
+                       WHEN 'high' THEN 1
+                       WHEN 'medium' THEN 2
+                       WHEN 'low' THEN 3
+                       ELSE 4
+                   END,
+                   found_at ASC
+               LIMIT $1""",
+            limit,
+        )
+        return [dict(r) for r in rows]
+
     # ─────────────────────────────────────────────
     # Health Snapshots
     # ─────────────────────────────────────────────
