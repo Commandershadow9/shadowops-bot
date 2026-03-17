@@ -33,11 +33,11 @@ logger = logging.getLogger('shadowops.analyst')
 # Maximale Anzahl Sessions pro Tag — Default, wird von Config ueberschrieben
 DEFAULT_MAX_SESSIONS_PER_DAY = 1
 
-# Timeout fuer eine einzelne Analyse-Session (30 Minuten)
-SESSION_TIMEOUT = 1800
+# Timeout fuer Scan-Session (45 Minuten — read-only Analyse)
+SESSION_TIMEOUT = 2700
 
-# Maximale Anzahl Tool-Aufrufe pro Session
-SESSION_MAX_TURNS = 50
+# Maximale Tool-Aufrufe Scan-Session
+SESSION_MAX_TURNS = 60
 
 # Timeout fuer User-Approval-Anfragen (5 Minuten)
 APPROVAL_TIMEOUT = 300
@@ -545,8 +545,8 @@ class SecurityAnalyst:
             # Fix-Session starten (Claude direkt, kein Codex)
             fix_result = await self.ai_engine.run_fix_session(
                 prompt=prompt,
-                timeout=3600,
-                max_turns=80,
+                timeout=7200,
+                max_turns=200,
                 model=self.claude_model,
             )
 

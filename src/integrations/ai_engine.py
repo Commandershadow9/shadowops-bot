@@ -1023,8 +1023,8 @@ class AIEngine:
     async def run_fix_session(
         self,
         prompt: str,
-        timeout: int = 3600,
-        max_turns: int = 80,
+        timeout: int = 7200,
+        max_turns: int = 200,
         model: str = 'claude-sonnet-4-6',
     ) -> Optional[Dict]:
         """Fix-Session: Arbeitet Findings aus der DB ab.
