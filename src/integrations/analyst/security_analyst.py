@@ -610,11 +610,15 @@ class SecurityAnalyst:
             pr_count = 0
 
             for r in results:
-                finding_id = r.get('finding_id')
+                raw_id = r.get('finding_id')
                 action = r.get('action', 'fixed')
                 details = r.get('details', '')
 
-                if not finding_id:
+                # finding_id kann String sein (Claude gibt manchmal "15" statt 15)
+                try:
+                    finding_id = int(raw_id)
+                except (ValueError, TypeError):
+                    logger.debug("Finding-ID '%s' nicht numerisch — übersprungen", raw_id)
                     continue
 
                 if action == 'fixed':
