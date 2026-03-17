@@ -163,11 +163,16 @@
 - **knowledge_base.py:** psycopg2 statt sqlite3 (sync, gleiche API)
 - **Cross-Referenz:** Analyst-Findings fliessen in Orchestrator-Planung, Orchestrator-Fixes erscheinen im Analyst-Kontext
 
-### Security Analyst — Anti-Duplikat + Entwicklungs-Awareness
-- **Finding-Dedup:** Keyword-Match (CVE-Nummern, lange Wörter) statt nur exakter Titel
-- **Offene Findings im Prompt:** "Diese sind bereits dokumentiert — NICHT erneut melden"
+### Security Analyst — 2-Phasen-Architektur (seit 2026-03-17)
+- **Phase 1 (Scan):** Reine Analyse (read-only), Findings in DB, 50 max_turns
+- **Phase 2 (Fix):** Offene Findings aus DB abarbeiten, 80 max_turns, 60min Timeout
+  - Sichere Fixes direkt ausführen (Permissions, Configs, Firewall)
+  - Code-Änderungen als PR (git branch + gh pr create)
+  - Riskante Sachen überspringen mit Begründung
+- **Finding-Dedup:** Keyword-Match (CVE-Nummern, lange Wörter)
 - **Auto-Close:** Findings >30 Tage ohne GitHub-Issue → automatisch geschlossen
 - **fix_policy pro Projekt:** active→critical_only, stable→all, frozen→monitor_only
+- **Codex-Quota-Cache:** Nach Quota-Fehler wird Codex 6h übersprungen
 
 ### Token-Budget (global)
 - **daily_token_budget:** 100K Token/Tag (konfigurierbar in config.yaml)
