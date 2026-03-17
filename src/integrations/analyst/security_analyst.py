@@ -37,7 +37,7 @@ DEFAULT_MAX_SESSIONS_PER_DAY = 3
 SESSION_TIMEOUT = 1800
 
 # Maximale Anzahl Tool-Aufrufe pro Session
-SESSION_MAX_TURNS = 25
+SESSION_MAX_TURNS = 50
 
 # Timeout fuer User-Approval-Anfragen (5 Minuten)
 APPROVAL_TIMEOUT = 300

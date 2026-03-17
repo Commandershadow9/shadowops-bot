@@ -1175,13 +1175,20 @@ class AIEngine:
         # Prompt erweitern: Ergebnisse als JSON in Temp-Datei schreiben
         full_prompt = (
             f"{prompt}\n\n"
-            f"--- AUSGABE-ANWEISUNG ---\n"
-            f"Wenn du fertig bist, schreibe deine Ergebnisse als valides JSON "
+            f"--- KRITISCHE AUSGABE-ANWEISUNG (MUSS BEFOLGT WERDEN) ---\n"
+            f"Du hast maximal {max_turns} Tool-Aufrufe. Teile sie so ein:\n"
+            f"- Verwende MAXIMAL die Haelfte fuer Untersuchungen\n"
+            f"- Schreibe die Ergebnisse FRUEHZEITIG in die Datei\n\n"
+            f"PFLICHT: Schreibe deine Ergebnisse als valides JSON "
             f"in die Datei: {tmp_path}\n"
             f"Das JSON MUSS diesem Schema entsprechen:\n"
             f"```json\n{schema_content}\n```\n"
             f"Nutze das Write-Tool um die Datei zu erstellen. "
-            f"Kein Markdown, nur reines JSON."
+            f"Kein Markdown, nur reines JSON.\n\n"
+            f"WICHTIG: Auch wenn du nicht alle Bereiche untersuchen konntest, "
+            f"MUSST du die bisherigen Ergebnisse in die Datei schreiben. "
+            f"Eine unvollstaendige Analyse mit geschriebener Datei ist BESSER "
+            f"als eine gruendliche Analyse ohne Ergebnis-Datei!"
         )
 
         # Erlaubte Tools — Bash-Prefixe + Kern-Tools (keine MCPs noetig)
