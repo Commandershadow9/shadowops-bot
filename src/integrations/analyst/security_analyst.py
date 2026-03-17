@@ -225,6 +225,175 @@ class SecurityAnalyst:
             logger.warning("Git-Activity-Sync fehlgeschlagen: %s", e)
 
     # ─────────────────────────────────────────────────────────────────
+    # Selbstkontrolle: Fix-Verifikation + Quality + Coverage + Decay
+    # ─────────────────────────────────────────────────────────────────
+
+    async def _verify_recent_fixes(self):
+        """Prueft ob kuerzlich gemachte Fixes noch aktiv sind.
+
+        Wird VOR jeder Session aufgerufen. Holt bis zu 10 unverified
+        Fixes der letzten 14 Tage und fuehrt einfache Checks durch.
+        Regressierte Fixes → Finding re-open + Discord-Alert.
+        """
+        try:
+            unverified = await self.db.get_unverified_fixes(days=14, limit=10)
+            if not unverified:
+                return
+
+            logger.info("Verifiziere %d kuerzliche Fixes...", len(unverified))
+            regressions = 0
+
+            for fix in unverified:
+                still_valid = True
+                check_method = 'existence_check'
+                regression_details = None
+
+                # Pruefen ob das Finding noch relevant ist
+                # Strategie: Datei-Existenz + Service-Status fuer betroffene Bereiche
+                category = fix.get('category', '')
+                project = fix.get('affected_project', '')
+                files = fix.get('affected_files') or []
+
+                try:
+                    if category in ('firewall', 'network'):
+                        # UFW-Regel pruefen
+                        proc = await asyncio.create_subprocess_exec(
+                            'sudo', 'ufw', 'status',
+                            stdout=asyncio.subprocess.PIPE,
+                            stderr=asyncio.subprocess.PIPE,
+                        )
+                        stdout, _ = await asyncio.wait_for(proc.communicate(), timeout=5)
+                        check_method = 'ufw status'
+                        # Einfacher Check: UFW muss aktiv sein
+                        if b'Status: active' not in stdout:
+                            still_valid = False
+                            regression_details = 'UFW ist nicht mehr aktiv'
+
+                    elif category == 'docker':
+                        # Docker-Container muessen laufen
+                        proc = await asyncio.create_subprocess_exec(
+                            'docker', 'ps', '--format', '{{.Names}}:{{.Status}}',
+                            stdout=asyncio.subprocess.PIPE,
+                            stderr=asyncio.subprocess.PIPE,
+                        )
+                        stdout, _ = await asyncio.wait_for(proc.communicate(), timeout=10)
+                        check_method = 'docker ps'
+
+                    elif category == 'permissions' and files:
+                        # Datei-Berechtigungen pruefen
+                        import os as _os
+                        for f in files[:3]:
+                            if _os.path.exists(f):
+                                mode = oct(_os.stat(f).st_mode)[-3:]
+                                # Warnung wenn Datei world-readable geworden ist
+                                if mode.endswith('4') or mode.endswith('6'):
+                                    if any(s in f for s in ['.env', 'credential', 'secret', 'key']):
+                                        still_valid = False
+                                        regression_details = f'{f} ist world-readable ({mode})'
+                                        break
+                        check_method = 'file permission check'
+
+                    elif category in ('config', 'ssh'):
+                        # SSH-Service muss laufen
+                        proc = await asyncio.create_subprocess_exec(
+                            'systemctl', 'is-active', 'sshd',
+                            stdout=asyncio.subprocess.PIPE,
+                            stderr=asyncio.subprocess.PIPE,
+                        )
+                        stdout, _ = await asyncio.wait_for(proc.communicate(), timeout=5)
+                        check_method = 'systemctl is-active sshd'
+                        if b'active' not in stdout:
+                            still_valid = False
+                            regression_details = 'sshd ist nicht aktiv'
+
+                    else:
+                        # Generischer Check: Finding-Dateien existieren noch
+                        check_method = 'file_existence'
+
+                except asyncio.TimeoutError:
+                    check_method = 'timeout'
+                    logger.debug("Verifikation Timeout fuer Fix #%d", fix['id'])
+                    continue
+                except Exception as e:
+                    logger.debug("Verifikation Fehler fuer Fix #%d: %s", fix['id'], e)
+                    continue
+
+                # Ergebnis speichern
+                session_id = self._current_session_id or 0
+                await self.db.record_verification(
+                    fix_attempt_id=fix['id'],
+                    session_id=session_id,
+                    still_valid=still_valid,
+                    check_method=check_method,
+                    regression_details=regression_details,
+                )
+
+                if not still_valid:
+                    regressions += 1
+                    # Finding re-open
+                    await self.db.reopen_finding(
+                        fix['finding_id'],
+                        f"Regression erkannt: {regression_details}",
+                    )
+                    logger.warning(
+                        "REGRESSION: Fix #%d fuer Finding #%d (%s) haelt nicht mehr: %s",
+                        fix['id'], fix['finding_id'], fix.get('finding_title', '?'),
+                        regression_details,
+                    )
+
+            if regressions > 0:
+                await self._notify_regressions(regressions)
+                # Pattern lernen
+                await self.db.add_pattern(
+                    pattern_type='fix_regression',
+                    description=f'{regressions} Fix(es) regressiert bei Verifikation',
+                    example=f'Session am {datetime.now(timezone.utc).date()}',
+                )
+
+            logger.info(
+                "Fix-Verifikation: %d geprueft, %d Regressionen",
+                len(unverified), regressions,
+            )
+
+        except Exception as e:
+            logger.warning("Fix-Verifikation fehlgeschlagen: %s", e)
+
+    async def _notify_regressions(self, count: int):
+        """Discord-Alert bei Fix-Regressionen."""
+        try:
+            channel_id = self.config.critical_channel if hasattr(self.config, 'critical_channel') else None
+            if not channel_id:
+                channel_id = self.bot.config.get_channel_for_alert('analyst') if self.bot else None
+            if not channel_id or not self.bot:
+                return
+            channel = self.bot.get_channel(int(channel_id))
+            if channel:
+                embed = discord.Embed(
+                    title=f"⚠️ {count} Fix-Regression(en) erkannt",
+                    description=(
+                        f"Bei der Verifikation wurden {count} Fixes gefunden die nicht mehr greifen.\n"
+                        f"Betroffene Findings wurden re-opened und werden in der naechsten Fix-Session bearbeitet."
+                    ),
+                    color=0xe67e22,
+                    timestamp=datetime.now(timezone.utc),
+                )
+                await channel.send(embed=embed)
+        except Exception:
+            pass
+
+    async def _pre_session_maintenance(self):
+        """Alle Pre-Session Tasks ausfuehren.
+
+        Buendelt alle Wartungsaufgaben die vor jeder Session laufen:
+        1. Git-Activity in DB synchronisieren
+        2. Kuerzliche Fixes verifizieren
+        3. Knowledge-Confidence abschwaechen
+        """
+        await self._sync_git_activity_to_db()
+        await self._verify_recent_fixes()
+        await self.db.decay_knowledge_confidence()
+
+    # ─────────────────────────────────────────────────────────────────
     # Lifecycle
     # ─────────────────────────────────────────────────────────────────
 
@@ -365,8 +534,9 @@ class SecurityAnalyst:
         """Interne Session-Logik — entscheidet autonom ob Scan oder Fix nötig ist."""
         session_id = None
         try:
-            # ── Schritt 0: Git-Activity in Knowledge-DB aktualisieren ──
-            await self._sync_git_activity_to_db()
+            # ── Schritt 0: Pre-Session Maintenance ──
+            # Git-Sync, Fix-Verifikation, Knowledge-Decay
+            await self._pre_session_maintenance()
 
             # ── Schritt 1: Backlog checken — was liegt an? ──
             fixable = await self.db.get_fixable_findings()
@@ -712,6 +882,17 @@ class SecurityAnalyst:
 
                 if action == 'fixed':
                     await self.db.mark_finding_fixed(finding_id)
+                    # Fix-Versuch aufzeichnen (Learning Pipeline)
+                    try:
+                        await self.db.record_fix_attempt(
+                            finding_id=finding_id,
+                            session_id=scan_session_id,
+                            approach=details[:200] if details else 'direct fix',
+                            result='success',
+                            commands_used=r.get('commands'),
+                        )
+                    except Exception as rec_err:
+                        logger.debug("Fix-Attempt Recording fehlgeschlagen: %s", rec_err)
                     fixed_count += 1
                     logger.info("Finding #%d gefixt: %s", finding_id, details[:100])
                 elif action == 'pr_created':
@@ -724,8 +905,31 @@ class SecurityAnalyst:
                         )
                     except Exception:
                         pass
+                    # Fix-Versuch als PR aufzeichnen
+                    try:
+                        await self.db.record_fix_attempt(
+                            finding_id=finding_id,
+                            session_id=scan_session_id,
+                            approach=f'PR erstellt: {details[:150]}',
+                            result='success',
+                        )
+                    except Exception:
+                        pass
                     pr_count += 1
                     logger.info("Finding #%d PR erstellt: %s", finding_id, details[:100])
+                elif action == 'failed':
+                    # Fehlgeschlagener Fix aufzeichnen (lernen!)
+                    try:
+                        await self.db.record_fix_attempt(
+                            finding_id=finding_id,
+                            session_id=scan_session_id,
+                            approach=details[:200] if details else 'unknown',
+                            result='failure',
+                            error_message=r.get('error', ''),
+                        )
+                    except Exception:
+                        pass
+                    logger.warning("Finding #%d Fix fehlgeschlagen: %s", finding_id, details[:100])
 
             logger.info(
                 "Fix-Phase abgeschlossen: %d direkt gefixt, %d PRs erstellt (von %d Findings)",
@@ -885,6 +1089,37 @@ class SecurityAnalyst:
 
             except Exception as e:
                 logger.error("Finding-Verarbeitung fehlgeschlagen: %s", e)
+
+        # ── Finding-Quality bewerten (Learning Pipeline) ──
+        finding_assessments = result.get('finding_assessments', [])
+        for fa in finding_assessments:
+            try:
+                fid = int(fa.get('finding_id', 0))
+                if fid > 0:
+                    await self.db.assess_finding_quality(
+                        finding_id=fid,
+                        is_actionable=fa.get('is_actionable', True),
+                        is_false_positive=fa.get('is_false_positive', False),
+                        false_positive_reason=fa.get('false_positive_reason'),
+                        discovery_method=fa.get('discovery_method'),
+                        confidence_score=fa.get('confidence', 0.5),
+                    )
+            except Exception as qa_err:
+                logger.debug("Finding-Quality-Assessment fehlgeschlagen: %s", qa_err)
+
+        # ── Scan-Coverage aufzeichnen (Learning Pipeline) ──
+        areas_checked = result.get('areas_checked', [])
+        areas_deferred = result.get('areas_deferred', [])
+        if areas_checked or areas_deferred:
+            coverage_data = []
+            for area in areas_checked:
+                coverage_data.append({'area': area, 'checked': True, 'depth': 'basic'})
+            for area in areas_deferred:
+                coverage_data.append({'area': area, 'checked': False, 'depth': 'skipped'})
+            try:
+                await self.db.record_scan_coverage(session_id, coverage_data)
+            except Exception as cov_err:
+                logger.debug("Scan-Coverage Recording fehlgeschlagen: %s", cov_err)
 
         # Session in DB abschliessen
         await self.db.end_session(

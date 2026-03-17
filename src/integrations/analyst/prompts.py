@@ -74,6 +74,14 @@ Jedes Finding braucht:
 - issue_title + issue_body: Fuer GitHub-Issue (bei issue_needed)
 
 Wissens-Updates (knowledge_updates): Dokumentiere was du ueber den Server gelernt hast.
+
+## Selbstkontrolle
+
+Melde im Ergebnis:
+- areas_checked: Welche Bereiche du gecheckt hast (firewall, docker, ssh, permissions, packages, logs, network)
+- areas_deferred: Welche du uebersprungen hast
+- finding_assessments: Pro Finding deine Einschaetzung (confidence 0-1, discovery_method, is_actionable).
+  Falls ein Finding sich als false_positive herausstellt, markiere es mit is_false_positive + Begruendung.
 """
 
 
@@ -161,6 +169,10 @@ Aenderungen hier koennen Docker-Container, Reverse-Proxy oder Service-Kommunikat
 
 Fuer JEDES Finding:
 - finding_id: DB-ID
-- action: "fixed" | "pr_created"
-- details: Was gemacht / PR-URL
+- action: "fixed" | "pr_created" | "failed"
+- details: Was gemacht / PR-URL / Fehlerbeschreibung
+- commands: Liste der ausgefuehrten Befehle (optional, fuer Lerneffekt)
+
+Falls ein Fix fehlschlaegt: action "failed" mit error-Feld. Nicht ueberspringen — der
+Fehlversuch wird gespeichert damit beim naechsten Mal ein anderer Ansatz gewaehlt wird.
 """

@@ -662,6 +662,44 @@ class AnalystDB:
         except Exception:
             pass
 
+        # ── Fix-Effektivitaet (welche Ansaetze funktionieren?) ──
+        try:
+            fix_eff = await self.get_fix_effectiveness()
+            if fix_eff:
+                parts.append("## Fix-Effektivitaet (90 Tage)\n")
+                for cat, stats in fix_eff.items():
+                    reg_warn = f" ⚠️{stats['regressions']} Regressionen" if stats['regressions'] else ""
+                    parts.append(
+                        f"- **{cat}:** {stats['success_rate']}% Erfolg "
+                        f"({stats['successes']}/{stats['total']}){reg_warn}"
+                    )
+                parts.append("")
+        except Exception:
+            pass
+
+        # ── Coverage-Luecken (was wurde lange nicht geprueft?) ──
+        try:
+            gaps = await self.get_coverage_gaps(max_age_days=7)
+            if gaps:
+                parts.append("## Scan-Luecken (>7 Tage nicht geprueft)\n")
+                for g in gaps:
+                    parts.append(f"- **{g['area']}** — zuletzt vor {g['days_ago']} Tagen")
+                parts.append("")
+        except Exception:
+            pass
+
+        # ── Finding-Qualitaet ──
+        try:
+            fp_stats = await self.get_false_positive_rate()
+            if fp_stats['total_assessed'] > 0:
+                parts.append("## Finding-Qualitaet (90 Tage)\n")
+                parts.append(f"- **Bewertet:** {fp_stats['total_assessed']} Findings")
+                parts.append(f"- **False Positives:** {fp_stats['false_positives']} ({fp_stats['false_positive_rate']}%)")
+                parts.append(f"- **Ø Confidence:** {fp_stats['avg_confidence']}")
+                parts.append("")
+        except Exception:
+            pass
+
         # ── 30-Tage-Statistik ──
         stats = await self._get_30day_stats()
         parts.append("## 30-Tage-Statistik\n")
@@ -715,3 +753,289 @@ class AnalystDB:
             'findings_fixed': findings_fixed,
             'findings_open': findings_open,
         }
+
+    # ─────────────────────────────────────────────
+    # Fix Attempts — Jeden Fix-Versuch aufzeichnen
+    # ─────────────────────────────────────────────
+
+    async def record_fix_attempt(
+        self,
+        finding_id: int,
+        session_id: int,
+        approach: str,
+        result: str,
+        commands_used: Optional[List[str]] = None,
+        side_effects: Optional[str] = None,
+        error_message: Optional[str] = None,
+        execution_time_s: Optional[int] = None,
+    ) -> int:
+        """Fix-Versuch aufzeichnen.
+
+        Args:
+            finding_id: Zugehoeriges Finding
+            session_id: Aktuelle Session
+            approach: Beschreibung des Ansatzes
+            result: 'success', 'failure', 'partial'
+            commands_used: Liste ausgefuehrter Befehle
+            side_effects: Beobachtete Nebeneffekte
+            error_message: Fehlermeldung bei Failure
+            execution_time_s: Dauer in Sekunden
+
+        Returns:
+            ID des Fix-Attempts
+        """
+        row = await self.pool.fetchrow(
+            """INSERT INTO fix_attempts
+               (finding_id, session_id, approach, commands_used, result,
+                side_effects, error_message, execution_time_s)
+               VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
+               RETURNING id""",
+            finding_id, session_id, approach, commands_used, result,
+            side_effects, error_message, execution_time_s,
+        )
+        fix_id = row['id']
+        logger.info(
+            "Fix-Attempt #%d fuer Finding #%d: %s (%s)",
+            fix_id, finding_id, approach[:60], result,
+        )
+        return fix_id
+
+    async def get_unverified_fixes(self, days: int = 14, limit: int = 10) -> List[Dict]:
+        """Erfolgreiche Fixes die noch nicht verifiziert wurden.
+
+        Holt Fixes der letzten N Tage die:
+        - result = 'success'
+        - noch nie verifiziert (verified_at IS NULL) ODER laenger als 3 Tage her
+
+        Returns:
+            Liste der Fix-Attempts mit Finding-Infos
+        """
+        rows = await self.pool.fetch(
+            """SELECT fa.id, fa.finding_id, fa.approach, fa.commands_used,
+                      fa.created_at, fa.verified_at, fa.still_valid,
+                      f.title as finding_title, f.category, f.affected_project,
+                      f.affected_files
+               FROM fix_attempts fa
+               JOIN findings f ON f.id = fa.finding_id
+               WHERE fa.result = 'success'
+                 AND fa.created_at >= NOW() - make_interval(days => $1)
+                 AND (fa.verified_at IS NULL
+                      OR fa.verified_at < NOW() - INTERVAL '3 days')
+               ORDER BY fa.created_at DESC
+               LIMIT $2""",
+            days, limit,
+        )
+        return [dict(r) for r in rows]
+
+    async def record_verification(
+        self,
+        fix_attempt_id: int,
+        session_id: int,
+        still_valid: bool,
+        check_method: Optional[str] = None,
+        regression_details: Optional[str] = None,
+    ):
+        """Verifikations-Ergebnis speichern.
+
+        Aktualisiert auch den Fix-Attempt selbst (verified_at, still_valid).
+        """
+        now = datetime.now(timezone.utc)
+
+        # Verifikations-Eintrag
+        await self.pool.execute(
+            """INSERT INTO fix_verifications
+               (fix_attempt_id, session_id, still_valid, check_method,
+                regression_details, checked_at)
+               VALUES ($1, $2, $3, $4, $5, $6)""",
+            fix_attempt_id, session_id, still_valid, check_method,
+            regression_details, now,
+        )
+
+        # Fix-Attempt aktualisieren
+        await self.pool.execute(
+            """UPDATE fix_attempts
+               SET verified_at = $1, still_valid = $2
+               WHERE id = $3""",
+            now, still_valid, fix_attempt_id,
+        )
+
+        status = "OK" if still_valid else "REGRESSIERT"
+        logger.info("Fix #%d verifiziert: %s", fix_attempt_id, status)
+
+    async def get_fix_effectiveness(self) -> Dict:
+        """Fix-Effektivitaet nach Kategorie berechnen.
+
+        Returns:
+            Dict mit Erfolgsraten pro Kategorie
+        """
+        rows = await self.pool.fetch(
+            """SELECT f.category,
+                      COUNT(*) as total,
+                      COUNT(*) FILTER (WHERE fa.result = 'success') as successes,
+                      COUNT(*) FILTER (WHERE fa.still_valid = FALSE) as regressions
+               FROM fix_attempts fa
+               JOIN findings f ON f.id = fa.finding_id
+               WHERE fa.created_at >= NOW() - INTERVAL '90 days'
+               GROUP BY f.category
+               ORDER BY total DESC"""
+        )
+        result = {}
+        for r in rows:
+            total = r['total']
+            successes = r['successes']
+            rate = round(successes / total * 100) if total > 0 else 0
+            result[r['category']] = {
+                'total': total,
+                'successes': successes,
+                'regressions': r['regressions'],
+                'success_rate': rate,
+            }
+        return result
+
+    async def reopen_finding(self, finding_id: int, reason: str):
+        """Finding wieder oeffnen wegen Regression.
+
+        Setzt status zurueck auf 'open' und loggt den Grund.
+        """
+        await self.pool.execute(
+            """UPDATE findings
+               SET status = 'open', fixed_at = NULL
+               WHERE id = $1""",
+            finding_id,
+        )
+        logger.warning("Finding #%d re-opened: %s", finding_id, reason)
+
+    # ─────────────────────────────────────────────
+    # Finding Quality — Qualitaetsbewertung
+    # ─────────────────────────────────────────────
+
+    async def assess_finding_quality(
+        self,
+        finding_id: int,
+        is_actionable: bool = True,
+        is_false_positive: bool = False,
+        false_positive_reason: Optional[str] = None,
+        discovery_method: Optional[str] = None,
+        confidence_score: float = 0.5,
+        assessed_by: str = 'analyst',
+    ):
+        """Finding-Qualitaet bewerten (Upsert).
+
+        Wird vom Analyst nach der Analyse aufgerufen um seine
+        eigenen Findings zu bewerten.
+        """
+        await self.pool.execute(
+            """INSERT INTO finding_quality
+               (finding_id, is_actionable, is_false_positive, false_positive_reason,
+                discovery_method, confidence_score, assessed_at, assessed_by)
+               VALUES ($1, $2, $3, $4, $5, $6, NOW(), $7)
+               ON CONFLICT (finding_id)
+               DO UPDATE SET
+                   is_actionable = $2, is_false_positive = $3,
+                   false_positive_reason = $4, discovery_method = $5,
+                   confidence_score = $6, assessed_at = NOW(), assessed_by = $7""",
+            finding_id, is_actionable, is_false_positive,
+            false_positive_reason, discovery_method, confidence_score, assessed_by,
+        )
+        if is_false_positive:
+            logger.info("Finding #%d als False Positive bewertet: %s", finding_id, false_positive_reason)
+
+    async def get_false_positive_rate(self) -> Dict:
+        """False-Positive-Rate berechnen (letzte 90 Tage)."""
+        row = await self.pool.fetchrow(
+            """SELECT
+                   COUNT(*) as total,
+                   COUNT(*) FILTER (WHERE is_false_positive) as false_positives,
+                   AVG(confidence_score) as avg_confidence
+               FROM finding_quality
+               WHERE assessed_at >= NOW() - INTERVAL '90 days'"""
+        )
+        total = row['total'] or 0
+        fps = row['false_positives'] or 0
+        return {
+            'total_assessed': total,
+            'false_positives': fps,
+            'false_positive_rate': round(fps / total * 100) if total > 0 else 0,
+            'avg_confidence': round(float(row['avg_confidence'] or 0.5), 2),
+        }
+
+    # ─────────────────────────────────────────────
+    # Scan Coverage — Abdeckungs-Tracking
+    # ─────────────────────────────────────────────
+
+    async def record_scan_coverage(
+        self,
+        session_id: int,
+        areas: List[Dict],
+    ):
+        """Scan-Abdeckung speichern.
+
+        Args:
+            session_id: Aktuelle Session
+            areas: Liste von {area, checked, depth, notes}
+        """
+        for a in areas:
+            await self.pool.execute(
+                """INSERT INTO scan_coverage
+                   (session_id, area, checked, depth, notes)
+                   VALUES ($1, $2, $3, $4, $5)""",
+                session_id,
+                a.get('area', 'unknown'),
+                a.get('checked', True),
+                a.get('depth', 'basic'),
+                a.get('notes'),
+            )
+        logger.debug("Scan-Coverage fuer Session %d: %d Bereiche", session_id, len(areas))
+
+    async def get_coverage_gaps(self, max_age_days: int = 7) -> List[Dict]:
+        """Bereiche die seit mehr als N Tagen nicht geprueft wurden.
+
+        Vergleicht alle bekannten Bereiche mit deren letztem Check-Datum.
+
+        Returns:
+            Liste von {area, last_checked, days_ago}
+        """
+        rows = await self.pool.fetch(
+            """SELECT area, MAX(checked_at) as last_checked
+               FROM scan_coverage
+               WHERE checked = TRUE
+               GROUP BY area
+               HAVING MAX(checked_at) < NOW() - make_interval(days => $1)
+               ORDER BY MAX(checked_at) ASC""",
+            max_age_days,
+        )
+        result = []
+        now = datetime.now(timezone.utc)
+        for r in rows:
+            days_ago = (now - r['last_checked']).days
+            result.append({
+                'area': r['area'],
+                'last_checked': r['last_checked'].isoformat(),
+                'days_ago': days_ago,
+            })
+        return result
+
+    # ─────────────────────────────────────────────
+    # Knowledge Confidence Decay
+    # ─────────────────────────────────────────────
+
+    async def decay_knowledge_confidence(self, decay_after_days: int = 14, decay_rate: float = 0.05):
+        """Confidence von altem Wissen reduzieren.
+
+        Knowledge-Eintraege die laenger als N Tage nicht verifiziert wurden
+        verlieren pro Lauf etwas Confidence. Minimum: 0.2 (wird nie geloescht).
+
+        Args:
+            decay_after_days: Ab wann Decay einsetzt
+            decay_rate: Um wie viel pro Lauf (0.05 = 5%)
+        """
+        result = await self.pool.execute(
+            """UPDATE knowledge
+               SET confidence = GREATEST(0.2, confidence - $1)
+               WHERE last_verified < NOW() - make_interval(days => $2)
+                 AND confidence > 0.2""",
+            decay_rate, decay_after_days,
+        )
+        count = int(result.split()[-1]) if result else 0
+        if count > 0:
+            logger.info("Confidence-Decay: %d Knowledge-Eintraege reduziert (-%s%%)", count, int(decay_rate * 100))
