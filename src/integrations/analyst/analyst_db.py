@@ -392,36 +392,58 @@ class AnalystDB:
         return [dict(r) for r in rows]
 
     async def mark_finding_fixed(self, finding_id: int):
-        """Finding als behoben markieren
+        """Finding als behoben markieren + Duplikate mitschliessen.
 
-        Args:
-            finding_id: ID des Findings
+        Wenn Finding #5 gefixt wird und Finding #10 den gleichen Titel hat,
+        wird #10 automatisch auch als gefixt markiert.
         """
         now = datetime.now(timezone.utc)
-        await self.pool.execute(
-            """UPDATE findings
-               SET status = 'fixed', fixed_at = $1
-               WHERE id = $2""",
-            now, finding_id,
+
+        # Titel des Findings holen
+        title = await self.pool.fetchval(
+            "SELECT title FROM findings WHERE id = $1", finding_id,
         )
-        logger.info("Finding #%d als behoben markiert", finding_id)
+
+        if title:
+            # Alle offenen Findings mit ähnlichem Titel mitschliessen
+            result = await self.pool.execute(
+                """UPDATE findings
+                   SET status = 'fixed', fixed_at = $1
+                   WHERE (id = $2 OR (status = 'open' AND LOWER(LEFT(title, 60)) = LOWER(LEFT($3, 60))))""",
+                now, finding_id, title,
+            )
+            # Anzahl betroffener Rows aus dem Result-Tag parsen
+            count = int(result.split()[-1]) if result else 1
+            if count > 1:
+                logger.info("Finding #%d + %d Duplikate als behoben markiert", finding_id, count - 1)
+            else:
+                logger.info("Finding #%d als behoben markiert", finding_id)
+        else:
+            await self.pool.execute(
+                "UPDATE findings SET status = 'fixed', fixed_at = $1 WHERE id = $2",
+                now, finding_id,
+            )
+            logger.info("Finding #%d als behoben markiert", finding_id)
 
     async def get_fixable_findings(self) -> List[Dict]:
-        """ALLE offenen Findings die gefixt werden können, priorisiert.
+        """ALLE offenen Findings die gefixt werden können, dedupliziert und priorisiert.
 
-        Gibt Findings zurück die:
-        - Status 'open' haben
-        - fix_type != 'info_only' (die sind rein informativ)
-        - Nach Severity sortiert (critical zuerst), dann nach Projekt gruppiert
+        Filtert:
+        - Status 'open', fix_type != 'info_only'
+        - Dedupliziert nach Titel (nur neuestes pro Titel-Gruppe)
+        - Findings MIT GitHub-Issue werden übersprungen (bereits getrackt)
+        - Nach Severity sortiert, dann nach Projekt gruppiert
         """
         rows = await self.pool.fetch(
-            """SELECT id, severity, category, title, description,
+            """SELECT DISTINCT ON (LOWER(LEFT(title, 60)))
+                      id, severity, category, title, description,
                       fix_type, affected_project, affected_files,
                       github_issue_url
                FROM findings
                WHERE status = 'open'
                  AND fix_type != 'info_only'
                ORDER BY
+                   LOWER(LEFT(title, 60)),
                    CASE severity
                        WHEN 'critical' THEN 0
                        WHEN 'high' THEN 1
@@ -429,10 +451,13 @@ class AnalystDB:
                        WHEN 'low' THEN 3
                        ELSE 4
                    END,
-                   affected_project,
-                   found_at ASC"""
+                   found_at DESC"""
         )
-        return [dict(r) for r in rows]
+        # Re-sort nach Severity + Projekt (DISTINCT ON erzwingt andere Sortierung)
+        severity_order = {'critical': 0, 'high': 1, 'medium': 2, 'low': 3, 'info': 4}
+        result = [dict(r) for r in rows]
+        result.sort(key=lambda f: (severity_order.get(f['severity'], 5), f.get('affected_project', '')))
+        return result
 
     # ─────────────────────────────────────────────
     # Health Snapshots

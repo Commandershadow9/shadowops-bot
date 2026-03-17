@@ -1139,23 +1139,27 @@ class AIEngine:
             return result
 
         except asyncio.TimeoutError:
-            logger.warning("Fix-Session: Timeout nach %ds", timeout)
+            logger.warning("Fix-Session: Timeout nach %ds — versuche Teilergebnisse zu retten", timeout)
             if proc:
                 try:
                     proc.kill()
                     await proc.wait()
                 except ProcessLookupError:
                     pass
-            return self._read_analyst_result(tmp_path)
+            # Teilergebnisse retten — Claude hat möglicherweise schon Findings gefixt
+            partial = self._read_analyst_result(tmp_path)
+            if partial:
+                count = len(partial.get('results', []))
+                logger.info("Fix-Session: %d Teilergebnisse gerettet trotz Timeout", count)
+            return partial
         except Exception as e:
             logger.error("Fix-Session Fehler: %s", e, exc_info=True)
-            return None
+            # Auch bei Exceptions Teilergebnisse versuchen
+            return self._read_analyst_result(tmp_path)
         finally:
-            try:
-                if os.path.exists(tmp_path):
-                    os.unlink(tmp_path)
-            except OSError:
-                pass
+            # Temp-Datei NICHT sofort löschen — erst nach erfolgreicher Verarbeitung
+            # Aufräumen passiert beim nächsten Lauf oder durch /tmp Cleanup
+            pass
 
     async def _run_analyst_codex(
         self,
