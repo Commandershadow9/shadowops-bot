@@ -964,6 +964,7 @@ class ShadowOpsBot(commands.Bot):
                         bot=self,
                         config=self.config,
                         ai_engine=self.ai_service,
+                        context_manager=self.context_manager,
                     )
                     await self.security_analyst.start()
                     self.logger.info("Security Analyst gestartet")

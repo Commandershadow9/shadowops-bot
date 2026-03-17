@@ -98,16 +98,18 @@ class SecurityAnalyst:
     und erstellt GitHub-Issues fuer Code-Probleme.
     """
 
-    def __init__(self, bot, config, ai_engine):
+    def __init__(self, bot, config, ai_engine, context_manager=None):
         """
         Args:
             bot: Discord Bot-Instanz
             config: ShadowOps Config-Objekt
             ai_engine: AIEngine-Instanz mit run_analyst_session()
+            context_manager: Optional ContextManager mit Git-History + Code-Analyse
         """
         self.bot = bot
         self.config = config
         self.ai_engine = ai_engine
+        self.context_manager = context_manager
 
         # Max Sessions aus Config oder Default
         analyst_cfg = config._config.get('security_analyst', {})
@@ -142,6 +144,85 @@ class SecurityAnalyst:
         # Failure-Tracking (verhindert Endlos-Retries)
         self._consecutive_failures: int = 0
         self._failure_cooldown_until: float = 0.0
+
+    # ─────────────────────────────────────────────────────────────────
+    # Knowledge-Sync: Git-Activity → DB
+    # ─────────────────────────────────────────────────────────────────
+
+    async def _sync_git_activity_to_db(self):
+        """Synchronisiert Git-Aktivitaet aller Projekte in die Knowledge-DB.
+
+        Wird VOR jeder Session aufgerufen. Schreibt kompakte Summaries
+        in die knowledge-Tabelle (category: project_activity), damit der
+        Analyst weiss welche Projekte sich seit dem letzten Scan geaendert haben.
+
+        Daten kommen vom ContextManager (GitHistoryAnalyzer + CodeAnalyzer).
+        """
+        if not self.context_manager:
+            return
+
+        try:
+            # Git-History neu laden (frische Daten)
+            self.context_manager.reload_git_history()
+
+            # Direkt auf die Analyzer zugreifen fuer volle Pattern-Daten
+            for project_name, analyzer in self.context_manager.git_analyzers.items():
+                try:
+                    patterns = analyzer.analyze_patterns()
+                except Exception:
+                    continue
+
+                total = patterns.get('total_commits', 0)
+                fixes = patterns.get('total_fixes', 0)
+                security = patterns.get('total_security', 0)
+
+                # Hotspot-Files (Top 3)
+                hotspots = patterns.get('frequently_changed_files', [])[:3]
+                hotspot_text = ', '.join(
+                    f"{f}({n}x)" for f, n in hotspots
+                ) if hotspots else 'keine'
+
+                # Letzte Security-Fixes
+                sec_fixes = patterns.get('recent_security_fixes', [])[:3]
+                sec_text = '; '.join(
+                    f"{s['date']}: {s['subject'][:60]}" for s in sec_fixes
+                ) if sec_fixes else 'keine'
+
+                content = (
+                    f"{total} Commits (30 Tage), {fixes} Fixes, {security} Security-Commits. "
+                    f"Hotspot-Dateien: {hotspot_text}. "
+                    f"Letzte Security-Fixes: {sec_text}."
+                )
+
+                # Confidence: Hoeher bei mehr Aktivitaet (aktive Projekte = wichtiger)
+                confidence = min(0.95, 0.5 + (total / 200))
+
+                await self.db.upsert_knowledge(
+                    category='project_activity',
+                    subject=f'{project_name}_git_activity',
+                    content=content,
+                    confidence=confidence,
+                )
+
+            # Code-Analyse Stats (Groesse der Projekte)
+            code_stats = self.context_manager.get_code_analysis_stats()
+            if code_stats.get('enabled'):
+                for project_name, stats in code_stats.get('projects', {}).items():
+                    if 'error' in stats:
+                        continue
+                    files = stats.get('total_files', 0)
+                    loc = stats.get('total_lines', 0)
+                    await self.db.upsert_knowledge(
+                        category='project_activity',
+                        subject=f'{project_name}_codebase_size',
+                        content=f"{files} Dateien, {loc} LOC",
+                        confidence=0.9,
+                    )
+
+            logger.info("Git-Activity in Knowledge-DB synchronisiert")
+
+        except Exception as e:
+            logger.warning("Git-Activity-Sync fehlgeschlagen: %s", e)
 
     # ─────────────────────────────────────────────────────────────────
     # Lifecycle
@@ -284,6 +365,9 @@ class SecurityAnalyst:
         """Interne Session-Logik — entscheidet autonom ob Scan oder Fix nötig ist."""
         session_id = None
         try:
+            # ── Schritt 0: Git-Activity in Knowledge-DB aktualisieren ──
+            await self._sync_git_activity_to_db()
+
             # ── Schritt 1: Backlog checken — was liegt an? ──
             fixable = await self.db.get_fixable_findings()
             open_count = len(fixable)
