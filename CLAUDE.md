@@ -164,12 +164,15 @@
 - **Cross-Referenz:** Analyst-Findings fliessen in Orchestrator-Planung, Orchestrator-Fixes erscheinen im Analyst-Kontext
 
 ### Security Analyst — 2-Phasen-Architektur (seit 2026-03-17)
-- **Phase 1 (Scan):** Reine Analyse (read-only), Findings in DB, 50 max_turns
-- **Phase 2 (Fix):** Offene Findings aus DB abarbeiten, 80 max_turns, 60min Timeout
-  - Sichere Fixes direkt ausführen (Permissions, Configs, Firewall)
-  - Code-Änderungen als PR (git branch + gh pr create)
-  - Riskante Sachen überspringen mit Begründung
-- **Finding-Dedup:** Keyword-Match (CVE-Nummern, lange Wörter)
+- **Autonome Entscheidung:** DB-Backlog prüfen → ≥20 offen: direkt Fix / <20: Scan+Fix / 0: voller Scan
+- **1 Session/Tag** (idle-triggered), reicht aus weil Fix-Phase gründlich arbeitet
+- **Phase 1 (Scan):** Reine Analyse (read-only), Findings in DB, 60 max_turns, 45min Timeout
+- **Phase 2 (Fix):** ALLE offenen Findings aus DB abarbeiten, 200 max_turns, 2h Timeout
+  - Sichere Fixes direkt ausführen (Permissions, Configs, Firewall, Docker)
+  - Code-Änderungen als PR (1 Branch `fix/security-findings` pro Projekt)
+  - Kein Überspringen — alles wird gefixt oder als PR angelegt
+  - Ergebnis-DB: mark_finding_fixed() schließt auch Duplikate mit
+- **Finding-Dedup:** DISTINCT ON Titel-Präfix + Keyword-Match bei Duplikat-Close
 - **Auto-Close:** Findings >30 Tage ohne GitHub-Issue → automatisch geschlossen
 - **fix_policy pro Projekt:** active→critical_only, stable→all, frozen→monitor_only
 - **Codex-Quota-Cache:** Nach Quota-Fehler wird Codex 6h übersprungen
