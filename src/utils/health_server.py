@@ -86,7 +86,7 @@ class HealthCheckServer:
             await self.runner.setup()
 
             self.site = web.TCPSite(
-                self.runner, '0.0.0.0', self.port,
+                self.runner, '127.0.0.1', self.port,
                 reuse_address=True, reuse_port=True
             )
             await self.site.start()
@@ -307,6 +307,17 @@ class HealthCheckServer:
         result = await self.changelog_db.list_by_project(project, page=1, limit=20)
         items = result["data"]
 
+        # Basis-URL fuer absolute Item-Links (z.B. https://guildscout.eu/changelog)
+        base_url = request.query.get('base_url', '').rstrip('/')
+
+        # Projekt→URL Mapping als Fallback
+        _project_base_urls = {
+            'guildscout': 'https://guildscout.eu/changelog',
+            'zerodox': 'https://zerodox.de/changelog',
+        }
+        if not base_url:
+            base_url = _project_base_urls.get(project, f'https://guildscout.eu/changelog')
+
         # RSS 2.0 XML erstellen
         rss_items = []
         for item in items:
@@ -315,25 +326,28 @@ class HealthCheckServer:
             title = xml_escape(item.get('title', ''))
             version = xml_escape(item.get('version', ''))
             guid = f"{project}-{item.get('version', '')}"
+            item_url = xml_escape(f"{base_url}/{item.get('version', '')}")
 
             rss_items.append(
                 f"    <item>\n"
                 f"      <title>{title}</title>\n"
-                f"      <link>/{project}/changelogs/{version}</link>\n"
+                f"      <link>{item_url}</link>\n"
                 f"      <description>{tldr}</description>\n"
                 f"      <pubDate>{pub_date}</pubDate>\n"
-                f"      <guid>{xml_escape(guid)}</guid>\n"
+                f"      <guid isPermaLink=\"true\">{item_url}</guid>\n"
                 f"    </item>"
             )
 
         items_xml = "\n".join(rss_items)
         project_escaped = xml_escape(project)
+        channel_url = xml_escape(base_url)
 
         rss_xml = (
             '<?xml version="1.0" encoding="UTF-8"?>\n'
             '<rss version="2.0">\n'
             '  <channel>\n'
             f'    <title>{project_escaped} Changelog</title>\n'
+            f'    <link>{channel_url}</link>\n'
             f'    <description>Aktuelle Aenderungen fuer {project_escaped}</description>\n'
             f'    <language>de</language>\n'
             f'{items_xml}\n'

@@ -8,14 +8,16 @@ performante, asynchrone Datenbankzugriffe auf die security_analyst DB.
 
 import json
 import logging
+import os
 import asyncpg
 from datetime import datetime, timezone
 from typing import Dict, List, Optional
 
 logger = logging.getLogger('shadowops.analyst_db')
 
-# Verbindungs-DSN für die Security Analyst Datenbank
-DSN = 'postgresql://security_analyst:sec_analyst_2026@127.0.0.1:5433/security_analyst'
+# Verbindungs-DSN für die Security Analyst Datenbank — aus Umgebungsvariable laden.
+# Kein Fallback-Wert mit Passwort; Fehler wird im Konstruktor geworfen wenn nicht gesetzt.
+DSN = os.environ.get('SECURITY_ANALYST_DB_URL', '')
 
 # Severity-Sortierreihenfolge: critical zuerst
 SEVERITY_ORDER = {
@@ -35,6 +37,12 @@ class AnalystDB:
     """
 
     def __init__(self, dsn: str = DSN):
+        if not dsn:
+            raise EnvironmentError(
+                "Umgebungsvariable SECURITY_ANALYST_DB_URL ist nicht gesetzt. "
+                "Bitte in der systemd-Unit oder .env konfigurieren. "
+                "Format: postgresql://user:password@host:port/dbname"
+            )
         self.dsn = dsn
         self.pool: Optional[asyncpg.Pool] = None
 

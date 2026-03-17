@@ -57,8 +57,12 @@ class GuildScoutAlertsHandler:
         channels_config = _get_section('channels', {})
         self.guildscout_channel_id = channels_config.get('guildscout', 0)
 
-        # Webhook security
-        guildscout_config = _get_section('guildscout', {})
+        # Webhook security — Secret liegt unter projects.guildscout, nicht Top-Level
+        projects_config = _get_section('projects', {})
+        if isinstance(projects_config, dict):
+            guildscout_config = projects_config.get('guildscout', {})
+        else:
+            guildscout_config = {}
         self.webhook_secret = guildscout_config.get('webhook_secret', '')
 
         # Webhook server (shares port with GitHub webhook)
@@ -78,7 +82,7 @@ class GuildScoutAlertsHandler:
         self.runner = web.AppRunner(self.app)
         await self.runner.setup()
         self.site = web.TCPSite(
-            self.runner, '0.0.0.0', self.webhook_port,
+            self.runner, '127.0.0.1', self.webhook_port,
             reuse_address=True, reuse_port=True
         )
         await self.site.start()
@@ -109,8 +113,8 @@ class GuildScoutAlertsHandler:
             True if signature is valid
         """
         if not self.webhook_secret:
-            # No secret configured, skip verification
-            return True
+            # Kein Secret konfiguriert — fail-closed: Anfrage ablehnen
+            return False
 
         if not signature:
             return False

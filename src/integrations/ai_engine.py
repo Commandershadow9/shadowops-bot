@@ -147,19 +147,17 @@ class CodexProvider:
         if schema_path:
             args.extend(['--output-schema', str(schema_path)])
 
-        # Prompt als positionales Argument am Ende (Codex CLI v0.104+)
-        args.append(prompt)
-
         try:
             proc = await asyncio.create_subprocess_exec(
                 *args,
+                stdin=asyncio.subprocess.PIPE,
                 stdout=asyncio.subprocess.PIPE,
                 stderr=asyncio.subprocess.PIPE,
                 env=env,
             )
 
             stdout_bytes, stderr_bytes = await asyncio.wait_for(
-                proc.communicate(),
+                proc.communicate(input=prompt.encode('utf-8')),
                 timeout=effective_timeout,
             )
 
@@ -211,19 +209,19 @@ class CodexProvider:
             '-c', 'mcp_servers={}',
             '-s', 'workspace-write',
             '-m', resolved_model,
-            prompt,
         ]
 
         try:
             proc = await asyncio.create_subprocess_exec(
                 *args,
+                stdin=asyncio.subprocess.PIPE,
                 stdout=asyncio.subprocess.PIPE,
                 stderr=asyncio.subprocess.PIPE,
                 env=env,
             )
 
             stdout_bytes, stderr_bytes = await asyncio.wait_for(
-                proc.communicate(),
+                proc.communicate(input=prompt.encode('utf-8')),
                 timeout=effective_timeout,
             )
 
@@ -389,7 +387,7 @@ class ClaudeProvider:
 
         args = [
             self.cli_path,
-            '-p', full_prompt,
+            '-p', '-',
             '--output-format', 'json',
             '--model', resolved_model,
             '--max-turns', '1',
@@ -398,13 +396,14 @@ class ClaudeProvider:
         try:
             proc = await asyncio.create_subprocess_exec(
                 *args,
+                stdin=asyncio.subprocess.PIPE,
                 stdout=asyncio.subprocess.PIPE,
                 stderr=asyncio.subprocess.PIPE,
                 env=env,
             )
 
             stdout_bytes, stderr_bytes = await asyncio.wait_for(
-                proc.communicate(),
+                proc.communicate(input=full_prompt.encode('utf-8')),
                 timeout=effective_timeout,
             )
 
@@ -452,7 +451,7 @@ class ClaudeProvider:
 
         args = [
             self.cli_path,
-            '-p', prompt,
+            '-p', '-',
             '--output-format', 'text',
             '--model', resolved_model,
             '--max-turns', '1',
@@ -461,13 +460,14 @@ class ClaudeProvider:
         try:
             proc = await asyncio.create_subprocess_exec(
                 *args,
+                stdin=asyncio.subprocess.PIPE,
                 stdout=asyncio.subprocess.PIPE,
                 stderr=asyncio.subprocess.PIPE,
                 env=env,
             )
 
             stdout_bytes, stderr_bytes = await asyncio.wait_for(
-                proc.communicate(),
+                proc.communicate(input=prompt.encode('utf-8')),
                 timeout=effective_timeout,
             )
 
