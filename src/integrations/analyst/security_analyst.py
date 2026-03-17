@@ -272,17 +272,50 @@ class SecurityAnalyst:
             await self._run_session_inner(trigger_type='idle_detected')
 
     async def _run_session_inner(self, trigger_type: str = 'idle_detected'):
-        """Interne Session-Logik (wird unter Lock aufgerufen)."""
+        """Interne Session-Logik — entscheidet autonom ob Scan oder Fix nötig ist."""
         session_id = None
         try:
-            # Session in DB starten
+            # ── Schritt 1: Backlog checken — was liegt an? ──
+            fixable = await self.db.get_fixable_findings()
+            open_count = len(fixable)
+
+            # ── Schritt 2: Entscheidung — Scan oder Fix? ──
+            if open_count >= 20:
+                # Viel Backlog → kein neuer Scan, direkt fixen
+                logger.info(
+                    "Backlog: %d offene Findings → überspringe Scan, starte Fix-Phase direkt",
+                    open_count,
+                )
+                session_id = await self.db.start_session(trigger_type='fix_backlog')
+                self._current_session_id = session_id
+                self._sessions_today += 1
+                await self._notify_session_start(session_id, mode='fix')
+                await self._run_fix_phase(session_id)
+
+                await self.db.end_session(
+                    session_id=session_id,
+                    summary=f"Fix-Session: {open_count} Findings im Backlog bearbeitet",
+                    topics=['backlog_fix'],
+                    tokens_used=0,
+                    model=self.claude_model,
+                    findings_count=0,
+                    auto_fixes=0,
+                    issues_created=0,
+                )
+                self._consecutive_failures = 0
+                return
+
+            # ── Schritt 3: Wenig Backlog → Scan + Fix ──
             session_id = await self.db.start_session(trigger_type=trigger_type)
             self._current_session_id = session_id
             self._sessions_today += 1
-            logger.info("Analyse-Session #%d gestartet", session_id)
 
-            # Discord: Session-Start melden
-            await self._notify_session_start(session_id)
+            if open_count > 0:
+                logger.info("Backlog: %d offene Findings → Scan + Fix", open_count)
+            else:
+                logger.info("Backlog leer → voller Scan")
+
+            await self._notify_session_start(session_id, mode='scan')
 
             # Health-Snapshot VOR der Analyse
             health_before = await self._take_health_snapshot(session_id)
@@ -308,12 +341,12 @@ class SecurityAnalyst:
                 except Exception as pause_err:
                     logger.warning("pause_session fehlgeschlagen: %s", pause_err)
                 self._current_session_id = None
-                self._sessions_today -= 1  # Abbruch durch User zaehlt nicht
+                self._sessions_today -= 1
                 return
 
-            # AI-Session starten (Codex primaer, Claude Fallback)
+            # Scan-Session starten
             logger.info(
-                "AI-Session wird gestartet (Codex: %s, Fallback: %s, Timeout: %ds)",
+                "Scan-Session wird gestartet (Codex: %s, Fallback: %s, Timeout: %ds)",
                 self.codex_model, self.claude_model, SESSION_TIMEOUT,
             )
             result = await self.ai_engine.run_analyst_session(
@@ -439,7 +472,7 @@ class SecurityAnalyst:
             return None
         return self.bot.get_channel(int(channel_id))
 
-    async def _notify_session_start(self, session_id: int):
+    async def _notify_session_start(self, session_id: int, mode: str = 'scan'):
         """Meldet den Start einer Analyst-Session in Discord."""
         channel = self._get_briefing_channel()
         if not channel:
@@ -447,16 +480,29 @@ class SecurityAnalyst:
             return
 
         today_str = date.today().strftime('%d.%m.%Y')
-        embed = discord.Embed(
-            title=f"\U0001f50d Analyst Session #{session_id} gestartet",
-            description=(
+        if mode == 'fix':
+            title = f"\U0001f527 Fix-Session #{session_id} gestartet"
+            desc = (
                 f"**Datum:** {today_str}\n"
-                f"**Primaer:** `{self.codex_model}` (Codex)\n"
-                f"**Fallback:** `{self.claude_model}` (Claude)\n"
-                f"**Sessions heute:** {self._sessions_today}/{self.max_sessions_per_day}\n"
-                f"**Trigger:** User idle"
-            ),
-            color=discord.Color.blue(),
+                f"**Modus:** Backlog abarbeiten (Findings fixen + PRs)\n"
+                f"**Engine:** `{self.claude_model}` (Claude direkt)\n"
+                f"**Trigger:** Viele offene Findings"
+            )
+            color = discord.Color.orange()
+        else:
+            title = f"\U0001f50d Scan-Session #{session_id} gestartet"
+            desc = (
+                f"**Datum:** {today_str}\n"
+                f"**Modus:** Server scannen + anschliessend Findings fixen\n"
+                f"**Scan:** `{self.codex_model}` / `{self.claude_model}`\n"
+                f"**Sessions heute:** {self._sessions_today}/{self.max_sessions_per_day}"
+            )
+            color = discord.Color.blue()
+
+        embed = discord.Embed(
+            title=title,
+            description=desc,
+            color=color,
             timestamp=datetime.now(timezone.utc),
         )
         embed.set_footer(text="SecurityAnalyst")
