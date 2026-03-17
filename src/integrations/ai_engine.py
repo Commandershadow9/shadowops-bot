@@ -1048,7 +1048,7 @@ class AIEngine:
                         "type": "object",
                         "properties": {
                             "finding_id": {"type": "integer"},
-                            "action": {"type": "string", "enum": ["fixed", "pr_created", "skipped"]},
+                            "action": {"type": "string", "enum": ["fixed", "pr_created"]},
                             "details": {"type": "string"}
                         },
                         "required": ["finding_id", "action", "details"]

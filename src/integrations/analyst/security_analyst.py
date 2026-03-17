@@ -31,7 +31,7 @@ logger = logging.getLogger('shadowops.analyst')
 # ─────────────────────────────────────────────────────────────────────
 
 # Maximale Anzahl Sessions pro Tag — Default, wird von Config ueberschrieben
-DEFAULT_MAX_SESSIONS_PER_DAY = 3
+DEFAULT_MAX_SESSIONS_PER_DAY = 1
 
 # Timeout fuer eine einzelne Analyse-Session (30 Minuten)
 SESSION_TIMEOUT = 1800
@@ -513,8 +513,8 @@ class SecurityAnalyst:
         from .prompts import FIX_SESSION_PROMPT
 
         try:
-            # Fixbare Findings aus DB holen
-            fixable = await self.db.get_fixable_findings(limit=15)
+            # ALLE fixbaren Findings aus DB holen
+            fixable = await self.db.get_fixable_findings()
 
             if not fixable:
                 logger.info("Fix-Phase: Keine fixbaren Findings vorhanden")
@@ -558,11 +558,10 @@ class SecurityAnalyst:
             results = fix_result.get('results', [])
             fixed_count = 0
             pr_count = 0
-            skipped_count = 0
 
             for r in results:
                 finding_id = r.get('finding_id')
-                action = r.get('action', 'skipped')
+                action = r.get('action', 'fixed')
                 details = r.get('details', '')
 
                 if not finding_id:
@@ -573,7 +572,8 @@ class SecurityAnalyst:
                     fixed_count += 1
                     logger.info("Finding #%d gefixt: %s", finding_id, details[:100])
                 elif action == 'pr_created':
-                    # PR-URL in Finding speichern
+                    # PR-URL in Finding speichern + als gefixt markieren (PR = bearbeitet)
+                    await self.db.mark_finding_fixed(finding_id)
                     try:
                         await self.db.pool.execute(
                             "UPDATE findings SET github_issue_url = $1 WHERE id = $2",
@@ -583,18 +583,15 @@ class SecurityAnalyst:
                         pass
                     pr_count += 1
                     logger.info("Finding #%d PR erstellt: %s", finding_id, details[:100])
-                else:
-                    skipped_count += 1
-                    logger.info("Finding #%d übersprungen: %s", finding_id, details[:80])
 
             logger.info(
-                "Fix-Phase abgeschlossen: %d fixed, %d PRs, %d skipped (von %d)",
-                fixed_count, pr_count, skipped_count, len(fixable),
+                "Fix-Phase abgeschlossen: %d direkt gefixt, %d PRs erstellt (von %d Findings)",
+                fixed_count, pr_count, len(fixable),
             )
 
             # Discord-Notification: Ergebnisse
             await self._notify_fix_phase_complete(
-                fixed_count, pr_count, skipped_count, fix_result.get('summary', ''),
+                fixed_count, pr_count, len(fixable), fix_result.get('summary', ''),
             )
 
         except Exception as e:
@@ -618,22 +615,23 @@ class SecurityAnalyst:
         except Exception:
             pass
 
-    async def _notify_fix_phase_complete(self, fixed: int, prs: int, skipped: int, summary: str):
+    async def _notify_fix_phase_complete(self, fixed: int, prs: int, total: int, summary: str):
         """Discord-Notification: Fix-Phase Ergebnis"""
         try:
             channel_id = self.bot.config.get_channel_for_alert('analyst') if self.bot else None
             if not channel_id or not self.bot:
                 return
             import discord
-            color = 0x2ecc71 if fixed > 0 else 0xe74c3c
+            done = fixed + prs
+            color = 0x2ecc71 if done > 0 else 0xe74c3c
             embed = discord.Embed(
-                title="✅ Fix-Phase abgeschlossen" if fixed > 0 else "⚠️ Fix-Phase abgeschlossen",
+                title=f"✅ Fix-Phase: {done}/{total} Findings bearbeitet",
                 description=summary[:500] if summary else "Keine Zusammenfassung",
                 color=color,
             )
-            embed.add_field(name="Gefixt", value=str(fixed), inline=True)
-            embed.add_field(name="PRs", value=str(prs), inline=True)
-            embed.add_field(name="Übersprungen", value=str(skipped), inline=True)
+            embed.add_field(name="Direkt gefixt", value=str(fixed), inline=True)
+            embed.add_field(name="PRs erstellt", value=str(prs), inline=True)
+            embed.add_field(name="Gesamt", value=str(total), inline=True)
             channel = self.bot.get_channel(int(channel_id))
             if channel:
                 await channel.send(embed=embed)
