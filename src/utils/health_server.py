@@ -86,7 +86,7 @@ class HealthCheckServer:
             await self.runner.setup()
 
             self.site = web.TCPSite(
-                self.runner, '0.0.0.0', self.port,
+                self.runner, '127.0.0.1', self.port,
                 reuse_address=True, reuse_port=True
             )
             await self.site.start()
