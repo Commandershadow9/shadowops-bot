@@ -429,14 +429,35 @@ class AIPatchNotesMixin:
 
         if self.patch_notes_trainer and self.prompt_ab_testing and (changelog_content or project_config):
             try:
-                # Select prompt variant using A/B testing (weighted by performance)
-                selected_variant = self.prompt_ab_testing.select_variant(
-                    project=repo_name,
-                    strategy='weighted_random'
-                )
-                variant_id = selected_variant.id
+                # Select prompt variant — DB-basiert (Learning) oder Datei-Fallback
+                db_variant_id = None
+                try:
+                    from integrations.patch_notes_learning import PatchNotesLearning
+                    learning = PatchNotesLearning()
+                    await learning.connect()
+                    db_variant_id = await learning.get_best_variant(repo_name)
+                    await learning.close()
+                except Exception:
+                    pass
 
-                self.logger.info(f"🧪 A/B Test: Using variant '{selected_variant.name}' (ID: {variant_id}) with language '{language}'")
+                if db_variant_id:
+                    # DB hat genug Daten → bevorzugte Variante nutzen
+                    variant_id = db_variant_id
+                    selected_variant = self.prompt_ab_testing.variants.get(variant_id)
+                    if not selected_variant:
+                        # Fallback wenn Variante nicht existiert
+                        selected_variant = self.prompt_ab_testing.select_variant(
+                            project=repo_name, strategy='weighted_random'
+                        )
+                        variant_id = selected_variant.id
+                    self.logger.info(f"🧪 Learning-DB: Beste Variante '{variant_id}' für {repo_name}")
+                else:
+                    # Nicht genug DB-Daten → klassisches A/B Testing
+                    selected_variant = self.prompt_ab_testing.select_variant(
+                        project=repo_name, strategy='weighted_random'
+                    )
+                    variant_id = selected_variant.id
+                    self.logger.info(f"🧪 A/B Test: Variante '{selected_variant.name}' (ID: {variant_id})")
 
                 # Build prompt from variant template (language-specific)
                 variant_template = self.prompt_ab_testing.get_variant_template(

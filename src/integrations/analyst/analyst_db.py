@@ -212,13 +212,17 @@ class AnalystDB:
     async def get_open_findings_summary(self, limit: int = 30) -> list:
         """Holt offene Findings als Kurzübersicht für den Analyst-Prompt.
 
+        Filtert False Positives automatisch aus (finding_quality Tabelle).
         Damit der Analyst weiß was schon gemeldet wurde und nicht
         dieselben Probleme erneut reported.
         """
         rows = await self.pool.fetch(
-            """SELECT id, severity, title, category
-               FROM findings WHERE status = 'open'
-               ORDER BY found_at DESC LIMIT $1""",
+            """SELECT f.id, f.severity, f.title, f.category
+               FROM findings f
+               LEFT JOIN finding_quality fq ON fq.finding_id = f.id
+               WHERE f.status = 'open'
+                 AND (fq.is_false_positive IS NULL OR fq.is_false_positive = FALSE)
+               ORDER BY f.found_at DESC LIMIT $1""",
             limit,
         )
         return [dict(r) for r in rows]
@@ -435,23 +439,25 @@ class AnalystDB:
         - Nach Severity sortiert, dann nach Projekt gruppiert
         """
         rows = await self.pool.fetch(
-            """SELECT DISTINCT ON (LOWER(LEFT(title, 60)))
-                      id, severity, category, title, description,
-                      fix_type, affected_project, affected_files,
-                      github_issue_url
-               FROM findings
-               WHERE status = 'open'
-                 AND fix_type != 'info_only'
+            """SELECT DISTINCT ON (LOWER(LEFT(f.title, 60)))
+                      f.id, f.severity, f.category, f.title, f.description,
+                      f.fix_type, f.affected_project, f.affected_files,
+                      f.github_issue_url
+               FROM findings f
+               LEFT JOIN finding_quality fq ON fq.finding_id = f.id
+               WHERE f.status = 'open'
+                 AND f.fix_type != 'info_only'
+                 AND (fq.is_false_positive IS NULL OR fq.is_false_positive = FALSE)
                ORDER BY
-                   LOWER(LEFT(title, 60)),
-                   CASE severity
+                   LOWER(LEFT(f.title, 60)),
+                   CASE f.severity
                        WHEN 'critical' THEN 0
                        WHEN 'high' THEN 1
                        WHEN 'medium' THEN 2
                        WHEN 'low' THEN 3
                        ELSE 4
                    END,
-                   found_at DESC"""
+                   f.found_at DESC"""
         )
         # Re-sort nach Severity + Projekt (DISTINCT ON erzwingt andere Sortierung)
         severity_order = {'critical': 0, 'high': 1, 'medium': 2, 'low': 3, 'info': 4}
@@ -674,6 +680,48 @@ class AnalystDB:
                         f"({stats['successes']}/{stats['total']}){reg_warn}"
                     )
                 parts.append("")
+        except Exception:
+            pass
+
+        # ── Finding-Trends pro Projekt (steigend/fallend/stabil) ──
+        try:
+            trend_rows = await self.pool.fetch(
+                """SELECT s.id as session_id, s.started_at::date as session_date,
+                          f.affected_project, COUNT(f.id) as finding_count
+                   FROM sessions s
+                   LEFT JOIN findings f ON f.session_id = s.id
+                   WHERE s.status = 'completed'
+                     AND s.started_at >= NOW() - INTERVAL '30 days'
+                   GROUP BY s.id, s.started_at, f.affected_project
+                   ORDER BY s.started_at DESC
+                   LIMIT 30"""
+            )
+            if trend_rows:
+                # Findings pro Projekt über die letzten Sessions
+                project_trends: Dict[str, List[int]] = {}
+                for r in trend_rows:
+                    proj = r['affected_project'] or 'infrastructure'
+                    if proj not in project_trends:
+                        project_trends[proj] = []
+                    project_trends[proj].append(r['finding_count'])
+
+                trend_lines = []
+                for proj, counts in sorted(project_trends.items()):
+                    if len(counts) < 2:
+                        continue
+                    recent = sum(counts[:3]) / min(3, len(counts))
+                    older = sum(counts[3:6]) / max(1, min(3, len(counts) - 3)) if len(counts) > 3 else recent
+                    if recent > older * 1.3:
+                        trend_lines.append(f"- 📈 **{proj}:** STEIGEND ({older:.0f}→{recent:.0f} Findings/Session)")
+                    elif recent < older * 0.7:
+                        trend_lines.append(f"- 📉 **{proj}:** FALLEND ({older:.0f}→{recent:.0f}) — Verbesserung!")
+                    else:
+                        trend_lines.append(f"- ➡️ **{proj}:** stabil (~{recent:.0f} Findings/Session)")
+
+                if trend_lines:
+                    parts.append("## Finding-Trends (letzte Sessions)\n")
+                    parts.extend(trend_lines)
+                    parts.append("")
         except Exception:
             pass
 
