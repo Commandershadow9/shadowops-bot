@@ -11,7 +11,7 @@
 ## Services & Ports
 | Service | Port | Bind | Zweck |
 |---------|------|------|-------|
-| Discord Bot | — | — | Gateway-Connection |
+| Discord Bot | — | — | Gateway-Connection (DEV + ZERODOX Server) |
 | Health Check + Changelog API | 8766 | 127.0.0.1 | Health, REST API, RSS Feed, Sitemap |
 | GitHub Webhook | 9090 | 0.0.0.0 | Push/PR Events (Traefik) |
 | GuildScout Alerts | 9091 | 127.0.0.1 | Alert Forwarding |
@@ -146,6 +146,7 @@
 | `test_alerts.py` | Test-Plan fuer Discord Alert Channels |
 | `run_tests_with_coverage.sh` | Tests mit Coverage ausfuehren, Ergebnisse nach data/test_results.json |
 | `migrate_changelogs.py` | Migration: ZERODOX + GuildScout PG-Changelogs → zentrale SQLite DB |
+| `setup_zerodox_channels.py` | Einmalig: ZERODOX Discord-Channels (Patch Notes) einrichten (Kategorie + Permissions) |
 
 ### Dokumentation
 | Pfad | Inhalt |
@@ -252,3 +253,12 @@
 - **URL-Slugs:** Versions-Dots werden zu Dashes (`1.0.0` → `1-0-0`), Detail-Page konvertiert zurück
 - **Design-Doc:** `docs/plans/2026-03-16-changelog-redesign-design.md`
 - **Implementierungsplan:** `docs/plans/2026-03-16-changelog-redesign.md`
+
+### ZERODOX Discord Patch-Notes Channels (18.03.2026)
+- **Zwei Channels auf dem ZERODOX-Server** (Guild `1151330239272730755`), nicht DEV-Server:
+  - `📋patch-notes` (ID: `1483892059596132483`) — Lobby-Kanäle, öffentlich, read-only. Sanitisierte Patch Notes.
+  - `🔧dev-updates` (ID: `1483892060963475617`) — Community-/Kundenbereich, intern, read-only. Gleiche Patch Notes + Rollen-Ping.
+- **Config-Keys pro Projekt:** `update_channel_id` (öffentlich), `internal_channel_id` (intern), `internal_channel_role_mention` (Rollen-ID fuer Ping)
+- **Cross-Guild-Support:** `bot.py` ueberspringt Auto-Channel-Creation wenn `update_channel_id` bereits gesetzt und Channel cross-guild erreichbar
+- **Interner Channel:** `_send_to_internal_customer_channel()` in `notifications_mixin.py` — postet Embed + `<@&role_id> Neues Update verfuegbar!` mit `AllowedMentions(roles=True)`
+- **Setup-Script:** `scripts/setup_zerodox_channels.py` (einmalig, nutzt ShadowOps Bot-Token via Discord REST API)

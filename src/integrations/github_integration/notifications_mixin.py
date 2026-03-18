@@ -564,6 +564,58 @@ class NotificationsMixin:
         except Exception as e:
             self.logger.error(f"❌ Fehler beim Senden im Kunden-Channel: {e}")
 
+        # Interner Kunden-Channel (z.B. für verifizierte Kunden mit Rollen-Ping)
+        await self._send_to_internal_customer_channel(embed, repo_name, project_config, version)
+
+    async def _send_to_internal_customer_channel(self, embed: discord.Embed, repo_name: str,
+                                                  project_config: Dict, version: Optional[str]) -> None:
+        """Sende Patch Notes an internen Kunden-Channel mit Rollen-Ping."""
+        internal_channel_id = project_config.get('internal_channel_id')
+        if not internal_channel_id:
+            return
+
+        internal_channel = self.bot.get_channel(internal_channel_id)
+        if not internal_channel:
+            self.logger.warning(f"⚠️ Interner Kunden-Channel {internal_channel_id} für {repo_name} nicht gefunden.")
+            return
+
+        # Rollen-Mention vorbereiten
+        role_id = project_config.get('internal_channel_role_mention')
+        role_mention = f"<@&{role_id}>" if role_id else ""
+
+        try:
+            description_chunks = self._split_embed_description(embed.description or "")
+
+            if len(description_chunks) <= 1:
+                await internal_channel.send(
+                    content=f"{role_mention} Neues Update verfügbar!" if role_mention else None,
+                    embed=embed,
+                    allowed_mentions=discord.AllowedMentions(roles=True),
+                )
+            else:
+                for i, chunk in enumerate(description_chunks):
+                    embed_copy = discord.Embed(
+                        title=f"{embed.title} (Teil {i+1}/{len(description_chunks)})" if i > 0 else embed.title,
+                        url=embed.url,
+                        color=embed.color,
+                        description=chunk,
+                        timestamp=embed.timestamp,
+                    )
+                    if i == len(description_chunks) - 1 and embed.footer:
+                        embed_copy.set_footer(text=embed.footer.text)
+                    # Rollen-Ping nur bei der ersten Nachricht
+                    content = f"{role_mention} Neues Update verfügbar!" if (i == 0 and role_mention) else None
+                    await internal_channel.send(
+                        content=content,
+                        embed=embed_copy,
+                        allowed_mentions=discord.AllowedMentions(roles=True),
+                    )
+
+            self.logger.info(f"📢 Patch Notes für {repo_name} im internen Kunden-Channel gesendet.")
+
+        except Exception as e:
+            self.logger.error(f"❌ Fehler beim Senden im internen Kunden-Channel: {e}")
+
     async def _send_internal_only(self, repo_name: str, repo_url: str, branch: str,
                                    pusher: str, commits: list, color: int) -> None:
         """Sende nur interne Notification (wenn Commits gebatcht werden)."""

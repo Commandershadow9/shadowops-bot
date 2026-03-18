@@ -296,14 +296,22 @@ class ShadowOpsBot(commands.Bot):
                     if not proj_config.get('enabled', True):
                         self.logger.info(f"⏭️ Projekt '{proj_name}' deaktiviert, überspringe Channel-Setup")
                         continue
+
+                    # Cross-Guild-Check: Wenn update_channel_id bereits in Config gesetzt
+                    # und der Channel existiert (evtl. auf anderem Server), nicht überschreiben
+                    existing_id = proj_config.get('update_channel_id')
+                    if existing_id and self.get_channel(existing_id):
+                        self.logger.info(f"✅ Update-Channel für '{proj_name}' bereits konfiguriert (ID: {existing_id}, cross-guild)")
+                        continue
+
                     # Generate default channel name if not explicitly set in config
                     channel_name = proj_config.get("update_channel_name", f"updates-{proj_name}")
-                    
+
                     self.logger.info(f"Prüfe Update-Channel für Projekt '{proj_name}' (Name: '{channel_name}')")
                     await _ensure_channel(
                         f"project_{proj_name}_updates", # Unique key for state manager
-                        channel_name, 
-                        f"Updates & Patch-Notes für das Projekt {proj_name}", 
+                        channel_name,
+                        f"Updates & Patch-Notes für das Projekt {proj_name}",
                         project_updates_category,
                         self.config.projects[proj_name], # Update target is the project's config dict
                         'update_channel_id',             # Key in the project's config dict
