@@ -241,6 +241,101 @@ class SecurityAnalyst:
         except Exception as e:
             logger.warning("Git-Activity-Sync fehlgeschlagen: %s", e)
 
+    # Projekt-Pfade → Security-relevante Info-Quellen
+    PROJECT_SECURITY_PROFILES = {
+        'guildscout': {
+            'path': '/home/cmdshadow/GuildScout',
+            'stack': 'Go API + Next.js + Python Bot',
+            'attack_surface': [
+                'REST API (Go/Fiber, Port 8091 via Docker)',
+                'OAuth2 Discord Login (Cookie-basiert)',
+                'Datei-Upload (Magic-Byte Validierung, 5MB, UUID-Namen)',
+                'WebSocket für Bot-Dashboard',
+            ],
+            'critical_files': [
+                'api/internal/handlers/',
+                'api/internal/middleware/auth.go',
+                'bot/config/config.yaml',
+                'docker-compose.yml',
+                '.env',
+            ],
+            'services': 'Docker: guildscout-api-v3(8091), guildscout-postgres(5433), guildscout-redis(6379), guildscout-web(3000)',
+            'auth': 'Discord OAuth2, Session-Cookies, Redis-Session-Store',
+            'secrets': 'bot/config/config.yaml, .env (Docker), REDIS_PASSWORD',
+        },
+        'zerodox': {
+            'path': '/home/cmdshadow/ZERODOX',
+            'stack': 'Next.js 16, Prisma, PostgreSQL',
+            'attack_surface': [
+                'Kunden-Portal mit NextAuth v5 (Credentials + TOTP 2FA + Passkeys)',
+                'REST API Endpoints (/api/)',
+                'Cron-Jobs mit API-Key Auth',
+                'Web-Chat + Support-Ticketing',
+                'Stripe Webhook',
+            ],
+            'critical_files': [
+                'web/src/app/api/',
+                'web/src/lib/auth/',
+                'web/src/lib/db/',
+                'docker-compose.yml',
+                'scripts/daily-cron.sh',
+            ],
+            'services': 'Docker: zerodox-web(3000 intern), zerodox-db(5434)',
+            'auth': 'NextAuth v5: Credentials + TOTP + Passkeys/WebAuthn + Magic Links',
+            'secrets': 'DATABASE_URL, AUTH_SECRET, TOTP_ENCRYPTION_KEY, BACKUP_ENCRYPTION_KEY, Stripe Keys',
+        },
+        'ai-agent-framework': {
+            'path': '/home/cmdshadow/agents',
+            'stack': 'Python Agent Framework',
+            'attack_surface': [
+                'AI-Provider-Chain (Codex → Claude CLI Subprocesses)',
+                'Redis Pub/Sub Event-Subscriber',
+                'PostgreSQL NOTIFY Listener',
+            ],
+            'critical_files': [
+                'core/ai/',
+                'run.sh',
+                'projects/*/config.yaml',
+            ],
+            'services': 'systemd: guildscout-feedback-agent, zerodox-support-agent, seo-agent',
+            'auth': 'OAuth Token (OpenAI), Setup-Token (Anthropic)',
+            'secrets': '.env pro Projekt, OAuth-Tokens in auth-profiles.json',
+        },
+    }
+
+    async def _sync_project_security_profiles(self):
+        """Schreibt Security-Profile der Projekte in die Knowledge-DB.
+
+        Wird beim Bot-Start und vor Sessions aufgerufen. Gibt dem Analyst
+        strukturiertes Wissen ueber Angriffsoberflaechen, kritische Dateien
+        und Auth-Mechanismen jedes Projekts.
+        """
+        try:
+            for name, profile in self.PROJECT_SECURITY_PROFILES.items():
+                attack_surface = '; '.join(profile['attack_surface'])
+                critical = ', '.join(profile['critical_files'][:5])
+
+                content = (
+                    f"Stack: {profile['stack']}. "
+                    f"Angriffsoberflaeche: {attack_surface}. "
+                    f"Auth: {profile['auth']}. "
+                    f"Kritische Dateien: {critical}. "
+                    f"Services: {profile['services']}. "
+                    f"Secrets: {profile['secrets']}."
+                )
+
+                await self.db.upsert_knowledge(
+                    category='project_security',
+                    subject=f'{name}_security_profile',
+                    content=content,
+                    confidence=0.95,
+                )
+
+            logger.info("Security-Profile fuer %d Projekte in DB synchronisiert", len(self.PROJECT_SECURITY_PROFILES))
+
+        except Exception as e:
+            logger.warning("Security-Profile-Sync fehlgeschlagen: %s", e)
+
     # ─────────────────────────────────────────────────────────────────
     # Selbstkontrolle: Fix-Verifikation + Quality + Coverage + Decay
     # ─────────────────────────────────────────────────────────────────
@@ -402,10 +497,12 @@ class SecurityAnalyst:
         """Alle Pre-Session Tasks ausfuehren.
 
         Buendelt alle Wartungsaufgaben die vor jeder Session laufen:
-        1. Git-Activity in DB synchronisieren
-        2. Kuerzliche Fixes verifizieren
-        3. Knowledge-Confidence abschwaechen
+        1. Projekt-Security-Profile in DB
+        2. Git-Activity in DB synchronisieren
+        3. Kuerzliche Fixes verifizieren
+        4. Knowledge-Confidence abschwaechen
         """
+        await self._sync_project_security_profiles()
         await self._sync_git_activity_to_db()
         await self._verify_recent_fixes()
         await self.db.decay_knowledge_confidence()
