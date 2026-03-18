@@ -201,8 +201,10 @@ class CIMixin:
             # Execute deployment
             result = await self.deployment_manager.deploy_project(repo_name, branch)
 
-            # Send result notification (Self-Deploy sendet sein eigenes Embed)
-            if result['success'] and not is_self_deploy:
+            # Send result notification (Self-Deploy sendet sein eigenes Embed im deployment_manager)
+            if is_self_deploy:
+                pass  # Bereits vom deployment_manager gehandelt
+            elif result['success']:
                 await self._send_deployment_success(repo_name, branch, commit_sha, result)
             else:
                 await self._send_deployment_failure(repo_name, branch, commit_sha, result)
