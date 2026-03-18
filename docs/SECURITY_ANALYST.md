@@ -81,10 +81,13 @@ Slash-Command `/agent-stats` zeigt das Learning-Dashboard on-demand.
 | Ebene | Mechanismus |
 |-------|-------------|
 | Prompt | GESCHUETZTE INFRASTRUKTUR Tabelle (Bind-Adressen, Ports, Docker, UFW) |
-| Knowledge-DB | `infrastructure_constraints/bind_addresses_docker_bridge` (99% Confidence) |
+| Knowledge-DB | `infrastructure_constraints/bind_addresses_docker_bridge` + `redis_auth_dependent_scripts` (99%) |
 | Validierung | PROTECTED_PORT_BINDINGS in Health-Snapshot (8766, 9090, 9091) |
+| Pattern | `auth_change_sideeffect` — Bei Auth-Aenderungen alle Konsumenten pruefen |
 
-Ausloeser: Incident 2026-03-17 — Analyst aenderte 0.0.0.0→127.0.0.1, 11h Ausfall.
+Kodifizierte Incidents:
+- 2026-03-17: Bind-Address 0.0.0.0→127.0.0.1 → 11h Bot-Ausfall
+- 2026-03-18: Redis requirepass → SEO Cron-Script ohne Auth → kein Nacht-Audit
 
 ### Dual-Engine AI
 
