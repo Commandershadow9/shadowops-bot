@@ -209,6 +209,28 @@ class DeploymentManager:
             else:
                 self.logger.info(f"⏭️ Skipping tests (not configured)")
 
+            # Self-Deploy: Bot deployt sich selbst
+            # → Success-Embed VOR Restart senden, dann verzögerter Background-Restart
+            # → Step 5/6/7 überspringen (post_deploy, service restart, health check)
+            is_self_deploy = (project_name == 'shadowops-bot')
+            if is_self_deploy:
+                result['deployed'] = True
+                duration = time.time() - start_time
+                result['success'] = True
+                result['duration_seconds'] = duration
+                self.logger.info(f"✅ Self-deploy: {project_name} ({duration:.1f}s) — Restart in 5s")
+                await self._send_deployment_update(project_name, "🔄 Self-Deploy — Restart in 5 Sekunden...")
+                await self._send_deployment_success(project_name, deploy_branch, duration, result)
+                # Verzögerter Restart: Unabhängiger Prozess der den Bot nach 5s neustartet
+                import subprocess
+                subprocess.Popen(
+                    ['bash', '-c', 'sleep 5 && sudo systemctl restart shadowops-bot'],
+                    stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
+                    start_new_session=True,
+                )
+                self.active_deployments[project_key] = False
+                return result
+
             # Step 5: Execute post-deploy command (if configured)
             if project['post_deploy_command']:
                 self.logger.info(f"⚙️ Running post-deploy command")
@@ -226,24 +248,6 @@ class DeploymentManager:
                 await self._send_deployment_update(project_name, "✅ Service restarted")
 
             result['deployed'] = True
-
-            # Self-Deploy: Bot deployt sich selbst → Embeds VOR Restart senden
-            is_self_deploy = (project_name == 'shadowops-bot')
-            if is_self_deploy:
-                duration = time.time() - start_time
-                result['success'] = True
-                result['duration_seconds'] = duration
-                self.logger.info(f"✅ Self-deploy: {project_name} ({duration:.1f}s) — Restart in 5s")
-                await self._send_deployment_success(project_name, deploy_branch, duration, result)
-                # Verzögerter Restart im Hintergrund
-                import subprocess
-                subprocess.Popen(
-                    ['bash', '-c', 'sleep 5 && sudo systemctl restart shadowops-bot'],
-                    stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
-                    start_new_session=True,
-                )
-                self.active_deployments[project_key] = False
-                return result
 
             # Step 7: Health check
             if project['health_check_url']:
