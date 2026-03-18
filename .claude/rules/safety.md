@@ -31,7 +31,7 @@ Bei Aenderungen an Shared-Services (Redis, PostgreSQL, Traefik) MUESSEN alle Kon
 
 ## Learning-System (agent_learning DB)
 - DB-Passwort `agent_learn_2026` steht in `patch_notes_learning.py` DSN — nicht aendern ohne alle Referenzen
-- `security_analyst` DB-Passwort `sec_analyst_2026` in `analyst_db.py` DSN
+- `security_analyst` DB-DSN wird aus `config.yaml` (`security_analyst.database_dsn`) oder `SECURITY_ANALYST_DB_URL` env var geladen — KEIN Hardcoded-Fallback mehr
 - Analyst `PROJECT_SECURITY_PROFILES` in `security_analyst.py` manuell pflegen bei Projektaenderungen
 - `PROTECTED_PORT_BINDINGS` muss bei neuen Ports aktualisiert werden
 - Token-Tracking: `_get_session_tokens()` misst Delta — NICHT manuell auf 0 setzen

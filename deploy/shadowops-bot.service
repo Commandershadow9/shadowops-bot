@@ -36,6 +36,8 @@ PrivateTmp=true
 # Umgebungsvariablen
 Environment="PYTHONUNBUFFERED=1"
 Environment="PYTHONUTF8=1"
+# Security Analyst DB — entweder hier ODER in config.yaml unter security_analyst.database_dsn
+# Environment="SECURITY_ANALYST_DB_URL=postgresql://security_analyst:PASSWORD@127.0.0.1:5433/security_analyst"
 # WICHTIG: CLAUDECODE darf NICHT gesetzt sein (verhindert "nested session" Fehler bei Claude CLI)
 UnsetEnvironment=CLAUDECODE
 # PATH fuer Codex und Claude CLI

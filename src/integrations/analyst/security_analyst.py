@@ -138,11 +138,15 @@ class SecurityAnalyst:
         self.codex_model = analyst_cfg.get('model', 'gpt-5.3-codex')
         self.claude_model = analyst_cfg.get('fallback_model', 'claude-opus-4-6')
 
-        # Datenbank-DSN aus Config oder Default
-        dsn = analyst_cfg.get(
-            'database_dsn',
-            'postgresql://security_analyst:sec_analyst_2026@127.0.0.1:5433/security_analyst',
-        )
+        # Datenbank-DSN: Priorität Config → Umgebungsvariable → Fehler
+        import os as _os
+        dsn = analyst_cfg.get('database_dsn') or _os.environ.get('SECURITY_ANALYST_DB_URL')
+        if not dsn:
+            raise EnvironmentError(
+                "DB-DSN für Security Analyst nicht konfiguriert. "
+                "Bitte 'database_dsn' in config.yaml (security_analyst:) setzen "
+                "oder Umgebungsvariable SECURITY_ANALYST_DB_URL definieren."
+            )
         self.db = AnalystDB(dsn)
         self.activity_monitor = ActivityMonitor(bot)
 
