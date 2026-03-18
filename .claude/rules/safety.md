@@ -20,3 +20,11 @@ Wenn Dateien hinzugefuegt, geloescht oder verschoben werden:
 - `config/config.yaml` enthaelt Discord Token, GitHub Token, API Keys
 - NIEMALS in Git committen — steht in .gitignore
 - Template: `config/config.example.yaml`
+
+## Learning-System (agent_learning DB)
+- DB-Passwort `agent_learn_2026` steht in `patch_notes_learning.py` DSN — nicht aendern ohne alle Referenzen
+- `security_analyst` DB-Passwort `sec_analyst_2026` in `analyst_db.py` DSN
+- Analyst `PROJECT_SECURITY_PROFILES` in `security_analyst.py` manuell pflegen bei Projektaenderungen
+- `PROTECTED_PORT_BINDINGS` muss bei neuen Ports aktualisiert werden
+- Token-Tracking: `_get_session_tokens()` misst Delta — NICHT manuell auf 0 setzen
+- LearningNotifier postet in `🧠-ai-learning` Channel — Channel-ID muss in state.json existieren

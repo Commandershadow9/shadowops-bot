@@ -40,7 +40,7 @@
 |-------|-----|----------|
 | `monitoring.py` | MonitoringCog | `/status`, `/bans`, `/threats`, `/docker`, `/aide` |
 | `admin.py` | AdminCog | `/scan`, `/stop-all-fixes`, `/remediation-stats`, `/set-approval-mode`, `/reload-context`, `/release-notes`, `/pending-notes` |
-| `inspector.py` | InspectorCog | `/get-ai-stats`, `/projekt-status`, `/alle-projekte` |
+| `inspector.py` | InspectorCog | `/get-ai-stats`, `/agent-stats`, `/projekt-status`, `/alle-projekte` |
 | `customer_setup_commands.py` | CustomerSetupCommands | `/setup-customer-server` |
 
 ### Integrationen (`src/integrations/`)
@@ -75,8 +75,10 @@
 | `changelog_db.py` | Zentrale Changelog-DB (SQLite, alle Projekte, Upsert + Paginierung) |
 | `content_sanitizer.py` | Security-Filter fuer Patch Notes (Pfade, IPs, Ports, Secrets) |
 | `patch_notes_batcher.py` | Sammelt Commits, Release via Cron (Sonntag), manuell (/release-notes) oder Notbremse (≥20) |
-| `patch_notes_feedback.py` | Discord Feedback (Persistent Buttons: Like + Bewerten, Text-Modal) |
+| `patch_notes_feedback.py` | Discord Feedback (Persistent Buttons: Like + Bewerten, Text-Modal) + Learning-DB Integration |
+| `patch_notes_learning.py` | Patch Notes Learning Pipeline (PostgreSQL agent_learning DB, Varianten-Gewichtung, Feedback-Loop) |
 | `patch_notes_web_exporter.py` | Web-Export (zentrale DB Upsert + File-Backup + optional HTTP POST). Frontend: shared-ui v0.2.0 Changelog-Komponenten |
+| `learning_notifier.py` | Automatische Discord-Posts in 🧠-ai-learning (Session-Summaries, Feedback-Ergebnisse, Weekly, Meilensteine) |
 | `knowledge_base.py` | PostgreSQL Knowledge Database (konsolidiert: Fixes, Strategien, Pläne, Analyst-Cross-Referenz) |
 | `log_analyzer.py` | Log-Analyse und -Auswertung |
 | `code_analyzer.py` | Code-Analyse fuer Fix-Strategien |
@@ -192,7 +194,8 @@
 ### Token-Budget (global)
 - **daily_token_budget:** 100K Token/Tag (konfigurierbar in config.yaml)
 - **Budget-Check:** Zentral in `_execute_with_fallback()` vor jedem AI-Call
-- **Token-Tracking:** Geschaetzt aus Prompt-Laenge
+- **Token-Tracking:** Geschaetzt aus Prompt-Laenge, pro Session via `_get_session_tokens()` Delta-Messung
+- **Session-DB:** Token-Verbrauch wird pro Session in `sessions.tokens_used` gespeichert (nicht mehr 0)
 
 ### AI-Call Sicherheit
 - **Codex Analyst:** Prompt via stdin statt CLI-Argument (ARG_MAX Fix), `-c mcp_servers={}` (kein MCP-Laden)
@@ -206,6 +209,18 @@
 - **subnet_tracking:** Angriffe pro /24 Subnet
 - **remediation_log:** Audit-Trail aller Auto-Fixes (mit Rollback-Command)
 - **pending_approvals:** Überlebt Bot-Restart (Approval-State persistent)
+
+### Agent-Learning DB (PostgreSQL, seit 2026-03-18)
+- **Gemeinsame DB** `agent_learning` auf GuildScout Postgres (Port 5433)
+- **agent_feedback:** Universelles Feedback (Discord Reactions, Ratings, Text) fuer alle Agents
+- **agent_quality_scores:** Qualitaetsbewertung pro Agent-Output (auto + feedback + combined)
+- **agent_knowledge:** Cross-Agent Wissensaustausch (Security Analyst → SEO/Feedback)
+- **pn_generations:** Jede generierte Patch Note mit Variante, Scores, Discord-Msg-ID
+- **pn_variants:** Prompt-Varianten Performance pro Projekt (times_used, avg_score, combined_weight)
+- **pn_examples:** Kuratierte Few-Shot Beispiele nach echtem Feedback sortiert
+- **seo_fix_impact:** Score-Delta nach PR-Merge (vorher/nachher, Fix-Kategorien)
+- **LearningNotifier:** Automatische Discord-Posts in 🧠-ai-learning (Sessions, Feedback, Weekly, Meilensteine)
+- **Event-getriggerte Scans:** Critical/High Events (CrowdSec/Fail2ban) triggern sofort Analyst Quick-Scan
 
 ### Recidive-Erkennung
 - 3+ Bans derselben IP → automatisch permanent in UFW geblockt

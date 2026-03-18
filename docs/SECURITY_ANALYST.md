@@ -57,8 +57,24 @@ NACH der Session:
   ├── scan_coverage → Bereiche gecheckt/uebersprungen
   ├── finding_quality → Confidence, Discovery-Method, False Positives
   ├── fix_attempts → Ansatz, Ergebnis, Seiteneffekte
+  ├── Cross-Agent-Knowledge → Offene Criticals in agent_learning DB
+  ├── LearningNotifier → Automatisches Embed in 🧠-ai-learning
   └── Alles fliesst in die naechste Session zurueck
+
+EXTERNE TRIGGER:
+  CrowdSec/Fail2ban Critical Event → trigger_event_scan()
+  → Sofortiger Quick-Scan (2h Cooldown, ignoriert Session-Limit)
 ```
+
+### Discord-Notifications (🧠-ai-learning)
+
+Der Analyst postet automatisch nach jeder Session:
+- Kompaktes Embed: Modus, Findings, Fixes, Tokens, Coverage
+- Farbcodiert: Gruen=Fixes, Orange=Findings, Rot=Regressionen, Blau=Routine
+- Woechentliches Summary (Montag): Alle Agents, DB-Groessen, Trends
+- Meilensteine: 🏆 bei 10/25/50/100/250 Fixes/Findings/Sessions
+
+Slash-Command `/agent-stats` zeigt das Learning-Dashboard on-demand.
 
 ### 3-Ebenen-Schutz gegen Infrastruktur-Breaks
 

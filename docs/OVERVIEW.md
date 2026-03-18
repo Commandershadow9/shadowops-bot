@@ -17,7 +17,7 @@
 - **[config/config.example.yaml](./config/config.example.yaml)** - Konfigurationstemplate
 
 ### Features & Systeme
-- **[docs/SECURITY_ANALYST.md](./docs/SECURITY_ANALYST.md)** - **NEU:** Autonomer AI Security Engineer (v4.0)
+- **[docs/SECURITY_ANALYST.md](./docs/SECURITY_ANALYST.md)** - Lernender AI Security Engineer (v5.0) — Full Learning Pipeline, Adaptive Sessions, Event-Trigger
 - **[docs/AUTO_REMEDIATION.md](./docs/AUTO_REMEDIATION.md)** - Auto-Remediation System (v2.0)
   - ⚠️ Teilweise veraltet, siehe ACTIVE_SECURITY_GUARDIAN.md für v3.0
 - **[HYBRID_AI_SYSTEM.md](./HYBRID_AI_SYSTEM.md)** - Hybrid AI Architektur (Ollama + Claude + OpenAI)
