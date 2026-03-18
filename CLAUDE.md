@@ -226,15 +226,17 @@
 
 ### Agent-Learning DB (PostgreSQL, seit 2026-03-18)
 - **Gemeinsame DB** `agent_learning` auf GuildScout Postgres (Port 5433)
+- **ai_learning.enabled: true** — Trainierte Prompts, A/B-Testing und Feedback-Loop fuer ALLE Projekte
 - **agent_feedback:** Universelles Feedback (Discord Reactions, Ratings, Text) fuer alle Agents
 - **agent_quality_scores:** Qualitaetsbewertung pro Agent-Output (auto + feedback + combined)
 - **agent_knowledge:** Cross-Agent Wissensaustausch (Security Analyst → SEO/Feedback)
 - **pn_generations:** Jede generierte Patch Note mit Variante, Scores, Discord-Msg-ID
 - **pn_variants:** Prompt-Varianten Performance pro Projekt (times_used, avg_score, combined_weight)
-- **pn_examples:** Kuratierte Few-Shot Beispiele nach echtem Feedback sortiert
+- **pn_examples:** Kuratierte Few-Shot Beispiele nach echtem Feedback sortiert (Cross-Project-Sharing)
 - **seo_fix_impact:** Score-Delta nach PR-Merge (vorher/nachher, Fix-Kategorien)
 - **LearningNotifier:** Automatische Discord-Posts in 🧠-ai-learning (Sessions, Feedback, Weekly, Meilensteine)
 - **Event-getriggerte Scans:** Critical/High Events (CrowdSec/Fail2ban) triggern sofort Analyst Quick-Scan
+- **Patch Notes Update-Channels:** Alle Projekte haben eigene Update-Channels mit Feedback-Buttons (shadowops-bot, ai-agent-framework, guildscout, zerodox)
 
 ### Recidive-Erkennung
 - 3+ Bans derselben IP → automatisch permanent in UFW geblockt

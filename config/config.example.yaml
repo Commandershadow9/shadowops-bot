@@ -173,6 +173,14 @@ security_analyst:
   # Doku: docs/SECURITY_ANALYST.md
 
 # ╔═══════════════════════════════════════════════════════════════════════════╗
+# ║ AI LEARNING (Patch Notes Training + A/B Testing)                         ║
+# ║ Aktiviert: Trainierte Prompts, Few-Shot Beispiele, Feedback-Loop        ║
+# ║ Deaktiviert: Fallback-Prompt ohne Training (geringere Qualitaet)        ║
+# ╚═══════════════════════════════════════════════════════════════════════════╝
+ai_learning:
+  enabled: true  # EMPFOHLEN: Aktiviert A/B-Testing, Learning-DB, Feedback-Loop
+
+# ╔═══════════════════════════════════════════════════════════════════════════╗
 # ║ PROJECTS (Überwachte Projekte)                                           ║
 # ╚═══════════════════════════════════════════════════════════════════════════╝
 projects:
@@ -262,6 +270,11 @@ projects:
     services:
       - "shadowops-bot"
     critical: true  # Kritisch - Bot muss immer laufen!
+    update_channel_id: 0  # Discord Channel-ID fuer Patch Notes + Feedback-Buttons
+
+    patch_notes:
+      language: "de"
+      use_ai: true
 
 # ╔═══════════════════════════════════════════════════════════════════════════╗
 # ║ ALERTS & NOTIFICATIONS                                                    ║
