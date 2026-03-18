@@ -1039,3 +1039,152 @@ class AnalystDB:
         count = int(result.split()[-1]) if result else 0
         if count > 0:
             logger.info("Confidence-Decay: %d Knowledge-Eintraege reduziert (-%s%%)", count, int(decay_rate * 100))
+
+    # ─────────────────────────────────────────────
+    # Scan-Plan — Datengetriebener Scan-Fokus
+    # ─────────────────────────────────────────────
+
+    # Standard-Scan-Bereiche die der Analyst abdecken sollte
+    SCAN_AREAS = [
+        'firewall',       # UFW-Regeln, offene Ports, iptables
+        'ssh',            # sshd_config, Auth-Methoden, Brute-Force
+        'docker',         # Container-Security, Trivy, Netzwerke
+        'permissions',    # Dateirechte, Ownership, SUID/SGID
+        'packages',       # System-Updates, CVEs, apt
+        'services',       # systemd, laufende Prozesse, Ports
+        'logs',           # Verdaechtige Muster, Angriffe, Fehler
+        'network',        # Bind-Adressen, DNS, TLS, Traefik
+        'credentials',    # .env-Dateien, API-Keys, Secrets
+        'dependencies',   # npm/pip Schwachstellen, veraltete Pakete
+    ]
+
+    async def build_scan_plan(self) -> str:
+        """Erstellt einen priorisierten, datengetriebenen Scan-Plan.
+
+        Analysiert:
+        1. Coverage-Luecken (was wurde lange nicht gecheckt?)
+        2. Finding-Hotspots (welche Kategorien hatten die meisten Findings?)
+        3. Regressionen (wo sind Fixes gescheitert?)
+        4. Git-Aktivitaet (welche Projekte wurden kuerzlich geaendert?)
+
+        Returns:
+            Formatierter Markdown-String fuer den Analyst-Prompt
+        """
+        priority_items = []
+
+        # ── 1. Coverage-Luecken → hoechste Prioritaet ──
+        try:
+            gaps = await self.get_coverage_gaps(max_age_days=5)
+            for g in gaps:
+                priority_items.append({
+                    'area': g['area'],
+                    'reason': f"Seit {g['days_ago']} Tagen nicht geprueft",
+                    'priority': 1,
+                })
+        except Exception:
+            pass
+
+        # ── 2. Regressierte Fixes → etwas ist kaputt ──
+        try:
+            regressions = await self.pool.fetch(
+                """SELECT DISTINCT f.category, f.title
+                   FROM fix_attempts fa
+                   JOIN findings f ON f.id = fa.finding_id
+                   WHERE fa.still_valid = FALSE
+                     AND fa.created_at >= NOW() - INTERVAL '30 days'
+                   LIMIT 5"""
+            )
+            for r in regressions:
+                priority_items.append({
+                    'area': r['category'],
+                    'reason': f"Regression: {r['title'][:60]}",
+                    'priority': 1,
+                })
+        except Exception:
+            pass
+
+        # ── 3. Finding-Hotspots → wo treten Probleme haeufig auf? ──
+        try:
+            hotspots = await self.pool.fetch(
+                """SELECT category, COUNT(*) as cnt
+                   FROM findings
+                   WHERE found_at >= NOW() - INTERVAL '60 days'
+                   GROUP BY category
+                   ORDER BY cnt DESC
+                   LIMIT 5"""
+            )
+            for h in hotspots:
+                priority_items.append({
+                    'area': h['category'],
+                    'reason': f"{h['cnt']} Findings in 60 Tagen — Hotspot",
+                    'priority': 2,
+                })
+        except Exception:
+            pass
+
+        # ── 4. Git-Activity → geaenderte Projekte brauchen Re-Scan ──
+        try:
+            active_projects = await self.pool.fetch(
+                """SELECT subject, content FROM knowledge
+                   WHERE category = 'project_activity'
+                     AND subject LIKE '%_git_activity'
+                     AND content LIKE '%Security-Commits%'
+                   ORDER BY confidence DESC"""
+            )
+            for p in active_projects:
+                # Projekte mit Security-Commits → priorisieren
+                if 'Security-Commits. ' in p['content']:
+                    sec_part = p['content'].split('Security-Commits. ')[0]
+                    # Anzahl Security-Commits extrahieren
+                    parts = sec_part.split(', ')
+                    for part in parts:
+                        if 'Security' in part:
+                            try:
+                                sec_count = int(part.split()[0])
+                                if sec_count > 0:
+                                    project_name = p['subject'].replace('_git_activity', '')
+                                    priority_items.append({
+                                        'area': f"project:{project_name}",
+                                        'reason': f"{sec_count} Security-Commits — Aenderungen verifizieren",
+                                        'priority': 2,
+                                    })
+                            except ValueError:
+                                pass
+        except Exception:
+            pass
+
+        # ── 5. Standard-Bereiche die noch nie gecheckt wurden ──
+        try:
+            checked_areas = await self.pool.fetch(
+                "SELECT DISTINCT area FROM scan_coverage WHERE checked = TRUE"
+            )
+            checked_set = {r['area'] for r in checked_areas}
+            for area in self.SCAN_AREAS:
+                if area not in checked_set:
+                    priority_items.append({
+                        'area': area,
+                        'reason': 'Noch nie geprueft',
+                        'priority': 1,
+                    })
+        except Exception:
+            # Wenn scan_coverage leer ist → alle Bereiche sind "neu"
+            pass
+
+        if not priority_items:
+            return "Keine spezifischen Prioritaeten — fuehre eine vollstaendige Analyse durch."
+
+        # Deduplizieren nach area (hoechste Prioritaet gewinnt)
+        seen = {}
+        for item in priority_items:
+            area = item['area']
+            if area not in seen or item['priority'] < seen[area]['priority']:
+                seen[area] = item
+        deduped = sorted(seen.values(), key=lambda x: (x['priority'], x['area']))
+
+        # Formatieren
+        lines = ["Priorisierte Scan-Reihenfolge:\n"]
+        for i, item in enumerate(deduped, 1):
+            urgency = "🔴" if item['priority'] == 1 else "🟡"
+            lines.append(f"{i}. {urgency} **{item['area']}** — {item['reason']}")
+
+        return "\n".join(lines)

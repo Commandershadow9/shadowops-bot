@@ -98,9 +98,11 @@ ANALYST_CONTEXT_TEMPLATE = """
 
 {open_findings}
 
-## FOKUS
+## SCAN-PLAN
 
-Untersuche Bereiche die du noch NICHT oder lange NICHT geprueft hast.
+{scan_plan}
+
+Arbeite den Plan von oben nach unten ab. Nutze die passenden Tools je Bereich.
 """
 
 

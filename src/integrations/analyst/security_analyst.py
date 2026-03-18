@@ -685,16 +685,20 @@ class SecurityAnalyst:
             # Health-Snapshot VOR der Analyse
             health_before = await self._take_health_snapshot(session_id)
 
-            # AI-Kontext aus DB zusammenstellen + offene Findings laden
+            # AI-Kontext aus DB zusammenstellen + offene Findings + Scan-Plan
             knowledge_context = await self.db.build_ai_context()
             open_findings = await self.db.get_open_findings_summary()
             open_findings_text = "\n".join(
                 f"- [{f['severity'].upper()}] {f['title']}" for f in open_findings[:20]
             ) if open_findings else "(keine offenen Findings)"
 
+            # Datengetriebenen Scan-Plan erstellen
+            scan_plan = await self.db.build_scan_plan()
+
             context_section = ANALYST_CONTEXT_TEMPLATE.format(
                 knowledge_context=knowledge_context,
                 open_findings=open_findings_text,
+                scan_plan=scan_plan,
             )
             prompt = ANALYST_SYSTEM_PROMPT + "\n\n" + context_section
 
@@ -1851,9 +1855,11 @@ class SecurityAnalyst:
                     open_findings_text = "\n".join(
                         f"- [{f['severity'].upper()}] {f['title']}" for f in open_findings[:20]
                     ) if open_findings else "(keine offenen Findings)"
+                    scan_plan = await self.db.build_scan_plan()
                     context_section = ANALYST_CONTEXT_TEMPLATE.format(
                         knowledge_context=knowledge_context,
                         open_findings=open_findings_text,
+                        scan_plan=scan_plan,
                     )
                     prompt = ANALYST_SYSTEM_PROMPT + "\n\n" + context_section
 
