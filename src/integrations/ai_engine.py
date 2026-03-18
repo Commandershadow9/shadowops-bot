@@ -875,6 +875,18 @@ class AIEngine:
             has_discord = result.get('title') and result.get('tldr') and result.get('discord_highlights')
             has_web = result.get('web_content')
             if has_discord and has_web:
+                # Schema-Validierung (soft — warnt bei Abweichungen, blockiert nicht)
+                try:
+                    schema_file = SCHEMAS_DIR / 'patch_notes.json'
+                    if schema_file not in _schema_cache:
+                        with open(schema_file) as f:
+                            _schema_cache[schema_file] = json.load(f)
+                    jsonschema.validate(result, _schema_cache[schema_file])
+                except jsonschema.ValidationError as ve:
+                    field_path = '/'.join(str(x) for x in ve.path) if ve.path else 'root'
+                    logger.warning("Patch Notes Schema-Warnung: %s (Feld: %s)", ve.message[:150], field_path)
+                except Exception:
+                    pass  # Schema-Datei nicht gefunden — kein Blocker
                 logger.info(f"✅ Strukturierte Patch Notes generiert: {result.get('title')}")
                 return result
             else:

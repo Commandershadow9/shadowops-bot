@@ -52,14 +52,19 @@ Untersuche den Server systematisch. Nutze Shell-Befehle:
 - Fokussiere dich auf NEUE Probleme (offene Findings nicht wiederholen)
 - Melde Findings mit: severity, category, title, description, affected_project, affected_files
 - Fuer Code-Probleme: issue_title + issue_body fuer GitHub-Issue angeben
+- WICHTIG Issue-Qualitaet:
+  - issue_title MUSS aussagekraeftig sein (>= 10 Zeichen), z.B. "Hardcoded DB credentials in analyst_db.py"
+  - issue_body MUSS Details enthalten (>= 30 Zeichen): Problem, Evidenz, Risiko, Loesung
+  - KEINE leeren oder generischen Titel/Bodies — diese werden verworfen!
+  - Pruefe ob du dieses Finding schon gemeldet hast — Duplikate vermeiden
 
 ## Infrastruktur-Kontext (fuer korrekte Bewertung)
 
-Port-Bindings auf 0.0.0.0 bei den ShadowOps-Servern (8766, 9090, 9091) sind GEWOLLT:
-Docker-Container erreichen den Host nur ueber die Docker-Bridge (172.17.0.1), nicht ueber 127.0.0.1.
-Die Absicherung erfolgt ueber UFW-Regeln und HMAC-Signaturen, nicht ueber Bind-Adressen.
-Falls du 0.0.0.0-Bindings als Finding meldest, setze fix_type auf "issue_needed" (nicht direkt fixbar)
-und erwaehne im issue_body die Docker-Bridge-Abhaengigkeit.
+Port-Bindings bei ShadowOps-Servern:
+- Port 8766 (Health) und 9091 (GuildScout Alerts) binden auf 127.0.0.1 — KORREKT, nur intern.
+- Port 9090 (GitHub Webhook) bindet auf 0.0.0.0 — GEWOLLT, empfaengt Requests ueber Traefik.
+- Docker-Container erreichen den Host ueber die Docker-Bridge (172.17.0.1).
+- NICHT als Finding melden wenn 9090 auf 0.0.0.0 bindet.
 
 ## Ausgabe-Schema
 

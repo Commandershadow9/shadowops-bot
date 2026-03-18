@@ -78,10 +78,19 @@ PROJECT_REPO_MAP = {
     'guildscout': 'Commandershadow9/GuildScout',
     'zerodox': 'Commandershadow9/ZERODOX',
     'shadowops': 'Commandershadow9/shadowops-bot',
+    'sicherheitsdienst': 'Commandershadow9/sicherheitsdienst-tool',
+    'project': 'Commandershadow9/sicherheitsdienst-tool',
 }
 
 # Fallback-Repo fuer Server-/Infrastruktur-Findings
 DEFAULT_REPO = 'Commandershadow9/shadowops-bot'
+
+# Projekte ohne eigenes GitHub-Repo — keine Issues erstellen
+SKIP_ISSUE_PROJECTS = {'openclaw', 'agents', 'blogger', 'content-pipeline'}
+
+# Minimale Laenge fuer Issue-Titel und -Body
+MIN_ISSUE_TITLE_LEN = 10
+MIN_ISSUE_BODY_LEN = 30
 
 # Services fuer Health-Checks
 USER_SERVICES = [
@@ -1904,35 +1913,93 @@ class SecurityAnalyst:
     async def _create_github_issue(self, finding: Dict) -> Optional[str]:
         """Erstellt ein GitHub-Issue fuer ein Code-Finding
 
+        Prueft vor Erstellung:
+        1. Mindest-Content (Titel >= 10, Body >= 30 Zeichen)
+        2. Projekt hat eigenes Repo (nicht in SKIP_ISSUE_PROJECTS)
+        3. DB-Dedup (gleiches Finding bereits offen)
+        4. GitHub-Dedup (aehnliches offenes Issue im Ziel-Repo)
+
         Args:
             finding: Finding-Dict mit issue_title, issue_body, affected_project
 
         Returns:
-            Issue-URL oder None bei Fehler
+            Issue-URL oder None bei Fehler/Skip
         """
         affected_project = finding.get('affected_project', '').strip()
+        title = finding.get('issue_title', finding.get('title', '')).strip()
+        body = finding.get('issue_body', finding.get('description', '')).strip()
+        severity = finding.get('severity', 'medium')
+
+        # ── Gate 1: Mindest-Content ──
+        if not title or len(title) < MIN_ISSUE_TITLE_LEN:
+            logger.warning(
+                "Issue uebersprungen: Titel leer oder zu kurz (%d Zeichen): '%s'",
+                len(title), title[:30],
+            )
+            return None
+
+        if not body or len(body) < MIN_ISSUE_BODY_LEN:
+            logger.warning(
+                "Issue uebersprungen: Body leer oder zu kurz (%d Zeichen) fuer '%s'",
+                len(body), title[:50],
+            )
+            return None
+
+        # ── Gate 2: Projekt-Skip (kein Repo vorhanden) ──
+        project_lower = affected_project.lower()
+        for skip_name in SKIP_ISSUE_PROJECTS:
+            if skip_name in project_lower:
+                logger.info(
+                    "Issue uebersprungen: Projekt '%s' hat kein GitHub-Repo — nur als Finding gespeichert",
+                    affected_project,
+                )
+                return None
+
         repo = self._resolve_repo(affected_project)
 
-        title = finding.get('issue_title', finding.get('title', 'Security Finding'))
-
-        # Duplikaterkennung: Offenes Finding mit gleichem Titel in DB?
+        # ── Gate 3: DB-Dedup (lokale Findings) ──
         existing = await self.db.find_similar_open_finding(finding.get('title', ''))
         if existing:
             existing_url = existing.get('github_issue_url', '')
             logger.info(
-                "Duplikat erkannt: Finding '%s' existiert bereits (ID #%d, Issue: %s) — ueberspringe",
+                "DB-Duplikat: Finding '%s' existiert bereits (ID #%d, Issue: %s) — ueberspringe",
                 existing['title'][:50], existing['id'], existing_url or 'kein Issue',
             )
             return existing_url or None
 
+        # ── Gate 4: GitHub-Dedup (offene Issues im Ziel-Repo) ──
+        try:
+            search_terms = title[:60].replace('[', '').replace(']', '').replace('"', '')
+            proc_search = await asyncio.create_subprocess_exec(
+                'gh', 'issue', 'list',
+                '--repo', repo,
+                '--state', 'open',
+                '--search', search_terms,
+                '--limit', '5',
+                '--json', 'number,title,url',
+                stdout=asyncio.subprocess.PIPE,
+                stderr=asyncio.subprocess.PIPE,
+            )
+            search_out, _ = await asyncio.wait_for(proc_search.communicate(), timeout=15)
+            if proc_search.returncode == 0:
+                import json as _json
+                existing_issues = _json.loads(search_out.decode() or '[]')
+                if existing_issues:
+                    first = existing_issues[0]
+                    logger.info(
+                        "GitHub-Duplikat: Aehnliches offenes Issue #%d '%s' in %s — ueberspringe",
+                        first['number'], first['title'][:50], repo,
+                    )
+                    return first.get('url', '')
+        except Exception as e:
+            logger.debug("GitHub-Dedup-Check fehlgeschlagen (nicht blockierend): %s", e)
+
         logger.info("Issue-Routing: '%s' -> %s", affected_project, repo)
-        body = finding.get('issue_body', finding.get('description', ''))
-        severity = finding.get('severity', 'medium')
 
         # Issue-Titel mit Security-Prefix
         full_title = f"[Security] {title}"
 
-        # Severity-Badge im Body (Labels koennten fehlen)
+        # Severity-Badge im Body
         body_with_badge = (
             f"**Severity:** {severity.upper()} | "
             f"**Projekt:** {affected_project or 'Server'}\n\n"
