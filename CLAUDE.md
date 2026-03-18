@@ -12,7 +12,7 @@
 | Service | Port | Bind | Zweck |
 |---------|------|------|-------|
 | Discord Bot | — | — | Gateway-Connection (DEV + ZERODOX Server) |
-| Health Check + Changelog API | 8766 | 127.0.0.1 | Health, REST API, RSS Feed, Sitemap |
+| Health Check + Changelog API | 8766 | 0.0.0.0 | Health, REST API, RSS Feed, Sitemap (UFW: nur Docker 172.16.0.0/12) |
 | GitHub Webhook | 9090 | 0.0.0.0 | Push/PR Events (Traefik) |
 | GuildScout Alerts | 9091 | 127.0.0.1 | Alert Forwarding |
 
@@ -212,7 +212,7 @@
 - **Claude Analyst:** `--dangerously-skip-permissions` + `--allowed-tools` (nur Security-Bash-Prefixe + Read/Write/Grep/Glob, keine MCPs)
 - **DB-Credentials:** Kein Hardcoded-DSN mehr — `SECURITY_ANALYST_DB_URL` env var oder `config.yaml` (security_analyst.database_dsn)
 - **Webhook:** Fail-closed bei fehlendem Secret, Config-Pfad korrigiert (projects.guildscout)
-- **Bind-Adressen:** 8766 + 9091 auf 127.0.0.1, nur 9090 (GitHub Webhook) auf 0.0.0.0
+- **Bind-Adressen:** 8766 auf 0.0.0.0 (UFW: nur Docker 172.16.0.0/12), 9091 auf 127.0.0.1, 9090 (GitHub Webhook) auf 0.0.0.0
 - **Patch Notes:** jsonschema-Validierung (soft) gegen `src/schemas/patch_notes.json`
 - **API-Quota-Erkennung:** Codex (OpenAI usage limit) + Claude (overloaded/rate limit) in stderr erkannt und geloggt
 - **Context Manager:** Nur aktive Projekte (sicherheitstool entfernt)
