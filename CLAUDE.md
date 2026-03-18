@@ -9,12 +9,12 @@
 - **Version:** v5.0.0
 
 ## Services & Ports
-| Service | Port | Zweck |
-|---------|------|-------|
-| Discord Bot | — | Gateway-Connection |
-| Health Check + Changelog API | 8766 | Health, REST API, RSS Feed, Sitemap |
-| GitHub Webhook | 9090 | Push/PR Events |
-| GuildScout Alerts | 9091 | Alert Forwarding |
+| Service | Port | Bind | Zweck |
+|---------|------|------|-------|
+| Discord Bot | — | — | Gateway-Connection |
+| Health Check + Changelog API | 8766 | 127.0.0.1 | Health, REST API, RSS Feed, Sitemap |
+| GitHub Webhook | 9090 | 0.0.0.0 | Push/PR Events (Traefik) |
+| GuildScout Alerts | 9091 | 127.0.0.1 | Alert Forwarding |
 
 ## Befehle
 | Aktion | Befehl |
@@ -54,7 +54,7 @@
 #### Einzelne Module
 | Datei | Zweck |
 |-------|-------|
-| `ai_engine.py` | Dual-Engine AI (Codex Primary + Claude Fallback, Structured Output, Markdown-Fence-Parser) |
+| `ai_engine.py` | Dual-Engine AI (Codex Primary + Claude Fallback, Structured Output, Markdown-Fence-Parser, Schema-Validierung via jsonschema). Prompts werden via stdin uebergeben (kein Leak in ps/proc) |
 | `smart_queue.py` | SmartQueue (3 Analyse-Slots, 1 Fix-Lock, Circuit Breaker) |
 | `auto_fix_manager.py` | Discord Buttons fuer Approve/Reject, Persistent Views |
 | `event_watcher.py` | Periodischer Scanner (Trivy/CrowdSec/Fail2ban/AIDE) |
@@ -94,7 +94,7 @@
 |-------------|-------|
 | `fixers/` | Tool-spezifische Fixer (trivy, crowdsec, fail2ban, aide) |
 | `ai_learning/` | Legacy AI Learning (DEAKTIVIERT — knowledge_db, knowledge_synthesizer, continuous_learning_agent) |
-| `analyst/` | Security Analyst (security_analyst, analyst_db, activity_monitor, prompts) — Full Learning Pipeline, Adaptive Sessions, Fix-Verifikation, Coverage-Tracking |
+| `analyst/` | Security Analyst (security_analyst, analyst_db, activity_monitor, prompts) — Full Learning Pipeline, Adaptive Sessions, Fix-Verifikation, Coverage-Tracking, Issue Quality-Gates (Mindest-Content, Dedup, Repo-Routing) |
 
 ### Utils (`src/utils/`)
 | Datei | Zweck |
@@ -186,6 +186,12 @@
 - **Kontext-Injektionen:** Fix-Effektivität, Coverage-Gaps, Finding-Qualität, Git-Activity
 - **Knowledge-Decay:** Confidence -5%/Lauf bei >14 Tage altem Wissen (Min: 20%)
 - **Finding-Dedup:** DISTINCT ON Titel-Präfix + Keyword-Match bei Duplikat-Close
+- **Issue Quality-Gates (seit 2026-03-18):** 4 Prüfungen vor GitHub-Issue-Erstellung:
+  1. Mindest-Content: Titel >= 10, Body >= 30 Zeichen (leere Issues blockiert)
+  2. Projekt-Skip: SKIP_ISSUE_PROJECTS (openclaw, agents, blogger — kein Repo)
+  3. DB-Dedup: find_similar_open_finding (Titel exakt + Keyword-Match)
+  4. GitHub-Dedup: `gh issue list --search` im Ziel-Repo vor Erstellung
+- **Erweitertes Repo-Routing:** PROJECT_REPO_MAP +sicherheitsdienst, +project
 - **Auto-Close:** Findings >30 Tage ohne GitHub-Issue → automatisch geschlossen
 - **fix_policy pro Projekt:** active→critical_only, stable→all, frozen→monitor_only
 - **Codex-Quota-Cache:** Nach Quota-Fehler wird Codex 6h übersprungen
@@ -198,8 +204,15 @@
 - **Session-DB:** Token-Verbrauch wird pro Session in `sessions.tokens_used` gespeichert (nicht mehr 0)
 
 ### AI-Call Sicherheit
-- **Codex Analyst:** Prompt via stdin statt CLI-Argument (ARG_MAX Fix), `-c mcp_servers={}` (kein MCP-Laden)
-- **Claude Analyst:** Prompt via stdin + `--dangerously-skip-permissions` + `--allowed-tools` (nur Security-Bash-Prefixe + Read/Write/Grep/Glob, keine MCPs)
+- **Alle Provider-Methoden:** Prompts via stdin (`communicate(input=...)`) — kein Leak in ps/proc
+  - Codex: `query()` + `query_raw()` — Prompt nicht mehr als CLI-Argument
+  - Claude: `query()` + `query_raw()` — `-p -` liest von stdin
+- **Codex Analyst:** `-c mcp_servers={}` (kein MCP-Laden)
+- **Claude Analyst:** `--dangerously-skip-permissions` + `--allowed-tools` (nur Security-Bash-Prefixe + Read/Write/Grep/Glob, keine MCPs)
+- **DB-Credentials:** Kein Hardcoded-DSN mehr — `SECURITY_ANALYST_DB_URL` env var oder `config.yaml` (security_analyst.database_dsn)
+- **Webhook:** Fail-closed bei fehlendem Secret, Config-Pfad korrigiert (projects.guildscout)
+- **Bind-Adressen:** 8766 + 9091 auf 127.0.0.1, nur 9090 (GitHub Webhook) auf 0.0.0.0
+- **Patch Notes:** jsonschema-Validierung (soft) gegen `src/schemas/patch_notes.json`
 - **API-Quota-Erkennung:** Codex (OpenAI usage limit) + Claude (overloaded/rate limit) in stderr erkannt und geloggt
 - **Context Manager:** Nur aktive Projekte (sicherheitstool entfernt)
 
