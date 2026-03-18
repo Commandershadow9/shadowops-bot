@@ -197,6 +197,13 @@ projects:
     critical: false
     update_channel_name: "guildscout-updates" # Optional: Channel name for customer-facing patch notes. Wird auto. erstellt.
 
+    # === CROSS-GUILD CHANNELS (optional) ===
+    # Wenn Patch Notes auf einem ANDEREN Discord-Server gepostet werden sollen
+    # (nicht dem Haupt-Guild), Channel-IDs direkt setzen. Auto-Creation wird dann uebersprungen.
+    # update_channel_id: 0             # Oeffentlicher Patch-Notes-Channel (read-only)
+    # internal_channel_id: 0           # Interner Channel (read-only, mit Rollen-Ping)
+    # internal_channel_role_mention: 0 # Discord Role-ID fuer Ping im internen Channel
+
     # === PATCH NOTES V2 ===
     patch_notes:
       enabled: true

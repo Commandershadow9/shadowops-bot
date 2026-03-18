@@ -252,6 +252,10 @@ Dann in GitHub: `https://webhook.yourdomain.com/webhook`
 ### Multi-Channel Support ✅
 - **Internal Channel:** `deployment_log` für Dev-Team
 - **Customer Channel:** `updates-{project}` für Kunden/Public
+- **Cross-Guild Channels:** Channels auf anderen Discord-Servern (seit 18.03.2026)
+  - Wenn `update_channel_id` in der Projekt-Config gesetzt ist UND der Channel per `bot.get_channel()` erreichbar ist, wird die Auto-Creation übersprungen
+  - Zusätzlich: `internal_channel_id` für einen internen Kunden-Channel mit Rollen-Ping (`internal_channel_role_mention`)
+  - Beispiel: ZERODOX Patch Notes werden auf dem ZERODOX-Server in `📋patch-notes` (öffentlich) und `🔧dev-updates` (intern) gepostet
 
 ### Auto-Deploy (optional)
 - Setze `github.auto_deploy: true`
