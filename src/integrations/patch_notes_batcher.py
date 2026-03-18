@@ -79,10 +79,10 @@ class PatchNotesBatcher:
         """
         import re
 
-        # Hotfixes werden nie gesammelt
+        # Nur echte Hotfixes/Critical sofort — Security-Fixes werden gesammelt
         for commit in commits:
             msg = (commit.get('message', '') or '').lower()
-            if 'hotfix' in msg or 'critical' in msg or 'security' in msg:
+            if 'hotfix' in msg or 'critical' in msg:
                 return False
 
         # Commits mit Version-Bump werden nie gesammelt
