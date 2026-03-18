@@ -151,6 +151,7 @@ class SecurityAnalyst:
         self._current_session_id: Optional[int] = None
         self._sessions_today: int = 0
         self._today: date = date.today()
+        self._session_tokens_start: int = 0  # Token-Counter beim Session-Start
         self._running: bool = False
         self._briefing_pending: bool = False
         self._pending_result: Optional[Dict] = None
@@ -493,6 +494,21 @@ class SecurityAnalyst:
         except Exception:
             pass
 
+    def _get_session_tokens(self) -> int:
+        """Token-Verbrauch seit Session-Start berechnen."""
+        try:
+            current = self.ai_engine._daily_tokens_used if self.ai_engine else 0
+            return max(0, current - self._session_tokens_start)
+        except Exception:
+            return 0
+
+    def _mark_token_start(self):
+        """Token-Counter vor Session-Start merken."""
+        try:
+            self._session_tokens_start = self.ai_engine._daily_tokens_used if self.ai_engine else 0
+        except Exception:
+            self._session_tokens_start = 0
+
     async def _pre_session_maintenance(self):
         """Alle Pre-Session Tasks ausfuehren.
 
@@ -501,11 +517,52 @@ class SecurityAnalyst:
         2. Git-Activity in DB synchronisieren
         3. Kuerzliche Fixes verifizieren
         4. Knowledge-Confidence abschwaechen
+        5. Cross-Agent-Knowledge synchronisieren
         """
         await self._sync_project_security_profiles()
         await self._sync_git_activity_to_db()
         await self._verify_recent_fixes()
         await self.db.decay_knowledge_confidence()
+        await self._sync_cross_agent_knowledge()
+
+    async def _sync_cross_agent_knowledge(self):
+        """Schreibt sicherheitsrelevante Erkenntnisse in die agent_learning DB.
+
+        Andere Agents (SEO, Feedback) koennen diese Daten nutzen um
+        ihre Arbeit besser zu koordinieren.
+        """
+        try:
+            from integrations.patch_notes_learning import PatchNotesLearning
+            learning = PatchNotesLearning()
+            await learning.connect()
+
+            # Offene Critical/High Findings pro Projekt → andere Agents wissen Bescheid
+            critical = await self.db.pool.fetch(
+                """SELECT affected_project, COUNT(*) as cnt, severity
+                   FROM findings
+                   WHERE status = 'open' AND severity IN ('critical', 'high')
+                   GROUP BY affected_project, severity
+                   ORDER BY cnt DESC"""
+            )
+
+            for r in critical:
+                project = r['affected_project'] or 'infrastructure'
+                content = (
+                    f"{r['cnt']} offene {r['severity'].upper()}-Findings. "
+                    f"Vorsicht bei Deployments/Fixes in diesem Projekt."
+                )
+                await learning.pool.execute(
+                    """INSERT INTO agent_knowledge
+                       (agent, category, subject, content, confidence, updated_at)
+                       VALUES ('security_analyst', 'security_alerts', $1, $2, 0.9, NOW())
+                       ON CONFLICT (agent, category, subject)
+                       DO UPDATE SET content = $2, confidence = 0.9, updated_at = NOW()""",
+                    f'{project}_open_criticals', content,
+                )
+
+            await learning.close()
+        except Exception as e:
+            logger.debug("Cross-Agent-Knowledge Sync fehlgeschlagen: %s", e)
 
     # ─────────────────────────────────────────────────────────────────
     # Lifecycle
@@ -711,6 +768,7 @@ class SecurityAnalyst:
         session_id = None
         try:
             # ── Schritt 0: Pre-Session Maintenance ──
+            self._mark_token_start()
             await self._pre_session_maintenance()
 
             # ── Schritt 1: Backlog checken + Session planen ──
@@ -758,7 +816,7 @@ class SecurityAnalyst:
                     session_id=session_id,
                     summary=f"Fix-Session ({plan['reason']}): {open_count} Findings bearbeitet",
                     topics=['backlog_fix'],
-                    tokens_used=0,
+                    tokens_used=self._get_session_tokens(),
                     model=self.claude_model,
                     findings_count=0,
                     auto_fixes=0,
@@ -869,7 +927,7 @@ class SecurityAnalyst:
                     session_id=session_id,
                     summary=f"Session ohne Ergebnis (Fehler #{self._consecutive_failures})",
                     topics=[],
-                    tokens_used=0,
+                    tokens_used=self._get_session_tokens(),
                     model=self.codex_model,
                     findings_count=0,
                     auto_fixes=0,
@@ -896,7 +954,7 @@ class SecurityAnalyst:
                         session_id=session_id,
                         summary=f"Session mit Fehler beendet: {str(e)[:200]}",
                         topics=[],
-                        tokens_used=0,
+                        tokens_used=self._get_session_tokens(),
                         model=self.codex_model,
                         findings_count=0,
                         auto_fixes=0,
@@ -1378,7 +1436,7 @@ class SecurityAnalyst:
             session_id=session_id,
             summary=summary,
             topics=topics,
-            tokens_used=0,  # Token-Zaehlung kommt spaeter
+            tokens_used=self._get_session_tokens(),
             model=model_used,
             findings_count=len(findings),
             auto_fixes=auto_fixes,
@@ -1895,6 +1953,70 @@ class SecurityAnalyst:
     # Manueller Scan
     # ─────────────────────────────────────────────────────────────────
 
+    async def trigger_event_scan(self, event_type: str, details: str = ""):
+        """Triggert einen Quick-Scan nach einem kritischen Security-Event.
+
+        Wird von Event-Watchern aufgerufen wenn CrowdSec/Fail2ban
+        kritische Aktivitaet melden. Ignoriert das Session-Limit
+        (maximal 1 Event-Scan pro 2 Stunden).
+        """
+        if self._session_lock.locked():
+            logger.debug("Event-Scan abgelehnt — Session laeuft")
+            return
+
+        # Rate-Limit: Max 1 Event-Scan pro 2 Stunden
+        import time as _time
+        cooldown_key = '_last_event_scan'
+        last_scan = getattr(self, cooldown_key, 0.0)
+        if _time.time() - last_scan < 7200:
+            logger.debug("Event-Scan Cooldown aktiv (letzter vor %.0f Min)", (_time.time() - last_scan) / 60)
+            return
+
+        logger.info("Event-getriggerter Quick-Scan: %s — %s", event_type, details[:100])
+        setattr(self, cooldown_key, _time.time())
+
+        async with self._session_lock:
+            session_id = await self.db.start_session(trigger_type=f'event:{event_type}')
+            self._current_session_id = session_id
+            self._mark_token_start()
+
+            try:
+                # Quick-Scan mit Fokus auf den Event-Bereich
+                focus_map = {
+                    'crowdsec': 'network',
+                    'fail2ban': 'ssh',
+                    'trivy': 'docker',
+                    'aide': 'permissions',
+                }
+                focus = focus_map.get(event_type, event_type)
+                result = await self.manual_scan(focus=focus)
+
+                await self.db.end_session(
+                    session_id=session_id,
+                    summary=f"Event-Scan: {event_type} — {details[:100]}",
+                    topics=[event_type, focus],
+                    tokens_used=self._get_session_tokens(),
+                    model=self.claude_model,
+                    findings_count=len(result.get('findings', [])) if result else 0,
+                    auto_fixes=0,
+                    issues_created=0,
+                )
+            except Exception as e:
+                logger.warning("Event-Scan fehlgeschlagen: %s", e)
+                try:
+                    await self.db.end_session(
+                        session_id=session_id,
+                        summary=f"Event-Scan fehlgeschlagen: {e}",
+                        topics=[event_type],
+                        tokens_used=self._get_session_tokens(),
+                        model=self.claude_model,
+                        findings_count=0, auto_fixes=0, issues_created=0,
+                    )
+                except Exception:
+                    pass
+            finally:
+                self._current_session_id = None
+
     async def manual_scan(self, focus: Optional[str] = None) -> Optional[Dict]:
         """Fuehrt einen manuellen Security-Scan durch
 
@@ -1991,7 +2113,7 @@ class SecurityAnalyst:
                         session_id=session_id,
                         summary="Manueller Scan ohne Ergebnis",
                         topics=[],
-                        tokens_used=0,
+                        tokens_used=self._get_session_tokens(),
                         model=self.codex_model,
                         findings_count=0,
                         auto_fixes=0,
@@ -2010,7 +2132,7 @@ class SecurityAnalyst:
                         session_id=session_id,
                         summary=f"Manueller Scan fehlgeschlagen: {str(e)[:200]}",
                         topics=[],
-                        tokens_used=0,
+                        tokens_used=self._get_session_tokens(),
                         model=self.codex_model,
                         findings_count=0,
                         auto_fixes=0,

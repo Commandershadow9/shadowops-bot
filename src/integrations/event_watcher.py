@@ -782,6 +782,17 @@ class SecurityEventWatcher:
             logger.info("⏸️ AI-Remediation deaktiviert - Event wird nur geloggt")
             return
 
+        # Bei kritischen Events: Analyst-Quick-Scan triggern
+        analyst = getattr(self.bot, 'security_analyst', None)
+        if analyst and event.severity in ('critical', 'high'):
+            try:
+                asyncio.ensure_future(analyst.trigger_event_scan(
+                    event_type=event.source,
+                    details=f"{event.title}: {event.description[:100]}",
+                ))
+            except Exception:
+                pass
+
         # Route event to Orchestrator (coordinated remediation)
         # The Orchestrator batches events and creates a coordinated plan
         if hasattr(self.bot, 'orchestrator') and self.bot.orchestrator:

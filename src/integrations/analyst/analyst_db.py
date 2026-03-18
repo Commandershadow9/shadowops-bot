@@ -725,6 +725,27 @@ class AnalystDB:
         except Exception:
             pass
 
+        # ── Git-Delta seit letztem Scan ──
+        try:
+            last_session = await self.get_last_session()
+            if last_session and last_session.get('started_at'):
+                last_scan_date = last_session['started_at'].strftime('%Y-%m-%d')
+                # Commits seit letztem Scan aus project_activity Knowledge holen
+                recent_activity = await self.pool.fetch(
+                    """SELECT subject, content FROM knowledge
+                       WHERE category = 'project_activity'
+                         AND subject LIKE '%_git_activity'
+                       ORDER BY subject"""
+                )
+                if recent_activity:
+                    parts.append(f"## Aenderungen seit letztem Scan ({last_scan_date})\n")
+                    for r in recent_activity:
+                        project = r['subject'].replace('_git_activity', '')
+                        parts.append(f"- **{project}:** {r['content'][:120]}")
+                    parts.append("")
+        except Exception:
+            pass
+
         # ── Coverage-Luecken (was wurde lange nicht geprueft?) ──
         try:
             gaps = await self.get_coverage_gaps(max_age_days=7)

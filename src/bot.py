@@ -1011,6 +1011,8 @@ class ShadowOpsBot(commands.Bot):
             self.update_dashboard.start()
         if not self.weekly_patch_notes_release.is_running():
             self.weekly_patch_notes_release.start()
+        if not self.learning_maintenance.is_running():
+            self.learning_maintenance.start()
 
         # Setze Status
         await self.change_presence(
@@ -1322,6 +1324,21 @@ class ShadowOpsBot(commands.Bot):
         if batcher:
             cron_info = f"{batcher.cron_day.capitalize()} {batcher.cron_hour}:00"
         self.logger.info(f"📅 Wöchentlicher Patch-Notes-Cron gestartet ({cron_info})")
+
+    @tasks.loop(hours=12)
+    async def learning_maintenance(self):
+        """Tägliche Learning-Maintenance: Feedback-Windows schließen."""
+        try:
+            fc = getattr(self, 'feedback_collector', None)
+            if fc:
+                await fc.close_old_feedback_windows()
+        except Exception as e:
+            self.logger.debug("Learning-Maintenance: %s", e)
+
+    @learning_maintenance.before_loop
+    async def before_learning_maintenance(self):
+        await self.wait_until_ready()
+        self.logger.info("🧠 Learning-Maintenance Loop gestartet (alle 12h)")
 
     @tasks.loop(minutes=5)
     async def update_dashboard(self):
