@@ -915,6 +915,24 @@ class SecurityAnalyst:
                 )
                 await self._process_results(session_id, result, health_ok, model_used)
 
+                # Learning-Notification nach Scan
+                notifier = getattr(self.bot, 'learning_notifier', None) if self.bot else None
+                if notifier:
+                    try:
+                        findings = result.get('findings', [])
+                        areas = result.get('areas_checked', [])
+                        await notifier.notify_analyst_session(
+                            session_id=session_id,
+                            mode=plan.get('mode', 'full_scan'),
+                            findings_count=len(findings),
+                            fixed_count=0,
+                            pr_count=0,
+                            tokens_used=self._get_session_tokens(),
+                            coverage_areas=len(areas),
+                        )
+                    except Exception:
+                        pass
+
                 # Phase 2: Fix-Session — offene Findings abarbeiten
                 await self._run_fix_phase(session_id)
             else:
@@ -1250,6 +1268,21 @@ class SecurityAnalyst:
             await self._notify_fix_phase_complete(
                 fixed_count, pr_count, len(fixable), fix_result.get('summary', ''),
             )
+
+            # Learning-Notification
+            notifier = getattr(self.bot, 'learning_notifier', None) if self.bot else None
+            if notifier:
+                try:
+                    await notifier.notify_analyst_session(
+                        session_id=scan_session_id,
+                        mode='fix_only',
+                        findings_count=0,
+                        fixed_count=fixed_count,
+                        pr_count=pr_count,
+                        tokens_used=self._get_session_tokens(),
+                    )
+                except Exception:
+                    pass
 
         except Exception as e:
             logger.error("Fix-Phase Fehler: %s", e, exc_info=True)

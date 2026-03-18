@@ -459,6 +459,29 @@ class PatchNotesFeedbackCollector:
             for gen in unclosed:
                 await db.close_feedback_window(gen['project'], gen['version'])
 
+                # Learning-Notification posten
+                try:
+                    notifier = getattr(self.bot, 'learning_notifier', None)
+                    if notifier:
+                        # Score aus DB holen
+                        score_row = await db.pool.fetchrow(
+                            "SELECT * FROM pn_generations WHERE project=$1 AND version=$2",
+                            gen['project'], gen['version'],
+                        )
+                        if score_row:
+                            fb = await db.get_aggregated_feedback(gen['project'], gen['version'])
+                            await notifier.notify_feedback_evaluated(
+                                project=gen['project'],
+                                version=gen['version'],
+                                variant_id=score_row.get('variant_id'),
+                                auto_score=score_row.get('auto_quality', 50),
+                                feedback_score=score_row.get('feedback_score', 50),
+                                combined_score=(score_row.get('auto_quality', 50) * 0.6 + (score_row.get('feedback_score', 50)) * 0.4),
+                                feedback_count=fb.get('feedback_count', 0),
+                            )
+                except Exception:
+                    pass
+
             logger.info(
                 "Feedback-Windows geschlossen: %d Generierungen ausgewertet",
                 len(unclosed),

@@ -112,6 +112,9 @@ class ShadowOpsBot(commands.Bot):
         # Changelog-DB (Patch Notes v3)
         self.changelog_db = None
 
+        # Learning Notifier (Discord-Posts über Agent-Erkenntnisse)
+        self.learning_notifier = None
+
         # Queue Management
         self.smart_queue = None
 
@@ -324,6 +327,10 @@ class ShadowOpsBot(commands.Bot):
         self.discord_logger.set_bot(self)
         await self.discord_logger.start()
         self.logger.info("✅ Discord Channel Logger bereit")
+
+        # Learning Notifier initialisieren
+        from integrations.learning_notifier import LearningNotifier
+        self.learning_notifier = LearningNotifier(self)
 
         # Initialisiere Auto-Fix Manager Channels
         try:
@@ -1327,11 +1334,22 @@ class ShadowOpsBot(commands.Bot):
 
     @tasks.loop(hours=12)
     async def learning_maintenance(self):
-        """Tägliche Learning-Maintenance: Feedback-Windows schließen."""
+        """Learning-Maintenance alle 12h: Feedback schliessen + Meilensteine + Weekly."""
         try:
             fc = getattr(self, 'feedback_collector', None)
             if fc:
                 await fc.close_old_feedback_windows()
+
+            # Meilensteine prüfen
+            if self.learning_notifier:
+                await self.learning_notifier.check_milestones()
+
+            # Wöchentliches Summary (Montag morgens)
+            from datetime import datetime
+            now = datetime.now()
+            if now.weekday() == 0 and now.hour < 12:
+                if self.learning_notifier:
+                    await self.learning_notifier.send_weekly_summary()
         except Exception as e:
             self.logger.debug("Learning-Maintenance: %s", e)
 
