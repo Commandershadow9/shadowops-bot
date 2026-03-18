@@ -16,6 +16,19 @@ from xml.sax.saxutils import escape as xml_escape
 
 logger = logging.getLogger("shadowops.health")
 
+# CORS-Allowlist: Nur bekannte Konsumenten duerfen Cross-Origin zugreifen.
+# Port 8766 ist nur lokal + Docker-Bridge erreichbar (UFW),
+# aber Defense-in-Depth begrenzt CORS trotzdem auf bekannte Origins.
+CORS_ALLOWED_ORIGINS: set[str] = {
+    'https://guildscout.eu',
+    'https://guildscout.de',
+    'https://guildscout.zerodox.de',
+    'https://zerodox.de',
+    'https://www.zerodox.de',
+    'http://localhost:3000',
+    'http://localhost:3001',
+}
+
 
 class HealthCheckServer:
     """Lightweight HTTP server for health checks and Changelog API"""
@@ -59,21 +72,27 @@ class HealthCheckServer:
 
     @web.middleware
     async def _cors_middleware(self, request: web.Request, handler):
-        """CORS Middleware fuer /api/ Routen."""
+        """CORS Middleware fuer /api/ Routen — Origin-Allowlist statt '*'."""
+        origin = request.headers.get('Origin', '')
+        allowed = origin in CORS_ALLOWED_ORIGINS
+
         # Preflight OPTIONS Requests
         if request.method == 'OPTIONS' and request.path.startswith('/api/'):
-            response = web.Response(status=204)
-            response.headers['Access-Control-Allow-Origin'] = '*'
-            response.headers['Access-Control-Allow-Methods'] = 'GET, POST, OPTIONS'
-            response.headers['Access-Control-Allow-Headers'] = 'Content-Type, X-API-Key'
+            response = web.Response(status=204 if allowed else 403)
+            if allowed:
+                response.headers['Access-Control-Allow-Origin'] = origin
+                response.headers['Access-Control-Allow-Methods'] = 'GET, POST, OPTIONS'
+                response.headers['Access-Control-Allow-Headers'] = 'Content-Type, X-API-Key'
+                response.headers['Vary'] = 'Origin'
             return response
 
         response = await handler(request)
 
-        # CORS-Header auf alle /api/ Responses
-        if request.path.startswith('/api/'):
-            response.headers['Access-Control-Allow-Origin'] = '*'
+        # CORS-Header nur fuer erlaubte Origins auf /api/ Responses
+        if request.path.startswith('/api/') and allowed:
+            response.headers['Access-Control-Allow-Origin'] = origin
             response.headers['Access-Control-Allow-Headers'] = 'Content-Type, X-API-Key'
+            response.headers['Vary'] = 'Origin'
 
         return response
 
