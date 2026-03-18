@@ -455,8 +455,25 @@ class AIPatchNotesMixin:
                 })
                 prompt = variant_template.format_map(format_values)
 
-                # Add examples from trainer
-                if self.patch_notes_trainer.good_examples:
+                # Add examples — DB-basiert (feedback-gewichtet) oder Legacy (auto-score)
+                examples_added = False
+                try:
+                    from integrations.patch_notes_learning import PatchNotesLearning
+                    learning = PatchNotesLearning()
+                    await learning.connect()
+                    db_examples = await learning.get_best_examples(repo_name, limit=2)
+                    await learning.close()
+                    if db_examples:
+                        prompt += "\n\n# EXAMPLES OF HIGH-QUALITY PATCH NOTES (feedback-ranked)\n\n"
+                        for i, ex in enumerate(db_examples, 1):
+                            prompt += f"## Example {i} ({ex['project']} v{ex['version']}, Score: {ex['combined_score']:.0f}):\n"
+                            prompt += f"```\n{ex['content'][:400]}...\n```\n\n"
+                        examples_added = True
+                except Exception:
+                    pass
+
+                # Fallback: Legacy-Beispiele
+                if not examples_added and self.patch_notes_trainer.good_examples:
                     prompt += "\n\n# EXAMPLES OF HIGH-QUALITY PATCH NOTES\n\n"
                     for i, example in enumerate(self.patch_notes_trainer.good_examples[:2], 1):
                         prompt += f"## Example {i} ({example['project']} v{example['version']}):\n"
@@ -531,6 +548,34 @@ class AIPatchNotesMixin:
                 if version:
                     structured_result['version'] = version
                 structured_result['language'] = language
+
+                # Learning DB: Generation aufzeichnen
+                try:
+                    from integrations.patch_notes_learning import PatchNotesLearning
+                    learning = PatchNotesLearning()
+                    await learning.connect()
+                    gen_version = structured_result.get('version', version or 'unknown')
+                    auto_quality = 70.0  # Basis-Score fuer strukturierten Output
+                    content = structured_result.get('web_content', '')
+                    # Einfaches Quality-Scoring
+                    if len(content) > 500:
+                        auto_quality += 10
+                    if len(structured_result.get('changes', [])) >= 3:
+                        auto_quality += 10
+                    if structured_result.get('tldr'):
+                        auto_quality += 5
+                    await learning.record_generation(
+                        project=repo_name,
+                        version=gen_version,
+                        variant_id=variant_id,
+                        title=structured_result.get('title', ''),
+                        content=content[:2000],
+                        auto_quality=min(100, auto_quality),
+                        commits_count=len(commits),
+                    )
+                    await learning.close()
+                except Exception as learn_err:
+                    self.logger.debug("Learning-DB Record fehlgeschlagen: %s", learn_err)
 
                 self.logger.info(
                     f"✅ Strukturierte Patch Notes fuer {repo_name}: "

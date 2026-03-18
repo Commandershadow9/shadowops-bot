@@ -753,6 +753,12 @@ class ShadowOpsBot(commands.Bot):
                         self.github_integration.feedback_collector = self.feedback_collector
                         self.feedback_collector.register_persistent_view()
 
+                        # Feedback-Windows schliessen (Learning Pipeline)
+                        try:
+                            await self.feedback_collector.close_old_feedback_windows()
+                        except Exception as fw_err:
+                            self.logger.debug("Feedback-Window-Close: %s", fw_err)
+
                         # 3. A/B Testing System
                         self.prompt_ab_testing = get_prompt_ab_testing()
                         self.github_integration.prompt_ab_testing = self.prompt_ab_testing
