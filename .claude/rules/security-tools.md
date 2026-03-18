@@ -45,3 +45,16 @@ paths:
 - Commands werden NIEMALS mit `shell=True` ausgefuehrt
 - Jeder Fix erstellt Backup unter `/tmp/shadowops_backups/`
 - Seen-Events Cache: `logs/seen_events.json` (verhindert Doppel-Alerts)
+
+## GitHub Issue-Hygiene (Vorfall 2026-03-18)
+
+> Security-Audit-Sessions haben 14 Issues erstellt, davon 9 Duplikate (5x Backup, 4x Health-Endpoints).
+> `seen_events.json` verhindert Doppel-Alerts, aber NICHT doppelte GitHub-Issues.
+
+### VOR Issue-Erstellung — PFLICHT:
+1. **Duplikat-Check:** `gh issue list -R <repo> --state open --search "<Kernbegriff>"` ausfuehren
+2. **Falls offenes Issue existiert:** Kommentar ergaenzen, KEIN neues Issue
+3. **Konsolidierung:** Mehrere Findings zum gleichen Fix = EIN konsolidiertes Issue
+   - Beispiel: "Backup umask", "Backup chmod", "Backup .gitignore" → 1 Backup-Haertungs-Issue
+4. **Fix-Status pruefen:** Offene PRs durchsuchen ob Finding bereits adressiert wird
+   - `gh pr list -R <repo> --state open --search "<Kernbegriff>"`
