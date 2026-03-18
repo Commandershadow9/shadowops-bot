@@ -181,25 +181,28 @@ class CIMixin:
         try:
             self.logger.info(f"🚀 Starting deployment: {repo_name}@{commit_sha}")
 
-            # Notify Discord that deployment is starting
-            channel = self.bot.get_channel(self.deployment_channel_id)
-            if channel:
-                embed = discord.Embed(
-                    title="🚀 Deployment Started",
-                    description=f"Deploying **{repo_name}** from `{branch}@{commit_sha}`",
-                    color=discord.Color.blue(),
-                    timestamp=datetime.now(timezone.utc)
-                )
-                embed.add_field(name="Repository", value=repo_name, inline=True)
-                embed.add_field(name="Branch", value=branch, inline=True)
-                embed.add_field(name="Commit", value=commit_sha, inline=True)
-                await channel.send(embed=embed)
+            # Self-Deploy: Kein "Started"-Embed (deployment_manager sendet nur 1 Success-Embed)
+            is_self_deploy = (repo_name == 'shadowops-bot')
+
+            if not is_self_deploy:
+                channel = self.bot.get_channel(self.deployment_channel_id)
+                if channel:
+                    embed = discord.Embed(
+                        title="🚀 Deployment Started",
+                        description=f"Deploying **{repo_name}** from `{branch}@{commit_sha}`",
+                        color=discord.Color.blue(),
+                        timestamp=datetime.now(timezone.utc)
+                    )
+                    embed.add_field(name="Repository", value=repo_name, inline=True)
+                    embed.add_field(name="Branch", value=branch, inline=True)
+                    embed.add_field(name="Commit", value=commit_sha, inline=True)
+                    await channel.send(embed=embed)
 
             # Execute deployment
             result = await self.deployment_manager.deploy_project(repo_name, branch)
 
-            # Send result notification
-            if result['success']:
+            # Send result notification (Self-Deploy sendet sein eigenes Embed)
+            if result['success'] and not is_self_deploy:
                 await self._send_deployment_success(repo_name, branch, commit_sha, result)
             else:
                 await self._send_deployment_failure(repo_name, branch, commit_sha, result)

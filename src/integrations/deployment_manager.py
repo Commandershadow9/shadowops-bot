@@ -160,9 +160,6 @@ class DeploymentManager:
 
             self.logger.info(f"🚀 Starting deployment: {project_name} @ {deploy_branch}")
 
-            # Send Discord notification: Deployment started
-            await self._send_deployment_started(project_name, deploy_branch)
-
             result = {
                 'success': False,
                 'project': project_name,
@@ -175,28 +172,40 @@ class DeploymentManager:
                 'error': None
             }
 
+            # Self-Deploy: Kompakter Flow — nur git pull + 1 Embed + Restart
+            is_self_deploy = (project_name == 'shadowops-bot')
+
+            if not is_self_deploy:
+                # Normale Projekte: Volles Deployment mit allen Schritten
+                await self._send_deployment_started(project_name, deploy_branch)
+
             # Step 1: Validate project path
             if not project['path'].exists():
                 raise DeploymentError(f"Project path does not exist: {project['path']}")
 
             # Step 2: Create backup
             self.logger.info(f"📦 Creating backup for {project_name}")
-            await self._send_deployment_update(project_name, "📦 Creating backup...")
+            if not is_self_deploy:
+                await self._send_deployment_update(project_name, "📦 Creating backup...")
             backup_path = await self._create_backup(project)
             result['backup_created'] = True
             self.logger.info(f"✅ Backup created: {backup_path}")
-            await self._send_deployment_update(project_name, f"✅ Backup created: {backup_path.name}")
+            if not is_self_deploy:
+                await self._send_deployment_update(project_name, f"✅ Backup created: {backup_path.name}")
 
             # Step 3: Pull latest code
             self.logger.info(f"📥 Pulling latest code from {deploy_branch}")
-            await self._send_deployment_update(project_name, f"📥 Pulling latest code from {deploy_branch}...")
+            if not is_self_deploy:
+                await self._send_deployment_update(project_name, f"📥 Pulling latest code from {deploy_branch}...")
             await self._git_pull(project, deploy_branch)
-            await self._send_deployment_update(project_name, "✅ Code updated")
+            if not is_self_deploy:
+                await self._send_deployment_update(project_name, "✅ Code updated")
 
             # Step 4: Run tests (if configured)
             if project['run_tests']:
                 self.logger.info(f"🧪 Running tests for {project_name}")
-                await self._send_deployment_update(project_name, "🧪 Running tests...")
+                if not is_self_deploy:
+                    await self._send_deployment_update(project_name, "🧪 Running tests...")
                 tests_passed = await self._run_tests(project)
                 result['tests_passed'] = tests_passed
 
@@ -205,23 +214,19 @@ class DeploymentManager:
                     raise DeploymentError("Tests failed")
 
                 self.logger.info(f"✅ Tests passed")
-                await self._send_deployment_update(project_name, "✅ All tests passed")
+                if not is_self_deploy:
+                    await self._send_deployment_update(project_name, "✅ All tests passed")
             else:
                 self.logger.info(f"⏭️ Skipping tests (not configured)")
 
-            # Self-Deploy: Bot deployt sich selbst
-            # → Success-Embed VOR Restart senden, dann verzögerter Background-Restart
-            # → Step 5/6/7 überspringen (post_deploy, service restart, health check)
-            is_self_deploy = (project_name == 'shadowops-bot')
+            # Self-Deploy: 1 Success-Embed + verzögerter Restart
             if is_self_deploy:
                 result['deployed'] = True
                 duration = time.time() - start_time
                 result['success'] = True
                 result['duration_seconds'] = duration
                 self.logger.info(f"✅ Self-deploy: {project_name} ({duration:.1f}s) — Restart in 5s")
-                await self._send_deployment_update(project_name, "🔄 Self-Deploy — Restart in 5 Sekunden...")
                 await self._send_deployment_success(project_name, deploy_branch, duration, result)
-                # Verzögerter Restart: Unabhängiger Prozess der den Bot nach 5s neustartet
                 import subprocess
                 subprocess.Popen(
                     ['bash', '-c', 'sleep 5 && sudo systemctl restart shadowops-bot'],
