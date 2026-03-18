@@ -57,20 +57,26 @@ Diese Dokumente beschreiben frühere Versionen und sind teilweise überholt:
 - IMPLEMENTATION_COMPLETE.md (v2.0) → Siehe ACTIVE_SECURITY_GUARDIAN.md für v3.0
 - docs/AUTO_REMEDIATION.md (v2.0) → Siehe ACTIVE_SECURITY_GUARDIAN.md für vollständige Fixer
 
-## 🆕 Version 4.0 Highlights
+## 🆕 Version 5.0 Highlights
 
-**Neu in v4.0:**
+**Neu in v5.0 — Lernender Security Analyst:**
+- ✅ **Full Learning Pipeline** — 4 neue DB-Tabellen fuer echte Feedback-Loops
+  - Fix-Verifikation: Prueft ob eigene Fixes noch halten (Regressionen → re-open)
+  - Fix-Memory: Vorherige Versuche sichtbar, Agent waehlt anderen Ansatz
+  - Finding-Quality: Selbstbewertung (Confidence, False Positives, Discovery Method)
+  - Scan-Coverage: Trackt welche Bereiche geprueft wurden, zeigt Luecken
+- ✅ **Adaptive Session-Steuerung** — 0-3 Sessions/Tag basierend auf Workload
+  - Viel Backlog → fix_only (3 Sessions), Wenig → quick_scan, Nichts → maintenance
+- ✅ **Datengetriebener Scan-Plan** — Priorisiert nach Coverage-Luecken, Hotspots, Git-Delta
+- ✅ **Projekt-Security-Profile** — Angriffsoberflaechen, Auth, Secrets pro Projekt in DB
+- ✅ **Knowledge-Decay** — Altes Wissen verliert Confidence, zwingt zur Re-Verifikation
+- ✅ **3-Ebenen-Schutz** — Prompt + DB + Port-Validierung gegen Infrastruktur-Breaks
+
+**v4.0:**
 - ✅ Dual AI Engine (Codex CLI + Claude CLI mit Fallback)
-- ✅ ServerAssistant (Daily Housekeeping + Weekly Report)
-- ✅ **Security Analyst** — Autonomer AI Security Engineer
-  - Freies Denken, nicht Checklisten
-  - Autonome Claude Code Sessions (max 25 Turns)
-  - Activity-basiert (startet nur wenn User idle)
-  - Eigene Postgres-DB für akkumuliertes Wissen
-  - Health-Snapshots mit Rollback-Erkennung
-  - Discord-Briefings + GitHub Issues
+- ✅ Autonomer Security Analyst mit Health-Snapshots + Discord-Briefings
 
-Alle Details zum Security Analyst in **[docs/SECURITY_ANALYST.md](./docs/SECURITY_ANALYST.md)**!
+Alle Details in **[docs/SECURITY_ANALYST.md](./docs/SECURITY_ANALYST.md)**!
 
 **v3.0 (Active Security Guardian):**
 - ✅ Echte Fix-Execution (keine Placeholders mehr!)

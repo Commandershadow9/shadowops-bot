@@ -1,18 +1,29 @@
-# 🗡️ ShadowOps - Active Security Guardian v4.0 🚀
+# 🗡️ ShadowOps - Active Security Guardian v5.0 🚀
 
-**Status:** AUF EIS | **Version:** 4.0.0 | **Letzte Aktualisierung:** 06.03.2026
+**Status:** AKTIV | **Version:** 5.0.0 | **Letzte Aktualisierung:** 18.03.2026
 
-**ShadowOps** ist ein **vollständig autonomer Security Guardian** mit KI-gesteuerter Auto-Remediation, aktivem Knowledge-Einsatz, intelligenter Request-Queue, persistentem Langzeit-Lernsystem und Multi-Projekt-Management, der Sicherheitsbedrohungen nicht nur erkennt und analysiert, sondern **eigenständig behebt, aktiv aus Erfahrungen lernt und sein Wissen kontinuierlich einsetzt**.
+**ShadowOps** ist ein **vollständig autonomer Security Guardian** mit lernfähigem AI Security Analyst, KI-gesteuerter Auto-Remediation, adaptiver Session-Steuerung und wachsender Knowledge-DB — kein statischer Scanner, sondern ein **System das aus seinen Erfahrungen lernt und immer besser wird**.
 
-> 📖 **Vollständige v3.1 Dokumentation:** [ACTIVE_SECURITY_GUARDIAN.md](./ACTIVE_SECURITY_GUARDIAN.md)
+> 📖 **Security Analyst Doku:** [docs/SECURITY_ANALYST.md](./docs/SECURITY_ANALYST.md)
 > 📚 **Dokumentations-Übersicht:** [DOCS_OVERVIEW.md](./DOCS_OVERVIEW.md)
-> 🧠 **KI-Lernsystem Dokumentation:** [AI_LEARNING_MULTI_PROJECT.md](./AI_LEARNING_MULTI_PROJECT.md)
 > 🔧 **API Dokumentation:** [docs/API.md](./docs/API.md)
 > 🚀 **Setup Guide:** [docs/SETUP_GUIDE.md](./docs/SETUP_GUIDE.md)
+> 📐 **Learning Pipeline Design:** [docs/plans/2026-03-18-analyst-learning-pipeline-design.md](./docs/plans/2026-03-18-analyst-learning-pipeline-design.md)
 
-## ⚡ Highlights v4.0
+## ⚡ Highlights v5.0
 
-### 🤖 **Dual-Engine AI System (v4.0 - NEW)**
+### 🧠 **Lernender Security Analyst (v5.0 - NEW)**
+- ✅ **Full Learning Pipeline**: 4 neue DB-Tabellen (fix_attempts, fix_verifications, finding_quality, scan_coverage)
+- ✅ **Adaptive Session-Steuerung**: 4 Modi (full_scan, quick_scan, fix_only, maintenance) — passt Intensität an Workload an
+- ✅ **Pre-Session Maintenance**: Git-Activity-Sync, Fix-Verifikation, Knowledge-Decay, Security-Profile
+- ✅ **Datengetriebener Scan-Plan**: Priorisiert nach Coverage-Lücken, Regressionen, Hotspots, Git-Delta
+- ✅ **Fix-Memory**: Vorherige Fix-Versuche sichtbar — Agent wählt beim Retry einen anderen Ansatz
+- ✅ **Selbstbewertung**: Analyst bewertet eigene Findings (Confidence, False Positives)
+- ✅ **Knowledge-Decay**: Altes Wissen verliert Confidence — zwingt zur Re-Verifikation
+- ✅ **3-Ebenen-Schutz**: Prompt + DB + Port-Validierung gegen Infrastruktur-Breaks
+- ✅ **Projekt-Security-Profile**: Angriffsoberflächen, Auth-Mechanismen, Secrets-Orte pro Projekt
+
+### 🤖 **Dual-Engine AI System (v4.0)**
 - ✅ **Codex CLI (Primary, 97%)**: gpt-4o (fast), gpt-5.3-codex (standard), o3 (thinking)
 - ✅ **Claude CLI (Fallback + Verify, 3%)**: claude-sonnet-4-6 (standard), claude-opus-4-6 (thinking)
 - ✅ **Config-basierter TaskRouter**: Routing nach Severity (CRITICAL→o3, HIGH→gpt-5.3-codex, LOW→gpt-4o)
@@ -660,17 +671,17 @@ See [CHANGELOG.md](./CHANGELOG.md) for detailed version history.
 - Basic security monitoring
 - Discord integration
 
-## 📊 Statistics (v4.0.0)
+## 📊 Statistics (v5.0.0)
 
-- **Total Lines of Code**: 15,000+
-- **Test Coverage**: 161 Tests
+- **Total Lines of Code**: 20,000+
 - **AI Engines**: 2 (Codex CLI + Claude CLI)
 - **AI Models**: 6 (gpt-4o, gpt-5.3-codex, o3, claude-sonnet-4-6, claude-opus-4-6)
 - **Security Integrations**: 4 (Fail2ban, CrowdSec, AIDE, Trivy)
+- **Knowledge DB Tables**: 21 (PostgreSQL)
+- **Learning Pipeline Tables**: 4 (fix_attempts, fix_verifications, finding_quality, scan_coverage)
+- **Scan Areas**: 10 (firewall, ssh, docker, permissions, packages, services, logs, network, credentials, dependencies)
 - **Discord Commands**: 14
-- **Supported Projects**: 4 (Sicherheitsdienst, GuildScout, ShadowOps, ZERODOX)
-- **Deployment Automation**: Full CI/CD
-- **Incident Tracking**: Automatic with threads
+- **Monitored Projects**: 3 (GuildScout, ZERODOX, AI Agents)
 
 ## 📄 Lizenz
 
@@ -746,4 +757,4 @@ tail -f logs/shadowops.log | grep deployment
 
 **Made with 🗡️ by CommanderShadow**
 
-*ShadowOps v4.0 - Dual-Engine AI Security Guardian (Codex + Claude)*
+*ShadowOps v5.0 - Lernender AI Security Guardian mit Full Learning Pipeline*
