@@ -285,6 +285,12 @@ class HealthCheckServer:
 
         return web.json_response({"success": True}, status=201)
 
+    # Basis-URLs je Projekt fuer absolute Links im RSS-Feed
+    PROJECT_BASE_URLS: dict[str, str] = {
+        'guildscout': 'https://guildscout.eu',
+        'zerodox': 'https://zerodox.de',
+    }
+
     async def changelog_feed(self, request: web.Request) -> web.Response:
         """
         GET /api/changelogs/feed?project=xxx&format=rss
@@ -292,7 +298,7 @@ class HealthCheckServer:
         """
         if not self.changelog_db:
             return web.json_response(
-                {"error": "Changelog-Dienst nicht verfuegbar"},
+                {"error": "Changelog-Dienst nicht verfügbar"},
                 status=503,
             )
 
@@ -307,6 +313,10 @@ class HealthCheckServer:
         result = await self.changelog_db.list_by_project(project, page=1, limit=20)
         items = result["data"]
 
+        base_url = self.PROJECT_BASE_URLS.get(project, f'https://{project}.eu')
+        changelog_base = f"{base_url}/changelog"
+        project_escaped = xml_escape(project.capitalize())
+
         # RSS 2.0 XML erstellen
         rss_items = []
         for item in items:
@@ -315,37 +325,42 @@ class HealthCheckServer:
             title = xml_escape(item.get('title', ''))
             version = xml_escape(item.get('version', ''))
             guid = f"{project}-{item.get('version', '')}"
+            absolute_link = f"{changelog_base}/{version}"
 
             rss_items.append(
                 f"    <item>\n"
                 f"      <title>{title}</title>\n"
-                f"      <link>/{project}/changelogs/{version}</link>\n"
+                f"      <link>{absolute_link}</link>\n"
                 f"      <description>{tldr}</description>\n"
                 f"      <pubDate>{pub_date}</pubDate>\n"
-                f"      <guid>{xml_escape(guid)}</guid>\n"
+                f"      <guid isPermaLink=\"true\">{absolute_link}</guid>\n"
                 f"    </item>"
             )
 
         items_xml = "\n".join(rss_items)
-        project_escaped = xml_escape(project)
 
         rss_xml = (
             '<?xml version="1.0" encoding="UTF-8"?>\n'
-            '<rss version="2.0">\n'
+            '<rss version="2.0" xmlns:atom="http://www.w3.org/2005/Atom">\n'
             '  <channel>\n'
             f'    <title>{project_escaped} Changelog</title>\n'
-            f'    <description>Aktuelle Aenderungen fuer {project_escaped}</description>\n'
+            f'    <link>{changelog_base}</link>\n'
+            f'    <description>Aktuelle Änderungen und Updates für {project_escaped}</description>\n'
             f'    <language>de</language>\n'
+            f'    <atom:link href="{base_url}/api/changelogs/feed?project={project}&amp;format=rss" rel="self" type="application/rss+xml"/>\n'
             f'{items_xml}\n'
             '  </channel>\n'
             '</rss>'
         )
 
-        return web.Response(
+        response = web.Response(
             text=rss_xml,
             content_type='application/rss+xml',
             charset='utf-8',
         )
+        # SEO-Crawler sollen diesen API-Endpoint nicht als Web-Seite indexieren
+        response.headers['X-Robots-Tag'] = 'noindex, nofollow'
+        return response
 
     async def changelog_sitemap(self, request: web.Request) -> web.Response:
         """
