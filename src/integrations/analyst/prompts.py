@@ -53,6 +53,14 @@ Untersuche den Server systematisch. Nutze Shell-Befehle:
 - Melde Findings mit: severity, category, title, description, affected_project, affected_files
 - Fuer Code-Probleme: issue_title + issue_body fuer GitHub-Issue angeben
 
+## Infrastruktur-Kontext (fuer korrekte Bewertung)
+
+Port-Bindings auf 0.0.0.0 bei den ShadowOps-Servern (8766, 9090, 9091) sind GEWOLLT:
+Docker-Container erreichen den Host nur ueber die Docker-Bridge (172.17.0.1), nicht ueber 127.0.0.1.
+Die Absicherung erfolgt ueber UFW-Regeln und HMAC-Signaturen, nicht ueber Bind-Adressen.
+Falls du 0.0.0.0-Bindings als Finding meldest, setze fix_type auf "issue_needed" (nicht direkt fixbar)
+und erwaehne im issue_body die Docker-Bridge-Abhaengigkeit.
+
 ## Ausgabe-Schema
 
 Jedes Finding braucht:
@@ -66,6 +74,14 @@ Jedes Finding braucht:
 - issue_title + issue_body: Fuer GitHub-Issue (bei issue_needed)
 
 Wissens-Updates (knowledge_updates): Dokumentiere was du ueber den Server gelernt hast.
+
+## Selbstkontrolle
+
+Melde im Ergebnis:
+- areas_checked: Welche Bereiche du gecheckt hast (firewall, docker, ssh, permissions, packages, logs, network)
+- areas_deferred: Welche du uebersprungen hast
+- finding_assessments: Pro Finding deine Einschaetzung (confidence 0-1, discovery_method, is_actionable).
+  Falls ein Finding sich als false_positive herausstellt, markiere es mit is_false_positive + Begruendung.
 """
 
 
@@ -82,9 +98,11 @@ ANALYST_CONTEXT_TEMPLATE = """
 
 {open_findings}
 
-## FOKUS
+## SCAN-PLAN
 
-Untersuche Bereiche die du noch NICHT oder lange NICHT geprueft hast.
+{scan_plan}
+
+Arbeite den Plan von oben nach unten ab. Nutze die passenden Tools je Bereich.
 """
 
 
@@ -130,10 +148,33 @@ Ein PR ist kein Push — er ist sicher und wird reviewed.
 - NACH Aenderungen: `docker ps` + `systemctl --user is-active guildscout-bot` pruefen
 - Bei Fehler: Sofort Rollback, dann naechstes Finding
 
+## GESCHUETZTE INFRASTRUKTUR — NUR per Issue/PR, NICHT direkt fixen!
+
+Die folgenden Bereiche haben Abhaengigkeiten die du nicht vollstaendig ueberblicken kannst.
+Aenderungen hier koennen Docker-Container, Reverse-Proxy oder Service-Kommunikation zerstoeren.
+
+**Regel:** Analysiere und melde als Finding (fix_type: "issue_needed"), aber fixe NICHT direkt!
+
+| Bereich | Warum geschuetzt |
+|---------|-----------------|
+| Bind-Adressen (0.0.0.0/127.0.0.1) in aiohttp-Servern | Docker-Container erreichen Host-Services ueber 172.17.0.1 (Docker-Bridge), nicht 127.0.0.1. Aendern auf 127.0.0.1 bricht GuildScout-API Proxy, Traefik-Webhooks und Alert-Forwarding. UFW + HMAC sind die richtige Schutzschicht. |
+| Port-Nummern (8766, 9090, 9091, 8091) | Fest verdrahtet in Docker-Compose, Traefik-Labels, UFW-Regeln und externen Healthchecks |
+| Docker-Netzwerk-Konfiguration | Container-zu-Container und Container-zu-Host Kommunikation bricht bei Aenderungen |
+| UFW-Regeln (ufw allow/deny) | Blockiert moeglicherweise legitimen Docker-Traffic oder oeffnet Ports ungewollt |
+| systemd Unit-Files | Falscher Bind/Port bricht Service nach naechstem Restart |
+| Traefik-Labels und -Routing | Externe Erreichbarkeit von GuildScout + ZERODOX |
+
+**Vorfall 2026-03-17:** Analyst hat Bind-Adressen von 0.0.0.0 auf 127.0.0.1 geaendert →
+11h Bot-Ausfall + Changelog-API fuer beide Projekte unerreichbar. Fix war Revert.
+
 ## Ausgabe
 
 Fuer JEDES Finding:
 - finding_id: DB-ID
-- action: "fixed" | "pr_created"
-- details: Was gemacht / PR-URL
+- action: "fixed" | "pr_created" | "failed"
+- details: Was gemacht / PR-URL / Fehlerbeschreibung
+- commands: Liste der ausgefuehrten Befehle (optional, fuer Lerneffekt)
+
+Falls ein Fix fehlschlaegt: action "failed" mit error-Feld. Nicht ueberspringen — der
+Fehlversuch wird gespeichert damit beim naechsten Mal ein anderer Ansatz gewaehlt wird.
 """

@@ -120,5 +120,124 @@ class InspectorCog(commands.Cog):
             await interaction.followup.send("❌ Fehler beim Abrufen der Projekt-Übersicht", ephemeral=True)
 
 
+    @app_commands.command(name="agent-stats", description="🧠 Zeige Agent-Learning Statistiken")
+    async def agent_stats_command(self, interaction: discord.Interaction):
+        """Zeigt Learning-Pipeline Stats aller Agents."""
+        await interaction.response.defer(ephemeral=False)
+        try:
+            embed = discord.Embed(
+                title="🧠 Agent Learning — Dashboard",
+                description="Übersicht über alle lernenden AI-Agents",
+                color=0x9B59B6,
+                timestamp=datetime.now(),
+            )
+
+            # ── Security Analyst ──
+            analyst = getattr(self.bot, 'security_analyst', None)
+            if analyst and analyst.db and analyst.db.pool:
+                try:
+                    db = analyst.db
+
+                    # Sessions + Tokens
+                    stats = await db._get_30day_stats()
+                    tokens_display = f"{stats['tokens_total']:,}" if stats['tokens_total'] else "0"
+
+                    # Fix-Versuche
+                    fix_stats = await db.pool.fetchrow(
+                        """SELECT COUNT(*) as total,
+                                  COUNT(*) FILTER (WHERE result='success') as success,
+                                  COUNT(*) FILTER (WHERE still_valid=FALSE) as regressions
+                           FROM fix_attempts
+                           WHERE created_at >= NOW() - INTERVAL '30 days'"""
+                    )
+
+                    # Coverage
+                    coverage_count = await db.pool.fetchval(
+                        "SELECT COUNT(DISTINCT area) FROM scan_coverage WHERE checked=TRUE"
+                    )
+
+                    # False Positives
+                    fp = await db.get_false_positive_rate()
+
+                    analyst_text = (
+                        f"**Sessions (30d):** {stats['sessions_count']}\n"
+                        f"**Tokens (30d):** {tokens_display}\n"
+                        f"**Findings:** {stats['findings_open']} offen / {stats['findings_fixed']} gefixt\n"
+                        f"**Fix-Versuche:** {fix_stats['total']} ({fix_stats['success']}× ✅, "
+                        f"{fix_stats['regressions']}× 🔄)\n"
+                        f"**Scan-Abdeckung:** {coverage_count}/10 Bereiche\n"
+                        f"**False Positives:** {fp['false_positive_rate']}%"
+                    )
+                    embed.add_field(name="🔒 Security Analyst", value=analyst_text, inline=False)
+                except Exception as e:
+                    embed.add_field(name="🔒 Security Analyst", value=f"Fehler: {e}", inline=False)
+
+            # ── Patch Notes ──
+            try:
+                from integrations.patch_notes_learning import PatchNotesLearning
+                pn = PatchNotesLearning()
+                await pn.connect()
+
+                # Generierungen
+                gen_count = await pn.pool.fetchval(
+                    "SELECT COUNT(*) FROM pn_generations"
+                )
+                # Feedback
+                fb_count = await pn.pool.fetchval(
+                    "SELECT COUNT(*) FROM agent_feedback WHERE agent='patch_notes'"
+                )
+                # Varianten
+                variants = await pn.get_variant_stats()
+                variant_text = ""
+                if variants:
+                    top = variants[0]
+                    variant_text = f"\n**Beste Variante:** `{top['variant_id']}` ({top['combined_weight']:.0f} Score)"
+
+                # Beispiele
+                examples = await pn.pool.fetchval(
+                    "SELECT COUNT(*) FROM pn_examples WHERE is_active=TRUE"
+                )
+
+                await pn.close()
+
+                pn_text = (
+                    f"**Generierungen:** {gen_count}\n"
+                    f"**Feedbacks:** {fb_count}\n"
+                    f"**Beispiele:** {examples}"
+                    f"{variant_text}"
+                )
+                embed.add_field(name="📝 Patch Notes", value=pn_text, inline=True)
+            except Exception:
+                embed.add_field(name="📝 Patch Notes", value="DB nicht verfügbar", inline=True)
+
+            # ── SEO Agent ──
+            try:
+                from integrations.patch_notes_learning import PatchNotesLearning
+                pn2 = PatchNotesLearning()
+                await pn2.connect()
+                impact_count = await pn2.pool.fetchval(
+                    "SELECT COUNT(*) FROM seo_fix_impact"
+                )
+                cross_knowledge = await pn2.pool.fetchval(
+                    "SELECT COUNT(*) FROM agent_knowledge"
+                )
+                await pn2.close()
+
+                seo_text = (
+                    f"**Fix-Impacts gemessen:** {impact_count}\n"
+                    f"**Cross-Agent Knowledge:** {cross_knowledge} Einträge"
+                )
+                embed.add_field(name="🔍 SEO Agent", value=seo_text, inline=True)
+            except Exception:
+                embed.add_field(name="🔍 SEO Agent", value="DB nicht verfügbar", inline=True)
+
+            embed.set_footer(text="agent_learning DB | /agent-stats")
+            await interaction.followup.send(embed=embed)
+
+        except Exception as e:
+            self.logger.error(f"❌ Fehler in /agent-stats: {e}", exc_info=True)
+            await interaction.followup.send("❌ Fehler beim Abrufen der Agent-Stats", ephemeral=True)
+
+
 async def setup(bot):
     await bot.add_cog(InspectorCog(bot))

@@ -39,7 +39,7 @@ class WebhookMixin:
         for port in ports_to_try:
             try:
                 self.site = web.TCPSite(
-                    self.runner, '127.0.0.1', port,
+                    self.runner, '0.0.0.0', port,  # Traefik (Docker) needs host access; UFW + HMAC secure it
                     reuse_address=True, reuse_port=True
                 )
                 await self.site.start()

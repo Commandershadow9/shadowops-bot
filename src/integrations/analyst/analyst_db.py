@@ -212,13 +212,17 @@ class AnalystDB:
     async def get_open_findings_summary(self, limit: int = 30) -> list:
         """Holt offene Findings als Kurzübersicht für den Analyst-Prompt.
 
+        Filtert False Positives automatisch aus (finding_quality Tabelle).
         Damit der Analyst weiß was schon gemeldet wurde und nicht
         dieselben Probleme erneut reported.
         """
         rows = await self.pool.fetch(
-            """SELECT id, severity, title, category
-               FROM findings WHERE status = 'open'
-               ORDER BY found_at DESC LIMIT $1""",
+            """SELECT f.id, f.severity, f.title, f.category
+               FROM findings f
+               LEFT JOIN finding_quality fq ON fq.finding_id = f.id
+               WHERE f.status = 'open'
+                 AND (fq.is_false_positive IS NULL OR fq.is_false_positive = FALSE)
+               ORDER BY f.found_at DESC LIMIT $1""",
             limit,
         )
         return [dict(r) for r in rows]
@@ -435,23 +439,25 @@ class AnalystDB:
         - Nach Severity sortiert, dann nach Projekt gruppiert
         """
         rows = await self.pool.fetch(
-            """SELECT DISTINCT ON (LOWER(LEFT(title, 60)))
-                      id, severity, category, title, description,
-                      fix_type, affected_project, affected_files,
-                      github_issue_url
-               FROM findings
-               WHERE status = 'open'
-                 AND fix_type != 'info_only'
+            """SELECT DISTINCT ON (LOWER(LEFT(f.title, 60)))
+                      f.id, f.severity, f.category, f.title, f.description,
+                      f.fix_type, f.affected_project, f.affected_files,
+                      f.github_issue_url
+               FROM findings f
+               LEFT JOIN finding_quality fq ON fq.finding_id = f.id
+               WHERE f.status = 'open'
+                 AND f.fix_type != 'info_only'
+                 AND (fq.is_false_positive IS NULL OR fq.is_false_positive = FALSE)
                ORDER BY
-                   LOWER(LEFT(title, 60)),
-                   CASE severity
+                   LOWER(LEFT(f.title, 60)),
+                   CASE f.severity
                        WHEN 'critical' THEN 0
                        WHEN 'high' THEN 1
                        WHEN 'medium' THEN 2
                        WHEN 'low' THEN 3
                        ELSE 4
                    END,
-                   found_at DESC"""
+                   f.found_at DESC"""
         )
         # Re-sort nach Severity + Projekt (DISTINCT ON erzwingt andere Sortierung)
         severity_order = {'critical': 0, 'high': 1, 'medium': 2, 'low': 3, 'info': 4}
@@ -662,6 +668,107 @@ class AnalystDB:
         except Exception:
             pass
 
+        # ── Fix-Effektivitaet (welche Ansaetze funktionieren?) ──
+        try:
+            fix_eff = await self.get_fix_effectiveness()
+            if fix_eff:
+                parts.append("## Fix-Effektivitaet (90 Tage)\n")
+                for cat, stats in fix_eff.items():
+                    reg_warn = f" ⚠️{stats['regressions']} Regressionen" if stats['regressions'] else ""
+                    parts.append(
+                        f"- **{cat}:** {stats['success_rate']}% Erfolg "
+                        f"({stats['successes']}/{stats['total']}){reg_warn}"
+                    )
+                parts.append("")
+        except Exception:
+            pass
+
+        # ── Finding-Trends pro Projekt (steigend/fallend/stabil) ──
+        try:
+            trend_rows = await self.pool.fetch(
+                """SELECT s.id as session_id, s.started_at::date as session_date,
+                          f.affected_project, COUNT(f.id) as finding_count
+                   FROM sessions s
+                   LEFT JOIN findings f ON f.session_id = s.id
+                   WHERE s.status = 'completed'
+                     AND s.started_at >= NOW() - INTERVAL '30 days'
+                   GROUP BY s.id, s.started_at, f.affected_project
+                   ORDER BY s.started_at DESC
+                   LIMIT 30"""
+            )
+            if trend_rows:
+                # Findings pro Projekt über die letzten Sessions
+                project_trends: Dict[str, List[int]] = {}
+                for r in trend_rows:
+                    proj = r['affected_project'] or 'infrastructure'
+                    if proj not in project_trends:
+                        project_trends[proj] = []
+                    project_trends[proj].append(r['finding_count'])
+
+                trend_lines = []
+                for proj, counts in sorted(project_trends.items()):
+                    if len(counts) < 2:
+                        continue
+                    recent = sum(counts[:3]) / min(3, len(counts))
+                    older = sum(counts[3:6]) / max(1, min(3, len(counts) - 3)) if len(counts) > 3 else recent
+                    if recent > older * 1.3:
+                        trend_lines.append(f"- 📈 **{proj}:** STEIGEND ({older:.0f}→{recent:.0f} Findings/Session)")
+                    elif recent < older * 0.7:
+                        trend_lines.append(f"- 📉 **{proj}:** FALLEND ({older:.0f}→{recent:.0f}) — Verbesserung!")
+                    else:
+                        trend_lines.append(f"- ➡️ **{proj}:** stabil (~{recent:.0f} Findings/Session)")
+
+                if trend_lines:
+                    parts.append("## Finding-Trends (letzte Sessions)\n")
+                    parts.extend(trend_lines)
+                    parts.append("")
+        except Exception:
+            pass
+
+        # ── Git-Delta seit letztem Scan ──
+        try:
+            last_session = await self.get_last_session()
+            if last_session and last_session.get('started_at'):
+                last_scan_date = last_session['started_at'].strftime('%Y-%m-%d')
+                # Commits seit letztem Scan aus project_activity Knowledge holen
+                recent_activity = await self.pool.fetch(
+                    """SELECT subject, content FROM knowledge
+                       WHERE category = 'project_activity'
+                         AND subject LIKE '%_git_activity'
+                       ORDER BY subject"""
+                )
+                if recent_activity:
+                    parts.append(f"## Aenderungen seit letztem Scan ({last_scan_date})\n")
+                    for r in recent_activity:
+                        project = r['subject'].replace('_git_activity', '')
+                        parts.append(f"- **{project}:** {r['content'][:120]}")
+                    parts.append("")
+        except Exception:
+            pass
+
+        # ── Coverage-Luecken (was wurde lange nicht geprueft?) ──
+        try:
+            gaps = await self.get_coverage_gaps(max_age_days=7)
+            if gaps:
+                parts.append("## Scan-Luecken (>7 Tage nicht geprueft)\n")
+                for g in gaps:
+                    parts.append(f"- **{g['area']}** — zuletzt vor {g['days_ago']} Tagen")
+                parts.append("")
+        except Exception:
+            pass
+
+        # ── Finding-Qualitaet ──
+        try:
+            fp_stats = await self.get_false_positive_rate()
+            if fp_stats['total_assessed'] > 0:
+                parts.append("## Finding-Qualitaet (90 Tage)\n")
+                parts.append(f"- **Bewertet:** {fp_stats['total_assessed']} Findings")
+                parts.append(f"- **False Positives:** {fp_stats['false_positives']} ({fp_stats['false_positive_rate']}%)")
+                parts.append(f"- **Ø Confidence:** {fp_stats['avg_confidence']}")
+                parts.append("")
+        except Exception:
+            pass
+
         # ── 30-Tage-Statistik ──
         stats = await self._get_30day_stats()
         parts.append("## 30-Tage-Statistik\n")
@@ -715,3 +822,438 @@ class AnalystDB:
             'findings_fixed': findings_fixed,
             'findings_open': findings_open,
         }
+
+    # ─────────────────────────────────────────────
+    # Fix Attempts — Jeden Fix-Versuch aufzeichnen
+    # ─────────────────────────────────────────────
+
+    async def record_fix_attempt(
+        self,
+        finding_id: int,
+        session_id: int,
+        approach: str,
+        result: str,
+        commands_used: Optional[List[str]] = None,
+        side_effects: Optional[str] = None,
+        error_message: Optional[str] = None,
+        execution_time_s: Optional[int] = None,
+    ) -> int:
+        """Fix-Versuch aufzeichnen.
+
+        Args:
+            finding_id: Zugehoeriges Finding
+            session_id: Aktuelle Session
+            approach: Beschreibung des Ansatzes
+            result: 'success', 'failure', 'partial'
+            commands_used: Liste ausgefuehrter Befehle
+            side_effects: Beobachtete Nebeneffekte
+            error_message: Fehlermeldung bei Failure
+            execution_time_s: Dauer in Sekunden
+
+        Returns:
+            ID des Fix-Attempts
+        """
+        row = await self.pool.fetchrow(
+            """INSERT INTO fix_attempts
+               (finding_id, session_id, approach, commands_used, result,
+                side_effects, error_message, execution_time_s)
+               VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
+               RETURNING id""",
+            finding_id, session_id, approach, commands_used, result,
+            side_effects, error_message, execution_time_s,
+        )
+        fix_id = row['id']
+        logger.info(
+            "Fix-Attempt #%d fuer Finding #%d: %s (%s)",
+            fix_id, finding_id, approach[:60], result,
+        )
+        return fix_id
+
+    async def get_unverified_fixes(self, days: int = 14, limit: int = 10) -> List[Dict]:
+        """Erfolgreiche Fixes die noch nicht verifiziert wurden.
+
+        Holt Fixes der letzten N Tage die:
+        - result = 'success'
+        - noch nie verifiziert (verified_at IS NULL) ODER laenger als 3 Tage her
+
+        Returns:
+            Liste der Fix-Attempts mit Finding-Infos
+        """
+        rows = await self.pool.fetch(
+            """SELECT fa.id, fa.finding_id, fa.approach, fa.commands_used,
+                      fa.created_at, fa.verified_at, fa.still_valid,
+                      f.title as finding_title, f.category, f.affected_project,
+                      f.affected_files
+               FROM fix_attempts fa
+               JOIN findings f ON f.id = fa.finding_id
+               WHERE fa.result = 'success'
+                 AND fa.created_at >= NOW() - make_interval(days => $1)
+                 AND (fa.verified_at IS NULL
+                      OR fa.verified_at < NOW() - INTERVAL '3 days')
+               ORDER BY fa.created_at DESC
+               LIMIT $2""",
+            days, limit,
+        )
+        return [dict(r) for r in rows]
+
+    async def record_verification(
+        self,
+        fix_attempt_id: int,
+        session_id: int,
+        still_valid: bool,
+        check_method: Optional[str] = None,
+        regression_details: Optional[str] = None,
+    ):
+        """Verifikations-Ergebnis speichern.
+
+        Aktualisiert auch den Fix-Attempt selbst (verified_at, still_valid).
+        """
+        now = datetime.now(timezone.utc)
+
+        # Verifikations-Eintrag
+        await self.pool.execute(
+            """INSERT INTO fix_verifications
+               (fix_attempt_id, session_id, still_valid, check_method,
+                regression_details, checked_at)
+               VALUES ($1, $2, $3, $4, $5, $6)""",
+            fix_attempt_id, session_id, still_valid, check_method,
+            regression_details, now,
+        )
+
+        # Fix-Attempt aktualisieren
+        await self.pool.execute(
+            """UPDATE fix_attempts
+               SET verified_at = $1, still_valid = $2
+               WHERE id = $3""",
+            now, still_valid, fix_attempt_id,
+        )
+
+        status = "OK" if still_valid else "REGRESSIERT"
+        logger.info("Fix #%d verifiziert: %s", fix_attempt_id, status)
+
+    async def get_fix_effectiveness(self) -> Dict:
+        """Fix-Effektivitaet nach Kategorie berechnen.
+
+        Returns:
+            Dict mit Erfolgsraten pro Kategorie
+        """
+        rows = await self.pool.fetch(
+            """SELECT f.category,
+                      COUNT(*) as total,
+                      COUNT(*) FILTER (WHERE fa.result = 'success') as successes,
+                      COUNT(*) FILTER (WHERE fa.still_valid = FALSE) as regressions
+               FROM fix_attempts fa
+               JOIN findings f ON f.id = fa.finding_id
+               WHERE fa.created_at >= NOW() - INTERVAL '90 days'
+               GROUP BY f.category
+               ORDER BY total DESC"""
+        )
+        result = {}
+        for r in rows:
+            total = r['total']
+            successes = r['successes']
+            rate = round(successes / total * 100) if total > 0 else 0
+            result[r['category']] = {
+                'total': total,
+                'successes': successes,
+                'regressions': r['regressions'],
+                'success_rate': rate,
+            }
+        return result
+
+    async def reopen_finding(self, finding_id: int, reason: str):
+        """Finding wieder oeffnen wegen Regression.
+
+        Setzt status zurueck auf 'open' und loggt den Grund.
+        """
+        await self.pool.execute(
+            """UPDATE findings
+               SET status = 'open', fixed_at = NULL
+               WHERE id = $1""",
+            finding_id,
+        )
+        logger.warning("Finding #%d re-opened: %s", finding_id, reason)
+
+    # ─────────────────────────────────────────────
+    # Finding Quality — Qualitaetsbewertung
+    # ─────────────────────────────────────────────
+
+    async def assess_finding_quality(
+        self,
+        finding_id: int,
+        is_actionable: bool = True,
+        is_false_positive: bool = False,
+        false_positive_reason: Optional[str] = None,
+        discovery_method: Optional[str] = None,
+        confidence_score: float = 0.5,
+        assessed_by: str = 'analyst',
+    ):
+        """Finding-Qualitaet bewerten (Upsert).
+
+        Wird vom Analyst nach der Analyse aufgerufen um seine
+        eigenen Findings zu bewerten.
+        """
+        await self.pool.execute(
+            """INSERT INTO finding_quality
+               (finding_id, is_actionable, is_false_positive, false_positive_reason,
+                discovery_method, confidence_score, assessed_at, assessed_by)
+               VALUES ($1, $2, $3, $4, $5, $6, NOW(), $7)
+               ON CONFLICT (finding_id)
+               DO UPDATE SET
+                   is_actionable = $2, is_false_positive = $3,
+                   false_positive_reason = $4, discovery_method = $5,
+                   confidence_score = $6, assessed_at = NOW(), assessed_by = $7""",
+            finding_id, is_actionable, is_false_positive,
+            false_positive_reason, discovery_method, confidence_score, assessed_by,
+        )
+        if is_false_positive:
+            logger.info("Finding #%d als False Positive bewertet: %s", finding_id, false_positive_reason)
+
+    async def get_false_positive_rate(self) -> Dict:
+        """False-Positive-Rate berechnen (letzte 90 Tage)."""
+        row = await self.pool.fetchrow(
+            """SELECT
+                   COUNT(*) as total,
+                   COUNT(*) FILTER (WHERE is_false_positive) as false_positives,
+                   AVG(confidence_score) as avg_confidence
+               FROM finding_quality
+               WHERE assessed_at >= NOW() - INTERVAL '90 days'"""
+        )
+        total = row['total'] or 0
+        fps = row['false_positives'] or 0
+        return {
+            'total_assessed': total,
+            'false_positives': fps,
+            'false_positive_rate': round(fps / total * 100) if total > 0 else 0,
+            'avg_confidence': round(float(row['avg_confidence'] or 0.5), 2),
+        }
+
+    # ─────────────────────────────────────────────
+    # Scan Coverage — Abdeckungs-Tracking
+    # ─────────────────────────────────────────────
+
+    async def record_scan_coverage(
+        self,
+        session_id: int,
+        areas: List[Dict],
+    ):
+        """Scan-Abdeckung speichern.
+
+        Args:
+            session_id: Aktuelle Session
+            areas: Liste von {area, checked, depth, notes}
+        """
+        for a in areas:
+            await self.pool.execute(
+                """INSERT INTO scan_coverage
+                   (session_id, area, checked, depth, notes)
+                   VALUES ($1, $2, $3, $4, $5)""",
+                session_id,
+                a.get('area', 'unknown'),
+                a.get('checked', True),
+                a.get('depth', 'basic'),
+                a.get('notes'),
+            )
+        logger.debug("Scan-Coverage fuer Session %d: %d Bereiche", session_id, len(areas))
+
+    async def get_coverage_gaps(self, max_age_days: int = 7) -> List[Dict]:
+        """Bereiche die seit mehr als N Tagen nicht geprueft wurden.
+
+        Vergleicht alle bekannten Bereiche mit deren letztem Check-Datum.
+
+        Returns:
+            Liste von {area, last_checked, days_ago}
+        """
+        rows = await self.pool.fetch(
+            """SELECT area, MAX(checked_at) as last_checked
+               FROM scan_coverage
+               WHERE checked = TRUE
+               GROUP BY area
+               HAVING MAX(checked_at) < NOW() - make_interval(days => $1)
+               ORDER BY MAX(checked_at) ASC""",
+            max_age_days,
+        )
+        result = []
+        now = datetime.now(timezone.utc)
+        for r in rows:
+            days_ago = (now - r['last_checked']).days
+            result.append({
+                'area': r['area'],
+                'last_checked': r['last_checked'].isoformat(),
+                'days_ago': days_ago,
+            })
+        return result
+
+    # ─────────────────────────────────────────────
+    # Knowledge Confidence Decay
+    # ─────────────────────────────────────────────
+
+    async def decay_knowledge_confidence(self, decay_after_days: int = 14, decay_rate: float = 0.05):
+        """Confidence von altem Wissen reduzieren.
+
+        Knowledge-Eintraege die laenger als N Tage nicht verifiziert wurden
+        verlieren pro Lauf etwas Confidence. Minimum: 0.2 (wird nie geloescht).
+
+        Args:
+            decay_after_days: Ab wann Decay einsetzt
+            decay_rate: Um wie viel pro Lauf (0.05 = 5%)
+        """
+        result = await self.pool.execute(
+            """UPDATE knowledge
+               SET confidence = GREATEST(0.2, confidence - $1)
+               WHERE last_verified < NOW() - make_interval(days => $2)
+                 AND confidence > 0.2""",
+            decay_rate, decay_after_days,
+        )
+        count = int(result.split()[-1]) if result else 0
+        if count > 0:
+            logger.info("Confidence-Decay: %d Knowledge-Eintraege reduziert (-%s%%)", count, int(decay_rate * 100))
+
+    # ─────────────────────────────────────────────
+    # Scan-Plan — Datengetriebener Scan-Fokus
+    # ─────────────────────────────────────────────
+
+    # Standard-Scan-Bereiche die der Analyst abdecken sollte
+    SCAN_AREAS = [
+        'firewall',       # UFW-Regeln, offene Ports, iptables
+        'ssh',            # sshd_config, Auth-Methoden, Brute-Force
+        'docker',         # Container-Security, Trivy, Netzwerke
+        'permissions',    # Dateirechte, Ownership, SUID/SGID
+        'packages',       # System-Updates, CVEs, apt
+        'services',       # systemd, laufende Prozesse, Ports
+        'logs',           # Verdaechtige Muster, Angriffe, Fehler
+        'network',        # Bind-Adressen, DNS, TLS, Traefik
+        'credentials',    # .env-Dateien, API-Keys, Secrets
+        'dependencies',   # npm/pip Schwachstellen, veraltete Pakete
+    ]
+
+    async def build_scan_plan(self) -> str:
+        """Erstellt einen priorisierten, datengetriebenen Scan-Plan.
+
+        Analysiert:
+        1. Coverage-Luecken (was wurde lange nicht gecheckt?)
+        2. Finding-Hotspots (welche Kategorien hatten die meisten Findings?)
+        3. Regressionen (wo sind Fixes gescheitert?)
+        4. Git-Aktivitaet (welche Projekte wurden kuerzlich geaendert?)
+
+        Returns:
+            Formatierter Markdown-String fuer den Analyst-Prompt
+        """
+        priority_items = []
+
+        # ── 1. Coverage-Luecken → hoechste Prioritaet ──
+        try:
+            gaps = await self.get_coverage_gaps(max_age_days=5)
+            for g in gaps:
+                priority_items.append({
+                    'area': g['area'],
+                    'reason': f"Seit {g['days_ago']} Tagen nicht geprueft",
+                    'priority': 1,
+                })
+        except Exception:
+            pass
+
+        # ── 2. Regressierte Fixes → etwas ist kaputt ──
+        try:
+            regressions = await self.pool.fetch(
+                """SELECT DISTINCT f.category, f.title
+                   FROM fix_attempts fa
+                   JOIN findings f ON f.id = fa.finding_id
+                   WHERE fa.still_valid = FALSE
+                     AND fa.created_at >= NOW() - INTERVAL '30 days'
+                   LIMIT 5"""
+            )
+            for r in regressions:
+                priority_items.append({
+                    'area': r['category'],
+                    'reason': f"Regression: {r['title'][:60]}",
+                    'priority': 1,
+                })
+        except Exception:
+            pass
+
+        # ── 3. Finding-Hotspots → wo treten Probleme haeufig auf? ──
+        try:
+            hotspots = await self.pool.fetch(
+                """SELECT category, COUNT(*) as cnt
+                   FROM findings
+                   WHERE found_at >= NOW() - INTERVAL '60 days'
+                   GROUP BY category
+                   ORDER BY cnt DESC
+                   LIMIT 5"""
+            )
+            for h in hotspots:
+                priority_items.append({
+                    'area': h['category'],
+                    'reason': f"{h['cnt']} Findings in 60 Tagen — Hotspot",
+                    'priority': 2,
+                })
+        except Exception:
+            pass
+
+        # ── 4. Git-Activity → geaenderte Projekte brauchen Re-Scan ──
+        try:
+            active_projects = await self.pool.fetch(
+                """SELECT subject, content FROM knowledge
+                   WHERE category = 'project_activity'
+                     AND subject LIKE '%_git_activity'
+                     AND content LIKE '%Security-Commits%'
+                   ORDER BY confidence DESC"""
+            )
+            for p in active_projects:
+                # Projekte mit Security-Commits → priorisieren
+                if 'Security-Commits. ' in p['content']:
+                    sec_part = p['content'].split('Security-Commits. ')[0]
+                    # Anzahl Security-Commits extrahieren
+                    parts = sec_part.split(', ')
+                    for part in parts:
+                        if 'Security' in part:
+                            try:
+                                sec_count = int(part.split()[0])
+                                if sec_count > 0:
+                                    project_name = p['subject'].replace('_git_activity', '')
+                                    priority_items.append({
+                                        'area': f"project:{project_name}",
+                                        'reason': f"{sec_count} Security-Commits — Aenderungen verifizieren",
+                                        'priority': 2,
+                                    })
+                            except ValueError:
+                                pass
+        except Exception:
+            pass
+
+        # ── 5. Standard-Bereiche die noch nie gecheckt wurden ──
+        try:
+            checked_areas = await self.pool.fetch(
+                "SELECT DISTINCT area FROM scan_coverage WHERE checked = TRUE"
+            )
+            checked_set = {r['area'] for r in checked_areas}
+            for area in self.SCAN_AREAS:
+                if area not in checked_set:
+                    priority_items.append({
+                        'area': area,
+                        'reason': 'Noch nie geprueft',
+                        'priority': 1,
+                    })
+        except Exception:
+            # Wenn scan_coverage leer ist → alle Bereiche sind "neu"
+            pass
+
+        if not priority_items:
+            return "Keine spezifischen Prioritaeten — fuehre eine vollstaendige Analyse durch."
+
+        # Deduplizieren nach area (hoechste Prioritaet gewinnt)
+        seen = {}
+        for item in priority_items:
+            area = item['area']
+            if area not in seen or item['priority'] < seen[area]['priority']:
+                seen[area] = item
+        deduped = sorted(seen.values(), key=lambda x: (x['priority'], x['area']))
+
+        # Formatieren
+        lines = ["Priorisierte Scan-Reihenfolge:\n"]
+        for i, item in enumerate(deduped, 1):
+            urgency = "🔴" if item['priority'] == 1 else "🟡"
+            lines.append(f"{i}. {urgency} **{item['area']}** — {item['reason']}")
+
+        return "\n".join(lines)

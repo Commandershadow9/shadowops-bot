@@ -112,6 +112,9 @@ class ShadowOpsBot(commands.Bot):
         # Changelog-DB (Patch Notes v3)
         self.changelog_db = None
 
+        # Learning Notifier (Discord-Posts über Agent-Erkenntnisse)
+        self.learning_notifier = None
+
         # Queue Management
         self.smart_queue = None
 
@@ -324,6 +327,10 @@ class ShadowOpsBot(commands.Bot):
         self.discord_logger.set_bot(self)
         await self.discord_logger.start()
         self.logger.info("✅ Discord Channel Logger bereit")
+
+        # Learning Notifier initialisieren
+        from integrations.learning_notifier import LearningNotifier
+        self.learning_notifier = LearningNotifier(self)
 
         # Initialisiere Auto-Fix Manager Channels
         try:
@@ -753,6 +760,12 @@ class ShadowOpsBot(commands.Bot):
                         self.github_integration.feedback_collector = self.feedback_collector
                         self.feedback_collector.register_persistent_view()
 
+                        # Feedback-Windows schliessen (Learning Pipeline)
+                        try:
+                            await self.feedback_collector.close_old_feedback_windows()
+                        except Exception as fw_err:
+                            self.logger.debug("Feedback-Window-Close: %s", fw_err)
+
                         # 3. A/B Testing System
                         self.prompt_ab_testing = get_prompt_ab_testing()
                         self.github_integration.prompt_ab_testing = self.prompt_ab_testing
@@ -964,6 +977,7 @@ class ShadowOpsBot(commands.Bot):
                         bot=self,
                         config=self.config,
                         ai_engine=self.ai_service,
+                        context_manager=self.context_manager,
                     )
                     await self.security_analyst.start()
                     self.logger.info("Security Analyst gestartet")
@@ -1004,6 +1018,8 @@ class ShadowOpsBot(commands.Bot):
             self.update_dashboard.start()
         if not self.weekly_patch_notes_release.is_running():
             self.weekly_patch_notes_release.start()
+        if not self.learning_maintenance.is_running():
+            self.learning_maintenance.start()
 
         # Setze Status
         await self.change_presence(
@@ -1315,6 +1331,32 @@ class ShadowOpsBot(commands.Bot):
         if batcher:
             cron_info = f"{batcher.cron_day.capitalize()} {batcher.cron_hour}:00"
         self.logger.info(f"📅 Wöchentlicher Patch-Notes-Cron gestartet ({cron_info})")
+
+    @tasks.loop(hours=12)
+    async def learning_maintenance(self):
+        """Learning-Maintenance alle 12h: Feedback schliessen + Meilensteine + Weekly."""
+        try:
+            fc = getattr(self, 'feedback_collector', None)
+            if fc:
+                await fc.close_old_feedback_windows()
+
+            # Meilensteine prüfen
+            if self.learning_notifier:
+                await self.learning_notifier.check_milestones()
+
+            # Wöchentliches Summary (Montag morgens)
+            from datetime import datetime
+            now = datetime.now()
+            if now.weekday() == 0 and now.hour < 12:
+                if self.learning_notifier:
+                    await self.learning_notifier.send_weekly_summary()
+        except Exception as e:
+            self.logger.debug("Learning-Maintenance: %s", e)
+
+    @learning_maintenance.before_loop
+    async def before_learning_maintenance(self):
+        await self.wait_until_ready()
+        self.logger.info("🧠 Learning-Maintenance Loop gestartet (alle 12h)")
 
     @tasks.loop(minutes=5)
     async def update_dashboard(self):

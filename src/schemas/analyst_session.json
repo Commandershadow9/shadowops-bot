@@ -67,8 +67,35 @@
     "next_priority": {
       "type": "string",
       "description": "Naechste Prioritaet fuer zukuenftige Sessions"
+    },
+    "areas_checked": {
+      "type": "array",
+      "items": { "type": "string" },
+      "description": "Liste der geprueften Bereiche (z.B. firewall, docker, ssh, permissions, packages, logs, network)"
+    },
+    "areas_deferred": {
+      "type": "array",
+      "items": { "type": "string" },
+      "description": "Bereiche die uebersprungen wurden (mit Begruendung in next_priority)"
+    },
+    "finding_assessments": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "properties": {
+          "finding_id": { "type": "integer", "description": "ID eines in dieser Session erstellten Findings" },
+          "confidence": { "type": "number", "minimum": 0, "maximum": 1 },
+          "discovery_method": { "type": "string", "description": "Wie gefunden: trivy, crowdsec, fail2ban, manual_review, log_analysis, ss_check, config_review" },
+          "is_actionable": { "type": "boolean" },
+          "is_false_positive": { "type": "boolean" },
+          "false_positive_reason": { "type": "string" }
+        },
+        "required": ["finding_id", "confidence", "discovery_method", "is_actionable"],
+        "additionalProperties": false
+      },
+      "description": "Selbstbewertung der eigenen Findings"
     }
   },
-  "required": ["summary", "topics_investigated", "findings", "knowledge_updates", "health_check_passed", "next_priority"],
+  "required": ["summary", "topics_investigated", "findings", "knowledge_updates", "health_check_passed", "next_priority", "areas_checked", "areas_deferred", "finding_assessments"],
   "additionalProperties": false
 }

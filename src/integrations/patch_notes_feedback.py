@@ -73,6 +73,14 @@ class TextFeedbackModal(ui.Modal, title="📝 Patch Notes Feedback"):
                 feedback_data=feedback_data
             )
 
+        # Learning DB
+        import asyncio
+        score = (rating_value or 3) * 20 - 50  # 1→-30, 3→10, 5→50
+        asyncio.ensure_future(self.collector._record_feedback_to_db(
+            self.project, self.version, 'rating',
+            {**feedback_data, 'score_delta': score},
+        ))
+
         logger.info(
             f"📝 Text-Feedback für {self.project} v{self.version}: "
             f"Rating={rating_value}, Text='{feedback_text[:50]}...'"
@@ -131,18 +139,26 @@ class PatchNotesView(ui.View):
 
         # Feedback aufzeichnen (Projekt/Version aus tracked_messages)
         msg_data = self._get_message_data(interaction)
-        if msg_data and self.collector and self.collector.trainer:
-            self.collector.trainer.record_feedback(
-                version=msg_data['version'],
-                project=msg_data['project'],
-                feedback_type='reaction',
-                feedback_data={
-                    'emoji': '👍',
-                    'score_delta': 10,
-                    'user_id': user_id,
-                    'added': True,
-                },
-            )
+        if msg_data and self.collector:
+            feedback_data = {
+                'emoji': '👍',
+                'score_delta': 10,
+                'user_id': user_id,
+                'added': True,
+            }
+            # Legacy JSONL
+            if self.collector.trainer:
+                self.collector.trainer.record_feedback(
+                    version=msg_data['version'],
+                    project=msg_data['project'],
+                    feedback_type='reaction',
+                    feedback_data=feedback_data,
+                )
+            # Learning DB
+            import asyncio
+            asyncio.ensure_future(self.collector._record_feedback_to_db(
+                msg_data['project'], msg_data['version'], 'like', feedback_data,
+            ))
 
     @ui.button(label="⭐ Bewerten", style=discord.ButtonStyle.secondary,
                custom_id="patchnotes_rate")
@@ -176,11 +192,15 @@ class PatchNotesFeedbackView(ui.View):
 class PatchNotesFeedbackCollector:
     """
     Collects user feedback on patch notes through Discord buttons and text.
+    Speichert in agent_learning DB (PostgreSQL) + Legacy JSONL.
     """
 
     def __init__(self, bot: discord.Client, patch_notes_trainer=None):
         self.bot = bot
         self.trainer = patch_notes_trainer
+
+        # Learning DB (async, wird bei Bedarf verbunden)
+        self._learning_db = None
 
         # Track messages we're collecting feedback on
         # {message_id: {'project': str, 'version': str, 'timestamp': datetime}}
@@ -202,6 +222,38 @@ class PatchNotesFeedbackCollector:
 
         trainer_status = "mit Trainer" if patch_notes_trainer else "standalone, ohne Trainer"
         logger.info(f"✅ Patch Notes Feedback Collector initialized ({trainer_status})")
+
+    async def _get_learning_db(self):
+        """Lazy-Init der Learning DB."""
+        if self._learning_db is None:
+            try:
+                from integrations.patch_notes_learning import PatchNotesLearning
+                self._learning_db = PatchNotesLearning()
+                await self._learning_db.connect()
+            except Exception as e:
+                logger.debug("Learning DB nicht verfuegbar: %s", e)
+                self._learning_db = False  # Nicht nochmal versuchen
+        return self._learning_db if self._learning_db else None
+
+    async def _record_feedback_to_db(self, project: str, version: str,
+                                      feedback_type: str, feedback_data: Dict):
+        """Feedback parallel in Learning DB speichern."""
+        try:
+            db = await self._get_learning_db()
+            if db:
+                await db.record_feedback(
+                    project=project,
+                    version=version,
+                    feedback_type=feedback_type,
+                    user_id=feedback_data.get('user_id'),
+                    user_name=feedback_data.get('user_name'),
+                    score_delta=feedback_data.get('score_delta', 0),
+                    rating=feedback_data.get('rating'),
+                    text_content=feedback_data.get('text'),
+                    metadata=feedback_data,
+                )
+        except Exception as e:
+            logger.debug("Feedback-DB-Write fehlgeschlagen: %s", e)
 
     def create_view(self, changelog_url: str = '') -> PatchNotesView:
         """Erstellt ein PatchNotesView für die Embed-Nachricht."""
@@ -260,6 +312,11 @@ class PatchNotesFeedbackCollector:
                 feedback_type='reaction',
                 feedback_data=feedback_data
             )
+
+        # Learning DB
+        await self._record_feedback_to_db(
+            message_data['project'], message_data['version'], 'reaction', feedback_data,
+        )
 
         logger.info(f"👍 Feedback recorded: {emoji} on {message_data['project']} v{message_data['version']} (score delta: {score_delta:+d})")
 
@@ -382,6 +439,55 @@ class PatchNotesFeedbackCollector:
             'user_count': len(users),
             'text_feedbacks': text_feedbacks,
         }
+
+
+    async def close_old_feedback_windows(self):
+        """Schliesst Feedback-Windows fuer Generierungen die aelter als 7 Tage sind.
+
+        Berechnet finale Scores, aktualisiert Varianten-Gewichtung und
+        Beispiel-Ranking. Sollte periodisch aufgerufen werden (z.B. beim Bot-Start).
+        """
+        try:
+            db = await self._get_learning_db()
+            if not db:
+                return
+
+            unclosed = await db.get_unclosed_generations(min_age_hours=168)
+            if not unclosed:
+                return
+
+            for gen in unclosed:
+                await db.close_feedback_window(gen['project'], gen['version'])
+
+                # Learning-Notification posten
+                try:
+                    notifier = getattr(self.bot, 'learning_notifier', None)
+                    if notifier:
+                        # Score aus DB holen
+                        score_row = await db.pool.fetchrow(
+                            "SELECT * FROM pn_generations WHERE project=$1 AND version=$2",
+                            gen['project'], gen['version'],
+                        )
+                        if score_row:
+                            fb = await db.get_aggregated_feedback(gen['project'], gen['version'])
+                            await notifier.notify_feedback_evaluated(
+                                project=gen['project'],
+                                version=gen['version'],
+                                variant_id=score_row.get('variant_id'),
+                                auto_score=score_row.get('auto_quality', 50),
+                                feedback_score=score_row.get('feedback_score', 50),
+                                combined_score=(score_row.get('auto_quality', 50) * 0.6 + (score_row.get('feedback_score', 50)) * 0.4),
+                                feedback_count=fb.get('feedback_count', 0),
+                            )
+                except Exception:
+                    pass
+
+            logger.info(
+                "Feedback-Windows geschlossen: %d Generierungen ausgewertet",
+                len(unclosed),
+            )
+        except Exception as e:
+            logger.debug("Feedback-Window-Close fehlgeschlagen: %s", e)
 
 
 def get_feedback_collector(bot: discord.Client, trainer=None) -> PatchNotesFeedbackCollector:

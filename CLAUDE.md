@@ -40,7 +40,7 @@
 |-------|-----|----------|
 | `monitoring.py` | MonitoringCog | `/status`, `/bans`, `/threats`, `/docker`, `/aide` |
 | `admin.py` | AdminCog | `/scan`, `/stop-all-fixes`, `/remediation-stats`, `/set-approval-mode`, `/reload-context`, `/release-notes`, `/pending-notes` |
-| `inspector.py` | InspectorCog | `/get-ai-stats`, `/projekt-status`, `/alle-projekte` |
+| `inspector.py` | InspectorCog | `/get-ai-stats`, `/agent-stats`, `/projekt-status`, `/alle-projekte` |
 | `customer_setup_commands.py` | CustomerSetupCommands | `/setup-customer-server` |
 
 ### Integrationen (`src/integrations/`)
@@ -74,9 +74,11 @@
 | `server_assistant.py` | Server Assistant (ersetzt Legacy Learning System) |
 | `changelog_db.py` | Zentrale Changelog-DB (SQLite, alle Projekte, Upsert + Paginierung) |
 | `content_sanitizer.py` | Security-Filter fuer Patch Notes (Pfade, IPs, Ports, Secrets) |
-| `patch_notes_batcher.py` | Sammelt Commits, Release via Cron (Sonntag), manuell (/release-notes) oder Notbremse (≥20) |
-| `patch_notes_feedback.py` | Discord Feedback (Persistent Buttons: Like + Bewerten, Text-Modal) |
+| `patch_notes_batcher.py` | Sammelt Commits, Release via Cron (Sonntag), manuell (/release-notes) oder Notbremse (≥20). Nur hotfix/critical sofort, security wird gesammelt |
+| `patch_notes_feedback.py` | Discord Feedback (Persistent Buttons: Like + Bewerten, Text-Modal) + Learning-DB Integration |
+| `patch_notes_learning.py` | Patch Notes Learning Pipeline (PostgreSQL agent_learning DB, Varianten-Gewichtung, Feedback-Loop) |
 | `patch_notes_web_exporter.py` | Web-Export (zentrale DB Upsert + File-Backup + optional HTTP POST). Frontend: shared-ui v0.2.0 Changelog-Komponenten |
+| `learning_notifier.py` | Automatische Discord-Posts in 🧠-ai-learning (Session-Summaries, Feedback-Ergebnisse, Weekly, Meilensteine) |
 | `knowledge_base.py` | PostgreSQL Knowledge Database (konsolidiert: Fixes, Strategien, Pläne, Analyst-Cross-Referenz) |
 | `log_analyzer.py` | Log-Analyse und -Auswertung |
 | `code_analyzer.py` | Code-Analyse fuer Fix-Strategien |
@@ -92,7 +94,7 @@
 |-------------|-------|
 | `fixers/` | Tool-spezifische Fixer (trivy, crowdsec, fail2ban, aide) |
 | `ai_learning/` | Legacy AI Learning (DEAKTIVIERT — knowledge_db, knowledge_synthesizer, continuous_learning_agent) |
-| `analyst/` | Security Analyst (security_analyst, analyst_db, activity_monitor, prompts) — Anti-Duplikat, Token-Budget, Entwicklungs-Awareness |
+| `analyst/` | Security Analyst (security_analyst, analyst_db, activity_monitor, prompts) — Full Learning Pipeline, Adaptive Sessions, Fix-Verifikation, Coverage-Tracking |
 
 ### Utils (`src/utils/`)
 | Datei | Zweck |
@@ -113,7 +115,7 @@
 | `coordinated_plan.json` | Koordinierte Batch-Plaene (Orchestrator) |
 | `incident_analysis.json` | Incident-Analyse (Self-Healing) |
 | `patch_notes.json` | AI-generierte Patch Notes (v3: + seo_keywords, seo_category) |
-| `analyst_session.json` | Security Analyst Session Output |
+| `analyst_session.json` | Security Analyst Session Output (+ areas_checked, finding_assessments) |
 
 ### Konfiguration
 | Datei | Zweck |
@@ -163,24 +165,37 @@
 - **knowledge_base.py:** psycopg2 statt sqlite3 (sync, gleiche API)
 - **Cross-Referenz:** Analyst-Findings fliessen in Orchestrator-Planung, Orchestrator-Fixes erscheinen im Analyst-Kontext
 
-### Security Analyst — 2-Phasen-Architektur (seit 2026-03-17)
-- **Autonome Entscheidung:** DB-Backlog prüfen → ≥20 offen: direkt Fix / <20: Scan+Fix / 0: voller Scan
-- **1 Session/Tag** (idle-triggered), reicht aus weil Fix-Phase gründlich arbeitet
-- **Phase 1 (Scan):** Reine Analyse (read-only), Findings in DB, 60 max_turns, 45min Timeout
-- **Phase 2 (Fix):** ALLE offenen Findings aus DB abarbeiten, 200 max_turns, 2h Timeout
+### Security Analyst — Lernende 2-Phasen-Architektur (seit 2026-03-18)
+- **Adaptive Session-Steuerung:**
+  - ≥20 Findings → fix_only (bis 3 Sessions/Tag, nur Fixen)
+  - 5-19 Findings → full_scan + fix (bis 2 Sessions/Tag)
+  - 1-4 Findings → quick_scan + fix (1 Session, 20min statt 45min)
+  - 0 Findings → maintenance (nur wenn letzter Scan >3 Tage her)
+- **Pre-Session Maintenance:** Git-Activity-Sync, Fix-Verifikation (14 Tage), Knowledge-Decay
+- **Phase 1 (Scan):** Reine Analyse, Findings + Coverage + Quality-Assessment in DB
+- **Phase 2 (Fix):** Findings abarbeiten mit vollem Knowledge-Kontext + vorherigen Fix-Versuchen
   - Sichere Fixes direkt ausführen (Permissions, Configs, Firewall, Docker)
   - Code-Änderungen als PR (1 Branch `fix/security-findings` pro Projekt)
-  - Kein Überspringen — alles wird gefixt oder als PR angelegt
-  - Ergebnis-DB: mark_finding_fixed() schließt auch Duplikate mit
+  - Geschützte Infrastruktur nur als Issue/PR (Bind-Adressen, Ports, Docker-Netzwerk)
+  - Fehlversuche werden gespeichert → nächstes Mal anderer Ansatz
+- **Full Learning Pipeline (4 DB-Tabellen):**
+  - `fix_attempts`: Jeden Fix-Versuch mit Ansatz/Commands/Ergebnis aufzeichnen
+  - `fix_verifications`: Prüfung ob Fixes noch aktiv sind, Regressionen → re-open
+  - `finding_quality`: Selbstbewertung (confidence, false_positive, discovery_method)
+  - `scan_coverage`: Welche Bereiche gecheckt, Lücken >7 Tage im Kontext sichtbar
+- **Kontext-Injektionen:** Fix-Effektivität, Coverage-Gaps, Finding-Qualität, Git-Activity
+- **Knowledge-Decay:** Confidence -5%/Lauf bei >14 Tage altem Wissen (Min: 20%)
 - **Finding-Dedup:** DISTINCT ON Titel-Präfix + Keyword-Match bei Duplikat-Close
 - **Auto-Close:** Findings >30 Tage ohne GitHub-Issue → automatisch geschlossen
 - **fix_policy pro Projekt:** active→critical_only, stable→all, frozen→monitor_only
 - **Codex-Quota-Cache:** Nach Quota-Fehler wird Codex 6h übersprungen
+- **Design-Doc:** `docs/plans/2026-03-18-analyst-learning-pipeline-design.md`
 
 ### Token-Budget (global)
 - **daily_token_budget:** 100K Token/Tag (konfigurierbar in config.yaml)
 - **Budget-Check:** Zentral in `_execute_with_fallback()` vor jedem AI-Call
-- **Token-Tracking:** Geschaetzt aus Prompt-Laenge
+- **Token-Tracking:** Geschaetzt aus Prompt-Laenge, pro Session via `_get_session_tokens()` Delta-Messung
+- **Session-DB:** Token-Verbrauch wird pro Session in `sessions.tokens_used` gespeichert (nicht mehr 0)
 
 ### AI-Call Sicherheit
 - **Codex Analyst:** Prompt via stdin statt CLI-Argument (ARG_MAX Fix), `-c mcp_servers={}` (kein MCP-Laden)
@@ -194,6 +209,18 @@
 - **subnet_tracking:** Angriffe pro /24 Subnet
 - **remediation_log:** Audit-Trail aller Auto-Fixes (mit Rollback-Command)
 - **pending_approvals:** Überlebt Bot-Restart (Approval-State persistent)
+
+### Agent-Learning DB (PostgreSQL, seit 2026-03-18)
+- **Gemeinsame DB** `agent_learning` auf GuildScout Postgres (Port 5433)
+- **agent_feedback:** Universelles Feedback (Discord Reactions, Ratings, Text) fuer alle Agents
+- **agent_quality_scores:** Qualitaetsbewertung pro Agent-Output (auto + feedback + combined)
+- **agent_knowledge:** Cross-Agent Wissensaustausch (Security Analyst → SEO/Feedback)
+- **pn_generations:** Jede generierte Patch Note mit Variante, Scores, Discord-Msg-ID
+- **pn_variants:** Prompt-Varianten Performance pro Projekt (times_used, avg_score, combined_weight)
+- **pn_examples:** Kuratierte Few-Shot Beispiele nach echtem Feedback sortiert
+- **seo_fix_impact:** Score-Delta nach PR-Merge (vorher/nachher, Fix-Kategorien)
+- **LearningNotifier:** Automatische Discord-Posts in 🧠-ai-learning (Sessions, Feedback, Weekly, Meilensteine)
+- **Event-getriggerte Scans:** Critical/High Events (CrowdSec/Fail2ban) triggern sofort Analyst Quick-Scan
 
 ### Recidive-Erkennung
 - 3+ Bans derselben IP → automatisch permanent in UFW geblockt

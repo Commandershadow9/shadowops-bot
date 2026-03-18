@@ -23,10 +23,15 @@ import tempfile
 from typing import Dict, Optional, List
 from pathlib import Path
 
+import jsonschema
+
 logger = logging.getLogger('shadowops')
 
 # Basis-Pfad zu den JSON-Schemas
 SCHEMAS_DIR = Path(__file__).parent.parent / 'schemas'
+
+# Schema-Cache: Datei-Pfad → geladenes Schema-Dict
+_schema_cache: Dict[str, dict] = {}
 
 
 # ============================================================================
@@ -1531,6 +1536,38 @@ class AIEngine:
     # Interne Methoden
     # ------------------------------------------------------------------
 
+    @staticmethod
+    def _validate_schema(result: Dict, schema_path: Optional[Path]) -> bool:
+        """
+        Validiert ein AI-Ergebnis gegen das zugehoerige JSON-Schema.
+
+        Args:
+            result: Das geparste AI-Ergebnis
+            schema_path: Pfad zur JSON-Schema-Datei (None = keine Validierung)
+
+        Returns:
+            True wenn valide oder kein Schema vorhanden, False bei Validierungsfehler
+        """
+        if not schema_path:
+            return True
+
+        schema_key = str(schema_path)
+        if schema_key not in _schema_cache:
+            try:
+                with open(schema_path, 'r') as f:
+                    _schema_cache[schema_key] = json.load(f)
+            except (FileNotFoundError, json.JSONDecodeError) as e:
+                logger.warning("Schema %s konnte nicht geladen werden: %s", schema_path, e)
+                return True  # Bei Lade-Fehler durchlassen
+
+        schema = _schema_cache[schema_key]
+        try:
+            jsonschema.validate(instance=result, schema=schema)
+            return True
+        except jsonschema.ValidationError as e:
+            logger.warning("Schema-Validierung fehlgeschlagen (%s): %s", schema_path.name, e.message)
+            return False
+
     async def _execute_with_fallback(
         self,
         prompt: str,
@@ -1585,8 +1622,12 @@ class AIEngine:
             )
 
             if result:
-                self.stats[f'{primary_name}_success'] += 1
-                return result
+                if self._validate_schema(result, schema_path):
+                    self.stats[f'{primary_name}_success'] += 1
+                    return result
+                else:
+                    logger.warning("%s-Ergebnis hat Schema-Validierung nicht bestanden — Fallback",
+                                   primary_name.capitalize())
 
             # Primary fehlgeschlagen
             self.stats[f'{primary_name}_failures'] += 1
@@ -1601,8 +1642,12 @@ class AIEngine:
         )
 
         if result:
-            self.stats[f'{fallback_name}_success'] += 1
-            return result
+            if self._validate_schema(result, schema_path):
+                self.stats[f'{fallback_name}_success'] += 1
+                return result
+            else:
+                logger.warning("%s-Ergebnis hat Schema-Validierung nicht bestanden — verwerfe Ergebnis",
+                               fallback_name.capitalize())
 
         self.stats[f'{fallback_name}_failures'] += 1
         return None

@@ -29,7 +29,6 @@ PROJECTS = [
         "port": 5434,
         "user": "zerodox",
         "password_env": "ZERODOX_DB_PASSWORD",
-        "password_default": "zerodox-db-secret-2025",
         "database": "zerodox",
     },
     {
@@ -38,7 +37,6 @@ PROJECTS = [
         "port": 5433,
         "user": "guildscout",
         "password_env": "GUILDSCOUT_DB_PASSWORD",
-        "password_default": "guildscout",
         "database": "guildscout",
     },
 ]
@@ -47,10 +45,9 @@ PROJECTS = [
 async def fetch_changelogs(project_config: dict) -> list[dict]:
     """Holt alle Changelogs aus einer PostgreSQL-Datenbank."""
     name = project_config["name"]
-    password = os.environ.get(
-        project_config["password_env"],
-        project_config["password_default"],
-    )
+    password = os.environ.get(project_config["password_env"])
+    if not password:
+        sys.exit(f"ERROR: Setze die Umgebungsvariable {project_config['password_env']}")
 
     try:
         conn = await asyncpg.connect(

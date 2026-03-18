@@ -30,13 +30,30 @@ logger = logging.getLogger('shadowops.analyst')
 # Konstanten
 # ─────────────────────────────────────────────────────────────────────
 
-# Maximale Anzahl Sessions pro Tag — Default, wird von Config ueberschrieben
+# Session-Limits — werden dynamisch angepasst basierend auf Workload
 DEFAULT_MAX_SESSIONS_PER_DAY = 1
 
-# Timeout fuer Scan-Session (45 Minuten — read-only Analyse)
+# Session-Modi mit unterschiedlicher Intensitaet
+# Format: (timeout_seconds, max_turns, beschreibung)
+SESSION_MODES = {
+    'full_scan':    (2700, 60, 'Voller Scan aller Bereiche'),
+    'quick_scan':   (1200, 30, 'Schnellcheck der kritischsten Bereiche'),
+    'fix_only':     (7200, 200, 'Nur Findings abarbeiten, kein Scan'),
+    'maintenance':  (600, 15, 'Nur Verifikation + Maintenance, kein Scan/Fix'),
+}
+
+# Workload-Schwellenwerte fuer adaptive Steuerung
+WORKLOAD_THRESHOLDS = {
+    'heavy':   20,  # >=20 offene Findings → fix_only, bis zu 3 Sessions
+    'normal':  5,   # 5-19 offene Findings → full_scan + fix, 1-2 Sessions
+    'light':   1,   # 1-4 offene Findings  → quick_scan + fix, 1 Session
+    'clean':   0,   # 0 offene Findings    → maintenance oder full_scan (selten)
+}
+
+# Timeout fuer Scan-Session (wird durch SESSION_MODES ueberschrieben)
 SESSION_TIMEOUT = 2700
 
-# Maximale Tool-Aufrufe Scan-Session
+# Maximale Tool-Aufrufe Scan-Session (wird durch SESSION_MODES ueberschrieben)
 SESSION_MAX_TURNS = 60
 
 # Timeout fuer User-Approval-Anfragen (5 Minuten)
@@ -79,6 +96,15 @@ SYSTEM_SERVICES = [
     'earlyoom',
 ]
 
+# Geschuetzte Port-Bindings — muessen auf 0.0.0.0 binden (Docker-Bridge Zugriff)
+# Format: {port: beschreibung}
+# Vorfall 2026-03-17: Analyst aenderte auf 127.0.0.1 → 11h Ausfall
+PROTECTED_PORT_BINDINGS = {
+    8766: 'Health/Changelog API (GuildScout+ZERODOX Proxy)',
+    9090: 'GitHub Webhook (Traefik→Host)',
+    9091: 'GuildScout Alerts (Docker→Host)',
+}
+
 
 class SecurityAnalyst:
     """Autonomer Security Analyst Agent
@@ -89,16 +115,18 @@ class SecurityAnalyst:
     und erstellt GitHub-Issues fuer Code-Probleme.
     """
 
-    def __init__(self, bot, config, ai_engine):
+    def __init__(self, bot, config, ai_engine, context_manager=None):
         """
         Args:
             bot: Discord Bot-Instanz
             config: ShadowOps Config-Objekt
             ai_engine: AIEngine-Instanz mit run_analyst_session()
+            context_manager: Optional ContextManager mit Git-History + Code-Analyse
         """
         self.bot = bot
         self.config = config
         self.ai_engine = ai_engine
+        self.context_manager = context_manager
 
         # Max Sessions aus Config oder Default
         analyst_cfg = config._config.get('security_analyst', {})
@@ -123,6 +151,7 @@ class SecurityAnalyst:
         self._current_session_id: Optional[int] = None
         self._sessions_today: int = 0
         self._today: date = date.today()
+        self._session_tokens_start: int = 0  # Token-Counter beim Session-Start
         self._running: bool = False
         self._briefing_pending: bool = False
         self._pending_result: Optional[Dict] = None
@@ -133,6 +162,407 @@ class SecurityAnalyst:
         # Failure-Tracking (verhindert Endlos-Retries)
         self._consecutive_failures: int = 0
         self._failure_cooldown_until: float = 0.0
+
+    # ─────────────────────────────────────────────────────────────────
+    # Knowledge-Sync: Git-Activity → DB
+    # ─────────────────────────────────────────────────────────────────
+
+    async def _sync_git_activity_to_db(self):
+        """Synchronisiert Git-Aktivitaet aller Projekte in die Knowledge-DB.
+
+        Wird VOR jeder Session aufgerufen. Schreibt kompakte Summaries
+        in die knowledge-Tabelle (category: project_activity), damit der
+        Analyst weiss welche Projekte sich seit dem letzten Scan geaendert haben.
+
+        Daten kommen vom ContextManager (GitHistoryAnalyzer + CodeAnalyzer).
+        """
+        if not self.context_manager:
+            return
+
+        try:
+            # Git-History neu laden (frische Daten)
+            self.context_manager.reload_git_history()
+
+            # Direkt auf die Analyzer zugreifen fuer volle Pattern-Daten
+            for project_name, analyzer in self.context_manager.git_analyzers.items():
+                try:
+                    patterns = analyzer.analyze_patterns()
+                except Exception:
+                    continue
+
+                total = patterns.get('total_commits', 0)
+                fixes = patterns.get('total_fixes', 0)
+                security = patterns.get('total_security', 0)
+
+                # Hotspot-Files (Top 3)
+                hotspots = patterns.get('frequently_changed_files', [])[:3]
+                hotspot_text = ', '.join(
+                    f"{f}({n}x)" for f, n in hotspots
+                ) if hotspots else 'keine'
+
+                # Letzte Security-Fixes
+                sec_fixes = patterns.get('recent_security_fixes', [])[:3]
+                sec_text = '; '.join(
+                    f"{s['date']}: {s['subject'][:60]}" for s in sec_fixes
+                ) if sec_fixes else 'keine'
+
+                content = (
+                    f"{total} Commits (30 Tage), {fixes} Fixes, {security} Security-Commits. "
+                    f"Hotspot-Dateien: {hotspot_text}. "
+                    f"Letzte Security-Fixes: {sec_text}."
+                )
+
+                # Confidence: Hoeher bei mehr Aktivitaet (aktive Projekte = wichtiger)
+                confidence = min(0.95, 0.5 + (total / 200))
+
+                await self.db.upsert_knowledge(
+                    category='project_activity',
+                    subject=f'{project_name}_git_activity',
+                    content=content,
+                    confidence=confidence,
+                )
+
+            # Code-Analyse Stats (Groesse der Projekte)
+            code_stats = self.context_manager.get_code_analysis_stats()
+            if code_stats.get('enabled'):
+                for project_name, stats in code_stats.get('projects', {}).items():
+                    if 'error' in stats:
+                        continue
+                    files = stats.get('total_files', 0)
+                    loc = stats.get('total_lines', 0)
+                    await self.db.upsert_knowledge(
+                        category='project_activity',
+                        subject=f'{project_name}_codebase_size',
+                        content=f"{files} Dateien, {loc} LOC",
+                        confidence=0.9,
+                    )
+
+            logger.info("Git-Activity in Knowledge-DB synchronisiert")
+
+        except Exception as e:
+            logger.warning("Git-Activity-Sync fehlgeschlagen: %s", e)
+
+    # Projekt-Pfade → Security-relevante Info-Quellen
+    PROJECT_SECURITY_PROFILES = {
+        'guildscout': {
+            'path': '/home/cmdshadow/GuildScout',
+            'stack': 'Go API + Next.js + Python Bot',
+            'attack_surface': [
+                'REST API (Go/Fiber, Port 8091 via Docker)',
+                'OAuth2 Discord Login (Cookie-basiert)',
+                'Datei-Upload (Magic-Byte Validierung, 5MB, UUID-Namen)',
+                'WebSocket für Bot-Dashboard',
+            ],
+            'critical_files': [
+                'api/internal/handlers/',
+                'api/internal/middleware/auth.go',
+                'bot/config/config.yaml',
+                'docker-compose.yml',
+                '.env',
+            ],
+            'services': 'Docker: guildscout-api-v3(8091), guildscout-postgres(5433), guildscout-redis(6379), guildscout-web(3000)',
+            'auth': 'Discord OAuth2, Session-Cookies, Redis-Session-Store',
+            'secrets': 'bot/config/config.yaml, .env (Docker), REDIS_PASSWORD',
+        },
+        'zerodox': {
+            'path': '/home/cmdshadow/ZERODOX',
+            'stack': 'Next.js 16, Prisma, PostgreSQL',
+            'attack_surface': [
+                'Kunden-Portal mit NextAuth v5 (Credentials + TOTP 2FA + Passkeys)',
+                'REST API Endpoints (/api/)',
+                'Cron-Jobs mit API-Key Auth',
+                'Web-Chat + Support-Ticketing',
+                'Stripe Webhook',
+            ],
+            'critical_files': [
+                'web/src/app/api/',
+                'web/src/lib/auth/',
+                'web/src/lib/db/',
+                'docker-compose.yml',
+                'scripts/daily-cron.sh',
+            ],
+            'services': 'Docker: zerodox-web(3000 intern), zerodox-db(5434)',
+            'auth': 'NextAuth v5: Credentials + TOTP + Passkeys/WebAuthn + Magic Links',
+            'secrets': 'DATABASE_URL, AUTH_SECRET, TOTP_ENCRYPTION_KEY, BACKUP_ENCRYPTION_KEY, Stripe Keys',
+        },
+        'ai-agent-framework': {
+            'path': '/home/cmdshadow/agents',
+            'stack': 'Python Agent Framework',
+            'attack_surface': [
+                'AI-Provider-Chain (Codex → Claude CLI Subprocesses)',
+                'Redis Pub/Sub Event-Subscriber',
+                'PostgreSQL NOTIFY Listener',
+            ],
+            'critical_files': [
+                'core/ai/',
+                'run.sh',
+                'projects/*/config.yaml',
+            ],
+            'services': 'systemd: guildscout-feedback-agent, zerodox-support-agent, seo-agent',
+            'auth': 'OAuth Token (OpenAI), Setup-Token (Anthropic)',
+            'secrets': '.env pro Projekt, OAuth-Tokens in auth-profiles.json',
+        },
+    }
+
+    async def _sync_project_security_profiles(self):
+        """Schreibt Security-Profile der Projekte in die Knowledge-DB.
+
+        Wird beim Bot-Start und vor Sessions aufgerufen. Gibt dem Analyst
+        strukturiertes Wissen ueber Angriffsoberflaechen, kritische Dateien
+        und Auth-Mechanismen jedes Projekts.
+        """
+        try:
+            for name, profile in self.PROJECT_SECURITY_PROFILES.items():
+                attack_surface = '; '.join(profile['attack_surface'])
+                critical = ', '.join(profile['critical_files'][:5])
+
+                content = (
+                    f"Stack: {profile['stack']}. "
+                    f"Angriffsoberflaeche: {attack_surface}. "
+                    f"Auth: {profile['auth']}. "
+                    f"Kritische Dateien: {critical}. "
+                    f"Services: {profile['services']}. "
+                    f"Secrets: {profile['secrets']}."
+                )
+
+                await self.db.upsert_knowledge(
+                    category='project_security',
+                    subject=f'{name}_security_profile',
+                    content=content,
+                    confidence=0.95,
+                )
+
+            logger.info("Security-Profile fuer %d Projekte in DB synchronisiert", len(self.PROJECT_SECURITY_PROFILES))
+
+        except Exception as e:
+            logger.warning("Security-Profile-Sync fehlgeschlagen: %s", e)
+
+    # ─────────────────────────────────────────────────────────────────
+    # Selbstkontrolle: Fix-Verifikation + Quality + Coverage + Decay
+    # ─────────────────────────────────────────────────────────────────
+
+    async def _verify_recent_fixes(self):
+        """Prueft ob kuerzlich gemachte Fixes noch aktiv sind.
+
+        Wird VOR jeder Session aufgerufen. Holt bis zu 10 unverified
+        Fixes der letzten 14 Tage und fuehrt einfache Checks durch.
+        Regressierte Fixes → Finding re-open + Discord-Alert.
+        """
+        try:
+            unverified = await self.db.get_unverified_fixes(days=14, limit=10)
+            if not unverified:
+                return
+
+            logger.info("Verifiziere %d kuerzliche Fixes...", len(unverified))
+            regressions = 0
+
+            for fix in unverified:
+                still_valid = True
+                check_method = 'existence_check'
+                regression_details = None
+
+                # Pruefen ob das Finding noch relevant ist
+                # Strategie: Datei-Existenz + Service-Status fuer betroffene Bereiche
+                category = fix.get('category', '')
+                project = fix.get('affected_project', '')
+                files = fix.get('affected_files') or []
+
+                try:
+                    if category in ('firewall', 'network'):
+                        # UFW-Regel pruefen
+                        proc = await asyncio.create_subprocess_exec(
+                            'sudo', 'ufw', 'status',
+                            stdout=asyncio.subprocess.PIPE,
+                            stderr=asyncio.subprocess.PIPE,
+                        )
+                        stdout, _ = await asyncio.wait_for(proc.communicate(), timeout=5)
+                        check_method = 'ufw status'
+                        # Einfacher Check: UFW muss aktiv sein
+                        if b'Status: active' not in stdout:
+                            still_valid = False
+                            regression_details = 'UFW ist nicht mehr aktiv'
+
+                    elif category == 'docker':
+                        # Docker-Container muessen laufen
+                        proc = await asyncio.create_subprocess_exec(
+                            'docker', 'ps', '--format', '{{.Names}}:{{.Status}}',
+                            stdout=asyncio.subprocess.PIPE,
+                            stderr=asyncio.subprocess.PIPE,
+                        )
+                        stdout, _ = await asyncio.wait_for(proc.communicate(), timeout=10)
+                        check_method = 'docker ps'
+
+                    elif category == 'permissions' and files:
+                        # Datei-Berechtigungen pruefen
+                        import os as _os
+                        for f in files[:3]:
+                            if _os.path.exists(f):
+                                mode = oct(_os.stat(f).st_mode)[-3:]
+                                # Warnung wenn Datei world-readable geworden ist
+                                if mode.endswith('4') or mode.endswith('6'):
+                                    if any(s in f for s in ['.env', 'credential', 'secret', 'key']):
+                                        still_valid = False
+                                        regression_details = f'{f} ist world-readable ({mode})'
+                                        break
+                        check_method = 'file permission check'
+
+                    elif category in ('config', 'ssh'):
+                        # SSH-Service muss laufen
+                        proc = await asyncio.create_subprocess_exec(
+                            'systemctl', 'is-active', 'sshd',
+                            stdout=asyncio.subprocess.PIPE,
+                            stderr=asyncio.subprocess.PIPE,
+                        )
+                        stdout, _ = await asyncio.wait_for(proc.communicate(), timeout=5)
+                        check_method = 'systemctl is-active sshd'
+                        if b'active' not in stdout:
+                            still_valid = False
+                            regression_details = 'sshd ist nicht aktiv'
+
+                    else:
+                        # Generischer Check: Finding-Dateien existieren noch
+                        check_method = 'file_existence'
+
+                except asyncio.TimeoutError:
+                    check_method = 'timeout'
+                    logger.debug("Verifikation Timeout fuer Fix #%d", fix['id'])
+                    continue
+                except Exception as e:
+                    logger.debug("Verifikation Fehler fuer Fix #%d: %s", fix['id'], e)
+                    continue
+
+                # Ergebnis speichern
+                session_id = self._current_session_id or 0
+                await self.db.record_verification(
+                    fix_attempt_id=fix['id'],
+                    session_id=session_id,
+                    still_valid=still_valid,
+                    check_method=check_method,
+                    regression_details=regression_details,
+                )
+
+                if not still_valid:
+                    regressions += 1
+                    # Finding re-open
+                    await self.db.reopen_finding(
+                        fix['finding_id'],
+                        f"Regression erkannt: {regression_details}",
+                    )
+                    logger.warning(
+                        "REGRESSION: Fix #%d fuer Finding #%d (%s) haelt nicht mehr: %s",
+                        fix['id'], fix['finding_id'], fix.get('finding_title', '?'),
+                        regression_details,
+                    )
+
+            if regressions > 0:
+                await self._notify_regressions(regressions)
+                # Pattern lernen
+                await self.db.add_pattern(
+                    pattern_type='fix_regression',
+                    description=f'{regressions} Fix(es) regressiert bei Verifikation',
+                    example=f'Session am {datetime.now(timezone.utc).date()}',
+                )
+
+            logger.info(
+                "Fix-Verifikation: %d geprueft, %d Regressionen",
+                len(unverified), regressions,
+            )
+
+        except Exception as e:
+            logger.warning("Fix-Verifikation fehlgeschlagen: %s", e)
+
+    async def _notify_regressions(self, count: int):
+        """Discord-Alert bei Fix-Regressionen."""
+        try:
+            channel_id = self.config.critical_channel if hasattr(self.config, 'critical_channel') else None
+            if not channel_id:
+                channel_id = self.bot.config.get_channel_for_alert('analyst') if self.bot else None
+            if not channel_id or not self.bot:
+                return
+            channel = self.bot.get_channel(int(channel_id))
+            if channel:
+                embed = discord.Embed(
+                    title=f"⚠️ {count} Fix-Regression(en) erkannt",
+                    description=(
+                        f"Bei der Verifikation wurden {count} Fixes gefunden die nicht mehr greifen.\n"
+                        f"Betroffene Findings wurden re-opened und werden in der naechsten Fix-Session bearbeitet."
+                    ),
+                    color=0xe67e22,
+                    timestamp=datetime.now(timezone.utc),
+                )
+                await channel.send(embed=embed)
+        except Exception:
+            pass
+
+    def _get_session_tokens(self) -> int:
+        """Token-Verbrauch seit Session-Start berechnen."""
+        try:
+            current = self.ai_engine._daily_tokens_used if self.ai_engine else 0
+            return max(0, current - self._session_tokens_start)
+        except Exception:
+            return 0
+
+    def _mark_token_start(self):
+        """Token-Counter vor Session-Start merken."""
+        try:
+            self._session_tokens_start = self.ai_engine._daily_tokens_used if self.ai_engine else 0
+        except Exception:
+            self._session_tokens_start = 0
+
+    async def _pre_session_maintenance(self):
+        """Alle Pre-Session Tasks ausfuehren.
+
+        Buendelt alle Wartungsaufgaben die vor jeder Session laufen:
+        1. Projekt-Security-Profile in DB
+        2. Git-Activity in DB synchronisieren
+        3. Kuerzliche Fixes verifizieren
+        4. Knowledge-Confidence abschwaechen
+        5. Cross-Agent-Knowledge synchronisieren
+        """
+        await self._sync_project_security_profiles()
+        await self._sync_git_activity_to_db()
+        await self._verify_recent_fixes()
+        await self.db.decay_knowledge_confidence()
+        await self._sync_cross_agent_knowledge()
+
+    async def _sync_cross_agent_knowledge(self):
+        """Schreibt sicherheitsrelevante Erkenntnisse in die agent_learning DB.
+
+        Andere Agents (SEO, Feedback) koennen diese Daten nutzen um
+        ihre Arbeit besser zu koordinieren.
+        """
+        try:
+            from integrations.patch_notes_learning import PatchNotesLearning
+            learning = PatchNotesLearning()
+            await learning.connect()
+
+            # Offene Critical/High Findings pro Projekt → andere Agents wissen Bescheid
+            critical = await self.db.pool.fetch(
+                """SELECT affected_project, COUNT(*) as cnt, severity
+                   FROM findings
+                   WHERE status = 'open' AND severity IN ('critical', 'high')
+                   GROUP BY affected_project, severity
+                   ORDER BY cnt DESC"""
+            )
+
+            for r in critical:
+                project = r['affected_project'] or 'infrastructure'
+                content = (
+                    f"{r['cnt']} offene {r['severity'].upper()}-Findings. "
+                    f"Vorsicht bei Deployments/Fixes in diesem Projekt."
+                )
+                await learning.pool.execute(
+                    """INSERT INTO agent_knowledge
+                       (agent, category, subject, content, confidence, updated_at)
+                       VALUES ('security_analyst', 'security_alerts', $1, $2, 0.9, NOW())
+                       ON CONFLICT (agent, category, subject)
+                       DO UPDATE SET content = $2, confidence = 0.9, updated_at = NOW()""",
+                    f'{project}_open_criticals', content,
+                )
+
+            await learning.close()
+        except Exception as e:
+            logger.debug("Cross-Agent-Knowledge Sync fehlgeschlagen: %s", e)
 
     # ─────────────────────────────────────────────────────────────────
     # Lifecycle
@@ -230,14 +660,29 @@ class SecurityAnalyst:
                     await asyncio.sleep(MAIN_LOOP_INTERVAL)
                     continue
 
-                # Session starten wenn: User idle + Tages-Limit nicht erreicht + keine laufende Session
+                # Session starten wenn: User idle + Limit nicht erreicht + keine laufende Session
+                # Dynamisches Limit: Workload bestimmt max_sessions
                 if (
                     not user_active
-                    and self._sessions_today < self.max_sessions_per_day
                     and self._current_session_id is None
                 ):
-                    logger.info("User ist idle und Session-Limit nicht erreicht — starte Analyse")
-                    await self._run_session()
+                    # Dynamisches Session-Limit berechnen
+                    try:
+                        fixable = await self.db.get_fixable_findings()
+                        plan = self._plan_session(len(fixable))
+                        effective_limit = min(
+                            plan['max_sessions'],
+                            self.max_sessions_per_day + plan['max_sessions'] - 1,
+                        )
+                    except Exception:
+                        effective_limit = self.max_sessions_per_day
+
+                    if self._sessions_today < effective_limit:
+                        logger.info(
+                            "User idle, Sessions %d/%d — starte Analyse",
+                            self._sessions_today, effective_limit,
+                        )
+                        await self._run_session()
 
             except asyncio.CancelledError:
                 logger.info("Main-Loop abgebrochen")
@@ -271,21 +716,96 @@ class SecurityAnalyst:
         async with self._session_lock:
             await self._run_session_inner(trigger_type='idle_detected')
 
+    def _plan_session(self, open_count: int) -> dict:
+        """Intelligenter Session-Planner — entscheidet Modus und Intensitaet.
+
+        Denkt wie ein Agent: Viel Arbeit → fokussiert fixen.
+        Wenig Arbeit → kurz scannen. Nichts offen → nur Maintenance.
+
+        Args:
+            open_count: Anzahl offener Findings
+
+        Returns:
+            Dict mit mode, max_sessions, scan, fix, reason
+        """
+        if open_count >= WORKLOAD_THRESHOLDS['heavy']:
+            return {
+                'mode': 'fix_only',
+                'max_sessions': 3,
+                'scan': False,
+                'fix': True,
+                'reason': f'{open_count} offene Findings — fokussiert fixen',
+            }
+        elif open_count >= WORKLOAD_THRESHOLDS['normal']:
+            return {
+                'mode': 'full_scan',
+                'max_sessions': 2,
+                'scan': True,
+                'fix': True,
+                'reason': f'{open_count} offene Findings — Scan + Fix',
+            }
+        elif open_count >= WORKLOAD_THRESHOLDS['light']:
+            return {
+                'mode': 'quick_scan',
+                'max_sessions': 1,
+                'scan': True,
+                'fix': True,
+                'reason': f'{open_count} offene Findings — Quickcheck + Fix',
+            }
+        else:
+            # 0 Findings — Maintenance oder seltener Full-Scan
+            # Full-Scan nur wenn letzte Session >3 Tage her
+            return {
+                'mode': 'maintenance',
+                'max_sessions': 1,
+                'scan': False,
+                'fix': False,
+                'reason': 'Alles clean — nur Maintenance',
+            }
+
     async def _run_session_inner(self, trigger_type: str = 'idle_detected'):
-        """Interne Session-Logik — entscheidet autonom ob Scan oder Fix nötig ist."""
+        """Interne Session-Logik — plant und fuehrt die optimale Session durch."""
         session_id = None
         try:
-            # ── Schritt 1: Backlog checken — was liegt an? ──
+            # ── Schritt 0: Pre-Session Maintenance ──
+            self._mark_token_start()
+            await self._pre_session_maintenance()
+
+            # ── Schritt 1: Backlog checken + Session planen ──
             fixable = await self.db.get_fixable_findings()
             open_count = len(fixable)
+            plan = self._plan_session(open_count)
 
-            # ── Schritt 2: Entscheidung — Scan oder Fix? ──
-            if open_count >= 20:
-                # Viel Backlog → kein neuer Scan, direkt fixen
-                logger.info(
-                    "Backlog: %d offene Findings → überspringe Scan, starte Fix-Phase direkt",
-                    open_count,
-                )
+            # Dynamisches Session-Limit anpassen
+            effective_max = min(plan['max_sessions'], self.max_sessions_per_day + plan['max_sessions'] - 1)
+            mode_config = SESSION_MODES[plan['mode']]
+
+            logger.info(
+                "Session-Plan: %s (Backlog: %d, Max-Sessions: %d, Reason: %s)",
+                plan['mode'], open_count, effective_max, plan['reason'],
+            )
+
+            # ── Schritt 2: Maintenance-Modus — kein Scan, kein Fix ──
+            if plan['mode'] == 'maintenance':
+                # Pruefen ob ein Full-Scan ueberfaellig ist
+                last_session = await self.db.get_last_session()
+                days_since_scan = 99
+                if last_session and last_session.get('ended_at'):
+                    days_since_scan = (datetime.now(timezone.utc) - last_session['ended_at']).days
+
+                if days_since_scan >= 3:
+                    # Laenger als 3 Tage kein Scan → doch Full-Scan
+                    plan['mode'] = 'full_scan'
+                    plan['scan'] = True
+                    plan['reason'] = f'Letzter Scan vor {days_since_scan} Tagen — ueberfaellig'
+                    mode_config = SESSION_MODES['full_scan']
+                    logger.info("Maintenance → Full-Scan hochgestuft (letzter Scan: %d Tage)", days_since_scan)
+                else:
+                    logger.info("Maintenance-Modus: Alles clean, letzter Scan vor %d Tagen — ueberspringe", days_since_scan)
+                    return
+
+            # ── Schritt 3: Fix-Only Modus ──
+            if plan['mode'] == 'fix_only':
                 session_id = await self.db.start_session(trigger_type='fix_backlog')
                 self._current_session_id = session_id
                 self._sessions_today += 1
@@ -294,9 +814,9 @@ class SecurityAnalyst:
 
                 await self.db.end_session(
                     session_id=session_id,
-                    summary=f"Fix-Session: {open_count} Findings im Backlog bearbeitet",
+                    summary=f"Fix-Session ({plan['reason']}): {open_count} Findings bearbeitet",
                     topics=['backlog_fix'],
-                    tokens_used=0,
+                    tokens_used=self._get_session_tokens(),
                     model=self.claude_model,
                     findings_count=0,
                     auto_fixes=0,
@@ -305,33 +825,48 @@ class SecurityAnalyst:
                 self._consecutive_failures = 0
                 return
 
-            # ── Schritt 3: Wenig Backlog → Scan + Fix ──
+            # ── Schritt 4: Scan (full oder quick) + optional Fix ──
             session_id = await self.db.start_session(trigger_type=trigger_type)
             self._current_session_id = session_id
             self._sessions_today += 1
 
-            if open_count > 0:
-                logger.info("Backlog: %d offene Findings → Scan + Fix", open_count)
-            else:
-                logger.info("Backlog leer → voller Scan")
+            logger.info(
+                "%s-Session startet (Timeout: %ds, Max-Turns: %d)",
+                plan['mode'], mode_config[0], mode_config[1],
+            )
 
             await self._notify_session_start(session_id, mode='scan')
 
             # Health-Snapshot VOR der Analyse
             health_before = await self._take_health_snapshot(session_id)
 
-            # AI-Kontext aus DB zusammenstellen + offene Findings laden
+            # AI-Kontext aus DB zusammenstellen + offene Findings + Scan-Plan
             knowledge_context = await self.db.build_ai_context()
             open_findings = await self.db.get_open_findings_summary()
             open_findings_text = "\n".join(
                 f"- [{f['severity'].upper()}] {f['title']}" for f in open_findings[:20]
             ) if open_findings else "(keine offenen Findings)"
 
+            # Datengetriebenen Scan-Plan erstellen
+            scan_plan = await self.db.build_scan_plan()
+
             context_section = ANALYST_CONTEXT_TEMPLATE.format(
                 knowledge_context=knowledge_context,
                 open_findings=open_findings_text,
+                scan_plan=scan_plan,
             )
             prompt = ANALYST_SYSTEM_PROMPT + "\n\n" + context_section
+
+            # Bei Quick-Scan: Fokus-Anweisung anhaengen
+            if plan['mode'] == 'quick_scan':
+                prompt += (
+                    "\n\n## QUICK-SCAN MODUS\n"
+                    "Du hast weniger Zeit als normal. Fokussiere dich auf:\n"
+                    "1. Bereiche die sich seit dem letzten Scan geaendert haben (siehe project_activity)\n"
+                    "2. Bereiche aus den Scan-Luecken (oben gelistet)\n"
+                    "3. Critical/High Severity zuerst\n"
+                    "Ueberspringe Low/Info und Bereiche die kuerzlich gecheckt wurden.\n"
+                )
 
             # Nochmal pruefen ob User immer noch idle ist (nur bei auto-trigger)
             if trigger_type == 'idle_detected' and await self.activity_monitor.is_user_active():
@@ -344,15 +879,17 @@ class SecurityAnalyst:
                 self._sessions_today -= 1
                 return
 
-            # Scan-Session starten
+            # Scan-Session starten (Timeout/Turns aus Session-Plan)
+            scan_timeout = mode_config[0]
+            scan_max_turns = mode_config[1]
             logger.info(
-                "Scan-Session wird gestartet (Codex: %s, Fallback: %s, Timeout: %ds)",
-                self.codex_model, self.claude_model, SESSION_TIMEOUT,
+                "Scan-Session wird gestartet (Codex: %s, Fallback: %s, Timeout: %ds, Turns: %d)",
+                self.codex_model, self.claude_model, scan_timeout, scan_max_turns,
             )
             result = await self.ai_engine.run_analyst_session(
                 prompt=prompt,
-                timeout=SESSION_TIMEOUT,
-                max_turns=SESSION_MAX_TURNS,
+                timeout=scan_timeout,
+                max_turns=scan_max_turns,
                 codex_model=self.codex_model,
                 claude_model=self.claude_model,
             )
@@ -378,6 +915,24 @@ class SecurityAnalyst:
                 )
                 await self._process_results(session_id, result, health_ok, model_used)
 
+                # Learning-Notification nach Scan
+                notifier = getattr(self.bot, 'learning_notifier', None) if self.bot else None
+                if notifier:
+                    try:
+                        findings = result.get('findings', [])
+                        areas = result.get('areas_checked', [])
+                        await notifier.notify_analyst_session(
+                            session_id=session_id,
+                            mode=plan.get('mode', 'full_scan'),
+                            findings_count=len(findings),
+                            fixed_count=0,
+                            pr_count=0,
+                            tokens_used=self._get_session_tokens(),
+                            coverage_areas=len(areas),
+                        )
+                    except Exception:
+                        pass
+
                 # Phase 2: Fix-Session — offene Findings abarbeiten
                 await self._run_fix_phase(session_id)
             else:
@@ -390,7 +945,7 @@ class SecurityAnalyst:
                     session_id=session_id,
                     summary=f"Session ohne Ergebnis (Fehler #{self._consecutive_failures})",
                     topics=[],
-                    tokens_used=0,
+                    tokens_used=self._get_session_tokens(),
                     model=self.codex_model,
                     findings_count=0,
                     auto_fixes=0,
@@ -417,7 +972,7 @@ class SecurityAnalyst:
                         session_id=session_id,
                         summary=f"Session mit Fehler beendet: {str(e)[:200]}",
                         topics=[],
-                        tokens_used=0,
+                        tokens_used=self._get_session_tokens(),
                         model=self.codex_model,
                         findings_count=0,
                         auto_fixes=0,
@@ -568,22 +1123,58 @@ class SecurityAnalyst:
 
             logger.info("Fix-Phase: %d Findings zum Abarbeiten", len(fixable))
 
-            # Findings-Liste für den Prompt formatieren
+            # Findings-Liste fuer den Prompt formatieren — inkl. vorheriger Fix-Versuche
             findings_text = []
             for f in fixable:
                 files = ', '.join(f.get('affected_files') or []) or '(keine Dateien)'
                 issue_url = f.get('github_issue_url', '')
                 issue_info = f" (Issue: {issue_url})" if issue_url else ''
+
+                # Vorherige Fix-Versuche fuer dieses Finding laden
+                prior_attempts = ''
+                try:
+                    attempts = await self.db.pool.fetch(
+                        """SELECT approach, result, error_message, created_at
+                           FROM fix_attempts
+                           WHERE finding_id = $1
+                           ORDER BY created_at DESC LIMIT 3""",
+                        f['id'],
+                    )
+                    if attempts:
+                        lines = []
+                        for a in attempts:
+                            icon = "✅" if a['result'] == 'success' else "❌"
+                            err = f" — {a['error_message'][:80]}" if a['error_message'] else ""
+                            lines.append(f"  {icon} {a['approach'][:100]}{err}")
+                        prior_attempts = (
+                            "\n**Vorherige Versuche (waehle einen ANDEREN Ansatz!):**\n"
+                            + "\n".join(lines) + "\n"
+                        )
+                except Exception:
+                    pass
+
                 findings_text.append(
                     f"### Finding #{f['id']} [{f['severity'].upper()}] — {f['category']}\n"
                     f"**{f['title']}**\n"
                     f"{f['description']}\n"
-                    f"Projekt: {f.get('affected_project', '?')} | Dateien: {files}{issue_info}\n"
+                    f"Projekt: {f.get('affected_project', '?')} | Dateien: {files}{issue_info}"
+                    f"{prior_attempts}\n"
                 )
+
+            # Knowledge-Kontext aus DB laden — Fix-AI braucht das gelernte Wissen
+            knowledge_context = ''
+            try:
+                knowledge_context = await self.db.build_ai_context()
+            except Exception:
+                pass
 
             prompt = FIX_SESSION_PROMPT.format(
                 findings_list='\n'.join(findings_text),
             )
+
+            # Knowledge-Kontext NACH dem Fix-Prompt anhaengen (schlank)
+            if knowledge_context:
+                prompt += "\n\n## DEIN GELERNTES WISSEN\n\n" + knowledge_context
 
             # Discord-Notification: Fix-Phase startet
             await self._notify_fix_phase_start(len(fixable))
@@ -619,6 +1210,17 @@ class SecurityAnalyst:
 
                 if action == 'fixed':
                     await self.db.mark_finding_fixed(finding_id)
+                    # Fix-Versuch aufzeichnen (Learning Pipeline)
+                    try:
+                        await self.db.record_fix_attempt(
+                            finding_id=finding_id,
+                            session_id=scan_session_id,
+                            approach=details[:200] if details else 'direct fix',
+                            result='success',
+                            commands_used=r.get('commands'),
+                        )
+                    except Exception as rec_err:
+                        logger.debug("Fix-Attempt Recording fehlgeschlagen: %s", rec_err)
                     fixed_count += 1
                     logger.info("Finding #%d gefixt: %s", finding_id, details[:100])
                 elif action == 'pr_created':
@@ -631,8 +1233,31 @@ class SecurityAnalyst:
                         )
                     except Exception:
                         pass
+                    # Fix-Versuch als PR aufzeichnen
+                    try:
+                        await self.db.record_fix_attempt(
+                            finding_id=finding_id,
+                            session_id=scan_session_id,
+                            approach=f'PR erstellt: {details[:150]}',
+                            result='success',
+                        )
+                    except Exception:
+                        pass
                     pr_count += 1
                     logger.info("Finding #%d PR erstellt: %s", finding_id, details[:100])
+                elif action == 'failed':
+                    # Fehlgeschlagener Fix aufzeichnen (lernen!)
+                    try:
+                        await self.db.record_fix_attempt(
+                            finding_id=finding_id,
+                            session_id=scan_session_id,
+                            approach=details[:200] if details else 'unknown',
+                            result='failure',
+                            error_message=r.get('error', ''),
+                        )
+                    except Exception:
+                        pass
+                    logger.warning("Finding #%d Fix fehlgeschlagen: %s", finding_id, details[:100])
 
             logger.info(
                 "Fix-Phase abgeschlossen: %d direkt gefixt, %d PRs erstellt (von %d Findings)",
@@ -643,6 +1268,21 @@ class SecurityAnalyst:
             await self._notify_fix_phase_complete(
                 fixed_count, pr_count, len(fixable), fix_result.get('summary', ''),
             )
+
+            # Learning-Notification
+            notifier = getattr(self.bot, 'learning_notifier', None) if self.bot else None
+            if notifier:
+                try:
+                    await notifier.notify_analyst_session(
+                        session_id=scan_session_id,
+                        mode='fix_only',
+                        findings_count=0,
+                        fixed_count=fixed_count,
+                        pr_count=pr_count,
+                        tokens_used=self._get_session_tokens(),
+                    )
+                except Exception:
+                    pass
 
         except Exception as e:
             logger.error("Fix-Phase Fehler: %s", e, exc_info=True)
@@ -793,12 +1433,43 @@ class SecurityAnalyst:
             except Exception as e:
                 logger.error("Finding-Verarbeitung fehlgeschlagen: %s", e)
 
+        # ── Finding-Quality bewerten (Learning Pipeline) ──
+        finding_assessments = result.get('finding_assessments', [])
+        for fa in finding_assessments:
+            try:
+                fid = int(fa.get('finding_id', 0))
+                if fid > 0:
+                    await self.db.assess_finding_quality(
+                        finding_id=fid,
+                        is_actionable=fa.get('is_actionable', True),
+                        is_false_positive=fa.get('is_false_positive', False),
+                        false_positive_reason=fa.get('false_positive_reason'),
+                        discovery_method=fa.get('discovery_method'),
+                        confidence_score=fa.get('confidence', 0.5),
+                    )
+            except Exception as qa_err:
+                logger.debug("Finding-Quality-Assessment fehlgeschlagen: %s", qa_err)
+
+        # ── Scan-Coverage aufzeichnen (Learning Pipeline) ──
+        areas_checked = result.get('areas_checked', [])
+        areas_deferred = result.get('areas_deferred', [])
+        if areas_checked or areas_deferred:
+            coverage_data = []
+            for area in areas_checked:
+                coverage_data.append({'area': area, 'checked': True, 'depth': 'basic'})
+            for area in areas_deferred:
+                coverage_data.append({'area': area, 'checked': False, 'depth': 'skipped'})
+            try:
+                await self.db.record_scan_coverage(session_id, coverage_data)
+            except Exception as cov_err:
+                logger.debug("Scan-Coverage Recording fehlgeschlagen: %s", cov_err)
+
         # Session in DB abschliessen
         await self.db.end_session(
             session_id=session_id,
             summary=summary,
             topics=topics,
-            tokens_used=0,  # Token-Zaehlung kommt spaeter
+            tokens_used=self._get_session_tokens(),
             model=model_used,
             findings_count=len(findings),
             auto_fixes=auto_fixes,
@@ -924,6 +1595,28 @@ class SecurityAnalyst:
         except Exception:
             resources['memory'] = 'unknown'
 
+        # Port-Bindings pruefen (geschuetzte Ports)
+        port_bindings = {}
+        try:
+            proc = await asyncio.create_subprocess_exec(
+                'ss', '-tlnp',
+                stdout=asyncio.subprocess.PIPE,
+                stderr=asyncio.subprocess.PIPE,
+            )
+            stdout, _ = await asyncio.wait_for(proc.communicate(), timeout=5)
+            for line in stdout.decode().strip().split('\n'):
+                for port in PROTECTED_PORT_BINDINGS:
+                    if f':{port}' in line:
+                        # Bind-Adresse extrahieren (z.B. "0.0.0.0:8766" oder "127.0.0.1:8766")
+                        parts = line.split()
+                        for part in parts:
+                            if f':{port}' in part:
+                                bind_addr = part.rsplit(':', 1)[0]
+                                port_bindings[str(port)] = bind_addr
+                                break
+        except Exception as e:
+            logger.warning("Port-Binding-Check fehlgeschlagen: %s", e)
+
         # In DB speichern
         await self.db.save_health_snapshot(
             session_id=session_id,
@@ -936,6 +1629,7 @@ class SecurityAnalyst:
             'containers': containers,
             'services': services,
             'resources': resources,
+            'port_bindings': port_bindings,
         }
 
     def _compare_health(self, before: Dict, after: Dict) -> bool:
@@ -977,6 +1671,25 @@ class SecurityAnalyst:
                         name, status_after,
                     )
                     all_ok = False
+
+        # Port-Bindings pruefen: Geschuetzte Ports muessen auf 0.0.0.0 bleiben
+        after_bindings = after.get('port_bindings', {})
+        before_bindings = before.get('port_bindings', {})
+        for port_str, description in {str(p): d for p, d in PROTECTED_PORT_BINDINGS.items()}.items():
+            bind_after = after_bindings.get(port_str, '')
+            bind_before = before_bindings.get(port_str, '')
+            if bind_before == '0.0.0.0' and bind_after != '0.0.0.0' and bind_after:
+                logger.critical(
+                    "PORT-BINDING-REGRESSION: Port %s (%s) war 0.0.0.0, jetzt: %s "
+                    "— Docker-Container koennen Host nicht mehr erreichen!",
+                    port_str, description, bind_after,
+                )
+                all_ok = False
+            elif bind_after and bind_after != '0.0.0.0':
+                logger.warning(
+                    "Port %s (%s) bindet auf %s statt 0.0.0.0 — Docker-Zugriff moeglicherweise blockiert",
+                    port_str, description, bind_after,
+                )
 
         if all_ok:
             logger.info("Health-Check bestanden — alle Services stabil")
@@ -1273,6 +1986,70 @@ class SecurityAnalyst:
     # Manueller Scan
     # ─────────────────────────────────────────────────────────────────
 
+    async def trigger_event_scan(self, event_type: str, details: str = ""):
+        """Triggert einen Quick-Scan nach einem kritischen Security-Event.
+
+        Wird von Event-Watchern aufgerufen wenn CrowdSec/Fail2ban
+        kritische Aktivitaet melden. Ignoriert das Session-Limit
+        (maximal 1 Event-Scan pro 2 Stunden).
+        """
+        if self._session_lock.locked():
+            logger.debug("Event-Scan abgelehnt — Session laeuft")
+            return
+
+        # Rate-Limit: Max 1 Event-Scan pro 2 Stunden
+        import time as _time
+        cooldown_key = '_last_event_scan'
+        last_scan = getattr(self, cooldown_key, 0.0)
+        if _time.time() - last_scan < 7200:
+            logger.debug("Event-Scan Cooldown aktiv (letzter vor %.0f Min)", (_time.time() - last_scan) / 60)
+            return
+
+        logger.info("Event-getriggerter Quick-Scan: %s — %s", event_type, details[:100])
+        setattr(self, cooldown_key, _time.time())
+
+        async with self._session_lock:
+            session_id = await self.db.start_session(trigger_type=f'event:{event_type}')
+            self._current_session_id = session_id
+            self._mark_token_start()
+
+            try:
+                # Quick-Scan mit Fokus auf den Event-Bereich
+                focus_map = {
+                    'crowdsec': 'network',
+                    'fail2ban': 'ssh',
+                    'trivy': 'docker',
+                    'aide': 'permissions',
+                }
+                focus = focus_map.get(event_type, event_type)
+                result = await self.manual_scan(focus=focus)
+
+                await self.db.end_session(
+                    session_id=session_id,
+                    summary=f"Event-Scan: {event_type} — {details[:100]}",
+                    topics=[event_type, focus],
+                    tokens_used=self._get_session_tokens(),
+                    model=self.claude_model,
+                    findings_count=len(result.get('findings', [])) if result else 0,
+                    auto_fixes=0,
+                    issues_created=0,
+                )
+            except Exception as e:
+                logger.warning("Event-Scan fehlgeschlagen: %s", e)
+                try:
+                    await self.db.end_session(
+                        session_id=session_id,
+                        summary=f"Event-Scan fehlgeschlagen: {e}",
+                        topics=[event_type],
+                        tokens_used=self._get_session_tokens(),
+                        model=self.claude_model,
+                        findings_count=0, auto_fixes=0, issues_created=0,
+                    )
+                except Exception:
+                    pass
+            finally:
+                self._current_session_id = None
+
     async def manual_scan(self, focus: Optional[str] = None) -> Optional[Dict]:
         """Fuehrt einen manuellen Security-Scan durch
 
@@ -1330,9 +2107,11 @@ class SecurityAnalyst:
                     open_findings_text = "\n".join(
                         f"- [{f['severity'].upper()}] {f['title']}" for f in open_findings[:20]
                     ) if open_findings else "(keine offenen Findings)"
+                    scan_plan = await self.db.build_scan_plan()
                     context_section = ANALYST_CONTEXT_TEMPLATE.format(
                         knowledge_context=knowledge_context,
                         open_findings=open_findings_text,
+                        scan_plan=scan_plan,
                     )
                     prompt = ANALYST_SYSTEM_PROMPT + "\n\n" + context_section
 
@@ -1367,7 +2146,7 @@ class SecurityAnalyst:
                         session_id=session_id,
                         summary="Manueller Scan ohne Ergebnis",
                         topics=[],
-                        tokens_used=0,
+                        tokens_used=self._get_session_tokens(),
                         model=self.codex_model,
                         findings_count=0,
                         auto_fixes=0,
@@ -1386,7 +2165,7 @@ class SecurityAnalyst:
                         session_id=session_id,
                         summary=f"Manueller Scan fehlgeschlagen: {str(e)[:200]}",
                         topics=[],
-                        tokens_used=0,
+                        tokens_used=self._get_session_tokens(),
                         model=self.codex_model,
                         findings_count=0,
                         auto_fixes=0,
