@@ -1,8 +1,8 @@
 """
-Patch Notes Batcher — Sammelt kleine Patches und gibt sie gebündelt frei.
+Patch Notes Batcher — Sammelt ALLE Commits und gibt sie kontrolliert frei.
 
-Kleine Commits ohne Version-Bump werden gesammelt, bis ein Schwellenwert
-erreicht ist oder manuell freigegeben wird.
+Jeder Commit wird gesammelt, unabhängig von Version-Bumps oder Hotfixes.
+Release nur via: Cron (Sonntag), Notbremse (≥20 Commits), oder manuell.
 """
 
 import json
@@ -16,13 +16,12 @@ logger = logging.getLogger('shadowops')
 
 class PatchNotesBatcher:
     """
-    Sammelt kleine Patches und gibt sie als gebündelte Patch Notes frei.
+    Sammelt ALLE Commits und gibt sie kontrolliert frei.
 
     Regeln:
-    - Commits ohne Version-Bump (kein vX.Y.Z in Message) werden gesammelt
-    - Hotfixes (Commit-Message enthält 'hotfix' oder 'critical') werden sofort veröffentlicht
-    - Bei ≥ batch_threshold gesammelten Commits → automatisch freigeben
-    - Manuelles Freigeben jederzeit möglich
+    - ALLE Commits werden gesammelt (keine Ausnahmen)
+    - Release via Cron (wöchentlich), Notbremse (≥ emergency_threshold), oder manuell
+    - Manuelles Freigeben jederzeit via /release-notes
     """
 
     def __init__(self, data_dir: Path, batch_threshold: int = 8,
@@ -67,31 +66,13 @@ class PatchNotesBatcher:
 
     def should_batch(self, commits: list, project: str) -> bool:
         """
-        Prüfe ob diese Commits gesammelt werden sollen statt sofort veröffentlicht.
+        ALLE Commits werden gesammelt — keine Ausnahmen.
 
-        Regeln:
-        - Hotfixes/Critical/Security → NIE sammeln (sofort veröffentlichen)
-        - Version-Bumps (vX.Y.Z) → NIE sammeln (sofort veröffentlichen)
-        - Alles andere → IMMER sammeln (Release via Cron/manuell/Notbremse)
+        Release nur via Cron (Sonntag), Notbremse (≥20), oder manuell (/release-notes).
 
         Returns:
-            True wenn Commits gesammelt werden sollen
+            True (immer)
         """
-        import re
-
-        # Nur echte Hotfixes/Critical sofort — Security-Fixes werden gesammelt
-        for commit in commits:
-            msg = (commit.get('message', '') or '').lower()
-            if 'hotfix' in msg or 'critical' in msg:
-                return False
-
-        # Commits mit Version-Bump werden nie gesammelt
-        for commit in commits:
-            msg = commit.get('message', '')
-            if re.search(r'v?(?:ersion|elease)?\s*(?<![0-9.])[0-9]{1,3}\.[0-9]{1,3}\.[0-9]{1,4}(?!\.[0-9])', msg, re.IGNORECASE):
-                return False
-
-        # Alles andere: IMMER sammeln
         return True
 
     def add_commits(self, project: str, commits: list) -> Dict:
