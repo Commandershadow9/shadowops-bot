@@ -290,7 +290,7 @@ class Fail2banFixer:
             # Update jail.local (create if doesn't exist)
             jail_local = '/etc/fail2ban/jail.local'
 
-            # Read existing content
+            # Read existing content (644 = world-readable, open() reicht)
             if Path(jail_local).exists():
                 with open(jail_local, 'r') as f:
                     content = f.read()
@@ -303,7 +303,6 @@ class Fail2banFixer:
 
             if jail_section_exists:
                 # Update existing section
-                # This is simplified - in production would use configparser
                 content = re.sub(
                     rf'(maxretry\s*=\s*)\d+',
                     rf'maxretry = {new_maxretry}',
@@ -325,9 +324,25 @@ findtime = {new_findtime}
 """
                 content += new_section
 
-            # Write updated config
-            with open(jail_local, 'w') as f:
-                f.write(content)
+            # Write updated config via sudo (Datei gehört root:root)
+            # Temporäre Datei schreiben, dann via sudo an Ziel kopieren
+            import tempfile
+            with tempfile.NamedTemporaryFile(mode='w', suffix='.conf', delete=False) as tmp:
+                tmp.write(content)
+                tmp_path = tmp.name
+
+            write_result = await self.executor.execute(
+                f"cp {tmp_path} {jail_local} && rm -f {tmp_path}",
+                sudo=True,
+                timeout=10,
+            )
+            if not write_result.success:
+                # Aufräumen
+                Path(tmp_path).unlink(missing_ok=True)
+                return {
+                    'status': 'failed',
+                    'error': f'Could not write {jail_local}: {write_result.error_message}'
+                }
 
             logger.info(f"✅ Jail configuration updated: {jail_name}")
 
