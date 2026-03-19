@@ -466,6 +466,90 @@ class RecoveryMixin:
         percentage = int((current / total) * 100)
         return f"{bar} {percentage}%"
 
+    async def _deploy_after_fix(self, project_name: str, project_path: str) -> bool:
+        """Deployed ein Projekt nach erfolgreichem Fix via DeploymentManager.
+
+        Nutzt den bestehenden DeploymentManager des Bots für:
+        - git commit + push (falls nötig)
+        - post_deploy_command (Docker Build, systemctl restart, etc.)
+        - Health-Checks + Rollback bei Fehler
+
+        Sicherheit: Alle Befehle nutzen execFile-Stil (kein Shell-Injection),
+        deploy_command kommt aus admin-kontrollierter Config.
+        """
+        deployment_manager = getattr(self.bot, 'deployment_manager', None)
+        if not deployment_manager:
+            logger.warning("Kein DeploymentManager verfuegbar — Deploy uebersprungen")
+            return False
+
+        try:
+            import asyncio
+
+            # Prüfe ob es uncommittete Änderungen gibt
+            check = await asyncio.create_subprocess_exec(
+                "git", "diff", "--quiet",
+                cwd=project_path,
+                stdout=asyncio.subprocess.PIPE,
+                stderr=asyncio.subprocess.PIPE,
+            )
+            await check.communicate()
+
+            if check.returncode != 0:
+                # Es gibt Änderungen — committen und pushen
+                logger.info(f"Uncommittete Aenderungen fuer {project_name} — committe...")
+
+                add_proc = await asyncio.create_subprocess_exec(
+                    "git", "add", "-A",
+                    cwd=project_path,
+                    stdout=asyncio.subprocess.PIPE,
+                    stderr=asyncio.subprocess.PIPE,
+                )
+                await add_proc.communicate()
+
+                msg = (
+                    f"fix(security): Auto-Fix von ShadowOps Security Analyst\n\n"
+                    f"Automatisch angewendete Security-Fixes fuer {project_name}.\n"
+                    f"Verifiziert durch Post-Fix-Scan."
+                )
+                commit_proc = await asyncio.create_subprocess_exec(
+                    "git", "commit", "-m", msg,
+                    cwd=project_path,
+                    stdout=asyncio.subprocess.PIPE,
+                    stderr=asyncio.subprocess.PIPE,
+                )
+                await commit_proc.communicate()
+
+                push_proc = await asyncio.create_subprocess_exec(
+                    "git", "push",
+                    cwd=project_path,
+                    stdout=asyncio.subprocess.PIPE,
+                    stderr=asyncio.subprocess.PIPE,
+                )
+                push_out, push_err = await asyncio.wait_for(
+                    push_proc.communicate(), timeout=30,
+                )
+                if push_proc.returncode == 0:
+                    logger.info(f"Security-Fix committed und gepusht fuer {project_name}")
+                else:
+                    logger.warning(f"git push fehlgeschlagen: {push_err.decode()[:200]}")
+
+            # Deploy über DeploymentManager (git pull + post_deploy_command + health check)
+            result = await deployment_manager.deploy_project(project_name)
+
+            if result.get('success'):
+                logger.info(f"Deploy erfolgreich fuer {project_name}")
+                return True
+            elif result.get('skipped'):
+                logger.info(f"Deploy uebersprungen fuer {project_name} (handled by CI)")
+                return True
+            else:
+                logger.warning(f"Deploy fehlgeschlagen: {result.get('error', 'Unknown')}")
+                return False
+
+        except Exception as e:
+            logger.error(f"Deploy-Fehler fuer {project_name}: {e}", exc_info=True)
+            return False
+
     def get_status(self) -> Dict:
         """Status des Orchestrators"""
         return {

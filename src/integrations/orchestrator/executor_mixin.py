@@ -969,14 +969,34 @@ class ExecutorMixin:
 
         logger.info(f"✅ Verification erfolgreich für {project_name}")
 
-        # Phase 4: Success!
-        logger.info(f"🎉 Phase 4/4: Projekt {project_name} erfolgreich gefixt!")
+        # Phase 4: Deploy — Fixes live schalten
+        logger.info(f"🚀 Phase 4/5: Auto-Deploy für {project_name}...")
 
         if exec_message:
             exec_embed.set_field_at(
                 0,
                 name="📊 Status",
-                value=f"🐳 Project {project_idx}/{total_projects}: {project_name}\n\n✅ Phase 4/4: Erfolgreich abgeschlossen!",
+                value=f"🐳 Project {project_idx}/{total_projects}: {project_name}\n\n🚀 Phase 4/5: Deploy läuft...",
+                inline=False
+            )
+            await exec_message.edit(embed=exec_embed)
+
+        deploy_success = await self._deploy_after_fix(project_name, project_path)
+
+        if deploy_success:
+            logger.info(f"✅ Deploy erfolgreich für {project_name}")
+        else:
+            logger.warning(f"⚠️ Deploy fehlgeschlagen für {project_name} — Fixes sind lokal angewendet aber nicht live")
+
+        # Phase 5: Success!
+        logger.info(f"🎉 Phase 5/5: Projekt {project_name} erfolgreich gefixt und deployed!")
+
+        if exec_message:
+            deploy_status = "✅ Deployed" if deploy_success else "⚠️ Deploy ausstehend"
+            exec_embed.set_field_at(
+                0,
+                name="📊 Status",
+                value=f"🐳 Project {project_idx}/{total_projects}: {project_name}\n\n✅ Phase 5/5: Abgeschlossen! ({deploy_status})",
                 inline=False
             )
             await exec_message.edit(embed=exec_embed)
