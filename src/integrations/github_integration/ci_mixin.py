@@ -4,7 +4,6 @@ CI polling and deployment methods for GitHubIntegration.
 
 import asyncio
 import logging
-from datetime import datetime, timezone
 from typing import Dict, Optional
 
 import aiohttp
@@ -184,19 +183,8 @@ class CIMixin:
             # Self-Deploy: Kein "Started"-Embed (deployment_manager sendet nur 1 Success-Embed)
             is_self_deploy = (repo_name == 'shadowops-bot')
 
-            if not is_self_deploy:
-                channel = self.bot.get_channel(self.deployment_channel_id)
-                if channel:
-                    embed = discord.Embed(
-                        title="🚀 Deployment Started",
-                        description=f"Deploying **{repo_name}** from `{branch}@{commit_sha}`",
-                        color=discord.Color.blue(),
-                        timestamp=datetime.now(timezone.utc)
-                    )
-                    embed.add_field(name="Repository", value=repo_name, inline=True)
-                    embed.add_field(name="Branch", value=branch, inline=True)
-                    embed.add_field(name="Commit", value=commit_sha, inline=True)
-                    await channel.send(embed=embed)
+            # "Deployment Started" Embed wird vom deployment_manager gesendet
+            # (nicht hier, um Doppelmeldungen zu vermeiden)
 
             # Execute deployment
             result = await self.deployment_manager.deploy_project(repo_name, branch)
