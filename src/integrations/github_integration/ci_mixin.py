@@ -187,16 +187,14 @@ class CIMixin:
             # (nicht hier, um Doppelmeldungen zu vermeiden)
 
             # Execute deployment
+            # Alle Discord-Benachrichtigungen (Started, Updates, Success, Failed)
+            # werden vom deployment_manager gesendet — nicht hier doppeln
             result = await self.deployment_manager.deploy_project(repo_name, branch)
 
-            # Send result notification (Self-Deploy sendet sein eigenes Embed im deployment_manager)
-            if is_self_deploy:
-                pass  # Bereits vom deployment_manager gehandelt
-            elif result['success']:
-                await self._send_deployment_success(repo_name, branch, commit_sha, result)
+            if result['success']:
+                self.logger.info(f"✅ Deployment erfolgreich: {repo_name}")
             else:
-                await self._send_deployment_failure(repo_name, branch, commit_sha, result)
+                self.logger.warning(f"⚠️ Deployment fehlgeschlagen: {repo_name}")
 
         except Exception as e:
-            self.logger.error(f"❌ Deployment failed: {e}", exc_info=True)
-            await self._send_deployment_error(repo_name, branch, commit_sha, str(e))
+            self.logger.error(f"❌ Deployment Fehler: {e}", exc_info=True)

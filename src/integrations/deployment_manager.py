@@ -557,7 +557,8 @@ class DeploymentManager:
 
     async def _health_check(self, project: Dict) -> bool:
         """
-        Perform health check on deployed application
+        Perform health check on deployed application with retries.
+        Docker-Container (z.B. Next.js) brauchen 10-15s zum Starten.
 
         Args:
             project: Project configuration
@@ -568,18 +569,31 @@ class DeploymentManager:
         import aiohttp
 
         url = project['health_check_url']
+        max_retries = 5
+        retry_delay = 5  # Sekunden zwischen Versuchen
 
-        try:
-            async with aiohttp.ClientSession() as session:
-                async with session.get(
-                    url,
-                    timeout=aiohttp.ClientTimeout(total=self.health_check_timeout)
-                ) as response:
-                    return response.status == 200
+        for attempt in range(1, max_retries + 1):
+            try:
+                async with aiohttp.ClientSession() as session:
+                    async with session.get(
+                        url,
+                        timeout=aiohttp.ClientTimeout(total=self.health_check_timeout)
+                    ) as response:
+                        if response.status == 200:
+                            if attempt > 1:
+                                self.logger.info(f"✅ Health check passed (Versuch {attempt}/{max_retries})")
+                            return True
+                        else:
+                            self.logger.warning(f"⚠️ Health check: Status {response.status} (Versuch {attempt}/{max_retries})")
 
-        except Exception as e:
-            self.logger.warning(f"⚠️ Health check failed: {e}")
-            return False
+            except Exception as e:
+                self.logger.warning(f"⚠️ Health check fehlgeschlagen (Versuch {attempt}/{max_retries}): {e}")
+
+            if attempt < max_retries:
+                await asyncio.sleep(retry_delay)
+
+        self.logger.error(f"❌ Health check endgültig fehlgeschlagen nach {max_retries} Versuchen")
+        return False
 
     async def _rollback(self, project: Dict, backup_path: Path):
         """
