@@ -669,10 +669,18 @@ class ServerAssistant:
             review = await self.ai_service.get_ai_analysis(
                 prompt=prompt, context="", use_critical_model=False
             )
-            if review and review.strip().upper() != 'OK' and len(review) > 10:
-                await self._send_security_review(
-                    repo_name, security_files, review
-                )
+            if not review or len(review) <= 10:
+                return
+            # CLI-Fehler nicht als Review posten
+            review_lower = review.strip().lower()
+            if review_lower.upper() == 'OK':
+                return
+            if 'reached max turns' in review_lower or 'error:' in review_lower[:20]:
+                logger.warning(f"Push Security Review: CLI-Fehler ignoriert: {review[:100]}")
+                return
+            await self._send_security_review(
+                repo_name, security_files, review
+            )
         except Exception as e:
             logger.error(f"Push Security Review fehlgeschlagen: {e}")
 
