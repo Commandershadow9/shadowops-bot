@@ -362,11 +362,15 @@ class DeploymentManager:
                 'rsync', '-rlptD',
                 '--no-perms', '--no-group', '--no-owner',
                 '--exclude=.git',
+                '--exclude=.env',
+                '--exclude=.venv',
                 '--exclude=__pycache__',
                 '--exclude=*.pyc',
                 '--exclude=node_modules',
                 '--exclude=venv',
                 '--exclude=backups',
+                '--exclude=logs',
+                '--exclude=uploads',
                 str(project['path']) + '/',
                 str(backup_path) + '/'
             ]
@@ -379,7 +383,9 @@ class DeploymentManager:
 
             stdout, stderr = await process.communicate()
 
-            if process.returncode != 0:
+            # rsync exit code 23 = partial transfer (z.B. Permission Denied
+            # auf Docker-Container-Dateien). Für Backup akzeptabel.
+            if process.returncode not in (0, 23):
                 raise DeploymentError(f"Backup failed: {stderr.decode()}")
         else:
             self.logger.warning("⚠️ rsync not found, using Python copy for backup")
@@ -610,8 +616,17 @@ class DeploymentManager:
             # Restore from backup using rsync
             # --no-perms --no-group --no-owner: Avoid chgrp/chown errors when
             # files were originally owned by Docker container user
+            # WICHTIG: Gleiche Excludes wie beim Backup + .env/.venv!
+            # Ohne --exclude=.git würde --delete das Git-Repo löschen,
+            # weil .git NICHT im Backup enthalten ist (Vorfall 2026-03-20).
             cmd = [
                 'rsync', '-rlptD', '--delete',
+                '--exclude=.git',
+                '--exclude=.env',
+                '--exclude=.venv',
+                '--exclude=node_modules',
+                '--exclude=__pycache__',
+                '--exclude=backups',
                 '--no-perms', '--no-group', '--no-owner',
                 str(backup_path) + '/',
                 str(project['path']) + '/'
