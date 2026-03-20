@@ -41,25 +41,52 @@ class NotificationsMixin:
         patch_config = project_config.get('patch_notes', {})
         language = patch_config.get('language', 'de')
 
-        # === BATCHING CHECK (skip bei manuellen/Cron-Releases) ===
-        if not skip_batcher and hasattr(self, 'patch_notes_batcher') and self.patch_notes_batcher:
-            if self.patch_notes_batcher.should_batch(commits, repo_name):
-                result = self.patch_notes_batcher.add_commits(repo_name, commits)
+        # === GLOBALER SAFETY-CHECK: Mindestens 2 Commits für Patch Notes ===
+        min_commits_global = patch_config.get('min_commits', 2)
+        if len(commits) < min_commits_global:
+            self.logger.warning(
+                f"⛔ Patch Notes für {repo_name} blockiert: "
+                f"nur {len(commits)} Commit(s), Minimum ist {min_commits_global}. "
+                f"(skip_batcher={skip_batcher})"
+            )
+            return
 
-                if result['ready']:
-                    # Batch-Threshold erreicht — alle gesammelten Commits freigeben
-                    all_commits = self.patch_notes_batcher.release_batch(repo_name)
-                    if all_commits:
-                        self.logger.info(f"🚀 Batch-Release: {len(all_commits)} Commits")
-                        commits = all_commits
-                    # Weiter mit normaler Verarbeitung
-                else:
-                    # Noch nicht genug — nur loggen, KEIN Discord-Spam
-                    self.logger.info(
-                        f"📦 {result['total_pending']}/{self.patch_notes_batcher.batch_threshold} "
-                        f"Commits für {repo_name} gesammelt (kein Release)"
-                    )
-                    return
+        # === BATCHING CHECK (skip bei manuellen/Cron-Releases) ===
+        if not skip_batcher:
+            # Batcher holen: zuerst eigenes Attribut, dann Fallback vom Bot
+            batcher = getattr(self, 'patch_notes_batcher', None)
+            if not batcher:
+                batcher = getattr(self.bot, 'patch_notes_batcher', None)
+                if batcher:
+                    self.patch_notes_batcher = batcher
+                    self.logger.info("🔧 PatchNotesBatcher vom Bot wiederhergestellt")
+
+            if batcher:
+                if batcher.should_batch(commits, repo_name):
+                    result = batcher.add_commits(repo_name, commits)
+
+                    if result['ready']:
+                        # Batch-Threshold erreicht — alle gesammelten Commits freigeben
+                        all_commits = batcher.release_batch(repo_name)
+                        if all_commits:
+                            self.logger.info(f"🚀 Batch-Release: {len(all_commits)} Commits")
+                            commits = all_commits
+                        # Weiter mit normaler Verarbeitung
+                    else:
+                        # Noch nicht genug — nur loggen, KEIN Discord-Spam
+                        self.logger.info(
+                            f"📦 {result['total_pending']}/{batcher.batch_threshold} "
+                            f"Commits für {repo_name} gesammelt (kein Release)"
+                        )
+                        return
+            else:
+                # Safety-Net: Batcher nicht verfügbar → fail-closed (KEIN ungepufferter Release)
+                self.logger.warning(
+                    f"⚠️ PatchNotesBatcher nicht verfügbar! "
+                    f"{len(commits)} Commit(s) für {repo_name} übersprungen — "
+                    f"kein ungepufferter Release erlaubt."
+                )
+                return
 
         # === INTERNAL EMBED (Technical, for developers) - DEUTSCH ===
         commits_url = f"{repo_url}/commits/{branch}" if repo_url else None

@@ -211,6 +211,17 @@ class AdminCog(commands.Cog):
             count = info.get('count', 0)
             first = info.get('first_added', '')[:10]
 
+            # Minimum-Check: Mindestens 2 Commits für sinnvolle Patch Notes
+            min_commits = max(2, getattr(batcher, 'cron_min_commits', 3))
+            if count < min_commits:
+                await interaction.followup.send(
+                    f"⚠️ Nur **{count}** Commit(s) für **{project_key}** gesammelt.\n"
+                    f"Minimum für Release: **{min_commits}** Commits.\n"
+                    f"Warte auf weitere Commits oder nutze den wöchentlichen Cron.",
+                    ephemeral=True
+                )
+                return
+
             # Release durchführen
             commits = batcher.release_batch(project_key)
             if not commits:
