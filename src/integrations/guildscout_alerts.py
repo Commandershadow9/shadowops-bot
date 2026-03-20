@@ -81,8 +81,10 @@ class GuildScoutAlertsHandler:
 
         self.runner = web.AppRunner(self.app)
         await self.runner.setup()
+        # WICHTIG: 0.0.0.0 weil Docker-Container den Host über 172.17.0.1 erreichen
+        # Absicherung über UFW (nur 172.16.0.0/12) + HMAC-Signaturen
         self.site = web.TCPSite(
-            self.runner, '127.0.0.1', self.webhook_port,
+            self.runner, '0.0.0.0', self.webhook_port,
             reuse_address=True, reuse_port=True
         )
         await self.site.start()
