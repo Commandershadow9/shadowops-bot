@@ -74,7 +74,7 @@
 | `server_assistant.py` | Server Assistant (ersetzt Legacy Learning System) |
 | `changelog_db.py` | Zentrale Changelog-DB (SQLite, alle Projekte, Upsert + Paginierung) |
 | `content_sanitizer.py` | Security-Filter fuer Patch Notes (Pfade, IPs, Ports, Secrets) |
-| `patch_notes_batcher.py` | Sammelt ALLE Commits ohne Ausnahme. Release nur via Cron (Sonntag 20:00), manuell (/release-notes), oder Notbremse (≥20 Commits) |
+| `patch_notes_batcher.py` | Sammelt ALLE Commits ohne Ausnahme. Release nur via Cron (Sonntag 20:00), manuell (/release-notes mit min 3 Commits), oder Notbremse (≥20 Commits). Globaler min_commits Safety-Check (Default 2) blockiert Einzelcommit-Releases auf allen Pfaden |
 | `patch_notes_feedback.py` | Discord Feedback (Persistent Buttons: Like + Bewerten, Text-Modal) + Learning-DB Integration |
 | `patch_notes_learning.py` | Patch Notes Learning Pipeline (PostgreSQL agent_learning DB, Varianten-Gewichtung, Feedback-Loop) |
 | `patch_notes_web_exporter.py` | Web-Export (zentrale DB Upsert + File-Backup + optional HTTP POST). Frontend: shared-ui v0.2.0 Changelog-Komponenten |
@@ -264,3 +264,10 @@
 - **Cross-Guild-Support:** `bot.py` ueberspringt Auto-Channel-Creation wenn `update_channel_id` bereits gesetzt und Channel cross-guild erreichbar
 - **Interner Channel:** `_send_to_internal_customer_channel()` in `notifications_mixin.py` — postet Embed + `<@&role_id> Neues Update verfuegbar!` mit `AllowedMentions(roles=True)`
 - **Setup-Script:** `scripts/setup_zerodox_channels.py` (einmalig, nutzt ShadowOps Bot-Token via Discord REST API)
+
+### Patch Notes Safety — 3-Schichten-Schutz (20.03.2026)
+- **Vorfall 18.03.2026:** Batcher-Referenz ging verloren → 1-Commit Patch Notes fuer ZERODOX v2.9.2 (KI halluzinierte Features aus Doku-Commit)
+- **Schicht 1 — Globaler min_commits Check:** `_send_push_notification()` blockiert ALLE Pfade bei `< min_commits` (Default 2, konfigurierbar per Projekt via `patch_notes.min_commits`)
+- **Schicht 2 — Batcher Self-Healing + Fail-Closed:** Batcher wird bei fehlender Referenz vom Bot-Objekt wiederhergestellt. Ist er trotzdem None → Commits werden uebersprungen (kein ungepufferter Release)
+- **Schicht 3 — /release-notes Minimum:** Manueller Release erfordert mindestens `cron_min_commits` (Default 3) Commits
+- **Alle 4 Trigger-Pfade gesichert:** Webhook Push, Local Polling, Woechentlicher Cron, Manueller /release-notes
