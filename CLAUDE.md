@@ -95,6 +95,7 @@
 | `fixers/` | Tool-spezifische Fixer (trivy, crowdsec, fail2ban, aide) |
 | `ai_learning/` | Legacy AI Learning (DEAKTIVIERT — knowledge_db, knowledge_synthesizer, continuous_learning_agent) |
 | `analyst/` | Security Analyst (security_analyst, analyst_db, activity_monitor, prompts) — Full Learning Pipeline, Adaptive Sessions, Fix-Verifikation, Coverage-Tracking, Issue Quality-Gates (Mindest-Content, Dedup, Repo-Routing) |
+| `security_engine/` | Unified Security Engine v6 (engine, db, executor, reactive, deep_scan, proactive, learning_bridge, providers, registry, circuit_breaker, fixer_adapters, models) |
 
 ### Utils (`src/utils/`)
 | Datei | Zweck |
@@ -271,3 +272,14 @@
 - **Schicht 2 — Batcher Self-Healing + Fail-Closed:** Batcher wird bei fehlender Referenz vom Bot-Objekt wiederhergestellt. Ist er trotzdem None → Commits werden uebersprungen (kein ungepufferter Release)
 - **Schicht 3 — /release-notes Minimum:** Manueller Release erfordert mindestens `cron_min_commits` (Default 3) Commits
 - **Alle 4 Trigger-Pfade gesichert:** Webhook Push, Local Polling, Woechentlicher Cron, Manueller /release-notes
+
+### Security Engine v6 (seit 2026-03-24)
+- **Vorher:** 4 isolierte Systeme (EventWatcher, Orchestrator, Self-Healing, Analyst) mit 2 DB-Layern (psycopg2 + asyncpg)
+- **Nachher:** 1 SecurityEngine mit 3 Modi (Reactive, Proactive, DeepScan), 1 unified asyncpg DB, Phase-Type-System
+- **Phase-Types:** `recon` (read-only), `contain` (Sofort-Block), `fix` (Härten), `verify` (Prüfen), `monitor` (Nachbeobachtung)
+- **Provider-Chain:** NoOp-Detection -> Fixer-Adapter -> Fallback (kein hardcoded if/elif mehr)
+- **Fast-Path:** 1-2 Events werden direkt gefixt, kein KI-Plan
+- **Event-Claiming:** `remediation_status` Tabelle verhindert Doppel-Fixes zwischen Modi
+- **Cross-Agent Learning:** LearningBridge liest/schreibt agent_learning DB bidirektional
+- **Design-Doc:** `docs/plans/2026-03-24-security-engine-v6.md`
+- **Architektur-Doc:** `docs/security-engine-v6-overview.md`
