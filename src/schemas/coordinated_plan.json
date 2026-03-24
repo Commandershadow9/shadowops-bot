@@ -7,10 +7,16 @@
     "requires_restart": { "type": "boolean" },
     "phases": {
       "type": "array",
+      "maxItems": 4,
       "items": {
         "type": "object",
         "properties": {
           "name": { "type": "string" },
+          "type": {
+            "type": "string",
+            "enum": ["recon", "contain", "fix", "verify", "monitor"],
+            "default": "fix"
+          },
           "description": { "type": "string" },
           "steps": {
             "type": "array",
@@ -18,7 +24,7 @@
           },
           "estimated_minutes": { "type": "integer" }
         },
-        "required": ["name", "description", "steps", "estimated_minutes"],
+        "required": ["name", "type", "description", "steps", "estimated_minutes"],
         "additionalProperties": false
       }
     },
