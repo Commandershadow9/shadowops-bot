@@ -213,6 +213,9 @@ class SecurityScanAgent:
         # Activity Monitor
         self.activity_monitor = ActivityMonitor(bot)
 
+        # Data-Verzeichnis (fuer Force-Scan Flag, nicht /tmp wegen PrivateTmp)
+        self._data_dir = os.path.join(os.getcwd(), 'data')
+
         # Config-Werte
         analyst_cfg = config._config.get('security_analyst', {})
         self.max_sessions_per_day = analyst_cfg.get(
@@ -295,8 +298,9 @@ class SecurityScanAgent:
                         self._briefing_pending = False
                         self._pending_result = None
 
-                # Force-Scan: /tmp/shadowops_force_scan erstellen um Activity-Check zu umgehen
-                force_scan_flag = '/tmp/shadowops_force_scan'
+                # Force-Scan: data/force_scan erstellen um Activity-Check zu umgehen
+                # NICHT /tmp/ wegen PrivateTmp=true in systemd (isoliertes /tmp)
+                force_scan_flag = os.path.join(self._data_dir, 'force_scan')
                 force_scan = os.path.exists(force_scan_flag)
                 if force_scan:
                     try:
