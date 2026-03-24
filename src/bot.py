@@ -659,6 +659,11 @@ class ShadowOpsBot(commands.Bot):
             else:
                 self.logger.info("⏸️ Event Watcher deaktiviert")
 
+            # Security Engine v6 Background-Tasks starten
+            if self.security_engine:
+                await self.security_engine.start()
+                self.logger.info("✅ Security Engine v6 Proactive Scheduler gestartet")
+
             # Pending Approvals aus DB prüfen (überlebten Bot-Restart?)
             try:
                 import asyncpg

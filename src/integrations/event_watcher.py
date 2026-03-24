@@ -793,8 +793,27 @@ class SecurityEventWatcher:
             except Exception:
                 pass
 
-        # Route event to Orchestrator (coordinated remediation)
-        # The Orchestrator batches events and creates a coordinated plan
+        # Route event to Security Engine v6 (parallel zum Legacy-System)
+        if hasattr(self.bot, 'security_engine') and self.bot.security_engine:
+            try:
+                from integrations.security_engine.models import BanEvent, ThreatEvent, VulnEvent, IntegrityEvent, Severity
+                # Legacy SecurityEvent → Security Engine v6 Event konvertieren
+                severity_map = {'CRITICAL': Severity.CRITICAL, 'HIGH': Severity.HIGH, 'MEDIUM': Severity.MEDIUM, 'LOW': Severity.LOW}
+                sev = severity_map.get(event.severity, Severity.MEDIUM)
+                event_map = {
+                    'fail2ban': lambda: BanEvent(source='fail2ban', severity=sev, details=event.details, event_id=event.event_id),
+                    'crowdsec': lambda: ThreatEvent(source='crowdsec', severity=sev, details=event.details, event_id=event.event_id),
+                    'trivy': lambda: VulnEvent(source='trivy', severity=sev, details=event.details, event_id=event.event_id),
+                    'aide': lambda: IntegrityEvent(source='aide', severity=sev, details=event.details, event_id=event.event_id),
+                }
+                v6_event = event_map.get(event.source, lambda: None)()
+                if v6_event:
+                    asyncio.create_task(self.bot.security_engine.handle_security_event(v6_event))
+                    logger.info(f"   🛡️ Event an Security Engine v6 weitergeleitet")
+            except Exception as e:
+                logger.debug(f"Security Engine v6 Event-Routing fehlgeschlagen: {e}")
+
+        # Route event to Orchestrator (coordinated remediation) — Legacy
         if hasattr(self.bot, 'orchestrator') and self.bot.orchestrator:
             await self.bot.orchestrator.submit_event(event)
             logger.info(f"   📦 Event submitted to Orchestrator for coordinated remediation")
