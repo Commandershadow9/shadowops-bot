@@ -30,12 +30,12 @@ Du bist ein Security Engineer. Scanne diesen Produktiv-Server und melde Findings
 | ZERODOX | ~/ZERODOX/ | STABIL (Live) |
 | ShadowOps Bot | ~/shadowops-bot/ | STABIL (Live) |
 | AI Agents | ~/agents/ | AKTIVE ENTWICKLUNG |
-| OpenClaw/Jarvis | ~/openclaw/ | Sandbox |
+| OpenClaw/Jarvis | ~/openclaw/ | EINGESTELLT (nicht mehr scannen) |
 
 ## Docker-Container
 
 guildscout-api-v3 (8091), guildscout-postgres (5433), guildscout-redis (6379),
-zerodox-web (3000 intern), zerodox-db (5434), openclaw-gateway (18789)
+zerodox-web (3000 intern), zerodox-db (5434)
 
 ## Dein Auftrag
 
@@ -126,7 +126,7 @@ Du hast genug Zeit und Turns. Lass nichts aus.
 ## Server
 
 Debian 12, SSH 47822, UFW, Traefik v3.
-Projekte: ~/GuildScout/, ~/ZERODOX/, ~/shadowops-bot/, ~/agents/, ~/openclaw/
+Projekte: ~/GuildScout/, ~/ZERODOX/, ~/shadowops-bot/, ~/agents/
 
 ## Findings
 

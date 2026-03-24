@@ -192,7 +192,7 @@
 - **Finding-Dedup:** DISTINCT ON Titel-Präfix + Keyword-Match bei Duplikat-Close
 - **Issue Quality-Gates (seit 2026-03-18):** 4 Prüfungen vor GitHub-Issue-Erstellung:
   1. Mindest-Content: Titel >= 10, Body >= 30 Zeichen (leere Issues blockiert)
-  2. Projekt-Skip: SKIP_ISSUE_PROJECTS (openclaw, agents, blogger — kein Repo)
+  2. Projekt-Skip: SKIP_ISSUE_PROJECTS (openclaw, agents, blogger, content-pipeline — kein Repo)
   3. DB-Dedup: find_similar_open_finding (Titel exakt + Keyword-Match)
   4. GitHub-Dedup: `gh issue list --search` im Ziel-Repo vor Erstellung
 - **Erweitertes Repo-Routing:** PROJECT_REPO_MAP +sicherheitsdienst, +project
@@ -292,5 +292,8 @@
   - GitHub-Issues mit 4 Quality-Gates (Content, Projekt-Skip, DB-Dedup, GitHub-Dedup)
   - Cross-Mode-Lock ueber remediation_status (claim_event/release_event)
   - Nutzt SecurityDB direkt (kein separater AnalystDB Layer)
+  - **PROJECT_SECURITY_PROFILES:** Detaillierte Attack-Surface-Profile fuer guildscout, zerodox, ai-agent-framework, shadowops-bot
+  - **SecurityDB._ensure_schema():** Erstellt ALLE Tabellen (Legacy + v6) bei Neuinstallation
+  - **LearningBridge:** Verbindet Security Engine mit agent_learning DB (Cross-Agent Feedback + Knowledge)
 - **Design-Doc:** `docs/plans/2026-03-24-security-engine-v6.md`, `docs/plans/2026-03-24-security-scan-agent-design.md`
 - **Architektur-Doc:** `docs/security-engine-v6-overview.md`

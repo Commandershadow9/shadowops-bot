@@ -182,22 +182,6 @@ PROJECT_SECURITY_PROFILES = {
         'auth': 'Discord Bot Token, GitHub Token, HMAC Webhook Secret',
         'secrets': 'config/config.yaml (Discord Token, GitHub Token, API Keys, DB DSNs)',
     },
-    'openclaw': {
-        'path': '/home/cmdshadow/openclaw',
-        'stack': 'Node.js AI Agent (Sandbox)',
-        'attack_surface': [
-            'Gateway API (Port 18789, nur localhost + VPN)',
-            'AI Agent mit Shell-Zugriff (Sandbox-Workspace)',
-            'OAuth Token Refresh (OpenAI, Anthropic)',
-        ],
-        'critical_files': [
-            'docker-compose.secure.yml',
-            '.env.sandbox',
-        ],
-        'services': 'Docker: openclaw-gateway(18789), Netzwerk: openclaw_isolated(172.23.0.0/16)',
-        'auth': 'OAuth (OpenAI), Setup-Token (Anthropic), allowInsecureAuth fuer VPN',
-        'secrets': '.env.sandbox, auth-profiles.json, OAuth-Tokens',
-    },
 }
 
 
