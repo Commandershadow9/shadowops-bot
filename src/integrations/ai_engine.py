@@ -1188,16 +1188,19 @@ class AIEngine:
         """Analyst-Session via Codex CLI (primaer).
 
         Verwendet create_subprocess_exec (kein Shell) mit fester Argumentliste.
+        --dangerously-bypass-approvals-and-sandbox: Voller System-Zugriff (sudo, Docker, UFW etc.)
+        damit der Security-Scan dieselbe Tiefe wie Claude erreicht.
         """
         env = self.codex._get_clean_env()
 
         # Prompt via stdin (ARG_MAX Limit bei grossen Prompts vermeiden)
         # -c mcp_servers={}: Keine MCP-Server laden (schneller, keine Auth-Fehler)
+        # --dangerously-bypass-approvals-and-sandbox: Voller Zugriff fuer Security-Scans
         args = [
             'codex', 'exec', '--ephemeral',
             '--skip-git-repo-check',
             '-c', 'mcp_servers={}',
-            '-s', 'workspace-write',
+            '--dangerously-bypass-approvals-and-sandbox',
             '-m', model,
             '--output-schema', schema_path,
         ]
