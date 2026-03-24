@@ -41,8 +41,8 @@ DEFAULT_MAX_SESSIONS_PER_DAY = 1
 
 # Session-Modi: (timeout_seconds, max_turns, beschreibung)
 SESSION_MODES = {
-    'full_scan':   (2700, 60,  'Voller Scan aller Bereiche'),
-    'quick_scan':  (1200, 30,  'Schnellcheck der kritischsten Bereiche'),
+    'full_scan':   (2700, 120, 'Voller Scan aller Bereiche'),
+    'quick_scan':  (1200, 50,  'Schnellcheck der kritischsten Bereiche'),
     'fix_only':    (7200, 200, 'Nur Findings abarbeiten, kein Scan'),
     'maintenance': (600,  15,  'Nur Verifikation + Maintenance, kein Scan/Fix'),
 }

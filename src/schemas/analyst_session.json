@@ -36,7 +36,7 @@
           "issue_title": { "type": "string" },
           "issue_body": { "type": "string" }
         },
-        "required": ["severity", "category", "title", "description", "fix_type", "affected_project"],
+        "required": ["severity", "category", "title", "description", "fix_type", "affected_project", "affected_files", "auto_fix_details", "rollback_command", "issue_title", "issue_body"],
         "additionalProperties": false
       },
       "description": "Erkenntnisse und Findings der Session"
@@ -90,7 +90,7 @@
           "is_false_positive": { "type": "boolean" },
           "false_positive_reason": { "type": "string" }
         },
-        "required": ["finding_id", "confidence", "discovery_method", "is_actionable"],
+        "required": ["finding_id", "confidence", "discovery_method", "is_actionable", "is_false_positive", "false_positive_reason"],
         "additionalProperties": false
       },
       "description": "Selbstbewertung der eigenen Findings"
