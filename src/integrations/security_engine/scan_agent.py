@@ -295,7 +295,18 @@ class SecurityScanAgent:
                         self._briefing_pending = False
                         self._pending_result = None
 
-                user_active = await self.activity_monitor.is_user_active()
+                # Force-Scan: /tmp/shadowops_force_scan erstellen um Activity-Check zu umgehen
+                force_scan_flag = '/tmp/shadowops_force_scan'
+                force_scan = os.path.exists(force_scan_flag)
+                if force_scan:
+                    try:
+                        os.remove(force_scan_flag)
+                    except OSError:
+                        pass
+                    logger.info("Force-Scan Flag erkannt — Activity-Check uebersprungen")
+                    user_active = False
+                else:
+                    user_active = await self.activity_monitor.is_user_active()
 
                 if loop_count % HEARTBEAT_EVERY == 0:
                     cd = max(0, self._failure_cooldown_until - time.time())
