@@ -438,6 +438,18 @@ Erstelle einen koordinierten Plan mit Phasen die NACHEINANDER ausgeführt werden
 
 **WICHTIG: Alle Texte MÜSSEN auf DEUTSCH sein!**
 
+## WICHTIGE REGELN FÜR DEN PLAN
+- Maximal 3-4 Phasen (weniger ist besser)
+- Jede Phase MUSS ein "type" Feld haben: "recon", "contain", "fix", "verify" oder "monitor"
+  - recon: Read-only Beweissicherung (Status erfassen, Logs sammeln)
+  - contain: Sofortige Eindämmung (IP blocken, Service isolieren)
+  - fix: Dauerhafte Behebung (Config ändern, Packages updaten)
+  - verify: Prüfen ob Fix wirkt (Status checken, Tests laufen)
+  - monitor: Nachbeobachtung (nur Logging, keine Aktion)
+- NIEMALS den gleichen Fix in mehreren Phasen wiederholen!
+- Bei 1-2 Events: contain + verify reicht meistens
+- Typische Reihenfolge: recon → contain → fix → verify
+
 Ausgabe als JSON:
 {
   "description": "Kurze Beschreibung des Gesamt-Plans (DEUTSCH)",
@@ -447,12 +459,14 @@ Ausgabe als JSON:
   "phases": [
     {
       "name": "Phase 1: Backup",
+      "type": "recon",
       "description": "System-Backup erstellen",
       "steps": ["Schritt 1", "Schritt 2"],
       "estimated_minutes": 5
     },
     {
       "name": "Phase 2: Docker Updates",
+      "type": "fix",
       "description": "CVEs in Docker Images beheben",
       "steps": ["Update packages", "Rebuild images", "Test"],
       "estimated_minutes": 15

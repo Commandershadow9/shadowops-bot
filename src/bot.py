@@ -56,6 +56,9 @@ from integrations.server_assistant import ServerAssistant
 # Security Analyst (autonome AI Security Sessions)
 from integrations.analyst import SecurityAnalyst
 
+# Security Engine v6 (Unified Security System)
+from integrations.security_engine import SecurityEngine
+
 # Queue Management
 from integrations.smart_queue import SmartQueue
 
@@ -108,6 +111,9 @@ class ShadowOpsBot(commands.Bot):
         self.server_assistant = None
         # Security Analyst (autonome AI Security Sessions)
         self.security_analyst = None
+
+        # Security Engine v6 (Unified Security System)
+        self.security_engine = None
 
         # Changelog-DB (Patch Notes v3)
         self.changelog_db = None
@@ -572,6 +578,30 @@ class ShadowOpsBot(commands.Bot):
                     discord_logger=self.discord_logger
                 )
                 self.logger.info("✅ [4/5] Remediation Orchestrator bereit")
+
+                # Initialisiere Security Engine v6 (parallel zum Legacy-System)
+                self.logger.info("🔄 [4.5/5] Initialisiere Security Engine v6...")
+                try:
+                    self.security_engine = SecurityEngine(
+                        bot=self,
+                        config=self.config,
+                        ai_service=self.ai_service,
+                        context_manager=self.context_manager,
+                    )
+                    await self.security_engine.initialize()
+
+                    # Bestehende Fixer registrieren
+                    if self.self_healing:
+                        self.security_engine.register_existing_fixers(
+                            fail2ban_fixer=getattr(self.self_healing, 'fail2ban_fixer', None),
+                            trivy_fixer=getattr(self.self_healing, 'trivy_fixer', None),
+                            crowdsec_fixer=getattr(self.self_healing, 'crowdsec_fixer', None),
+                            aide_fixer=getattr(self.self_healing, 'aide_fixer', None),
+                        )
+                    self.logger.info("✅ [4.5/5] Security Engine v6 bereit (Reactive + DeepScan + Proactive)")
+                except Exception as e:
+                    self.logger.warning(f"⚠️ Security Engine v6 konnte nicht initialisiert werden: {e}")
+                    self.security_engine = None
             else:
                 self.logger.info("⏸️ AI-Funktionen deaktiviert - Remediation läuft im Monitoring-Modus")
                 self.context_manager = None
@@ -1087,6 +1117,13 @@ class ShadowOpsBot(commands.Bot):
         import traceback
         self.logger.info("🛑 Shutting down ShadowOps Bot...")
         self.logger.info(f"   Close() aufgerufen von: {''.join(traceback.format_stack()[-3:-1])}")
+
+        # Stop Security Engine v6
+        if self.security_engine:
+            try:
+                await self.security_engine.shutdown()
+            except Exception as e:
+                self.logger.warning(f"Security Engine Shutdown Fehler: {e}")
 
         # Stop Security Analyst
         if self.security_analyst:

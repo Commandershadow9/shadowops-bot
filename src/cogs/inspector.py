@@ -239,5 +239,40 @@ class InspectorCog(commands.Cog):
             await interaction.followup.send("❌ Fehler beim Abrufen der Agent-Stats", ephemeral=True)
 
 
+    @app_commands.command(name='security-engine', description='Security Engine v6 Status + Stats')
+    async def security_engine_status(self, interaction: discord.Interaction):
+        """Zeigt Security Engine v6 Status und Statistiken"""
+        engine = getattr(self.bot, 'security_engine', None)
+        if not engine:
+            await interaction.response.send_message("⚠️ Security Engine v6 nicht aktiv", ephemeral=True)
+            return
+
+        stats = engine.get_stats()
+
+        embed = discord.Embed(
+            title="🛡️ Security Engine v6",
+            color=0x2ECC71 if not stats['circuit_breaker']['is_open'] else 0xE74C3C
+        )
+
+        # Engine Status
+        cb = stats['circuit_breaker']
+        status = "🟢 Aktiv" if not cb['is_open'] else f"🔴 Circuit Breaker offen ({', '.join(cb['open_keys'])})"
+        embed.add_field(name="Status", value=status, inline=False)
+
+        # Stats
+        embed.add_field(
+            name="📊 Events",
+            value=f"Verarbeitet: {stats['events_processed']}\nÜbersprungen: {stats['events_skipped']}",
+            inline=True
+        )
+
+        # Registrierte Fixer
+        fixers = stats.get('registered_fixers', {})
+        fixer_text = "\n".join([f"`{k}`: {', '.join(v)}" for k, v in fixers.items()]) or "Keine"
+        embed.add_field(name="🔧 Fixer", value=fixer_text[:1024], inline=False)
+
+        await interaction.response.send_message(embed=embed)
+
+
 async def setup(bot):
     await bot.add_cog(InspectorCog(bot))

@@ -44,3 +44,12 @@ Bei Aenderungen an Shared-Services (Redis, PostgreSQL, Traefik) MUESSEN alle Kon
 - `PROTECTED_PORT_BINDINGS` muss bei neuen Ports aktualisiert werden
 - Token-Tracking: `_get_session_tokens()` misst Delta — NICHT manuell auf 0 setzen
 - LearningNotifier postet in `🧠-ai-learning` Channel — Channel-ID muss in state.json existieren
+
+## Security Engine v6
+- **SecurityDB** nutzt asyncpg Pool (min 2, max 5) — NICHT psycopg2
+- **fix_attempts_v2** Tabelle: ALLE Fix-Ergebnisse (success, failed, no_op, skipped_duplicate) werden aufgezeichnet
+- **remediation_status** Tabelle: Cross-Mode Lock — vor Fix immer claim_event() pruefen
+- **CircuitBreaker**: 5 Failures pro Source → 1h Pause. NICHT manuell resetten ohne Grund
+- **Phase-Types sind verbindlich**: recon/verify/monitor duerfen NICHTS aendern (read-only)
+- **NoOp-Detection**: Fail2banFixerAdapter prueft Config bevor geschrieben wird — NICHT umgehen
+- **LearningBridge**: Separate DB-Connection zur agent_learning DB — Passwort in config.yaml
