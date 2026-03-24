@@ -14,7 +14,7 @@
 | Discord Bot | — | — | Gateway-Connection (DEV + ZERODOX Server) |
 | Health Check + Changelog API | 8766 | 0.0.0.0 | Health, REST API, RSS Feed, Sitemap (UFW: nur Docker 172.16.0.0/12) |
 | GitHub Webhook | 9090 | 0.0.0.0 | Push/PR Events (Traefik) |
-| GuildScout Alerts | 9091 | 127.0.0.1 | Alert Forwarding |
+| GuildScout Alerts | 9091 | 0.0.0.0 | Alert Forwarding (UFW: nur Docker 172.16.0.0/12) |
 
 ## Befehle
 | Aktion | Befehl |
