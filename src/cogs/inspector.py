@@ -132,45 +132,46 @@ class InspectorCog(commands.Cog):
                 timestamp=datetime.now(),
             )
 
-            # ── Security Analyst ──
-            analyst = getattr(self.bot, 'security_analyst', None)
-            if analyst and analyst.db and analyst.db.pool:
+            # ── Security ScanAgent (oder Legacy Analyst) ──
+            scan_agent = getattr(self.bot, 'security_analyst', None)
+            pool = None
+            if scan_agent and hasattr(scan_agent, 'db') and scan_agent.db and scan_agent.db.pool:
+                pool = scan_agent.db.pool
+            if pool:
                 try:
-                    db = analyst.db
-
-                    # Sessions + Tokens
-                    stats = await db._get_30day_stats()
-                    tokens_display = f"{stats['tokens_total']:,}" if stats['tokens_total'] else "0"
+                    # Sessions + Tokens (direkte Query statt _get_30day_stats)
+                    session_stats = await pool.fetchrow("""
+                        SELECT COUNT(*) as cnt, COALESCE(SUM(tokens_used),0) as tokens,
+                               COALESCE(SUM(auto_fixes_count),0) as fixes
+                        FROM sessions WHERE started_at >= NOW() - INTERVAL '30 days'
+                    """)
+                    findings_open = await pool.fetchval("SELECT COUNT(*) FROM findings WHERE status='open'")
+                    findings_fixed = await pool.fetchval(
+                        "SELECT COUNT(*) FROM findings WHERE status='fixed' AND found_at >= NOW()-INTERVAL '30 days'")
+                    tokens_display = f"{session_stats['tokens']:,}" if session_stats['tokens'] else "0"
 
                     # Fix-Versuche
-                    fix_stats = await db.pool.fetchrow(
-                        """SELECT COUNT(*) as total,
-                                  COUNT(*) FILTER (WHERE result='success') as success,
-                                  COUNT(*) FILTER (WHERE still_valid=FALSE) as regressions
-                           FROM fix_attempts
-                           WHERE created_at >= NOW() - INTERVAL '30 days'"""
-                    )
+                    fix_stats = await pool.fetchrow("""
+                        SELECT COUNT(*) as total,
+                               COUNT(*) FILTER (WHERE result='success') as success
+                        FROM fix_attempts WHERE created_at >= NOW() - INTERVAL '30 days'
+                    """)
 
                     # Coverage
-                    coverage_count = await db.pool.fetchval(
-                        "SELECT COUNT(DISTINCT area) FROM scan_coverage WHERE checked=TRUE"
-                    )
-
-                    # False Positives
-                    fp = await db.get_false_positive_rate()
+                    coverage_count = await pool.fetchval(
+                        "SELECT COUNT(DISTINCT area) FROM scan_coverage WHERE was_checked=TRUE"
+                    ) or 0
 
                     analyst_text = (
-                        f"**Sessions (30d):** {stats['sessions_count']}\n"
+                        f"**Sessions (30d):** {session_stats['cnt']}\n"
                         f"**Tokens (30d):** {tokens_display}\n"
-                        f"**Findings:** {stats['findings_open']} offen / {stats['findings_fixed']} gefixt\n"
-                        f"**Fix-Versuche:** {fix_stats['total']} ({fix_stats['success']}× ✅, "
-                        f"{fix_stats['regressions']}× 🔄)\n"
-                        f"**Scan-Abdeckung:** {coverage_count}/10 Bereiche\n"
-                        f"**False Positives:** {fp['false_positive_rate']}%"
+                        f"**Findings:** {findings_open} offen / {findings_fixed} gefixt\n"
+                        f"**Fix-Versuche:** {fix_stats['total']} ({fix_stats['success']}× ✅)\n"
+                        f"**Scan-Abdeckung:** {coverage_count}/10 Bereiche"
                     )
-                    embed.add_field(name="🔒 Security Analyst", value=analyst_text, inline=False)
+                    embed.add_field(name="🔒 Security ScanAgent", value=analyst_text, inline=False)
                 except Exception as e:
-                    embed.add_field(name="🔒 Security Analyst", value=f"Fehler: {e}", inline=False)
+                    embed.add_field(name="🔒 Security ScanAgent", value=f"Fehler: {e}", inline=False)
 
             # ── Patch Notes ──
             try:

@@ -30,7 +30,8 @@ from .db import SecurityDB
 from .executor import PhaseTypeExecutor
 from .reactive import ReactiveMode
 from .proactive import ProactiveMode
-from .deep_scan import DeepScanMode
+from .deep_scan import DeepScanMode  # Legacy, wird durch SecurityScanAgent ersetzt
+from .scan_agent import SecurityScanAgent
 from .registry import FixerRegistry
 from .providers import NoOpProvider
 from .circuit_breaker import CircuitBreaker
@@ -77,7 +78,8 @@ class SecurityEngine:
 
         # Modi (werden in initialize() erstellt)
         self.reactive: Optional[ReactiveMode] = None
-        self.deep_scan = None  # DeepScanMode (Phase 3.1)
+        self.deep_scan = None  # Legacy DeepScanMode (wird durch scan_agent ersetzt)
+        self.scan_agent: Optional[SecurityScanAgent] = None  # Neuer SecurityScanAgent
         self.proactive = None  # ProactiveMode (Phase 4)
 
         # Circuit Breaker
@@ -130,6 +132,18 @@ class SecurityEngine:
             context_manager=self.context_manager,
         )
 
+        # SecurityScanAgent (ersetzt DeepScanMode wenn Bot verfuegbar)
+        if self.bot:
+            self.scan_agent = SecurityScanAgent(
+                bot=self.bot,
+                config=self.bot.config if hasattr(self.bot, 'config') else config,
+                ai_engine=self.ai_service,
+                db=self.db,
+                context_manager=self.context_manager,
+                executor=self.executor,
+                learning_bridge=None,  # wird nach LearningBridge-Init gesetzt
+            )
+
         # LearningBridge
         try:
             self.learning_bridge = LearningBridge()
@@ -138,6 +152,10 @@ class SecurityEngine:
             logger.warning(f"LearningBridge nicht verfuegbar: {e}")
             self.learning_bridge = None
 
+        # LearningBridge an ScanAgent weitergeben
+        if self.scan_agent and self.learning_bridge:
+            self.scan_agent.learning_bridge = self.learning_bridge
+
         # Discord Logger vom Bot holen
         if self.bot and hasattr(self.bot, 'discord_logger'):
             self.discord_logger = self.bot.discord_logger
@@ -145,15 +163,26 @@ class SecurityEngine:
         logger.info("✅ SecurityEngine initialisiert")
 
     async def start(self):
-        """Startet Background-Tasks (Proactive Scheduler + Daily Scan + Midnight Reset)"""
+        """Startet Background-Tasks (Proactive Scheduler + ScanAgent + Midnight Reset)"""
         self._proactive_task = asyncio.create_task(self._proactive_loop())
-        self._scan_task = asyncio.create_task(self._daily_scan_loop())
         self._midnight_task = asyncio.create_task(self._midnight_reset_loop())
         logger.info("🔄 Proactive Scheduler gestartet (alle 6h)")
-        logger.info("🔍 Daily Scan Scheduler gestartet (adaptiv: 1-3x/Tag)")
+
+        # SecurityScanAgent starten (ersetzt den alten daily_scan_loop)
+        if self.scan_agent:
+            await self.scan_agent.start()
+            logger.info("🔍 SecurityScanAgent gestartet (adaptiv, Activity-Monitor)")
+        else:
+            # Fallback: Legacy Daily-Scan-Loop (wenn kein Bot verfuegbar)
+            self._scan_task = asyncio.create_task(self._daily_scan_loop())
+            logger.info("🔍 Legacy Daily Scan Scheduler gestartet")
 
     async def shutdown(self):
         """Graceful Shutdown"""
+        # ScanAgent stoppen
+        if self.scan_agent:
+            await self.scan_agent.stop()
+
         for task in [self._proactive_task, getattr(self, '_scan_task', None), getattr(self, '_midnight_task', None)]:
             if task:
                 task.cancel()
@@ -395,9 +424,12 @@ class SecurityEngine:
             wait = (tomorrow - now).total_seconds()
             await asyncio.sleep(wait)
 
-            if self.deep_scan:
+            if self.scan_agent:
+                self.scan_agent.reset_daily()
+                logger.info("🔄 Daily Reset: ScanAgent Session-Counter zurueckgesetzt")
+            elif self.deep_scan:
                 self.deep_scan.reset_daily()
-                logger.info("🔄 Daily Reset: Session-Counter zurueckgesetzt")
+                logger.info("🔄 Daily Reset: Legacy Session-Counter zurueckgesetzt")
 
     # ── Proactive Scheduler ───────────────────────────────────────
 
@@ -445,7 +477,7 @@ class SecurityEngine:
 
     def get_stats(self) -> Dict[str, Any]:
         """Gibt Engine-Statistiken zurueck"""
-        return {
+        stats = {
             'events_processed': self._events_processed,
             'events_skipped': self._events_skipped,
             'fixes_applied': self._fixes_applied,
@@ -454,3 +486,6 @@ class SecurityEngine:
             'registered_fixers': self.registry.list_registered(),
             'proactive_running': self._proactive_task is not None and not self._proactive_task.done(),
         }
+        if self.scan_agent:
+            stats['scan_agent'] = self.scan_agent.get_stats()
+        return stats

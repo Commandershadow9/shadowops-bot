@@ -94,8 +94,8 @@
 |-------------|-------|
 | `fixers/` | Tool-spezifische Fixer (trivy, crowdsec, fail2ban, aide) |
 | `ai_learning/` | Legacy AI Learning (DEAKTIVIERT — knowledge_db, knowledge_synthesizer, continuous_learning_agent) |
-| `analyst/` | Security Analyst (security_analyst, analyst_db, activity_monitor, prompts) — Full Learning Pipeline, Adaptive Sessions, Fix-Verifikation, Coverage-Tracking, Issue Quality-Gates (Mindest-Content, Dedup, Repo-Routing) |
-| `security_engine/` | Unified Security Engine v6 (engine, db, executor, reactive, deep_scan, proactive, learning_bridge, providers, registry, circuit_breaker, fixer_adapters, models) |
+| `analyst/` | Legacy Security Analyst (DEAKTIVIERT — ersetzt durch SecurityScanAgent in `security_engine/`) |
+| `security_engine/` | Unified Security Engine v6 (engine, db, executor, reactive, deep_scan, proactive, learning_bridge, providers, registry, circuit_breaker, fixer_adapters, models, scan_agent, prompts, activity_monitor) |
 
 ### Utils (`src/utils/`)
 | Datei | Zweck |
@@ -152,7 +152,7 @@
 ### Dokumentation
 | Pfad | Inhalt |
 |------|--------|
-| `docs/` | Aktive Referenz-Doku (API, Overview, Security Analyst) |
+| `docs/` | Aktive Referenz-Doku (API, Overview, Security Engine v6) |
 | `docs/guides/` | Benutzer-Anleitungen (Setup, Quickstart, Multi-Guild) |
 | `docs/plans/` | Design- und Implementierungsdokumente |
 | `docs/adr/` | Architecture Decision Records (6 ADRs) |
@@ -167,7 +167,9 @@
 - **knowledge_base.py:** psycopg2 statt sqlite3 (sync, gleiche API)
 - **Cross-Referenz:** Analyst-Findings fliessen in Orchestrator-Planung, Orchestrator-Fixes erscheinen im Analyst-Kontext
 
-### Security Analyst — Lernende 2-Phasen-Architektur (seit 2026-03-18)
+### Security Analyst — Lernende 2-Phasen-Architektur (seit 2026-03-18, seit 2026-03-24 in SecurityScanAgent)
+- **HINWEIS:** Diese Logik lebt jetzt im `SecurityScanAgent` (`security_engine/scan_agent.py`).
+  Der alte `analyst/security_analyst.py` ist Legacy und wird nicht mehr gestartet.
 - **Adaptive Session-Steuerung:**
   - ≥20 Findings → fix_only (bis 3 Sessions/Tag, nur Fixen)
   - 5-19 Findings → full_scan + fix (bis 2 Sessions/Tag)
@@ -236,7 +238,7 @@
 - **pn_examples:** Kuratierte Few-Shot Beispiele nach echtem Feedback sortiert (Cross-Project-Sharing)
 - **seo_fix_impact:** Score-Delta nach PR-Merge (vorher/nachher, Fix-Kategorien)
 - **LearningNotifier:** Automatische Discord-Posts in 🧠-ai-learning (Sessions, Feedback, Weekly, Meilensteine)
-- **Event-getriggerte Scans:** Critical/High Events (CrowdSec/Fail2ban) triggern sofort Analyst Quick-Scan
+- **Event-getriggerte Scans:** Critical/High Events (CrowdSec/Fail2ban) triggern sofort ScanAgent Quick-Scan (via event_watcher → scan_agent.trigger_event_scan)
 - **Patch Notes Update-Channels:** Alle Projekte haben eigene Update-Channels mit Feedback-Buttons (shadowops-bot, ai-agent-framework, guildscout, zerodox)
 
 ### Recidive-Erkennung
@@ -281,5 +283,14 @@
 - **Fast-Path:** 1-2 Events werden direkt gefixt, kein KI-Plan
 - **Event-Claiming:** `remediation_status` Tabelle verhindert Doppel-Fixes zwischen Modi
 - **Cross-Agent Learning:** LearningBridge liest/schreibt agent_learning DB bidirektional
-- **Design-Doc:** `docs/plans/2026-03-24-security-engine-v6.md`
+- **SecurityScanAgent** (seit 2026-03-24): Ersetzt DeepScanMode + alten SecurityAnalyst
+  - Autonomer Agent mit Activity Monitor (nur starten wenn User idle)
+  - Adaptive Session-Steuerung (fix_only/full_scan/quick_scan/maintenance)
+  - Volle Learning Pipeline (Fix-Verifikation, Knowledge-Decay, Coverage-Tracking)
+  - Health-Snapshots vor/nach jeder Session
+  - Discord-Briefings (sofort wenn online, pending wenn offline)
+  - GitHub-Issues mit 4 Quality-Gates (Content, Projekt-Skip, DB-Dedup, GitHub-Dedup)
+  - Cross-Mode-Lock ueber remediation_status (claim_event/release_event)
+  - Nutzt SecurityDB direkt (kein separater AnalystDB Layer)
+- **Design-Doc:** `docs/plans/2026-03-24-security-engine-v6.md`, `docs/plans/2026-03-24-security-scan-agent-design.md`
 - **Architektur-Doc:** `docs/security-engine-v6-overview.md`

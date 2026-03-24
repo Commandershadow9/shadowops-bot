@@ -7,10 +7,12 @@ from .providers import FixProvider, NoOpProvider, BashFixProvider
 from .registry import FixerRegistry
 from .executor import PhaseTypeExecutor
 from .reactive import ReactiveMode
+from .scan_agent import SecurityScanAgent
 from .engine import SecurityEngine
 
 __all__ = [
     'SecurityEngine',
+    'SecurityScanAgent',
     'SecurityEvent', 'BanEvent', 'ThreatEvent', 'VulnEvent', 'IntegrityEvent',
     'PhaseType', 'FixResult', 'EngineMode', 'Severity',
     'FixProvider', 'NoOpProvider', 'BashFixProvider',

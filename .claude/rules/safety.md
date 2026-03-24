@@ -40,8 +40,8 @@ Bei Aenderungen an Shared-Services (Redis, PostgreSQL, Traefik) MUESSEN alle Kon
 ## Learning-System (agent_learning DB)
 - DB-Passwort `agent_learn_2026` steht in `patch_notes_learning.py` DSN — nicht aendern ohne alle Referenzen
 - `security_analyst` DB-DSN wird aus `config.yaml` (`security_analyst.database_dsn`) oder `SECURITY_ANALYST_DB_URL` env var geladen — KEIN Hardcoded-Fallback mehr
-- Analyst `PROJECT_SECURITY_PROFILES` in `security_analyst.py` manuell pflegen bei Projektaenderungen
-- `PROTECTED_PORT_BINDINGS` muss bei neuen Ports aktualisiert werden
+- `PROJECT_SECURITY_PROFILES` in `security_engine/scan_agent.py` manuell pflegen bei Projektaenderungen
+- `PROTECTED_PORT_BINDINGS` in `security_engine/scan_agent.py` muss bei neuen Ports aktualisiert werden
 - Token-Tracking: `_get_session_tokens()` misst Delta — NICHT manuell auf 0 setzen
 - LearningNotifier postet in `🧠-ai-learning` Channel — Channel-ID muss in state.json existieren
 
@@ -53,3 +53,12 @@ Bei Aenderungen an Shared-Services (Redis, PostgreSQL, Traefik) MUESSEN alle Kon
 - **Phase-Types sind verbindlich**: recon/verify/monitor duerfen NICHTS aendern (read-only)
 - **NoOp-Detection**: Fail2banFixerAdapter prueft Config bevor geschrieben wird — NICHT umgehen
 - **LearningBridge**: Separate DB-Connection zur agent_learning DB — Passwort in config.yaml
+
+## SecurityScanAgent (ersetzt DeepScanMode + alten SecurityAnalyst)
+- **scan_agent.py**: Autonomer Agent in `security_engine/`, nutzt SecurityDB direkt (kein AnalystDB)
+- **Activity Monitor**: `security_engine/activity_monitor.py` — prueft SSH, Git, Claude, Discord
+- **Prompts**: `security_engine/prompts.py` — 1:1 vom alten Analyst, ANALYST_SYSTEM_PROMPT + FIX_SESSION_PROMPT
+- **PROJECT_SECURITY_PROFILES**: In `scan_agent.py` — bei Projektaenderungen manuell pflegen
+- **PROTECTED_PORT_BINDINGS**: In `scan_agent.py` — bei neuen Ports aktualisieren
+- **Fix-Phase nutzt Cross-Mode-Lock**: claim_event/release_event fuer jedes Finding
+- **Alter Analyst** (`analyst/security_analyst.py`): Wird NICHT mehr von Engine gestartet, bleibt vorerst als Referenz

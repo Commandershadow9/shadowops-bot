@@ -53,10 +53,10 @@ from integrations.research_fetcher import ResearchFetcher
 # Server Assistant (ersetzt Learning System)
 from integrations.server_assistant import ServerAssistant
 
-# Security Analyst (autonome AI Security Sessions)
-from integrations.analyst import SecurityAnalyst
+# Security Analyst (Legacy — ersetzt durch SecurityScanAgent in Security Engine v6)
+# from integrations.analyst import SecurityAnalyst
 
-# Security Engine v6 (Unified Security System)
+# Security Engine v6 (Unified Security System, inkl. SecurityScanAgent)
 from integrations.security_engine import SecurityEngine
 
 # Queue Management
@@ -109,10 +109,10 @@ class ShadowOpsBot(commands.Bot):
 
         # Server Assistant (ersetzt Learning)
         self.server_assistant = None
-        # Security Analyst (autonome AI Security Sessions)
+        # Security Analyst (Legacy — ersetzt durch SecurityScanAgent in Engine v6)
         self.security_analyst = None
 
-        # Security Engine v6 (Unified Security System)
+        # Security Engine v6 (Unified Security System, inkl. SecurityScanAgent)
         self.security_engine = None
 
         # Changelog-DB (Patch Notes v3)
@@ -1012,31 +1012,17 @@ class ShadowOpsBot(commands.Bot):
                     exc_info=True
                 )
 
-            # Security Analyst starten (wenn aktiviert)
+            # SecurityScanAgent laeuft jetzt innerhalb der Security Engine v6
+            # Der alte SecurityAnalyst wird NICHT mehr separat gestartet.
+            # Stattdessen: security_engine.start() startet den ScanAgent automatisch.
             analyst_config = self.config._config.get('security_analyst', {})
-            if analyst_config.get('enabled', False):
-                try:
-                    self.security_analyst = SecurityAnalyst(
-                        bot=self,
-                        config=self.config,
-                        ai_engine=self.ai_service,
-                        context_manager=self.context_manager,
-                    )
-                    await self.security_analyst.start()
-                    self.logger.info("Security Analyst gestartet")
-
-                    await self._send_status_message(
-                        "**Security Analyst aktiv**\n"
-                        "- Autonome Sessions bei User-Idle\n"
-                        "- Discord-Briefing bei Online-Rueckkehr\n"
-                        "- GitHub Issues fuer Code-Findings",
-                        0x00FF00
-                    )
-                except Exception as e:
-                    self.logger.error(
-                        f"Security Analyst konnte nicht gestartet werden: {e}",
-                        exc_info=True
-                    )
+            if analyst_config.get('enabled', False) and self.security_engine and self.security_engine.scan_agent:
+                self.logger.info(
+                    "Security Analyst (ScanAgent) laeuft innerhalb Security Engine v6 — "
+                    "kein separater Start noetig"
+                )
+                # Referenz fuer Abwaertskompatibilitaet (inspector, event_watcher, learning_notifier)
+                self.security_analyst = self.security_engine.scan_agent
 
             # Legacy: AI Learning System (falls in Config noch aktiviert)
             if self.config.ai_learning_enabled and self.config.ai_enabled:
@@ -1130,12 +1116,8 @@ class ShadowOpsBot(commands.Bot):
             except Exception as e:
                 self.logger.warning(f"Security Engine Shutdown Fehler: {e}")
 
-        # Stop Security Analyst
-        if self.security_analyst:
-            try:
-                await self.security_analyst.stop()
-            except Exception as e:
-                self.logger.error(f"Error stopping security analyst: {e}")
+        # Security Analyst wird jetzt durch security_engine.shutdown() gestoppt
+        # (scan_agent.stop() wird dort aufgerufen)
 
         # Stop Server Assistant
         if self.server_assistant:

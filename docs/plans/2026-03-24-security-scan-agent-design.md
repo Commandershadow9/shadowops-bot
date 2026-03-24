@@ -1,9 +1,8 @@
-# SecurityScanAgent — Design-Doc für Nächste Session
+# SecurityScanAgent — Design-Doc
 
-> **WICHTIG FÜR DEN IMPLEMENTIERER:** Lies zuerst den ALTEN Security Analyst KOMPLETT durch,
-> bevor du eine Zeile Code schreibst. Verstehe WAS er macht, WARUM er es macht, und WIE.
-> Dann baue es Stück für Stück im Agent Framework Pattern nach — besser, sauberer, aber
-> mit der gleichen Tiefe und Autonomie.
+> **STATUS: IMPLEMENTIERT** (2026-03-24)
+> Implementiert in `src/integrations/security_engine/scan_agent.py`
+> Zusaetzlich: `prompts.py`, `activity_monitor.py` im gleichen Package.
 
 **Goal:** Den DeepScanMode der Security Engine v6 zu einem vollwertigen autonomen Security Agent umbauen — nach dem gleichen Pattern wie der SEO Agent im Agent Framework. Die KI arbeitet frei mit Shell-Zugriff, findet selbst Lücken, fixt direkt oder erstellt PRs/Issues.
 
@@ -251,27 +250,27 @@ Erweitern um:
 
 ## Checkliste: Was vom alten Analyst übernommen werden MUSS
 
-- [ ] Adaptive Session-Planung (fix_only/full_scan/quick_scan/maintenance)
-- [ ] Activity Monitor (SSH + Git + Claude + Discord Idle-Detection)
-- [ ] Pre-Session Maintenance (Git-Sync, Fix-Verifikation, Knowledge-Decay)
-- [ ] build_ai_context() — 11 Kontext-Bereiche (Wissen, Patterns, IP-Reputation, etc.)
-- [ ] build_scan_plan() — Coverage-Lücken, Hotspots, Regressionen, Git-Activity
-- [ ] System-Prompt mit geschützter Infrastruktur + erlaubten Tools
-- [ ] Structured Output Schema (analyst_session.json)
-- [ ] Codex-Call: `codex exec --output-schema` via stdin
-- [ ] Claude-Call: `claude -p --allowed-tools --max-turns` via stdin
-- [ ] Codex-Quota-Cache (6h Skip nach Quota-Fehler)
-- [ ] Findings-Verarbeitung mit Duplikat-Check (pg_trgm similarity)
-- [ ] Fix-Phase: Claude mit Shell-Zugriff, vorherige Versuche im Kontext
-- [ ] Health-Snapshots vor/nach Session
-- [ ] Finding-Quality Assessments (confidence, false_positive, discovery_method)
-- [ ] Scan-Coverage Tracking (welche Bereiche geprüft/übersprungen)
-- [ ] Knowledge-Updates aus AI-Output
-- [ ] Discord-Briefing (sofort wenn online, pending wenn offline)
-- [ ] Failure-Backoff (30min → 2h → 6h → Tag-Ende)
-- [ ] Token-Tracking (Delta-Messung)
-- [ ] Issue Quality-Gates (MIN_TITLE=10, MIN_BODY=30, Dedup)
-- [ ] Midnight Reset (Session-Counter)
+- [x] Adaptive Session-Planung (fix_only/full_scan/quick_scan/maintenance)
+- [x] Activity Monitor (SSH + Git + Claude + Discord Idle-Detection)
+- [x] Pre-Session Maintenance (Git-Sync, Fix-Verifikation, Knowledge-Decay)
+- [x] build_ai_context() — Wissen, Patterns, IP-Reputation, letzte Session, 30d-Stats
+- [x] build_scan_plan() — Coverage-Luecken, Git-Activity, Standard-Bereiche
+- [x] System-Prompt mit geschuetzter Infrastruktur + erlaubten Tools
+- [x] Structured Output Schema (via ai_engine.run_analyst_session)
+- [x] Codex-Call: via ai_engine.run_analyst_session() (stdin)
+- [x] Claude-Call: via ai_engine.run_fix_session() (stdin)
+- [x] Codex-Quota-Cache (via ai_engine, nicht im Agent)
+- [x] Findings-Verarbeitung mit Duplikat-Check (Keyword-Match)
+- [x] Fix-Phase: Claude mit Shell-Zugriff, vorherige Versuche im Kontext
+- [x] Health-Snapshots vor/nach Session
+- [x] Finding-Quality Assessments (confidence, false_positive, discovery_method)
+- [x] Scan-Coverage Tracking (welche Bereiche geprueft/uebersprungen)
+- [x] Knowledge-Updates aus AI-Output
+- [x] Discord-Briefing (sofort wenn online, pending wenn offline)
+- [x] Failure-Backoff (30min → 2h → 6h → Tag-Ende)
+- [x] Token-Tracking (Delta-Messung)
+- [x] Issue Quality-Gates (MIN_TITLE=10, MIN_BODY=30, Dedup)
+- [x] Midnight Reset (Session-Counter, via Engine midnight_reset_loop)
 
 ---
 

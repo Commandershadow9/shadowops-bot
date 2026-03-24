@@ -782,11 +782,19 @@ class SecurityEventWatcher:
             logger.info("⏸️ AI-Remediation deaktiviert - Event wird nur geloggt")
             return
 
-        # Bei kritischen Events: Analyst-Quick-Scan triggern
-        analyst = getattr(self.bot, 'security_analyst', None)
-        if analyst and event.severity in ('critical', 'high'):
+        # Bei kritischen Events: ScanAgent Quick-Scan triggern
+        # Zuerst neuen ScanAgent pruefen (Security Engine v6),
+        # Fallback auf alten security_analyst
+        scan_agent = None
+        engine = getattr(self.bot, 'security_engine', None)
+        if engine and hasattr(engine, 'scan_agent') and engine.scan_agent:
+            scan_agent = engine.scan_agent
+        else:
+            scan_agent = getattr(self.bot, 'security_analyst', None)
+
+        if scan_agent and event.severity in ('critical', 'high'):
             try:
-                asyncio.ensure_future(analyst.trigger_event_scan(
+                asyncio.ensure_future(scan_agent.trigger_event_scan(
                     event_type=event.source,
                     details=f"{event.title}: {event.description[:100]}",
                 ))

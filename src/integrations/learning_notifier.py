@@ -185,24 +185,25 @@ class LearningNotifier:
             timestamp=datetime.now(timezone.utc),
         )
 
-        # ── Security Analyst ──
-        analyst = getattr(self.bot, 'security_analyst', None)
-        if analyst and analyst.db and analyst.db.pool:
+        # ── Security ScanAgent ──
+        scan_agent = getattr(self.bot, 'security_analyst', None)
+        pool = None
+        if scan_agent and hasattr(scan_agent, 'db') and scan_agent.db and scan_agent.db.pool:
+            pool = scan_agent.db.pool
+        if pool:
             try:
-                stats = await analyst.db._get_30day_stats()
-                # Letzte 7 Tage
-                week_sessions = await analyst.db.pool.fetchval(
-                    "SELECT COUNT(*) FROM sessions WHERE started_at >= NOW() - INTERVAL '7 days' AND status='completed'"
-                )
-                week_findings = await analyst.db.pool.fetchval(
-                    "SELECT COUNT(*) FROM findings WHERE found_at >= NOW() - INTERVAL '7 days'"
-                )
-                week_fixes = await analyst.db.pool.fetchval(
-                    "SELECT COUNT(*) FROM fix_attempts WHERE created_at >= NOW() - INTERVAL '7 days' AND result='success'"
-                )
-                week_regressions = await analyst.db.pool.fetchval(
-                    "SELECT COUNT(*) FROM fix_verifications WHERE checked_at >= NOW() - INTERVAL '7 days' AND still_valid=FALSE"
-                )
+                # Direkte Queries statt AnalystDB-Methoden
+                findings_open = await pool.fetchval("SELECT COUNT(*) FROM findings WHERE status='open'")
+                findings_fixed = await pool.fetchval(
+                    "SELECT COUNT(*) FROM findings WHERE status='fixed' AND found_at >= NOW()-INTERVAL '30 days'")
+                week_sessions = await pool.fetchval(
+                    "SELECT COUNT(*) FROM sessions WHERE started_at >= NOW()-INTERVAL '7 days' AND status='completed'")
+                week_findings = await pool.fetchval(
+                    "SELECT COUNT(*) FROM findings WHERE found_at >= NOW()-INTERVAL '7 days'")
+                week_fixes = await pool.fetchval(
+                    "SELECT COUNT(*) FROM fix_attempts WHERE created_at >= NOW()-INTERVAL '7 days' AND result='success'")
+                week_regressions = await pool.fetchval(
+                    "SELECT COUNT(*) FROM fix_verifications WHERE checked_at >= NOW()-INTERVAL '7 days' AND still_valid=FALSE")
 
                 analyst_text = (
                     f"Sessions: **{week_sessions}** · "
@@ -211,9 +212,9 @@ class LearningNotifier:
                 )
                 if week_regressions:
                     analyst_text += f" · Regressionen: **{week_regressions}** ⚠️"
-                analyst_text += f"\nGesamt: {stats['findings_open']} offen / {stats['findings_fixed']} behoben"
+                analyst_text += f"\nGesamt: {findings_open} offen / {findings_fixed} behoben"
 
-                embed.add_field(name="🔒 Security Analyst", value=analyst_text, inline=False)
+                embed.add_field(name="🔒 Security ScanAgent", value=analyst_text, inline=False)
             except Exception:
                 pass
 
@@ -258,10 +259,10 @@ class LearningNotifier:
         except Exception:
             pass
 
-        # ── Security Analyst DB ──
-        if analyst and analyst.db and analyst.db.pool:
+        # ── Security DB ──
+        if pool:
             try:
-                sa_rows = await analyst.db.pool.fetchval(
+                sa_rows = await pool.fetchval(
                     """SELECT
                         (SELECT COUNT(*) FROM sessions) +
                         (SELECT COUNT(*) FROM findings) +
@@ -297,18 +298,21 @@ class LearningNotifier:
         if not channel:
             return
 
-        analyst = getattr(self.bot, 'security_analyst', None)
-        if not analyst or not analyst.db or not analyst.db.pool:
+        scan_agent = getattr(self.bot, 'security_analyst', None)
+        pool = None
+        if scan_agent and hasattr(scan_agent, 'db') and scan_agent.db and scan_agent.db.pool:
+            pool = scan_agent.db.pool
+        if not pool:
             return
 
         try:
-            total_fixes = await analyst.db.pool.fetchval(
+            total_fixes = await pool.fetchval(
                 "SELECT COUNT(*) FROM fix_attempts WHERE result='success'"
             )
-            total_findings = await analyst.db.pool.fetchval(
+            total_findings = await pool.fetchval(
                 "SELECT COUNT(*) FROM findings"
             )
-            total_sessions = await analyst.db.pool.fetchval(
+            total_sessions = await pool.fetchval(
                 "SELECT COUNT(*) FROM sessions WHERE status='completed'"
             )
 
