@@ -936,8 +936,12 @@ class SecurityScanAgent:
         return count or 0
 
     async def _get_last_session(self) -> Optional[Dict]:
-        row = await self.db.pool.fetchrow(
-            "SELECT * FROM sessions WHERE status='completed' ORDER BY ended_at DESC LIMIT 1")
+        """Letzte ERFOLGREICHE Session (mit Findings oder Auto-Fixes)."""
+        row = await self.db.pool.fetchrow("""
+            SELECT * FROM sessions WHERE status='completed'
+              AND (findings_count > 0 OR auto_fixes_count > 0 OR tokens_used > 0)
+            ORDER BY ended_at DESC LIMIT 1
+        """)
         return dict(row) if row else None
 
     async def _find_similar_open_finding(self, title: str) -> Optional[Dict]:
