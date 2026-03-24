@@ -331,7 +331,7 @@ class SecurityScanAgent:
                     except Exception:
                         effective_limit = self.max_sessions_per_day
 
-                    if self._sessions_today < effective_limit:
+                    if force_scan or self._sessions_today < effective_limit:
                         trigger = 'force_scan' if force_scan else 'idle_detected'
                         logger.info("User idle, Sessions %d/%d — starte Analyse (trigger=%s)",
                                     self._sessions_today, effective_limit, trigger)
