@@ -145,18 +145,22 @@ class SecurityEngine:
         logger.info("✅ SecurityEngine initialisiert")
 
     async def start(self):
-        """Startet Background-Tasks (Proactive Scheduler)"""
+        """Startet Background-Tasks (Proactive Scheduler + Daily Scan + Midnight Reset)"""
         self._proactive_task = asyncio.create_task(self._proactive_loop())
+        self._scan_task = asyncio.create_task(self._daily_scan_loop())
+        self._midnight_task = asyncio.create_task(self._midnight_reset_loop())
         logger.info("🔄 Proactive Scheduler gestartet (alle 6h)")
+        logger.info("🔍 Daily Scan Scheduler gestartet (adaptiv: 1-3x/Tag)")
 
     async def shutdown(self):
         """Graceful Shutdown"""
-        if self._proactive_task:
-            self._proactive_task.cancel()
-            try:
-                await self._proactive_task
-            except asyncio.CancelledError:
-                pass
+        for task in [self._proactive_task, getattr(self, '_scan_task', None), getattr(self, '_midnight_task', None)]:
+            if task:
+                task.cancel()
+                try:
+                    await task
+                except asyncio.CancelledError:
+                    pass
         if self.learning_bridge:
             await self.learning_bridge.close()
         if self.db:
@@ -299,6 +303,101 @@ class SecurityEngine:
                         await channel.send(embed=embed)
         except Exception as e:
             logger.debug(f"Discord-Notification fehlgeschlagen: {e}")
+
+    # ── Daily Scan Scheduler ─────────────────────────────────────
+
+    async def _daily_scan_loop(self):
+        """Background-Task: Taegliche Security-Scans (adaptiv 1-3x/Tag)"""
+        # Erster Scan nach 5 Minuten (Bot soll erstmal vollstaendig hochfahren)
+        await asyncio.sleep(300)
+
+        while True:
+            try:
+                if not self.deep_scan:
+                    logger.warning("DeepScan nicht verfuegbar — uebersprungen")
+                    await asyncio.sleep(3600)
+                    continue
+
+                can_scan = await self.deep_scan.can_start_session()
+                if not can_scan:
+                    logger.info("🔍 Session-Limit erreicht — naechster Versuch in 2h")
+                    await asyncio.sleep(7200)
+                    continue
+
+                logger.info("🔍 Starte geplanten Security Deep-Scan...")
+                session_result = await self.deep_scan.run_session()
+
+                # Discord-Report
+                status_emoji = "✅" if session_result['status'] == 'completed' else "❌"
+                mode = session_result.get('mode', '?')
+                findings = session_result.get('findings_count', 0)
+                fixes = session_result.get('fixes_count', 0)
+                issues = session_result.get('issues_created', 0)
+
+                msg = (
+                    f"🔍 **Security Deep-Scan abgeschlossen** {status_emoji}\n\n"
+                    f"**Modus:** `{mode}`\n"
+                    f"**Findings:** {findings} neue\n"
+                    f"**Fixes:** {fixes} angewendet\n"
+                    f"**Issues:** {issues} erstellt\n"
+                )
+
+                if session_result.get('findings'):
+                    msg += "\n**Neue Findings:**\n"
+                    for f in session_result['findings'][:5]:
+                        sev = f.get('severity', '?')
+                        emoji = '🔴' if sev == 'CRITICAL' else '🟠' if sev == 'HIGH' else '🟡' if sev == 'MEDIUM' else '⚪'
+                        msg += f"{emoji} [{sev}] {f.get('title', '?')}\n"
+
+                if session_result.get('error'):
+                    msg += f"\n⚠️ **Fehler:** {session_result['error'][:200]}"
+
+                color = 0x2ECC71 if session_result['status'] == 'completed' and findings == 0 else \
+                        0xF39C12 if findings > 0 else 0xE74C3C
+                await self._notify_discord(msg, color=color)
+
+                # Learning Bridge: Session-Ergebnis teilen
+                if self.learning_bridge and self.learning_bridge.is_connected:
+                    await self.learning_bridge.share_knowledge(
+                        'security', f'scan_{datetime.now(timezone.utc).strftime("%Y%m%d_%H%M")}',
+                        f'Scan ({mode}): {findings} Findings, {fixes} Fixes, {issues} Issues',
+                        confidence=0.8,
+                    )
+
+                # Naechster Scan: Adaptiv
+                # Viele Findings → 4h, wenige → 8h, keine → 12h
+                if findings >= 5:
+                    wait_hours = 4
+                elif findings >= 1:
+                    wait_hours = 8
+                else:
+                    wait_hours = 12
+
+                logger.info(f"🔍 Naechster Scan in {wait_hours}h")
+                await asyncio.sleep(wait_hours * 3600)
+
+            except asyncio.CancelledError:
+                raise
+            except Exception as e:
+                logger.error(f"Daily Scan Fehler: {e}", exc_info=True)
+                await asyncio.sleep(3600)  # 1h warten bei Fehler
+
+    # ── Midnight Reset ────────────────────────────────────────────
+
+    async def _midnight_reset_loop(self):
+        """Setzt taegliche Counter zurueck (Sessions, Stats)"""
+        while True:
+            now = datetime.now(timezone.utc)
+            # Naechste Mitternacht berechnen
+            tomorrow = now.replace(hour=0, minute=0, second=0, microsecond=0)
+            if tomorrow <= now:
+                tomorrow = tomorrow.replace(day=tomorrow.day + 1)
+            wait = (tomorrow - now).total_seconds()
+            await asyncio.sleep(wait)
+
+            if self.deep_scan:
+                self.deep_scan.reset_daily()
+                logger.info("🔄 Daily Reset: Session-Counter zurueckgesetzt")
 
     # ── Proactive Scheduler ───────────────────────────────────────
 
