@@ -384,24 +384,29 @@ class SecurityScanAgent:
                         plan['mode'], len(fixable), plan['reason'])
 
             # Maintenance: Bei 0 Backlog trotzdem regelmässig scannen
-            # Vergleiche Kalendertage (nicht volle 24h-Perioden), damit ein Scan
-            # von gestern 23:00 heute als "anderer Tag" zaehlt
+            # Force-Scan umgeht den Date-Check komplett
             if plan['mode'] == 'maintenance':
-                last = await self._get_last_session()
-                days_since_scan = 99
-                if last and last.get('ended_at'):
-                    last_date = last['ended_at'].date()
-                    today = datetime.now(timezone.utc).date()
-                    days_since_scan = (today - last_date).days
-                if days_since_scan >= self.maintenance_scan_days:
+                if trigger_type == 'force_scan':
                     plan['mode'] = 'full_scan'
                     plan['scan'] = True
                     mode_config = SESSION_MODES['full_scan']
-                    logger.info("Taeglicher Scan (letzter: vor %d Tag(en), Schwelle: %d) — starte full_scan",
-                                days_since_scan, self.maintenance_scan_days)
+                    logger.info("Force-Scan: Maintenance → full_scan")
                 else:
-                    logger.info("Scan heute bereits gelaufen — skip")
-                    return
+                    last = await self._get_last_session()
+                    days_since_scan = 99
+                    if last and last.get('ended_at'):
+                        last_date = last['ended_at'].date()
+                        today = datetime.now(timezone.utc).date()
+                        days_since_scan = (today - last_date).days
+                    if days_since_scan >= self.maintenance_scan_days:
+                        plan['mode'] = 'full_scan'
+                        plan['scan'] = True
+                        mode_config = SESSION_MODES['full_scan']
+                        logger.info("Taeglicher Scan (letzter: vor %d Tag(en), Schwelle: %d) — starte full_scan",
+                                    days_since_scan, self.maintenance_scan_days)
+                    else:
+                        logger.info("Scan heute bereits gelaufen — skip")
+                        return
 
             # Fix-Only
             if plan['mode'] == 'fix_only':
