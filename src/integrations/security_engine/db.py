@@ -34,8 +34,147 @@ class SecurityDB:
             await self.pool.close()
 
     async def _ensure_schema(self):
-        """Erstellt neue Tabellen (IF NOT EXISTS), laesst bestehende intakt"""
+        """Erstellt alle Tabellen (IF NOT EXISTS), laesst bestehende intakt.
+
+        Umfasst sowohl die Legacy-Tabellen (vom alten Analyst, gebraucht vom
+        SecurityScanAgent) als auch die neuen v6-Tabellen (Reactive/Proactive Mode).
+        """
         async with self.pool.acquire() as conn:
+            # ── Legacy-Tabellen (SecurityScanAgent) ──────────────────
+            await conn.execute("""
+                CREATE TABLE IF NOT EXISTS sessions (
+                    id SERIAL PRIMARY KEY,
+                    started_at TIMESTAMPTZ NOT NULL,
+                    ended_at TIMESTAMPTZ,
+                    trigger_type TEXT NOT NULL,
+                    topics_investigated TEXT[],
+                    findings_count INT DEFAULT 0,
+                    auto_fixes_count INT DEFAULT 0,
+                    issues_created INT DEFAULT 0,
+                    tokens_used INT DEFAULT 0,
+                    model_used TEXT,
+                    ai_summary TEXT,
+                    status TEXT DEFAULT 'running'
+                );
+                CREATE INDEX IF NOT EXISTS idx_sessions_started ON sessions(started_at DESC);
+
+                CREATE TABLE IF NOT EXISTS knowledge (
+                    id SERIAL PRIMARY KEY,
+                    category TEXT NOT NULL,
+                    subject TEXT NOT NULL,
+                    content TEXT NOT NULL,
+                    confidence FLOAT DEFAULT 0.5,
+                    last_verified TIMESTAMPTZ,
+                    created_at TIMESTAMPTZ DEFAULT NOW(),
+                    updated_at TIMESTAMPTZ DEFAULT NOW(),
+                    UNIQUE(category, subject)
+                );
+                CREATE INDEX IF NOT EXISTS idx_knowledge_category ON knowledge(category);
+
+                CREATE TABLE IF NOT EXISTS findings (
+                    id SERIAL PRIMARY KEY,
+                    severity TEXT NOT NULL,
+                    category TEXT NOT NULL,
+                    title TEXT NOT NULL,
+                    description TEXT NOT NULL,
+                    affected_project TEXT,
+                    affected_files TEXT[],
+                    status TEXT DEFAULT 'open',
+                    fix_type TEXT,
+                    github_issue_url TEXT,
+                    auto_fix_details TEXT,
+                    rollback_command TEXT,
+                    found_at TIMESTAMPTZ DEFAULT NOW(),
+                    fixed_at TIMESTAMPTZ,
+                    session_id INT REFERENCES sessions(id)
+                );
+                CREATE INDEX IF NOT EXISTS idx_findings_status ON findings(status);
+                CREATE INDEX IF NOT EXISTS idx_findings_severity ON findings(severity);
+                CREATE INDEX IF NOT EXISTS idx_findings_project ON findings(affected_project);
+
+                CREATE TABLE IF NOT EXISTS learned_patterns (
+                    id SERIAL PRIMARY KEY,
+                    pattern_type TEXT NOT NULL,
+                    description TEXT NOT NULL,
+                    examples JSONB DEFAULT '[]',
+                    times_seen INT DEFAULT 1,
+                    created_at TIMESTAMPTZ DEFAULT NOW(),
+                    updated_at TIMESTAMPTZ DEFAULT NOW()
+                );
+
+                CREATE TABLE IF NOT EXISTS health_snapshots (
+                    id SERIAL PRIMARY KEY,
+                    taken_at TIMESTAMPTZ DEFAULT NOW(),
+                    session_id INT REFERENCES sessions(id),
+                    services JSONB NOT NULL,
+                    docker_containers JSONB NOT NULL,
+                    system_resources JSONB NOT NULL
+                );
+
+                CREATE TABLE IF NOT EXISTS fix_attempts (
+                    id SERIAL PRIMARY KEY,
+                    finding_id INT REFERENCES findings(id) ON DELETE CASCADE,
+                    session_id INT REFERENCES sessions(id) ON DELETE SET NULL,
+                    approach TEXT NOT NULL,
+                    commands_used TEXT[],
+                    result TEXT NOT NULL CHECK(result IN ('success', 'failure', 'partial')),
+                    side_effects TEXT,
+                    error_message TEXT,
+                    execution_time_s INT,
+                    created_at TIMESTAMPTZ DEFAULT NOW(),
+                    verified_at TIMESTAMPTZ,
+                    still_valid BOOLEAN
+                );
+                CREATE INDEX IF NOT EXISTS idx_fix_attempts_finding ON fix_attempts(finding_id);
+                CREATE INDEX IF NOT EXISTS idx_fix_attempts_created ON fix_attempts(created_at DESC);
+
+                CREATE TABLE IF NOT EXISTS fix_verifications (
+                    id SERIAL PRIMARY KEY,
+                    fix_attempt_id INT REFERENCES fix_attempts(id) ON DELETE CASCADE,
+                    session_id INT REFERENCES sessions(id) ON DELETE SET NULL,
+                    still_valid BOOLEAN NOT NULL,
+                    check_method TEXT,
+                    regression_details TEXT,
+                    checked_at TIMESTAMPTZ DEFAULT NOW()
+                );
+                CREATE INDEX IF NOT EXISTS idx_fix_verifications_attempt ON fix_verifications(fix_attempt_id);
+
+                CREATE TABLE IF NOT EXISTS finding_quality (
+                    id SERIAL PRIMARY KEY,
+                    finding_id INT UNIQUE REFERENCES findings(id) ON DELETE CASCADE,
+                    is_actionable BOOLEAN,
+                    is_false_positive BOOLEAN DEFAULT FALSE,
+                    false_positive_reason TEXT,
+                    discovery_method TEXT,
+                    confidence_score FLOAT DEFAULT 0.5,
+                    assessed_at TIMESTAMPTZ DEFAULT NOW(),
+                    assessed_by TEXT DEFAULT 'analyst'
+                );
+
+                CREATE TABLE IF NOT EXISTS scan_coverage (
+                    id SERIAL PRIMARY KEY,
+                    session_id INT REFERENCES sessions(id) ON DELETE CASCADE,
+                    area TEXT NOT NULL,
+                    checked BOOLEAN DEFAULT TRUE,
+                    depth TEXT DEFAULT 'basic' CHECK(depth IN ('basic', 'deep', 'skipped')),
+                    notes TEXT,
+                    checked_at TIMESTAMPTZ DEFAULT NOW()
+                );
+                CREATE INDEX IF NOT EXISTS idx_scan_coverage_area ON scan_coverage(area, checked_at DESC);
+                CREATE INDEX IF NOT EXISTS idx_scan_coverage_session ON scan_coverage(session_id);
+
+                CREATE TABLE IF NOT EXISTS ip_reputation (
+                    id SERIAL PRIMARY KEY,
+                    ip_address INET NOT NULL UNIQUE,
+                    total_bans INT DEFAULT 0,
+                    threat_score INT DEFAULT 0,
+                    permanent_blocked BOOLEAN DEFAULT FALSE,
+                    first_seen TIMESTAMPTZ DEFAULT NOW(),
+                    last_seen TIMESTAMPTZ DEFAULT NOW()
+                );
+            """)
+
+            # ── Neue v6-Tabellen (Reactive/Proactive Mode) ──────────
             await conn.execute("""
                 CREATE TABLE IF NOT EXISTS fix_attempts_v2 (
                     id SERIAL PRIMARY KEY,

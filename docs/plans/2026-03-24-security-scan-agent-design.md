@@ -1,8 +1,13 @@
 # SecurityScanAgent — Design-Doc
 
-> **STATUS: IMPLEMENTIERT** (2026-03-24)
+> **STATUS: IMPLEMENTIERT + BUGFIXES** (2026-03-24)
 > Implementiert in `src/integrations/security_engine/scan_agent.py`
 > Zusaetzlich: `prompts.py`, `activity_monitor.py` im gleichen Package.
+>
+> **Bugfixes (2026-03-24):**
+> - `engine.py`: `config.raw` → `config._config`, bare `config` → `self.config`
+> - `scan_agent.py`: Spalte `was_checked` → `checked` (3 Stellen), FK-Violation `session_id or 0` → `None`
+> - `db.py`: `_ensure_schema()` erstellt jetzt ALLE Tabellen (Legacy + v6) fuer Neuinstallationen
 
 **Goal:** Den DeepScanMode der Security Engine v6 zu einem vollwertigen autonomen Security Agent umbauen — nach dem gleichen Pattern wie der SEO Agent im Agent Framework. Die KI arbeitet frei mit Shell-Zugriff, findet selbst Lücken, fixt direkt oder erstellt PRs/Issues.
 

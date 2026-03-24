@@ -62,7 +62,7 @@ class SecurityEngine:
             self._db_dsn = getattr(config, 'security_db_dsn', None)
             if not self._db_dsn:
                 # Fallback: aus security_analyst config
-                sa_cfg = config.raw.get('security_analyst', {}) if hasattr(config, 'raw') else {}
+                sa_cfg = config._config.get('security_analyst', {}) if hasattr(config, '_config') else {}
                 self._db_dsn = sa_cfg.get('database_dsn',
                     'postgresql://security_analyst:sec_analyst_2026@127.0.0.1:5433/security_analyst')
 
@@ -136,7 +136,7 @@ class SecurityEngine:
         if self.bot:
             self.scan_agent = SecurityScanAgent(
                 bot=self.bot,
-                config=self.bot.config if hasattr(self.bot, 'config') else config,
+                config=self.bot.config if hasattr(self.bot, 'config') else self.config,
                 ai_engine=self.ai_service,
                 db=self.db,
                 context_manager=self.context_manager,

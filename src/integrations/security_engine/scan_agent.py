@@ -159,6 +159,45 @@ PROJECT_SECURITY_PROFILES = {
         'auth': 'OAuth Token (OpenAI), Setup-Token (Anthropic)',
         'secrets': '.env pro Projekt, OAuth-Tokens in auth-profiles.json',
     },
+    'shadowops-bot': {
+        'path': '/home/cmdshadow/shadowops-bot',
+        'stack': 'Python 3.12, discord.py 2.7, Dual-Engine AI (Codex + Claude)',
+        'attack_surface': [
+            'GitHub Webhook Server (Port 9090, HMAC-Validierung)',
+            'Health/Changelog REST API + RSS Feed (Port 8766)',
+            'GuildScout Alert Forwarding (Port 9091)',
+            'Discord Gateway (2 Guilds: DEV + ZERODOX)',
+            'AI Subprocess Calls (Codex/Claude via stdin)',
+            'Auto-Fix Executor (Shell-Commands auf Produktiv-Server)',
+        ],
+        'critical_files': [
+            'config/config.yaml',
+            'src/bot.py',
+            'src/integrations/ai_engine.py',
+            'src/integrations/security_engine/',
+            'src/integrations/command_executor.py',
+            'deploy/shadowops-bot.service',
+        ],
+        'services': 'systemd: shadowops-bot (system-level), Ports: 8766, 9090, 9091',
+        'auth': 'Discord Bot Token, GitHub Token, HMAC Webhook Secret',
+        'secrets': 'config/config.yaml (Discord Token, GitHub Token, API Keys, DB DSNs)',
+    },
+    'openclaw': {
+        'path': '/home/cmdshadow/openclaw',
+        'stack': 'Node.js AI Agent (Sandbox)',
+        'attack_surface': [
+            'Gateway API (Port 18789, nur localhost + VPN)',
+            'AI Agent mit Shell-Zugriff (Sandbox-Workspace)',
+            'OAuth Token Refresh (OpenAI, Anthropic)',
+        ],
+        'critical_files': [
+            'docker-compose.secure.yml',
+            '.env.sandbox',
+        ],
+        'services': 'Docker: openclaw-gateway(18789), Netzwerk: openclaw_isolated(172.23.0.0/16)',
+        'auth': 'OAuth (OpenAI), Setup-Token (Anthropic), allowInsecureAuth fuer VPN',
+        'secrets': '.env.sandbox, auth-profiles.json, OAuth-Tokens',
+    },
 }
 
 
@@ -573,7 +612,7 @@ class SecurityScanAgent:
                         INSERT INTO fix_verifications
                             (fix_attempt_id, session_id, still_valid, check_method, regression_details)
                         VALUES ($1, $2, $3, $4, $5)
-                    """, fix['id'], self._current_session_id or 0, still_valid, check_method, regression_details)
+                    """, fix['id'], self._current_session_id, still_valid, check_method, regression_details)
                 except Exception:
                     pass
                 if not still_valid:
@@ -698,14 +737,14 @@ class SecurityScanAgent:
         for area in result.get('areas_checked', []):
             try:
                 await self.db.pool.execute(
-                    "INSERT INTO scan_coverage (session_id, area, was_checked, depth) VALUES ($1,$2,TRUE,'basic')",
+                    "INSERT INTO scan_coverage (session_id, area, checked, depth) VALUES ($1,$2,TRUE,'basic')",
                     session_id, area)
             except Exception:
                 pass
         for area in result.get('areas_deferred', []):
             try:
                 await self.db.pool.execute(
-                    "INSERT INTO scan_coverage (session_id, area, was_checked, depth) VALUES ($1,$2,FALSE,'skipped')",
+                    "INSERT INTO scan_coverage (session_id, area, checked, depth) VALUES ($1,$2,FALSE,'skipped')",
                     session_id, area)
             except Exception:
                 pass
@@ -1020,7 +1059,7 @@ class SecurityScanAgent:
             gaps = await self.db.pool.fetch("""
                 SELECT area, EXTRACT(DAY FROM NOW()-MAX(s.started_at)) as days_ago
                 FROM scan_coverage sc JOIN sessions s ON s.id=sc.session_id
-                WHERE sc.was_checked=TRUE GROUP BY area
+                WHERE sc.checked=TRUE GROUP BY area
                 HAVING MAX(s.started_at)<NOW()-INTERVAL '7 days'
                 ORDER BY days_ago DESC
             """)
