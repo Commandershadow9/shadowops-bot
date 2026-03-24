@@ -332,9 +332,10 @@ class SecurityScanAgent:
                         effective_limit = self.max_sessions_per_day
 
                     if self._sessions_today < effective_limit:
-                        logger.info("User idle, Sessions %d/%d — starte Analyse",
-                                    self._sessions_today, effective_limit)
-                        await self._run_session()
+                        trigger = 'force_scan' if force_scan else 'idle_detected'
+                        logger.info("User idle, Sessions %d/%d — starte Analyse (trigger=%s)",
+                                    self._sessions_today, effective_limit, trigger)
+                        await self._run_session(trigger_type=trigger)
 
             except asyncio.CancelledError:
                 return
@@ -363,11 +364,11 @@ class SecurityScanAgent:
 
     # ─── Session-Ausfuehrung ──────────────────────────────────────────
 
-    async def _run_session(self):
+    async def _run_session(self, trigger_type: str = 'idle_detected'):
         if self._session_lock.locked():
             return
         async with self._session_lock:
-            await self._run_session_inner(trigger_type='idle_detected')
+            await self._run_session_inner(trigger_type=trigger_type)
 
     async def _run_session_inner(self, trigger_type: str = 'idle_detected'):
         session_id = None
