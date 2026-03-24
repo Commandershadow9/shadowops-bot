@@ -5,10 +5,12 @@ from .models import (
 )
 from .providers import FixProvider, NoOpProvider, BashFixProvider
 from .registry import FixerRegistry
+from .executor import PhaseTypeExecutor
 
 __all__ = [
     'SecurityEvent', 'BanEvent', 'ThreatEvent', 'VulnEvent', 'IntegrityEvent',
     'PhaseType', 'FixResult', 'EngineMode', 'Severity',
     'FixProvider', 'NoOpProvider', 'BashFixProvider',
     'FixerRegistry',
+    'PhaseTypeExecutor',
 ]
