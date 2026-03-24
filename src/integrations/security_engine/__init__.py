@@ -6,6 +6,7 @@ from .models import (
 from .providers import FixProvider, NoOpProvider, BashFixProvider
 from .registry import FixerRegistry
 from .executor import PhaseTypeExecutor
+from .reactive import ReactiveMode
 
 __all__ = [
     'SecurityEvent', 'BanEvent', 'ThreatEvent', 'VulnEvent', 'IntegrityEvent',
@@ -13,4 +14,5 @@ __all__ = [
     'FixProvider', 'NoOpProvider', 'BashFixProvider',
     'FixerRegistry',
     'PhaseTypeExecutor',
+    'ReactiveMode',
 ]
