@@ -61,6 +61,10 @@ MAIN_LOOP_INTERVAL = 60
 # Heartbeat alle N Loops
 HEARTBEAT_EVERY = 10
 
+# Maintenance-Scan-Schwelle: Wie viele Tage zwischen Scans bei 0 Backlog?
+# Default 1 = mindestens 1 Scan pro Tag (konfigurierbar via security_analyst.maintenance_scan_days)
+MAINTENANCE_SCAN_INTERVAL_DAYS = 1
+
 # Failure-Backoff (30 Min, 2h, 6h)
 FAILURE_BACKOFF_SECONDS = [1800, 7200, 21600]
 MAX_CONSECUTIVE_FAILURES = 3
@@ -216,6 +220,9 @@ class SecurityScanAgent:
         )
         self.codex_model = analyst_cfg.get('model', 'gpt-5.3-codex')
         self.claude_model = analyst_cfg.get('fallback_model', 'claude-opus-4-6')
+        self.maintenance_scan_days = analyst_cfg.get(
+            'maintenance_scan_days', MAINTENANCE_SCAN_INTERVAL_DAYS
+        )
 
         # State
         self._task: Optional[asyncio.Task] = None
@@ -360,19 +367,21 @@ class SecurityScanAgent:
             logger.info("Session-Plan: %s (Backlog: %d, Reason: %s)",
                         plan['mode'], len(fixable), plan['reason'])
 
-            # Maintenance pruefen
+            # Maintenance: Bei 0 Backlog trotzdem regelmässig scannen
             if plan['mode'] == 'maintenance':
                 last = await self._get_last_session()
                 days = 99
                 if last and last.get('ended_at'):
                     days = (datetime.now(timezone.utc) - last['ended_at']).days
-                if days >= 3:
+                if days >= self.maintenance_scan_days:
                     plan['mode'] = 'full_scan'
                     plan['scan'] = True
                     mode_config = SESSION_MODES['full_scan']
-                    logger.info("Maintenance → Full-Scan (letzter: %d Tage)", days)
+                    logger.info("Taeglicher Scan (letzter: %d Tage, Schwelle: %d) — starte full_scan",
+                                days, self.maintenance_scan_days)
                 else:
-                    logger.info("Maintenance: clean, letzter Scan %d Tage — skip", days)
+                    logger.info("Scan heute bereits gelaufen (%d/%d Tage) — skip",
+                                days, self.maintenance_scan_days)
                     return
 
             # Fix-Only

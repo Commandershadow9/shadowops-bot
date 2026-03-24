@@ -174,7 +174,7 @@
   - ≥20 Findings → fix_only (bis 3 Sessions/Tag, nur Fixen)
   - 5-19 Findings → full_scan + fix (bis 2 Sessions/Tag)
   - 1-4 Findings → quick_scan + fix (1 Session, 20min statt 45min)
-  - 0 Findings → maintenance (nur wenn letzter Scan >3 Tage her)
+  - 0 Findings → daily full_scan (mind. 1x/Tag, konfigurierbar via `security_analyst.maintenance_scan_days`)
 - **Pre-Session Maintenance:** Git-Activity-Sync, Fix-Verifikation (14 Tage), Knowledge-Decay
 - **Phase 1 (Scan):** Reine Analyse, Findings + Coverage + Quality-Assessment in DB
 - **Phase 2 (Fix):** Findings abarbeiten mit vollem Knowledge-Kontext + vorherigen Fix-Versuchen
