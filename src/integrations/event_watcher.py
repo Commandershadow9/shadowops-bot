@@ -149,17 +149,8 @@ class SecurityEventWatcher:
                    f"Fail2ban={self.intervals['fail2ban']}s, "
                    f"AIDE={self.intervals['aide']}s")
 
-        self._log_activity(
-            "startup",
-            "🛡️ **Security-Tools aktiv**\n"
-            f"• Trivy: Scan alle {self.intervals['trivy']}s\n"
-            f"• CrowdSec: Scan alle {self.intervals['crowdsec']}s\n"
-            f"• Fail2ban: Scan alle {self.intervals['fail2ban']}s\n"
-            f"• AIDE: Scan alle {self.intervals['aide']}s\n"
-            "• Alerts werden in den Security-Channels gepostet",
-            severity="info",
-            force=True
-        )
+        # Keine separate Discord-Meldung — Startup-Summary im bot_status
+        # Channel zeigt bereits alle aktiven Services kompakt an.
 
     async def stop(self):
         """Stop all event watchers"""
@@ -396,10 +387,12 @@ class SecurityEventWatcher:
         logger.info(f"🔍 Starting Fail2ban Realtime Watcher ({interval}s intervals)")
 
         # Recidive-Tracking: Aus PostgreSQL laden (persistent über Restarts)
+        # WICHTIG: await statt ensure_future — Race Condition vermeiden!
+        # Sonst ist _permanent_blocked beim ersten Scan-Zyklus noch leer.
         if not hasattr(self, '_ban_counts'):
             self._ban_counts: dict[str, int] = {}
             self._permanent_blocked: set[str] = set()
-            asyncio.ensure_future(self._init_recidive_from_db())
+            await self._init_recidive_from_db()
 
         while self.running:
             try:
