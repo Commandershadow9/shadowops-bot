@@ -484,7 +484,17 @@ class SecurityScanAgent:
                 open_findings=open_text,
                 scan_plan=scan_plan,
             )
-            prompt = ANALYST_SYSTEM_PROMPT + "\n\n" + context
+            # Deterministische Pre-Checks (harte Fakten VOR AI-Analyse)
+            pre_check_data = await self._run_pre_checks()
+
+            prompt = ANALYST_SYSTEM_PROMPT + "\n\n"
+            if pre_check_data:
+                prompt += "## AKTUELLE SERVER-FAKTEN (deterministisch gesammelt)\n\n"
+                prompt += pre_check_data + "\n\n"
+                prompt += ("Die obigen Daten sind FRISCH und VERIFIZIERT. Nutze sie als Grundlage "
+                           "deiner Analyse. Du musst diese Befehle NICHT erneut ausfuehren — "
+                           "konzentriere dich auf TIEFERE Analysen die ueber diese Basisdaten hinausgehen.\n\n")
+            prompt += context
 
             if plan['mode'] == 'quick_scan':
                 prompt += (
@@ -719,6 +729,184 @@ class SecurityScanAgent:
         except Exception as e:
             logger.debug("Cross-Agent-Sync fehlgeschlagen: %s", e)
 
+    # ─── Content-Deletion-Guard ──────────────────────────────────────
+
+    async def _check_deletion_guard(self) -> List[str]:
+        """Prueft ob die Fix-Phase grosse Netto-Loeschungen in Repos verursacht hat.
+
+        Gibt Warnungen zurueck fuer Projekte mit >20 Zeilen Netto-Loeschung.
+        """
+        warnings = []
+        projects = {
+            'GuildScout': '/home/cmdshadow/GuildScout',
+            'ZERODOX': '/home/cmdshadow/ZERODOX',
+            'shadowops-bot': '/home/cmdshadow/shadowops-bot',
+            'agents': '/home/cmdshadow/agents',
+        }
+        for name, path in projects.items():
+            try:
+                proc = await asyncio.create_subprocess_exec(
+                    'git', '-C', path, 'diff', '--shortstat', 'HEAD',
+                    stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.PIPE)
+                stdout, _ = await asyncio.wait_for(proc.communicate(), timeout=10)
+                stat = stdout.decode().strip()
+                if not stat:
+                    continue
+                # Parse "X files changed, Y insertions(+), Z deletions(-)"
+                import re
+                ins_match = re.search(r'(\d+) insertion', stat)
+                del_match = re.search(r'(\d+) deletion', stat)
+                insertions = int(ins_match.group(1)) if ins_match else 0
+                deletions = int(del_match.group(1)) if del_match else 0
+                net_deletion = deletions - insertions
+                if net_deletion > 20:
+                    warnings.append(
+                        f"{name}: {deletions} Loeschungen, {insertions} Einfuegungen "
+                        f"(Netto: -{net_deletion} Zeilen)")
+                    logger.warning("DELETION-GUARD: %s hat %d Netto-Loeschungen",
+                                   name, net_deletion)
+            except Exception:
+                continue
+        return warnings
+
+    # ─── Post-Fix Integrity Check ─────────────────────────────────────
+
+    async def _post_fix_integrity_check(self) -> Optional[str]:
+        """Prueft nach Fixes ob kritische Infrastruktur noch intakt ist.
+
+        Returns:
+            None wenn alles OK, sonst Fehlerbeschreibung.
+        """
+        problems = []
+
+        async def _check(args: list, timeout: int = 8) -> str:
+            try:
+                proc = await asyncio.create_subprocess_exec(
+                    *args, stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.PIPE)
+                stdout, _ = await asyncio.wait_for(proc.communicate(), timeout=timeout)
+                return stdout.decode('utf-8', errors='replace').strip()
+            except Exception:
+                return ''
+
+        # 1. Docker-Container muessen laufen
+        docker_out = await _check(['docker', 'ps', '--format', '{{.Names}}:{{.Status}}'])
+        critical_containers = ['guildscout-postgres', 'guildscout-redis', 'zerodox-db']
+        for c in critical_containers:
+            if c not in docker_out:
+                problems.append(f"Container {c} nicht gefunden")
+            elif f"{c}:" in docker_out:
+                status_line = [l for l in docker_out.split('\n') if c in l]
+                if status_line and 'up' not in status_line[0].lower():
+                    problems.append(f"Container {c} nicht UP: {status_line[0]}")
+
+        # 2. Kritische Ports muessen lauschen
+        ports_out = await _check(['ss', '-tlnp'])
+        for port in [8766, 9090, 47822]:  # Health, Webhook, SSH
+            if f':{port}' not in ports_out:
+                problems.append(f"Port {port} lauscht nicht mehr")
+
+        # 3. ShadowOps Bot Service (wir selbst)
+        bot_status = await _check(['systemctl', 'is-active', 'shadowops-bot'])
+        if 'active' not in bot_status:
+            problems.append(f"shadowops-bot Service: {bot_status}")
+
+        # 4. User-Services pruefen
+        user_env = {**os.environ, 'XDG_RUNTIME_DIR': '/run/user/1000'}
+        for svc in ['guildscout-bot']:
+            try:
+                proc = await asyncio.create_subprocess_exec(
+                    'systemctl', '--user', 'is-active', svc,
+                    stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.PIPE,
+                    env=user_env)
+                stdout, _ = await asyncio.wait_for(proc.communicate(), timeout=5)
+                status = stdout.decode().strip()
+                if status not in ('active', 'inactive'):  # inactive ist OK (bot kann gestoppt sein)
+                    problems.append(f"User-Service {svc}: {status}")
+            except Exception:
+                pass
+
+        if problems:
+            msg = "; ".join(problems)
+            logger.critical("Post-Fix Integrity: %d Probleme — %s", len(problems), msg)
+            return msg
+
+        logger.info("Post-Fix Integrity: Alle Checks bestanden")
+        return None
+
+    # ─── Deterministische Pre-Checks ──────────────────────────────────
+
+    async def _run_pre_checks(self) -> str:
+        """Sammelt harte Fakten VOR der AI-Analyse.
+
+        Laeuft deterministisch — kein AI-Aufruf noetig.
+        Ergebnisse werden als Fakten in den Prompt injiziert,
+        damit die AI nur noch BEWERTEN muss, nicht selbst sammeln.
+        """
+        sections = []
+
+        async def _safe_exec(args: list, timeout: int = 10) -> str:
+            """Sichere Ausfuehrung ohne Shell (kein Command-Injection-Risiko)."""
+            try:
+                proc = await asyncio.create_subprocess_exec(
+                    *args, stdout=asyncio.subprocess.PIPE,
+                    stderr=asyncio.subprocess.PIPE)
+                stdout, _ = await asyncio.wait_for(proc.communicate(), timeout=timeout)
+                return stdout.decode('utf-8', errors='replace').strip()
+            except Exception:
+                return ''
+
+        # 1. Offene Ports
+        ports = await _safe_exec(['ss', '-tlnp'])
+        if ports:
+            sections.append(f"### Offene Ports (ss -tlnp)\n```\n{ports[:1500]}\n```")
+
+        # 2. UFW Status
+        ufw = await _safe_exec(['sudo', 'ufw', 'status', 'verbose'])
+        if ufw:
+            sections.append(f"### UFW Firewall\n```\n{ufw[:1500]}\n```")
+
+        # 3. Docker Container
+        docker = await _safe_exec(['docker', 'ps', '--format',
+                                    'table {{.Names}}\t{{.Status}}\t{{.Ports}}'])
+        if docker:
+            sections.append(f"### Docker Container\n```\n{docker[:1500]}\n```")
+
+        # 4. Fail2ban
+        f2b = await _safe_exec(['sudo', 'fail2ban-client', 'status', 'sshd'])
+        if f2b:
+            sections.append(f"### Fail2ban (sshd)\n```\n{f2b[:800]}\n```")
+
+        # 5. CrowdSec aktuelle Alerts
+        cscli = await _safe_exec(['sudo', 'cscli', 'alerts', 'list', '-l', '5', '-o', 'raw'])
+        if cscli:
+            sections.append(f"### CrowdSec Alerts (letzte 5)\n```\n{cscli[:1000]}\n```")
+
+        # 6. Fehlgeschlagene Services
+        failed_sys = await _safe_exec(['systemctl', 'list-units', '--state=failed',
+                                        '--no-pager', '--no-legend'])
+        if failed_sys:
+            sections.append(f"### Fehlgeschlagene System-Services\n```\n{failed_sys}\n```")
+        else:
+            sections.append("### Fehlgeschlagene Services\n(keine)")
+
+        # 7. Disk + Memory
+        disk = await _safe_exec(['df', '-h', '/', '--output=target,pcent,avail'])
+        mem = await _safe_exec(['free', '-h'])
+        if disk or mem:
+            disk_line = disk.split('\n')[-1].strip() if disk else '?'
+            mem_line = [l for l in mem.split('\n') if 'Mem' in l][0] if mem and 'Mem' in mem else '?'
+            sections.append(f"### Ressourcen\n- Disk: `{disk_line}`\n- Memory: `{mem_line}`")
+
+        # 8. Letzte SSH-Logins
+        logins = await _safe_exec(['last', '-5', '-w'])
+        if logins:
+            lines = logins.split('\n')[:5]
+            sections.append(f"### Letzte Logins\n```\n{'chr(10)'.join(lines)}\n```")
+
+        result = "\n\n".join(sections)
+        logger.info("Pre-Checks: %d Sektionen, %d Bytes", len(sections), len(result))
+        return result
+
     # ─── Ergebnis-Verarbeitung ────────────────────────────────────────
 
     async def _process_results(self, session_id: int, result: Dict,
@@ -935,9 +1123,28 @@ class SecurityScanAgent:
                     except Exception:
                         pass
 
+            # Post-Fix Integrity Check — Services noch intakt?
+            if fixed_count > 0:
+                regression = await self._post_fix_integrity_check()
+                if regression:
+                    logger.critical("POST-FIX REGRESSION: %s", regression)
+                    await self._notify_fix_phase_complete(
+                        fixed_count, pr_count, len(fixable),
+                        f"WARNUNG: Post-Fix Regression erkannt: {regression}")
+                    return
+
+            # Content-Deletion-Guard — grosse Loeschungen erkennen
+            deletion_warnings = await self._check_deletion_guard()
+            if deletion_warnings:
+                logger.warning("DELETION-GUARD: %d Warnungen", len(deletion_warnings))
+
+            summary_extra = ""
+            if deletion_warnings:
+                summary_extra = " | DELETION-WARNUNG: " + "; ".join(deletion_warnings)
+
             logger.info("Fix-Phase: %d gefixt, %d PRs (von %d)", fixed_count, pr_count, len(fixable))
             await self._notify_fix_phase_complete(fixed_count, pr_count, len(fixable),
-                                                   fix_result.get('summary', ''))
+                                                   fix_result.get('summary', '') + summary_extra)
         except Exception as e:
             logger.error("Fix-Phase Fehler: %s", e, exc_info=True)
 
@@ -1524,7 +1731,16 @@ class SecurityScanAgent:
                     open_findings=open_text,
                     scan_plan=scan_plan,
                 )
-                prompt = WEEKLY_DEEP_PROMPT + "\n\n" + context
+                # Deterministische Pre-Checks
+                pre_check_data = await self._run_pre_checks()
+
+                prompt = WEEKLY_DEEP_PROMPT + "\n\n"
+                if pre_check_data:
+                    prompt += "## AKTUELLE SERVER-FAKTEN (deterministisch gesammelt)\n\n"
+                    prompt += pre_check_data + "\n\n"
+                    prompt += ("Diese Daten sind FRISCH. Nutze sie als Basis und geh TIEFER: "
+                               "Code-Review, CVE-Details, Cross-Projekt-Analyse.\n\n")
+                prompt += context
 
                 # Weekly-Deep nutzt IMMER Claude (nicht Codex)
                 result = await self.ai_engine.run_analyst_session(
