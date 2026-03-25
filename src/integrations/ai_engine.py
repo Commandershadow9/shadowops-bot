@@ -1006,9 +1006,11 @@ class AIEngine:
             os.path.dirname(__file__), '..', 'schemas', 'analyst_session.json'
         )
 
-        # 1. Primaer: Codex (überspringen wenn Quota erschöpft)
+        # 1. Primaer: Codex (überspringen wenn Quota erschöpft oder explizit deaktiviert)
         import time as _time
-        if _time.time() < self._codex_quota_exhausted_until:
+        if not codex_model:
+            logger.info("Analyst-Session: Codex deaktiviert — direkt Claude (%s)", claude_model)
+        elif _time.time() < self._codex_quota_exhausted_until:
             remaining_h = (self._codex_quota_exhausted_until - _time.time()) / 3600
             logger.info(
                 "Analyst-Session: Codex-Quota erschöpft (noch %.1fh) — direkt Claude (%s)",

@@ -289,6 +289,162 @@ class LearningNotifier:
             logger.debug("Weekly-Summary fehlgeschlagen: %s", e)
 
     # ─────────────────────────────────────────────
+    # Weekly-Recap: Umfassender Wochenbericht
+    # ─────────────────────────────────────────────
+
+    async def send_weekly_recap(self, security_db=None):
+        """Umfassender Weekly-Recap — Trends, Insights, Coverage, Fix-Impact.
+
+        Wird nach dem Weekly-Deep-Scan aufgerufen (Sonntag Nacht).
+        Detaillierter als send_weekly_summary() (das nur Stats zeigt).
+        """
+        channel = self._get_channel()
+        if not channel:
+            return
+
+        pool = None
+        if security_db and hasattr(security_db, 'pool') and security_db.pool:
+            pool = security_db.pool
+        if not pool:
+            # Fallback: Pool vom Bot holen
+            scan_agent = getattr(self.bot, 'security_analyst', None)
+            if scan_agent and hasattr(scan_agent, 'db') and scan_agent.db:
+                pool = scan_agent.db.pool
+        if not pool:
+            return
+
+        try:
+            # ── 1. Finding-Trend (4 Wochen) ──
+            trend_rows = await pool.fetch("""
+                SELECT date_trunc('week', found_at)::date as woche,
+                       COUNT(*) as total,
+                       COUNT(*) FILTER (WHERE severity IN ('critical','high')) as crit_high,
+                       COUNT(*) FILTER (WHERE status='fixed') as fixed
+                FROM findings WHERE found_at >= NOW()-INTERVAL '28 days'
+                GROUP BY 1 ORDER BY 1
+            """)
+
+            trend_text = ""
+            for r in trend_rows:
+                emoji = "🟢" if r['crit_high'] == 0 else "🟡" if r['crit_high'] <= 3 else "🔴"
+                trend_text += (f"{emoji} **KW {r['woche'].strftime('%d.%m.')}:** "
+                               f"{r['total']} Findings ({r['crit_high']} crit/high), "
+                               f"{r['fixed']} gefixt\n")
+            if not trend_text:
+                trend_text = "(keine Findings in den letzten 4 Wochen)"
+
+            # ── 2. Coverage-Status ──
+            coverage_rows = await pool.fetch("""
+                SELECT area, MAX(checked_at)::date as letzte,
+                       EXTRACT(DAY FROM NOW()-MAX(checked_at))::int as tage_her
+                FROM scan_coverage WHERE checked=TRUE GROUP BY area
+                ORDER BY tage_her DESC
+            """)
+
+            coverage_text = ""
+            for r in coverage_rows:
+                emoji = "✅" if r['tage_her'] <= 1 else "🟡" if r['tage_her'] <= 3 else "🔴"
+                coverage_text += f"{emoji} {r['area']} ({r['tage_her']}d)\n"
+            if not coverage_text:
+                coverage_text = "(keine Coverage-Daten)"
+
+            # ── 3. Fix-Effektivitaet ──
+            fix_rows = await pool.fetch("""
+                SELECT f.category, COUNT(fa.*) as versuche,
+                       COUNT(*) FILTER (WHERE fa.result='success') as erfolge
+                FROM fix_attempts fa JOIN findings f ON f.id=fa.finding_id
+                GROUP BY f.category ORDER BY versuche DESC LIMIT 5
+            """)
+
+            fix_text = ""
+            for r in fix_rows:
+                rate = (r['erfolge'] / r['versuche'] * 100) if r['versuche'] > 0 else 0
+                emoji = "🟢" if rate >= 80 else "🟡" if rate >= 50 else "🔴"
+                fix_text += f"{emoji} {r['category']}: {r['erfolge']}/{r['versuche']} ({rate:.0f}%)\n"
+            if not fix_text:
+                fix_text = "(keine Fix-Versuche)"
+
+            # ── 4. Neue Insights (diese Woche) ──
+            insight_rows = await pool.fetch("""
+                SELECT category, subject, content, confidence
+                FROM knowledge WHERE last_verified >= NOW()-INTERVAL '7 days'
+                  AND confidence >= 0.8
+                ORDER BY confidence DESC LIMIT 8
+            """)
+
+            insight_text = ""
+            for r in insight_rows:
+                insight_text += f"- **{r['subject']}** ({int(r['confidence']*100)}%): {r['content'][:80]}\n"
+            if not insight_text:
+                insight_text = "(keine neuen Insights)"
+
+            # ── 5. Offene Findings Zusammenfassung ──
+            open_stats = await pool.fetchrow("""
+                SELECT COUNT(*) as total,
+                       COUNT(*) FILTER (WHERE severity='critical') as critical,
+                       COUNT(*) FILTER (WHERE severity='high') as high,
+                       COUNT(*) FILTER (WHERE severity='medium') as medium,
+                       COUNT(*) FILTER (WHERE severity='low') as low,
+                       COUNT(*) FILTER (WHERE severity='info') as info
+                FROM findings WHERE status='open'
+            """)
+
+            # ── 6. Wochen-Stats ──
+            week_stats = await pool.fetchrow("""
+                SELECT COUNT(*) as sessions,
+                       COALESCE(SUM(findings_count),0) as findings,
+                       COALESCE(SUM(auto_fixes_count),0) as fixes,
+                       COALESCE(SUM(issues_created),0) as issues
+                FROM sessions WHERE started_at >= NOW()-INTERVAL '7 days' AND status='completed'
+            """)
+
+            # ── Embed bauen ──
+            crit_count = (open_stats['critical'] or 0) + (open_stats['high'] or 0)
+            if crit_count > 0:
+                color = 0xE74C3C
+                status_emoji = "🔴"
+            elif (open_stats['medium'] or 0) > 5:
+                color = 0xF39C12
+                status_emoji = "🟡"
+            else:
+                color = 0x2ECC71
+                status_emoji = "🟢"
+
+            embed = discord.Embed(
+                title=f"{status_emoji} Weekly Security Recap",
+                description=(
+                    f"**{week_stats['sessions']}** Sessions · "
+                    f"**{week_stats['findings']}** Findings · "
+                    f"**{week_stats['fixes']}** Fixes · "
+                    f"**{week_stats['issues']}** Issues"
+                ),
+                color=color,
+                timestamp=datetime.now(timezone.utc),
+            )
+
+            # Offene Findings
+            open_text = (
+                f"🔴 {open_stats['critical'] or 0} Critical · "
+                f"🟠 {open_stats['high'] or 0} High · "
+                f"🟡 {open_stats['medium'] or 0} Medium · "
+                f"🔵 {open_stats['low'] or 0} Low · "
+                f"⚪ {open_stats['info'] or 0} Info"
+            )
+            embed.add_field(name=f"📊 Offene Findings ({open_stats['total']})", value=open_text, inline=False)
+            embed.add_field(name="📈 4-Wochen-Trend", value=trend_text[:1024], inline=False)
+            embed.add_field(name="🗺️ Coverage", value=coverage_text[:1024], inline=True)
+            embed.add_field(name="🔧 Fix-Effektivitaet", value=fix_text[:1024], inline=True)
+            embed.add_field(name="💡 Top-Insights", value=insight_text[:1024], inline=False)
+
+            embed.set_footer(text="Weekly Security Recap · SecurityScanAgent")
+
+            await channel.send(embed=embed)
+            logger.info("Weekly Security Recap gesendet")
+
+        except Exception as e:
+            logger.warning("Weekly-Recap fehlgeschlagen: %s", e)
+
+    # ─────────────────────────────────────────────
     # Meilensteine
     # ─────────────────────────────────────────────
 

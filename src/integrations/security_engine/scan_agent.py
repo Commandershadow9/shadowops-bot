@@ -29,7 +29,8 @@ from typing import Dict, List, Optional
 import discord
 
 from .activity_monitor import ActivityMonitor
-from .prompts import ANALYST_SYSTEM_PROMPT, ANALYST_CONTEXT_TEMPLATE, FIX_SESSION_PROMPT
+from .prompts import (ANALYST_SYSTEM_PROMPT, ANALYST_CONTEXT_TEMPLATE, FIX_SESSION_PROMPT,
+                       WEEKLY_DEEP_PROMPT, REFLECTION_PROMPT)
 
 logger = logging.getLogger('shadowops.scan_agent')
 
@@ -41,10 +42,25 @@ DEFAULT_MAX_SESSIONS_PER_DAY = 1
 
 # Session-Modi: (timeout_seconds, max_turns, beschreibung)
 SESSION_MODES = {
-    'full_scan':   (2700, 120, 'Voller Scan aller Bereiche'),
-    'quick_scan':  (1200, 50,  'Schnellcheck der kritischsten Bereiche'),
-    'fix_only':    (7200, 200, 'Nur Findings abarbeiten, kein Scan'),
-    'maintenance': (600,  15,  'Nur Verifikation + Maintenance, kein Scan/Fix'),
+    'full_scan':    (2700, 120, 'Voller Scan aller Bereiche'),
+    'quick_scan':   (1200, 50,  'Schnellcheck der kritischsten Bereiche'),
+    'fix_only':     (7200, 200, 'Nur Findings abarbeiten, kein Scan'),
+    'maintenance':  (600,  15,  'Nur Verifikation + Maintenance, kein Scan/Fix'),
+    'weekly_deep':  (3600, 150, 'Woechentlicher Deep-Scan mit Code-Review (nur Claude)'),
+}
+
+# Wochentag fuer Weekly-Deep-Scan (0=Mo, 6=So)
+WEEKLY_DEEP_DAY = 6  # Sonntag
+
+# Projektnamen-Normalisierung (62 Varianten → 5 echte)
+PROJECT_NAME_MAP = {
+    'guildscout': 'guildscout', 'GuildScout': 'guildscout',
+    'zerodox': 'zerodox', 'ZERODOX': 'zerodox',
+    'shadowops-bot': 'shadowops-bot', 'ShadowOps Bot': 'shadowops-bot', 'shadowops': 'shadowops-bot',
+    'ai-agent-framework': 'ai-agent-framework', 'AI Agents': 'ai-agent-framework',
+    'agents': 'ai-agent-framework',
+    'infrastructure': 'infrastructure', 'Server': 'infrastructure',
+    'server': 'infrastructure',
 }
 
 # Workload-Schwellenwerte
@@ -234,6 +250,7 @@ class SecurityScanAgent:
         self._today: date = date.today()
         self._session_tokens_start: int = 0
         self._running: bool = False
+        self._weekly_deep_done_this_week: bool = False
         self._briefing_pending: bool = False
         self._pending_result: Optional[Dict] = None
         self._session_lock = asyncio.Lock()
@@ -298,10 +315,11 @@ class SecurityScanAgent:
                         self._briefing_pending = False
                         self._pending_result = None
 
-                # Force-Scan: data/force_scan erstellen um Activity-Check zu umgehen
-                # NICHT /tmp/ wegen PrivateTmp=true in systemd (isoliertes /tmp)
+                # Force-Flags pruefen (data/ wegen PrivateTmp=true)
                 force_scan_flag = os.path.join(self._data_dir, 'force_scan')
+                force_deep_flag = os.path.join(self._data_dir, 'force_deep_scan')
                 force_scan = os.path.exists(force_scan_flag)
+                force_deep = os.path.exists(force_deep_flag)
                 if force_scan:
                     try:
                         os.remove(force_scan_flag)
@@ -309,20 +327,41 @@ class SecurityScanAgent:
                         pass
                     logger.info("Force-Scan Flag erkannt — Activity-Check uebersprungen")
                     user_active = False
+                elif force_deep:
+                    try:
+                        os.remove(force_deep_flag)
+                    except OSError:
+                        pass
+                    logger.info("Force-Deep-Scan Flag erkannt — starte weekly_deep")
+                    user_active = False
                 else:
                     user_active = await self.activity_monitor.is_user_active()
 
+                # Sonntag-Check: Automatischer Weekly-Deep-Scan
+                is_weekly_deep_day = (today.weekday() == WEEKLY_DEEP_DAY
+                                      and not self._weekly_deep_done_this_week)
+                if today.weekday() != WEEKLY_DEEP_DAY:
+                    self._weekly_deep_done_this_week = False  # Reset fuer naechste Woche
+
                 if loop_count % HEARTBEAT_EVERY == 0:
                     cd = max(0, self._failure_cooldown_until - time.time())
-                    logger.debug("Heartbeat: active=%s, sessions=%d/%d, failures=%d, cd=%.0fs",
+                    logger.debug("Heartbeat: active=%s, sessions=%d/%d, failures=%d, cd=%.0fs, deep_day=%s",
                                  user_active, self._sessions_today, self.max_sessions_per_day,
-                                 self._consecutive_failures, cd)
+                                 self._consecutive_failures, cd, is_weekly_deep_day)
 
                 if self._failure_cooldown_until > time.time():
                     await asyncio.sleep(MAIN_LOOP_INTERVAL)
                     continue
 
                 if not user_active and self._current_session_id is None:
+                    # Weekly-Deep-Scan (Sonntag oder Force)
+                    if force_deep or (is_weekly_deep_day and not force_scan):
+                        logger.info("Starte Weekly-Deep-Scan (trigger=%s)",
+                                    'force_deep' if force_deep else 'sunday_auto')
+                        await self._run_weekly_deep(
+                            trigger='force_deep' if force_deep else 'weekly_auto')
+                        continue
+
                     try:
                         fixable = await self._get_fixable_findings()
                         plan = self._plan_session(len(fixable))
@@ -479,6 +518,8 @@ class SecurityScanAgent:
                 await self._process_results(session_id, result, health_ok, model_used)
                 await self._notify_learning(session_id, plan['mode'], result)
                 await self._run_fix_phase(session_id)
+                # Post-Scan Reflection (nach jedem Scan, nicht nur weekly)
+                await self._post_scan_reflection(session_id, plan['mode'], result)
             else:
                 self._consecutive_failures += 1
                 self._apply_failure_backoff(session_id)
@@ -704,6 +745,10 @@ class SecurityScanAgent:
 
         for finding in findings:
             try:
+                # Projektnamen normalisieren
+                finding['affected_project'] = self._normalize_project_name(
+                    finding.get('affected_project', ''))
+
                 title = finding.get('title', 'Unbenannt')
                 existing = await self._find_similar_open_finding(title)
                 if existing:
@@ -1441,6 +1486,290 @@ class SecurityScanAgent:
         except Exception as e:
             logger.error("GitHub-Issue Fehler: %s", e)
         return None
+
+    # ─── Weekly Deep-Scan ──────────────────────────────────────────────
+
+    async def _run_weekly_deep(self, trigger: str = 'weekly_auto'):
+        """Woechentlicher Deep-Scan mit Claude (tiefere Analyse als taeglich)."""
+        if self._session_lock.locked():
+            return
+        async with self._session_lock:
+            session_id = None
+            try:
+                self._mark_token_start()
+                await self._pre_session_maintenance()
+                await self._knowledge_maintenance()
+
+                mode_config = SESSION_MODES['weekly_deep']
+                session_id = await self._start_session(f'weekly_deep:{trigger}')
+                self._current_session_id = session_id
+                self._sessions_today += 1
+
+                logger.info("Weekly-Deep-Scan Session #%d (Claude, %ds, %d Turns)",
+                            session_id, mode_config[0], mode_config[1])
+                await self._notify_session_start(session_id, mode='deep')
+
+                health_before = await self._take_health_snapshot(session_id)
+
+                # Kontext bauen (wie taeglich, aber mit Deep-Prompt)
+                knowledge_context = await self._build_ai_context()
+                open_findings = await self._get_open_findings_summary()
+                open_text = "\n".join(
+                    f"- [{f['severity'].upper()}] {f['title']}" for f in open_findings[:30]
+                ) if open_findings else "(keine offenen Findings)"
+                scan_plan = await self._build_scan_plan()
+
+                context = ANALYST_CONTEXT_TEMPLATE.format(
+                    knowledge_context=knowledge_context,
+                    open_findings=open_text,
+                    scan_plan=scan_plan,
+                )
+                prompt = WEEKLY_DEEP_PROMPT + "\n\n" + context
+
+                # Weekly-Deep nutzt IMMER Claude (nicht Codex)
+                result = await self.ai_engine.run_analyst_session(
+                    prompt=prompt, timeout=mode_config[0], max_turns=mode_config[1],
+                    codex_model=None,  # Kein Codex, direkt Claude
+                    claude_model=self.claude_model,
+                )
+
+                health_after = await self._take_health_snapshot(session_id)
+                health_ok = self._compare_health(health_before, health_after)
+                if not health_ok:
+                    await self._send_health_alert(health_before, health_after)
+
+                if result:
+                    provider = result.pop('_provider', 'unknown')
+                    model_used = result.pop('_model', 'unknown')
+                    self._consecutive_failures = 0
+                    logger.info("Weekly-Deep #%d OK via %s/%s", session_id, provider, model_used)
+
+                    await self._process_results(session_id, result, health_ok, model_used)
+                    await self._run_fix_phase(session_id)
+
+                    # Post-Scan Reflection (SEO Agent Pattern)
+                    await self._post_scan_reflection(session_id, 'weekly_deep', result)
+
+                    self._weekly_deep_done_this_week = True
+
+                    # Weekly-Recap Discord-Report
+                    notifier = getattr(self.bot, 'learning_notifier', None) if self.bot else None
+                    if notifier and hasattr(notifier, 'send_weekly_recap'):
+                        try:
+                            await notifier.send_weekly_recap(self.db)
+                        except Exception as e:
+                            logger.warning("Weekly-Recap fehlgeschlagen: %s", e)
+                else:
+                    self._consecutive_failures += 1
+                    self._apply_failure_backoff(session_id)
+                    await self._notify_session_failure(session_id)
+                    await self._end_session(session_id=session_id,
+                        summary=f"Weekly-Deep Fehler #{self._consecutive_failures}",
+                        topics=[], model=self.claude_model,
+                        findings_count=0, auto_fixes=0, issues_created=0)
+
+            except asyncio.CancelledError:
+                if session_id:
+                    try:
+                        await self._pause_session(session_id)
+                    except Exception:
+                        pass
+                raise
+            except Exception as e:
+                logger.error("Weekly-Deep Fehler: %s", e, exc_info=True)
+                if session_id:
+                    try:
+                        await self._end_session(session_id=session_id,
+                            summary=f"Fehler: {str(e)[:200]}", topics=[], model=self.claude_model,
+                            findings_count=0, auto_fixes=0, issues_created=0)
+                    except Exception:
+                        pass
+            finally:
+                self._current_session_id = None
+
+    # ─── Post-Scan Reflection (SEO Agent Pattern) ───────────────────
+
+    async def _post_scan_reflection(self, session_id: int, mode: str, result: Dict):
+        """Selbstbewertung nach jeder Scan-Session — generiert Insights."""
+        try:
+            findings = result.get('findings', [])
+            areas = result.get('areas_checked', [])
+            deferred = result.get('areas_deferred', [])
+
+            # Session-Summary fuer Reflection
+            session_summary = (
+                f"Modus: {mode}\n"
+                f"Findings: {len(findings)} (davon {sum(1 for f in findings if f.get('severity') in ('critical','high'))} critical/high)\n"
+                f"Bereiche geprueft: {', '.join(areas) if areas else 'unbekannt'}\n"
+                f"Bereiche uebersprungen: {', '.join(deferred) if deferred else 'keine'}\n"
+                f"Knowledge-Updates: {len(result.get('knowledge_updates', []))}\n"
+            )
+
+            # Wochen-Kontext aus DB
+            weekly_context = ""
+            try:
+                week_stats = await self.db.pool.fetchrow("""
+                    SELECT COUNT(*) as sessions,
+                           COALESCE(SUM(findings_count),0) as findings,
+                           COALESCE(SUM(auto_fixes_count),0) as fixes
+                    FROM sessions WHERE started_at >= NOW()-INTERVAL '7 days'
+                      AND status='completed'
+                """)
+                week_regs = await self.db.pool.fetchval("""
+                    SELECT COUNT(*) FROM fix_verifications
+                    WHERE checked_at >= NOW()-INTERVAL '7 days' AND still_valid=FALSE
+                """)
+                weekly_context = (
+                    f"Diese Woche: {week_stats['sessions']} Sessions, "
+                    f"{week_stats['findings']} Findings, {week_stats['fixes']} Fixes, "
+                    f"{week_regs or 0} Regressionen"
+                )
+            except Exception:
+                weekly_context = "(Wochen-Kontext nicht verfuegbar)"
+
+            prompt = REFLECTION_PROMPT.format(
+                session_summary=session_summary,
+                weekly_context=weekly_context,
+            )
+
+            # Reflection via Claude (kurze Session)
+            reflection = await self.ai_engine.run_fix_session(
+                prompt=prompt, timeout=120, max_turns=5, model=self.claude_model)
+
+            if reflection and isinstance(reflection, dict):
+                # Insights in Knowledge-DB speichern
+                for insight in reflection.get('insights', []):
+                    try:
+                        await self.db.store_knowledge(
+                            category=insight.get('category', 'security_insight'),
+                            subject=insight.get('subject', 'unknown'),
+                            content=insight.get('content', ''),
+                            confidence=insight.get('confidence', 0.7))
+                    except Exception:
+                        pass
+
+                # Insights in agent_learning DB teilen (Cross-Agent)
+                if self.learning_bridge and self.learning_bridge.is_connected:
+                    for insight in reflection.get('insights', []):
+                        try:
+                            await self.learning_bridge.share_knowledge(
+                                category=insight.get('category', 'security_insight'),
+                                subject=insight.get('subject', 'unknown'),
+                                content=insight.get('content', ''),
+                                confidence=insight.get('confidence', 0.7))
+                        except Exception:
+                            pass
+
+                quality = reflection.get('quality_score', 0)
+                trend = reflection.get('trend', 'unknown')
+                logger.info("Reflection Session #%d: Quality=%d/100, Trend=%s, %d Insights",
+                            session_id, quality, trend, len(reflection.get('insights', [])))
+
+                # Discord-Notification
+                await self._notify_reflection(session_id, reflection)
+            else:
+                logger.info("Reflection: Kein strukturiertes Ergebnis")
+
+        except Exception as e:
+            logger.warning("Post-Scan Reflection fehlgeschlagen: %s", e)
+
+    async def _notify_reflection(self, session_id: int, reflection: Dict):
+        """Discord-Embed fuer Reflection-Ergebnis."""
+        ch = self._get_briefing_channel()
+        if not ch:
+            return
+        try:
+            quality = reflection.get('quality_score', 0)
+            trend = reflection.get('trend', 'unknown')
+            insights = reflection.get('insights', [])
+
+            color = 0x2ecc71 if quality >= 70 else 0xf39c12 if quality >= 40 else 0xe74c3c
+            trend_emoji = {'improving': '📈', 'stable': '➡️', 'declining': '📉'}.get(trend, '❓')
+
+            embed = discord.Embed(
+                title=f"🔬 Reflection — Session #{session_id}",
+                description=reflection.get('quality_notes', '')[:500],
+                color=color, timestamp=datetime.now(timezone.utc))
+            embed.add_field(name="Qualitaet", value=f"**{quality}/100**", inline=True)
+            embed.add_field(name="Trend", value=f"{trend_emoji} {trend}", inline=True)
+
+            if insights:
+                insight_text = "\n".join(
+                    f"- **{i.get('subject', '?')}** ({int(i.get('confidence', 0)*100)}%): "
+                    f"{i.get('content', '')[:100]}" for i in insights[:5])
+                embed.add_field(name=f"Insights ({len(insights)})", value=insight_text[:1024], inline=False)
+
+            if reflection.get('blind_spots'):
+                embed.add_field(name="Blinde Flecken",
+                    value="\n".join(f"- {b}" for b in reflection['blind_spots'][:5])[:500], inline=False)
+
+            embed.set_footer(text="Post-Scan Reflection")
+            await ch.send(embed=embed)
+        except Exception:
+            pass
+
+    # ─── Knowledge-Maintenance (Woechentlich) ────────────────────────
+
+    async def _knowledge_maintenance(self):
+        """Woechentliche Wartung: Cleanup, Normalisierung, Insights."""
+        try:
+            if not self.db.pool:
+                return
+
+            # 1. Projektnamen normalisieren
+            normalized = 0
+            for old_name, new_name in PROJECT_NAME_MAP.items():
+                if old_name != new_name:
+                    result = await self.db.pool.execute(
+                        "UPDATE findings SET affected_project=$1 WHERE affected_project=$2",
+                        new_name, old_name)
+                    count = int(result.split()[-1]) if result else 0
+                    normalized += count
+            # Generische "Server*" Varianten
+            result = await self.db.pool.execute("""
+                UPDATE findings SET affected_project='infrastructure'
+                WHERE affected_project LIKE 'Server%' OR affected_project LIKE 'server%'
+                  OR affected_project IN ('Alle', 'Analysis Runtime', 'Session Context',
+                     'Execution Context', 'Session Execution Context', 'Runtime Tooling / Ops')
+            """)
+            normalized += int(result.split()[-1]) if result else 0
+            if normalized > 0:
+                logger.info("Knowledge-Maintenance: %d Projektnamen normalisiert", normalized)
+
+            # 2. Positive/Info Findings als acknowledged markieren (>14 Tage alt)
+            result = await self.db.pool.execute("""
+                UPDATE findings SET status='fixed'
+                WHERE status='open' AND fix_type='info_only'
+                  AND found_at < NOW()-INTERVAL '14 days'
+            """)
+            stale_closed = int(result.split()[-1]) if result else 0
+            if stale_closed > 0:
+                logger.info("Knowledge-Maintenance: %d alte info_only Findings geschlossen", stale_closed)
+
+            # 3. Knowledge mit sehr niedriger Confidence entfernen
+            result = await self.db.pool.execute(
+                "DELETE FROM knowledge WHERE confidence <= 0.1 AND last_verified < NOW()-INTERVAL '30 days'")
+            dead_knowledge = int(result.split()[-1]) if result else 0
+            if dead_knowledge > 0:
+                logger.info("Knowledge-Maintenance: %d tote Knowledge-Eintraege entfernt", dead_knowledge)
+
+        except Exception as e:
+            logger.warning("Knowledge-Maintenance fehlgeschlagen: %s", e)
+
+    # ─── Projektnamen-Normalisierung ─────────────────────────────────
+
+    @staticmethod
+    def _normalize_project_name(name: str) -> str:
+        """Normalisiert Projektnamen auf die 5 Standard-Namen."""
+        if not name:
+            return 'infrastructure'
+        lower = name.lower().strip()
+        for key, normalized in PROJECT_NAME_MAP.items():
+            if key.lower() in lower:
+                return normalized
+        if 'server' in lower or 'infra' in lower:
+            return 'infrastructure'
+        return name
 
     # ─── Stats ────────────────────────────────────────────────────────
 

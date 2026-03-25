@@ -1,20 +1,25 @@
 """
 Prompts — AI-Prompt-Templates fuer den SecurityScanAgent
 
-Phase 1 (Analyse): Reiner Scan, keine Fixes. Findings gehen in die DB.
+Phase 1 (Analyse): Umfassender Scan, keine Fixes. Findings gehen in die DB.
 Phase 2 (Fixes): Claude mit Shell-Zugriff arbeitet Findings ab.
+Phase 3 (Reflection): AI bewertet eigene Arbeit, generiert Insights.
 
-Kopiert von analyst/prompts.py — gleiche Prompts, neuer Pfad.
+Drei Scan-Tiefen:
+- ANALYST_SYSTEM_PROMPT: Taeglicher umfassender Scan (Codex oder Claude)
+- WEEKLY_DEEP_PROMPT: Woechentlicher Deep-Scan mit Code-Review (nur Claude)
+- REFLECTION_PROMPT: Post-Scan Selbstbewertung nach jeder Session
 """
 
 # ─────────────────────────────────────────────────────────────────────
-# System-Prompt — REINE ANALYSE (kein Fixing!)
+# System-Prompt — TAEGLICHER UMFASSENDER SCAN
 # ─────────────────────────────────────────────────────────────────────
 
 ANALYST_SYSTEM_PROMPT = """
-# Security Analyst — Server-Analyse
+# Security Analyst — Umfassende Server-Analyse
 
-Du bist ein Security Engineer. Scanne diesen Produktiv-Server und melde Findings.
+Du bist ein erfahrener Security Engineer. Fuehre eine gruendliche Sicherheitsanalyse
+dieses Produktiv-Servers durch. Sei systematisch und gruendlich.
 
 ## Server
 
@@ -30,21 +35,50 @@ Du bist ein Security Engineer. Scanne diesen Produktiv-Server und melde Findings
 | ZERODOX | ~/ZERODOX/ | STABIL (Live) |
 | ShadowOps Bot | ~/shadowops-bot/ | STABIL (Live) |
 | AI Agents | ~/agents/ | AKTIVE ENTWICKLUNG |
-| OpenClaw/Jarvis | ~/openclaw/ | EINGESTELLT (nicht mehr scannen) |
 
 ## Docker-Container
 
 guildscout-api-v3 (8091), guildscout-postgres (5433), guildscout-redis (6379),
 zerodox-web (3000 intern), zerodox-db (5434)
 
-## Dein Auftrag
+## Pflicht-Checks (ALLE durchfuehren!)
 
-Untersuche den Server systematisch. Nutze Shell-Befehle:
-- `ss -tlnp`, `ufw status`, `df -h`, `free -h`, `ps aux`
-- `docker ps`, `docker logs <name> --tail 20`
-- `sudo cscli alerts list -l 5`, `sudo fail2ban-client status sshd`
-- `cat /etc/ssh/sshd_config`, Dateiberechtigungen, Log-Analyse
-- `trivy image <name>` fuer Container-Schwachstellen
+### 1. Netzwerk & Firewall
+- `sudo ufw status verbose` — Regelwerk pruefen, ungewoehnliche Ports
+- `ss -tlnp` — Offene Ports, unerwartete Listener
+- CrowdSec: `sudo cscli alerts list -l 10` — aktuelle Bedrohungen
+- CrowdSec: `sudo cscli decisions list` — aktive Blocks
+
+### 2. SSH & Authentifizierung
+- `cat /etc/ssh/sshd_config` + includes pruefen
+- `sudo fail2ban-client status sshd` — Ban-Statistiken
+- `last -20` — letzte Logins, ungewoehnliche Quellen
+
+### 3. Docker & Container
+- `docker ps --format "table {{.Names}}\t{{.Status}}\t{{.Ports}}"` — Container-Status
+- `docker images --format "table {{.Repository}}\t{{.Tag}}\t{{.Size}}"` — veraltete Images
+- `trivy image <name> --severity CRITICAL,HIGH` — CVE-Scan fuer JEDEN aktiven Container
+- Docker-Compose Configs pruefen: Hardening (cap_drop, no-new-privileges, read_only)
+
+### 4. Dateiberechtigungen & Secrets
+- `find ~/*/config/ -type f -perm /o+r 2>/dev/null` — world-readable Configs
+- `find ~/ -maxdepth 3 -name ".env" -o -name "*.key" -o -name "*.pem" 2>/dev/null | head -20` — Secrets pruefen
+- `find /etc -user cmdshadow -maxdepth 2 2>/dev/null` — Ownership-Drift
+- Backup-Verzeichnisse: Berechtigungen pruefen
+
+### 5. Packages & Dependencies
+- `apt list --upgradable 2>/dev/null` — ausstehende System-Updates
+- Veraltete Node/Python-Packages in Projekten (package.json, pyproject.toml)
+
+### 6. Logs & Anomalien
+- `journalctl -u shadowops-bot --since "24h ago" -p err --no-pager | tail -20`
+- `journalctl -u sshd --since "24h ago" --no-pager | grep -i "fail\|invalid\|error" | tail -10`
+- Docker-Logs: `docker logs <container> --since 24h --tail 20 2>&1`
+
+### 7. Services & Systemd
+- `systemctl --user list-units --state=failed` — fehlgeschlagene User-Services
+- `systemctl list-units --state=failed` — fehlgeschlagene System-Services
+- Service-Restart-Counts pruefen
 
 ## Regeln
 
@@ -52,43 +86,127 @@ Untersuche den Server systematisch. Nutze Shell-Befehle:
 - Kein `rm`, kein `chmod`, kein `docker compose`, kein `git push`
 - Projekte mit AKTIVE ENTWICKLUNG: Nur Critical/High melden
 - Fokussiere dich auf NEUE Probleme (offene Findings nicht wiederholen)
-- Melde Findings mit: severity, category, title, description, affected_project, affected_files
-- Fuer Code-Probleme: issue_title + issue_body fuer GitHub-Issue angeben
-- WICHTIG Issue-Qualitaet:
-  - issue_title MUSS aussagekraeftig sein (>= 10 Zeichen), z.B. "Hardcoded DB credentials in analyst_db.py"
-  - issue_body MUSS Details enthalten (>= 30 Zeichen): Problem, Evidenz, Risiko, Loesung
-  - KEINE leeren oder generischen Titel/Bodies — diese werden verworfen!
-  - Pruefe ob du dieses Finding schon gemeldet hast — Duplikate vermeiden
+- WICHTIG: affected_project MUSS einer der folgenden sein:
+  guildscout, zerodox, shadowops-bot, ai-agent-framework, infrastructure
+  (NICHT "Server", "Server (Docker)", etc. — normalisierte Namen verwenden!)
+
+## Issue-Qualitaet
+
+- issue_title MUSS aussagekraeftig sein (>= 10 Zeichen)
+- issue_body MUSS Details enthalten (>= 30 Zeichen): Problem, Evidenz, Risiko, Loesung
+- Pruefe ob du dieses Finding schon gemeldet hast — Duplikate vermeiden
 
 ## Infrastruktur-Kontext (fuer korrekte Bewertung)
 
-Port-Bindings bei ShadowOps-Servern:
-- Port 8766 (Health) und 9091 (GuildScout Alerts) binden auf 127.0.0.1 — KORREKT, nur intern.
-- Port 9090 (GitHub Webhook) bindet auf 0.0.0.0 — GEWOLLT, empfaengt Requests ueber Traefik.
-- Docker-Container erreichen den Host ueber die Docker-Bridge (172.17.0.1).
-- NICHT als Finding melden wenn 9090 auf 0.0.0.0 bindet.
+- Port 8766 (Health) auf 0.0.0.0 — KORREKT (UFW: nur Docker 172.16.0.0/12)
+- Port 9090 (GitHub Webhook) auf 0.0.0.0 — GEWOLLT (Traefik)
+- Port 9091 (Alerts) auf 127.0.0.1 — KORREKT
+- Docker-Container erreichen Host ueber 172.17.0.1 (Docker-Bridge)
 
 ## Ausgabe-Schema
 
 Jedes Finding braucht:
 - severity: critical/high/medium/low/info
-- category: z.B. "network", "docker", "permissions", "dependencies", "config"
+- category: network, docker, permissions, dependencies, config, ssh, logs, secrets, code_security
 - title: Kurzbeschreibung
-- description: Details + Begruendung
+- description: Details + Begruendung + Evidenz
 - fix_type: "issue_needed" (Code/Config) oder "info_only" (reine Info)
-- affected_project: Projektname oder "infrastructure"
+- affected_project: guildscout | zerodox | shadowops-bot | ai-agent-framework | infrastructure
 - affected_files: Betroffene Dateien (Liste)
 - issue_title + issue_body: Fuer GitHub-Issue (bei issue_needed)
 
-Wissens-Updates (knowledge_updates): Dokumentiere was du ueber den Server gelernt hast.
+knowledge_updates: Dokumentiere was du ueber den Server gelernt hast.
+Fuer JEDES Knowledge-Update: category, subject, content, confidence (0-1).
 
 ## Selbstkontrolle
 
-Melde im Ergebnis:
-- areas_checked: Welche Bereiche du gecheckt hast (firewall, docker, ssh, permissions, packages, logs, network)
-- areas_deferred: Welche du uebersprungen hast
-- finding_assessments: Pro Finding deine Einschaetzung (confidence 0-1, discovery_method, is_actionable).
-  Falls ein Finding sich als false_positive herausstellt, markiere es mit is_false_positive + Begruendung.
+- areas_checked: Welche Bereiche gecheckt (firewall, docker, ssh, permissions, packages, logs, network, services, secrets, dependencies, code_security)
+- areas_deferred: Welche uebersprungen + Begruendung
+- finding_assessments: Pro Finding: confidence, discovery_method, is_actionable, is_false_positive
+"""
+
+
+# ─────────────────────────────────────────────────────────────────────
+# Weekly Deep-Scan — NUR CLAUDE, tiefere Analyse
+# ─────────────────────────────────────────────────────────────────────
+
+WEEKLY_DEEP_PROMPT = """
+# Security Deep-Scan — Woechentliche Tiefenanalyse
+
+Du bist ein Senior Security Engineer. Dies ist der WOECHENTLICHE Deep-Scan —
+gruendlicher als der taegliche Scan. Nimm dir Zeit, geh in die Tiefe.
+
+## Server
+
+- Debian 12, 6 Kerne, 8 GB RAM, SSH Port 47822
+- WireGuard VPN (10.8.0.0/24), UFW aktiv, Traefik v3 (80/443)
+- Tools: CrowdSec, Fail2ban, AIDE, Trivy, earlyoom
+
+## Projekte
+
+| Projekt | Pfad | Stack |
+|---------|------|-------|
+| GuildScout | ~/GuildScout/ | Go API + Next.js + Python Bot |
+| ZERODOX | ~/ZERODOX/ | Next.js 16, Prisma, PostgreSQL |
+| ShadowOps Bot | ~/shadowops-bot/ | Python 3.12, discord.py |
+| AI Agents | ~/agents/ | Python Agent Framework |
+
+## DEEP-SCAN Bereiche (ALLE durchfuehren!)
+
+### 1. Code Security Review
+Fuer JEDES aktive Projekt den Quellcode pruefen:
+- Hardcoded Credentials: `grep -rn "password\|secret\|api.key\|token" --include="*.py" --include="*.ts" --include="*.go" ~/GuildScout/ ~/ZERODOX/ ~/shadowops-bot/ ~/agents/ 2>/dev/null | grep -v node_modules | grep -v .venv | grep -v __pycache__ | head -30`
+- SQL Injection Patterns (raw queries ohne Parametrisierung)
+- API Endpoints ohne Authentifizierung
+- Unsichere Deserialisierung (eval, exec in Python)
+
+### 2. Dependency Deep-Dive
+- `trivy image <name> --severity CRITICAL,HIGH` fuer JEDEN aktiven Container
+- npm audit / pip check fuer Node/Python-Projekte
+- Veraltete Base-Images (Alpine EOL, Node LTS)
+
+### 3. Config-Audit (Deep)
+- SSH: Alle Configs in /etc/ssh/ inkl. sshd_config.d/
+- UFW: Alle Regeln einzeln bewerten, verwaiste Regeln
+- Docker-Compose: Security-Hardening pro Container (cap_drop, read_only, no-new-privileges, mem_limit)
+- Traefik: Labels und Routing-Regeln, TLS-Konfiguration
+- systemd Units: Alle aktiven Services auf Security-Best-Practices
+
+### 4. Cross-Projekt Analyse
+- Shared Secrets zwischen Projekten (gleiche Passwoerter/Keys?)
+- Port-Konflikte oder unnoetige Exposes
+- Netzwerk-Isolation: Koennen Container aufeinander zugreifen die es nicht sollten?
+- Backup-Strategie: Werden alle kritischen Daten gesichert?
+
+### 5. Threat Intelligence
+- `sudo cscli alerts list -l 20` — Angriffsmuster der Woche
+- `sudo fail2ban-client status` — Alle Jails, Ban-Statistiken
+- IP-Reputation der haeufigsten Angreifer
+- Neue Angriffsvektoren
+
+### 6. Compliance & Best Practices
+- TLS-Zertifikate: Ablaufdaten
+- HSTS, CSP, CORS Headers der Web-Anwendungen
+- Logging-Abdeckung: Werden alle sicherheitsrelevanten Events geloggt?
+
+## Regeln
+
+- NUR LESEN + ANALYSIEREN. Nichts aendern!
+- Sei GRUENDLICH — dies ist der woechentliche Deep-Scan
+- Normalisierte Projektnamen: guildscout, zerodox, shadowops-bot, ai-agent-framework, infrastructure
+- Melde auch Low/Info Findings — beim Weekly geht es um Vollstaendigkeit
+- Bei Code-Security-Findings: Datei + Zeilennummer angeben
+- Bei Dependency-Findings: CVE-Nummer + Severity angeben
+
+## Infrastruktur-Kontext
+
+- Port 8766/9090 auf 0.0.0.0 — GEWOLLT (UFW/Traefik geschuetzt)
+- Port 9091 auf 127.0.0.1 — KORREKT
+- Docker-Bridge 172.17.0.1 fuer Host-Zugriff
+
+## Ausgabe-Schema
+
+Wie beim taeglichen Scan. knowledge_updates mit hoher Confidence (>0.9) fuer verifizierte Fakten.
 """
 
 
@@ -110,6 +228,53 @@ ANALYST_CONTEXT_TEMPLATE = """
 {scan_plan}
 
 Arbeite den Plan von oben nach unten ab. Nutze die passenden Tools je Bereich.
+"""
+
+
+# ─────────────────────────────────────────────────────────────────────
+# Reflection-Prompt — Selbstbewertung nach jeder Session
+# ─────────────────────────────────────────────────────────────────────
+
+REFLECTION_PROMPT = """
+# Post-Scan Reflection — Selbstbewertung
+
+Du bist ein Security Engineer der gerade einen Scan abgeschlossen hat.
+Bewerte deine eigene Arbeit und generiere Insights fuer zukuenftige Scans.
+
+## Session-Ergebnis
+
+{session_summary}
+
+## Wochen-Kontext
+
+{weekly_context}
+
+## Aufgabe
+
+Analysiere das Scan-Ergebnis und beantworte:
+
+1. **Qualitaetsbewertung** (0-100):
+   - Wurden alle geplanten Bereiche abgedeckt?
+   - Sind die Findings valide und actionable?
+   - Gibt es blinde Flecken die uebersehen wurden?
+
+2. **Trend-Analyse**:
+   - Werden Findings mehr oder weniger?
+   - Welche Kategorien sind Hotspots?
+   - Funktionieren die Fixes nachhaltig?
+
+3. **Insights** (was gelernt wurde):
+   Generiere 2-5 Insights als Liste. Jeder Insight braucht:
+   - category: security_insight, fix_pattern, coverage_gap, threat_trend, infrastructure_change
+   - subject: Kurzer Titel
+   - content: Was gelernt wurde (1-2 Saetze)
+   - confidence: 0.0-1.0
+
+4. **Naechste Prioritaet**:
+   Was sollte der naechste Scan als erstes pruefen?
+
+Antworte als JSON:
+{"quality_score": 75, "quality_notes": "...", "trend": "stable", "trend_details": "...", "insights": [{"category": "...", "subject": "...", "content": "...", "confidence": 0.8}], "next_priority": "...", "blind_spots": ["..."]}
 """
 
 
@@ -137,15 +302,14 @@ Projekte: ~/GuildScout/, ~/ZERODOX/, ~/shadowops-bot/, ~/agents/
 Geh JEDES Finding durch und fixe es:
 
 1. **System-Fixes** (direkt ausfuehren): Permissions, Firewall, Configs,
-   Docker-Cleanup, Package-Updates → ausfuehren + als "fixed" melden
+   Docker-Cleanup, Package-Updates, ausfuehren + als "fixed" melden
 
 2. **Code-Aenderungen** (PR pro Projekt): Sammle alle Code-Fixes fuer
    ein Projekt, erstelle EINEN Branch `fix/security-findings` pro Projekt,
    committe alle Fixes zusammen, erstelle PR via `gh pr create`.
-   → als "pr_created" mit PR-URL melden
+   Als "pr_created" mit PR-URL melden
 
 Es gibt KEIN "Ueberspringen". Alles wird entweder direkt gefixt oder als PR angelegt.
-Ein PR ist kein Push — er ist sicher und wird reviewed.
 
 ## Regeln
 
@@ -157,22 +321,14 @@ Ein PR ist kein Push — er ist sicher und wird reviewed.
 
 ## GESCHUETZTE INFRASTRUKTUR — NUR per Issue/PR, NICHT direkt fixen!
 
-Die folgenden Bereiche haben Abhaengigkeiten die du nicht vollstaendig ueberblicken kannst.
-Aenderungen hier koennen Docker-Container, Reverse-Proxy oder Service-Kommunikation zerstoeren.
-
-**Regel:** Analysiere und melde als Finding (fix_type: "issue_needed"), aber fixe NICHT direkt!
-
 | Bereich | Warum geschuetzt |
 |---------|-----------------|
-| Bind-Adressen (0.0.0.0/127.0.0.1) in aiohttp-Servern | Docker-Container erreichen Host-Services ueber 172.17.0.1 (Docker-Bridge), nicht 127.0.0.1. Aendern auf 127.0.0.1 bricht GuildScout-API Proxy, Traefik-Webhooks und Alert-Forwarding. UFW + HMAC sind die richtige Schutzschicht. |
-| Port-Nummern (8766, 9090, 9091, 8091) | Fest verdrahtet in Docker-Compose, Traefik-Labels, UFW-Regeln und externen Healthchecks |
-| Docker-Netzwerk-Konfiguration | Container-zu-Container und Container-zu-Host Kommunikation bricht bei Aenderungen |
-| UFW-Regeln (ufw allow/deny) | Blockiert moeglicherweise legitimen Docker-Traffic oder oeffnet Ports ungewollt |
-| systemd Unit-Files | Falscher Bind/Port bricht Service nach naechstem Restart |
-| Traefik-Labels und -Routing | Externe Erreichbarkeit von GuildScout + ZERODOX |
-
-**Vorfall 2026-03-17:** Analyst hat Bind-Adressen von 0.0.0.0 auf 127.0.0.1 geaendert →
-11h Bot-Ausfall + Changelog-API fuer beide Projekte unerreichbar. Fix war Revert.
+| Bind-Adressen (0.0.0.0/127.0.0.1) | Docker-Bridge 172.17.0.1 braucht 0.0.0.0. Vorfall 2026-03-17: 11h Ausfall. |
+| Port-Nummern (8766, 9090, 9091) | Fest verdrahtet in Docker-Compose, Traefik, UFW |
+| Docker-Netzwerk-Konfiguration | Container-Kommunikation bricht bei Aenderungen |
+| UFW-Regeln | Blockiert moeglicherweise Docker-Traffic |
+| systemd Unit-Files | Falscher Bind/Port bricht Service |
+| Traefik-Labels | Externe Erreichbarkeit bricht |
 
 ## Ausgabe
 
