@@ -57,7 +57,13 @@ Bei Aenderungen an Shared-Services (Redis, PostgreSQL, Traefik) MUESSEN alle Kon
 ## SecurityScanAgent (ersetzt DeepScanMode + alten SecurityAnalyst)
 - **scan_agent.py**: Autonomer Agent in `security_engine/`, nutzt SecurityDB direkt (kein AnalystDB)
 - **Activity Monitor**: `security_engine/activity_monitor.py` — prueft SSH, Git, Claude, Discord
-- **Prompts**: `security_engine/prompts.py` — 1:1 vom alten Analyst, ANALYST_SYSTEM_PROMPT + FIX_SESSION_PROMPT
+- **Prompts**: `security_engine/prompts.py` — ANALYST_SYSTEM_PROMPT (taeglich), WEEKLY_DEEP_PROMPT (Sonntag), REFLECTION_PROMPT (nach jeder Session), FIX_SESSION_PROMPT
+- **Deterministische Pre-Checks**: UFW, Docker, Fail2ban, CrowdSec, Ports, Services — VOR AI-Analyse gesammelt
+- **Post-Fix Integrity Check**: Prueft Container, Ports, Services nach jedem Fix
+- **Content-Deletion-Guard**: Warnt bei >20 Zeilen Netto-Loeschung in Repos
+- **Post-Scan Reflection**: AI bewertet eigene Arbeit, generiert Insights (nach JEDER Session)
+- **Weekly-Deep-Scan**: Sonntag Nacht automatisch (nur Claude), manuell: `touch data/force_deep_scan`
+- **Force-Scan Flags**: In `data/` (NICHT `/tmp/` wegen PrivateTmp=true in systemd)
 - **PROJECT_SECURITY_PROFILES**: In `scan_agent.py` — bei Projektaenderungen manuell pflegen
 - **PROTECTED_PORT_BINDINGS**: In `scan_agent.py` — bei neuen Ports aktualisieren
 - **Fix-Phase nutzt Cross-Mode-Lock**: claim_event/release_event fuer jedes Finding

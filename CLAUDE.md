@@ -306,3 +306,13 @@
   - **Force-Scan Flags:** `touch data/force_scan` (taeglich), `touch data/force_deep_scan` (weekly) — umgeht Activity-Check, Session-Limit und Maintenance-Check
 - **Design-Doc:** `docs/plans/2026-03-24-security-engine-v6.md`, `docs/plans/2026-03-24-security-scan-agent-design.md`
 - **Architektur-Doc:** `docs/security-engine-v6-overview.md`
+
+### Discord-Nachrichten-Optimierung (seit 2026-03-25)
+- **Startup:** 8-10 einzelne Embeds → 1 kompaktes Summary-Embed (`_send_startup_summary`)
+- **Deployment-Log:** 5-8 Text-Nachrichten pro Deploy → 1 Embed mit Timeline (`_send_deployment_update` sammelt, Success/Failure zeigt alles)
+- **Fail2ban Recidive:** CIDR-Format-Bug gefixt (`INET::TEXT` gibt `/32` Suffix), `force=True` entfernt, Race Condition bei DB-Init behoben (`await` statt `ensure_future`)
+- **Proactive Report:** Kein Routine-Spam mehr (nur bei kritischen Empfehlungen), Daten fliessen in Weekly-Recap
+- **Pending-Approval:** Roher Text → sauberes Embed mit Batch-ID und Aktion
+- **Channel-Naming:** Update-Channels mit Emoji-Prefix umbenannt (`📋-updates-*`, `🧪-ci-*`)
+- **Toter Channel:** `sicherheitsdiensttool_updates` aus state.json entfernt (Channel existiert nicht mehr)
+- **Ergebnis:** ~200 Nachrichten/Tag → ~20-30 (85% Reduktion)
