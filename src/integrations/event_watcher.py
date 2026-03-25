@@ -454,9 +454,9 @@ class SecurityEventWatcher:
                             'ban', 'fail2ban', ip, ban.get('jail', 'sshd'), 'high',
                         )
 
-                        if self._ban_counts[ip] >= 3:
-                            # 3+ Bans → Permanent in UFW blocken
-                            # Nutzt create_subprocess_exec (kein Shell, kein Injection-Risiko)
+                        if self._ban_counts[ip] >= 3 and ip not in self._permanent_blocked:
+                            # 3+ Bans UND noch nicht permanent geblockt
+                            # create_subprocess_exec: kein Shell, kein Injection-Risiko
                             try:
                                 proc = await asyncio.create_subprocess_exec(
                                     'sudo', 'ufw', 'deny', 'from', ip, 'to', 'any',
@@ -470,7 +470,6 @@ class SecurityEventWatcher:
                                         "RECIDIVE: IP %s permanent geblockt (UFW) — %dx von fail2ban gebannt",
                                         ip, self._ban_counts[ip],
                                     )
-                                    # In DB persistieren
                                     await self._save_security_event(
                                         'permanent_block', 'ufw', ip, 'recidive', 'critical',
                                     )
@@ -484,7 +483,6 @@ class SecurityEventWatcher:
                                         f"🔒 **Recidive-Block:** IP `{ip}` permanent in UFW gesperrt "
                                         f"({self._ban_counts[ip]}x gebannt)",
                                         severity="critical",
-                                        force=True,
                                     )
                             except Exception as e:
                                 logger.error("UFW Recidive-Block fehlgeschlagen für %s: %s", ip, e)
