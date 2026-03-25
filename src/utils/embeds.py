@@ -76,12 +76,9 @@ class EmbedBuilder:
                     inline=field.get("inline", True)
                 )
 
-        # Footer
-        footer_text = footer or "ShadowOps Security Monitoring"
-        embed.set_footer(
-            text=footer_text,
-            icon_url="https://cdn.discordapp.com/emojis/1234567890.png"  # Optional: Bot-Icon
-        )
+        # Footer (kompakt, ohne ungueltige Icon-URL)
+        footer_text = footer or "ShadowOps Security"
+        embed.set_footer(text=footer_text)
 
         return embed
 

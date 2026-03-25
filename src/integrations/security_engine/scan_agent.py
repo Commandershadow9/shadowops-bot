@@ -1514,16 +1514,16 @@ class SecurityScanAgent:
         ch = self._get_briefing_channel()
         if not ch:
             return
-        today_str = date.today().strftime('%d.%m.%Y')
-        if mode == 'fix':
-            embed = discord.Embed(title=f"🔧 Fix-Session #{session_id}",
-                description=f"**Datum:** {today_str}\n**Engine:** `{self.claude_model}`",
-                color=discord.Color.orange(), timestamp=datetime.now(timezone.utc))
-        else:
-            embed = discord.Embed(title=f"🔍 Scan-Session #{session_id}",
-                description=f"**Datum:** {today_str}\n**Scan:** `{self.codex_model}` / `{self.claude_model}`\n"
-                            f"**Sessions:** {self._sessions_today}/{self.max_sessions_per_day}",
-                color=discord.Color.blue(), timestamp=datetime.now(timezone.utc))
+        mode_config = {
+            'scan':  ('🔍', 'Scan',       0x3498DB),
+            'fix':   ('🔧', 'Fix',        0xE67E22),
+            'deep':  ('🔬', 'Deep-Scan',  0x9B59B6),
+        }
+        emoji, label, color = mode_config.get(mode, ('🔍', 'Scan', 0x3498DB))
+        embed = discord.Embed(
+            title=f"{emoji} {label} #{session_id}",
+            description=f"Sessions: **{self._sessions_today}/{self.max_sessions_per_day}**",
+            color=color, timestamp=datetime.now(timezone.utc))
         embed.set_footer(text="SecurityScanAgent")
         try:
             await ch.send(embed=embed)

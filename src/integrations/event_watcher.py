@@ -497,11 +497,11 @@ class SecurityEventWatcher:
                                 logger.error("UFW Recidive-Block fehlgeschlagen für %s: %s", ip, e)
 
                     logger.info(f"🚫 Fail2ban: {len(bans)} Ban(s) erkannt und gemeldet")
+                    # Kein force=True — Throttle nutzen um Spam zu vermeiden
                     self._log_activity(
                         "fail2ban",
-                        f"🚫 **Fail2ban:** {len(bans)} neue Ban(s) sofort erkannt",
+                        f"🚫 **Fail2ban:** {len(bans)} neue Ban(s) erkannt",
                         severity="warning",
-                        force=True
                     )
 
             except Exception as e:

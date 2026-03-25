@@ -447,20 +447,85 @@ class ShadowOpsBot(commands.Bot):
                     self.logger.error(f"❌ Fehler beim Laden von Cog '{filename[:-3]}': {e}", exc_info=True)
 
     async def _send_status_message(self, message: str, color: int = 0x00FF00):
-        """Sendet eine Status-Nachricht an den Bot-Status Channel"""
+        """Sammelt Status-Nachrichten fuer das finale Startup-Embed.
+
+        Statt 8-10 einzelne Embeds wird alles gesammelt und am Ende
+        als 1 kompaktes Embed gesendet (via _send_startup_summary).
+        """
+        if not hasattr(self, '_startup_messages'):
+            self._startup_messages = []
+        self._startup_messages.append(message)
+
+    async def _send_startup_summary(self):
+        """Sendet 1 kompaktes Startup-Embed mit allen gesammelten Status-Nachrichten."""
         try:
             bot_status_channel_id = self.config.channels.get('bot_status')
-            if bot_status_channel_id:
-                channel = self.get_channel(bot_status_channel_id)
-                if channel:
-                    embed = discord.Embed(
-                        description=message,
-                        color=color,
-                        timestamp=datetime.now()
+            if not bot_status_channel_id:
+                return
+            channel = self.get_channel(bot_status_channel_id)
+            if not channel:
+                return
+
+            messages = getattr(self, '_startup_messages', [])
+            if not messages:
+                return
+
+            # Kompaktes Embed bauen
+            embed = discord.Embed(
+                title="ShadowOps Security Bot — Online",
+                color=0x2ECC71,
+                timestamp=datetime.now(),
+            )
+
+            # Basis-Info
+            embed.add_field(
+                name="System",
+                value=f"Guilds: **{len(self.guilds)}** | Latenz: **{round(self.latency * 1000)}ms**",
+                inline=False,
+            )
+
+            # Services kompakt zusammenfassen
+            services = []
+            if self.security_engine:
+                services.append("Security Engine v6")
+            if getattr(self, 'security_analyst', None):
+                services.append("ScanAgent")
+            if getattr(self, 'event_watcher', None):
+                services.append("Event Watcher")
+            if getattr(self, 'self_healing', None):
+                services.append("Self-Healing")
+            if getattr(self, 'orchestrator', None):
+                services.append("Orchestrator")
+            if getattr(self, 'project_monitor', None):
+                services.append("Project Monitor")
+            if getattr(self, 'deployment_manager', None):
+                services.append("Deployment Manager")
+            if getattr(self, 'server_assistant', None):
+                services.append("Server Assistant")
+
+            if services:
+                embed.add_field(
+                    name=f"Services ({len(services)})",
+                    value=" | ".join(f"`{s}`" for s in services),
+                    inline=False,
+                )
+
+            # Projekte
+            if self.project_monitor:
+                projects = list(self.project_monitor.monitored_projects.keys()) if hasattr(self.project_monitor, 'monitored_projects') else []
+                if projects:
+                    embed.add_field(
+                        name=f"Monitoring ({len(projects)})",
+                        value=" | ".join(f"`{p}`" for p in projects),
+                        inline=False,
                     )
-                    await channel.send(embed=embed)
+
+            embed.set_footer(text="ShadowOps Bot v5.0")
+            await channel.send(embed=embed)
+            self._startup_messages = []
+
         except Exception as e:
-            self.logger.error(f"Fehler beim Senden der Status-Nachricht: {e}")
+            self.logger.error(f"Startup-Summary Fehler: {e}")
 
     async def on_ready(self):
         """Bot ist bereit und mit Discord verbunden"""
@@ -1061,6 +1126,9 @@ class ShadowOpsBot(commands.Bot):
         # Markiere als initialisiert
         self._ready_initialized = True
         self.logger.info("🚀 ShadowOps Bot vollständig einsatzbereit!")
+
+        # 1 kompaktes Startup-Embed senden (statt 8-10 einzelne)
+        await self._send_startup_summary()
 
         # Process any pending GitHub webhooks that arrived during startup
         if self.github_integration:

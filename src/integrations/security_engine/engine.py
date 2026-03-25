@@ -434,39 +434,50 @@ class SecurityEngine:
     # ── Proactive Scheduler ───────────────────────────────────────
 
     async def _proactive_loop(self):
-        """Background-Task: Alle 6h Proactive Report generieren"""
+        """Background-Task: Alle 6h Proactive Report generieren.
+
+        Delta-Check: Postet nur wenn sich der Report geaendert hat.
+        """
         await asyncio.sleep(60)  # 1min nach Start warten
+        last_report_key = ''  # Delta-Check: Letzter Report-Fingerprint
+
         while True:
             try:
                 logger.info("📊 Proactive Scan gestartet...")
                 report = await self.proactive.generate_hardening_report()
 
-                # Report in Discord posten
                 gaps = len(report.get('coverage_gaps', []))
                 recs = report.get('recommendations', [])
                 high_recs = [r for r in recs if r.get('priority') == 'high']
 
-                # Fix-Effektivitaet formatieren
+                # Delta-Check: Nur posten wenn sich etwas geaendert hat
                 eff = report.get('fix_effectiveness', {})
-                eff_lines = []
-                for source, stats in eff.items():
-                    emoji = '🟢' if stats.get('status') == 'good' else '🟡' if stats.get('status') == 'warning' else '🔴'
-                    eff_lines.append(f"{emoji} {source}: {stats.get('success_rate', 0):.0%}")
+                report_key = f"gaps={gaps},recs={len(recs)},high={len(high_recs)},eff={len(eff)}"
+                if report_key == last_report_key:
+                    logger.debug("Proactive Report unveraendert — skip")
+                else:
+                    last_report_key = report_key
 
-                msg = (
-                    f"📊 **Proactive Security Report**\n\n"
-                    f"**Coverage-Luecken:** {gaps} Bereiche\n"
-                    f"**Empfehlungen:** {len(recs)} ({len(high_recs)} kritisch)\n\n"
-                    f"**Fix-Effektivitaet:**\n" + '\n'.join(eff_lines)
-                )
+                    # Fix-Effektivitaet formatieren
+                    eff_lines = []
+                    for source, stats in eff.items():
+                        emoji = '🟢' if stats.get('status') == 'good' else '🟡' if stats.get('status') == 'warning' else '🔴'
+                        eff_lines.append(f"{emoji} `{source}` {stats.get('success_rate', 0):.0%}")
 
-                if high_recs:
-                    msg += "\n\n**⚠️ Kritische Empfehlungen:**\n"
-                    for r in high_recs[:3]:
-                        msg += f"→ {r.get('message', '')}\n"
+                    msg = (
+                        f"**Coverage-Luecken:** {gaps} | "
+                        f"**Empfehlungen:** {len(recs)} ({len(high_recs)} kritisch)\n"
+                    )
+                    if eff_lines:
+                        msg += "**Fix-Rate:** " + " · ".join(eff_lines) + "\n"
 
-                await self._notify_discord(msg, color=0x3498DB if not high_recs else 0xF39C12)
-                logger.info(f"📊 Proactive Report: {gaps} Luecken, {len(recs)} Empfehlungen")
+                    if high_recs:
+                        msg += "\n**Kritische Empfehlungen:**\n"
+                        for r in high_recs[:3]:
+                            msg += f"→ {r.get('message', '')}\n"
+
+                    await self._notify_discord(msg, color=0x3498DB if not high_recs else 0xF39C12)
+                    logger.info("📊 Proactive Report: %d Luecken, %d Empfehlungen (NEU)", gaps, len(recs))
 
             except Exception as e:
                 logger.error(f"Proactive Scan Fehler: {e}")
