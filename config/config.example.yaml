@@ -165,12 +165,18 @@ security_analyst:
   enabled: true
   database_dsn: "postgresql://security_analyst:SICHERES_PASSWORT@127.0.0.1:5433/security_analyst"
   max_sessions_per_day: 1           # Basis-Limit (dynamisch erhoehbar bei Backlog)
-  model: "gpt-5.3-codex"            # Primaeres Modell (Codex)
-  fallback_model: "claude-opus-4-6"  # Fallback-Modell (Claude)
-  # Adaptive Steuerung: >=20 Findings → bis 3 Sessions, 5-19 → bis 2, 1-4 → 1, 0 → maintenance
+  model: "gpt-5.3-codex"            # Primaeres Modell fuer taegliche Scans (Codex mit Full-Access)
+  fallback_model: "claude-opus-4-6"  # Fallback + Weekly-Deep-Scan Modell (Claude)
+  maintenance_scan_days: 1          # Tage zwischen Scans bei 0 Backlog (1 = taeglich)
+  # Adaptive Steuerung: >=20 Findings → bis 3 Sessions, 5-19 → bis 2, 1-4 → 1, 0 → daily full_scan
+  # Weekly-Deep-Scan: Sonntag Nacht automatisch (nur Claude), manuell: touch data/force_deep_scan
+  # Force-Scan: touch data/force_scan (taeglich), touch data/force_deep_scan (weekly)
+  # Pre-Checks: UFW, Docker, Fail2ban, CrowdSec, Ports, Services (deterministisch vor AI)
+  # Post-Scan Reflection: AI bewertet eigene Arbeit nach jeder Session
+  # Post-Fix Integrity: Prueft Container, Ports, Services nach Fixes
+  # Content-Deletion-Guard: Warnt bei >20 Zeilen Netto-Loeschung
   # Knowledge-Decay: -5%/Lauf bei Wissen >14 Tage alt (Minimum: 20%)
   # Fix-Verifikation: Letzte 14 Tage, max 10 Fixes pro Session
-  # Doku: docs/SECURITY_ANALYST.md
 
 # ╔═══════════════════════════════════════════════════════════════════════════╗
 # ║ AI LEARNING (Patch Notes Training + A/B Testing)                         ║

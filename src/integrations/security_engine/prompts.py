@@ -72,7 +72,7 @@ zerodox-web (3000 intern), zerodox-db (5434)
 
 ### 6. Logs & Anomalien
 - `journalctl -u shadowops-bot --since "24h ago" -p err --no-pager | tail -20`
-- `journalctl -u sshd --since "24h ago" --no-pager | grep -i "fail\|invalid\|error" | tail -10`
+- `journalctl -u sshd --since "24h ago" --no-pager | grep -iE "fail|invalid|error" | tail -10`
 - Docker-Logs: `docker logs <container> --since 24h --tail 20 2>&1`
 
 ### 7. Services & Systemd
@@ -155,7 +155,7 @@ gruendlicher als der taegliche Scan. Nimm dir Zeit, geh in die Tiefe.
 
 ### 1. Code Security Review
 Fuer JEDES aktive Projekt den Quellcode pruefen:
-- Hardcoded Credentials: `grep -rn "password\|secret\|api.key\|token" --include="*.py" --include="*.ts" --include="*.go" ~/GuildScout/ ~/ZERODOX/ ~/shadowops-bot/ ~/agents/ 2>/dev/null | grep -v node_modules | grep -v .venv | grep -v __pycache__ | head -30`
+- Hardcoded Credentials: `grep -rnE "password|secret|api.key|token" --include="*.py" --include="*.ts" --include="*.go" ~/GuildScout/ ~/ZERODOX/ ~/shadowops-bot/ ~/agents/ 2>/dev/null | grep -v node_modules | grep -v .venv | grep -v __pycache__ | head -30`
 - SQL Injection Patterns (raw queries ohne Parametrisierung)
 - API Endpoints ohne Authentifizierung
 - Unsichere Deserialisierung (eval, exec in Python)

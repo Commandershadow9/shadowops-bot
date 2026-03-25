@@ -211,8 +211,8 @@
 - **Alle Provider-Methoden:** Prompts via stdin (`communicate(input=...)`) — kein Leak in ps/proc
   - Codex: `query()` + `query_raw()` — Prompt nicht mehr als CLI-Argument
   - Claude: `query()` + `query_raw()` — `-p -` liest von stdin
-- **Codex Analyst:** `-c mcp_servers={}` (kein MCP-Laden)
-- **Claude Analyst:** `--dangerously-skip-permissions` + `--allowed-tools` (nur Security-Bash-Prefixe + Read/Write/Grep/Glob, keine MCPs)
+- **Codex Analyst:** `--dangerously-bypass-approvals-and-sandbox` + `-c mcp_servers={}` (voller System-Zugriff fuer Security-Scans)
+- **Claude Analyst:** `--dangerously-skip-permissions` + `--allowed-tools` (Security-Bash-Prefixe + Read/Write/Grep/Glob, keine MCPs)
 - **DB-Credentials:** Kein Hardcoded-DSN mehr — `SECURITY_ANALYST_DB_URL` env var oder `config.yaml` (security_analyst.database_dsn)
 - **Webhook:** Fail-closed bei fehlendem Secret, Config-Pfad korrigiert (projects.guildscout)
 - **Bind-Adressen:** 8766 auf 0.0.0.0 (UFW: nur Docker 172.16.0.0/12), 9091 auf 127.0.0.1, 9090 (GitHub Webhook) auf 0.0.0.0
@@ -283,17 +283,26 @@
 - **Fast-Path:** 1-2 Events werden direkt gefixt, kein KI-Plan
 - **Event-Claiming:** `remediation_status` Tabelle verhindert Doppel-Fixes zwischen Modi
 - **Cross-Agent Learning:** LearningBridge liest/schreibt agent_learning DB bidirektional
-- **SecurityScanAgent** (seit 2026-03-24): Ersetzt DeepScanMode + alten SecurityAnalyst
+- **SecurityScanAgent** (seit 2026-03-24, erweitert 2026-03-25): Ersetzt DeepScanMode + alten SecurityAnalyst
   - Autonomer Agent mit Activity Monitor (nur starten wenn User idle)
-  - Adaptive Session-Steuerung (fix_only/full_scan/quick_scan/maintenance)
-  - Volle Learning Pipeline (Fix-Verifikation, Knowledge-Decay, Coverage-Tracking)
+  - **Taeglicher Scan:** Codex Full-Access (`--dangerously-bypass-approvals-and-sandbox`), 7 Pflicht-Check-Bereiche
+  - **Woechentlicher Deep-Scan:** Nur Claude, Code Security Review, Dependency Deep-Dive, Cross-Projekt-Analyse, Compliance (Sonntag Nacht auto, `touch data/force_deep_scan` manuell)
+  - **Deterministische Pre-Checks:** UFW, Docker, Fail2ban, CrowdSec, Ports, Services, Disk, Memory — werden VOR der AI-Analyse gesammelt und als Fakten injiziert
+  - **Post-Scan Reflection:** AI bewertet eigene Arbeit (Quality Score, Trend, Insights, Blind Spots) nach JEDER Session
+  - **Post-Fix Integrity Check:** Prueft nach Fixes ob Container, Ports, Services intakt sind
+  - **Content-Deletion-Guard:** Warnt bei Netto-Loeschungen >20 Zeilen in Projekt-Repos
+  - Adaptive Session-Steuerung (fix_only/full_scan/quick_scan/maintenance/weekly_deep)
+  - Maintenance-Schwelle: 1 Tag (konfigurierbar via `security_analyst.maintenance_scan_days`)
   - Health-Snapshots vor/nach jeder Session
-  - Discord-Briefings (sofort wenn online, pending wenn offline)
+  - Discord-Briefings (sofort wenn online, pending wenn offline) + Weekly-Recap Report
   - GitHub-Issues mit 4 Quality-Gates (Content, Projekt-Skip, DB-Dedup, GitHub-Dedup)
   - Cross-Mode-Lock ueber remediation_status (claim_event/release_event)
   - Nutzt SecurityDB direkt (kein separater AnalystDB Layer)
   - **PROJECT_SECURITY_PROFILES:** Detaillierte Attack-Surface-Profile fuer guildscout, zerodox, ai-agent-framework, shadowops-bot
+  - **Projektnamen-Normalisierung:** 62 Varianten → 5 Standard-Namen (guildscout, zerodox, shadowops-bot, ai-agent-framework, infrastructure)
+  - **Knowledge-Maintenance:** Woechentlich — Projektnamen normalisieren, alte info_only Findings schliessen, tote Knowledge entfernen
   - **SecurityDB._ensure_schema():** Erstellt ALLE Tabellen (Legacy + v6) bei Neuinstallation
   - **LearningBridge:** Verbindet Security Engine mit agent_learning DB (Cross-Agent Feedback + Knowledge)
+  - **Force-Scan Flags:** `touch data/force_scan` (taeglich), `touch data/force_deep_scan` (weekly) — umgeht Activity-Check, Session-Limit und Maintenance-Check
 - **Design-Doc:** `docs/plans/2026-03-24-security-engine-v6.md`, `docs/plans/2026-03-24-security-scan-agent-design.md`
 - **Architektur-Doc:** `docs/security-engine-v6-overview.md`
