@@ -745,12 +745,16 @@ class ShadowOpsBot(commands.Bot):
                     for p in pending:
                         channel = self.get_channel(p['channel_id'])
                         if channel:
-                            await channel.send(
-                                f"⚠️ **Pending Approval aus vorherigem Run**\n"
-                                f"Batch `{p['batch_id']}`: {p['plan_description'][:200]}\n"
-                                f"Der Bot wurde während der Approval-Phase neugestartet.\n"
-                                f"Bitte manuell prüfen und bei Bedarf `/scan` starten."
+                            embed = discord.Embed(
+                                title="Pending Approval — Bot Restart",
+                                description=p['plan_description'][:500],
+                                color=0xF39C12,
+                                timestamp=datetime.now(),
                             )
+                            embed.add_field(name="Batch", value=f"`{p['batch_id']}`", inline=True)
+                            embed.add_field(name="Aktion", value="Manuell pruefen oder `/scan`", inline=True)
+                            embed.set_footer(text="Approval war aktiv bei Bot-Restart")
+                            await channel.send(embed=embed)
                     # Pending Approvals als expired markieren
                     pool = await asyncpg.create_pool(
                         'postgresql://security_analyst:sec_analyst_2026@127.0.0.1:5433/security_analyst',

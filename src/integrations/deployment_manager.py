@@ -672,39 +672,29 @@ class DeploymentManager:
 
 
     async def _send_deployment_started(self, project_name: str, branch: str):
-        """Send Discord notification when deployment starts"""
-        channel = self.bot.get_channel(self.deployment_channel_id)
-        if not channel:
-            return
+        """Initialisiert den Step-Sammler fuer dieses Deployment.
 
-        embed = discord.Embed(
-            title="🚀 Deployment Started",
-            description=f"Deploying **{project_name}** from branch `{branch}`",
-            color=discord.Color.blue(),
-            timestamp=datetime.now(timezone.utc)
-        )
-
-        embed.add_field(name="Project", value=project_name, inline=True)
-        embed.add_field(name="Branch", value=f"`{branch}`", inline=True)
-        embed.add_field(name="Status", value="⏳ In Progress", inline=True)
-
-        try:
-            await channel.send(embed=embed)
-            self.logger.debug(f"📢 Sent deployment started notification for {project_name}")
-        except Exception as e:
-            self.logger.error(f"❌ Failed to send Discord notification: {e}", exc_info=True)
+        Keine separate Discord-Nachricht mehr — Steps werden gesammelt
+        und im Success/Failure Embed angezeigt.
+        """
+        if not hasattr(self, '_deploy_steps'):
+            self._deploy_steps: Dict[str, list] = {}
+        self._deploy_steps[project_name] = []
+        self.logger.info(f"🚀 Deployment gestartet: {project_name} ({branch})")
 
     async def _send_deployment_update(self, project_name: str, message: str):
-        """Send short deployment progress update to Discord"""
-        channel = self.bot.get_channel(self.deployment_channel_id)
-        if not channel:
-            return
+        """Sammelt Deploy-Steps und loggt nur intern.
 
-        try:
-            timestamp = datetime.now(timezone.utc).strftime('%H:%M:%S')
-            await channel.send(f"**[{timestamp}] {project_name}:** {message}")
-        except Exception as e:
-            self.logger.error(f"❌ Failed to send Discord update: {e}", exc_info=True)
+        Einzelne Steps werden NICHT mehr als separate Discord-Nachrichten gesendet.
+        Stattdessen sammelt _send_deployment_success/_failure alle Steps in 1 Embed.
+        """
+        if not hasattr(self, '_deploy_steps'):
+            self._deploy_steps: Dict[str, list] = {}
+        if project_name not in self._deploy_steps:
+            self._deploy_steps[project_name] = []
+        timestamp = datetime.now(timezone.utc).strftime('%H:%M:%S')
+        self._deploy_steps[project_name].append(f"`{timestamp}` {message}")
+        self.logger.info(f"[Deploy] {project_name}: {message}")
 
     async def _send_deployment_success(
         self, project_name: str, branch: str, duration: float, result: Dict
@@ -721,23 +711,18 @@ class DeploymentManager:
             timestamp=datetime.now(timezone.utc)
         )
 
-        embed.add_field(name="Project", value=project_name, inline=True)
+        embed.add_field(name="Projekt", value=f"`{project_name}`", inline=True)
         embed.add_field(name="Branch", value=f"`{branch}`", inline=True)
-        embed.add_field(name="Duration", value=f"{duration:.1f}s", inline=True)
+        embed.add_field(name="Dauer", value=f"{duration:.1f}s", inline=True)
 
-        if result.get('tests_passed') is not None:
-            tests_status = "✅ Passed" if result['tests_passed'] else "❌ Failed"
-            embed.add_field(name="Tests", value=tests_status, inline=True)
-
-        if result.get('backup_created'):
-            embed.add_field(name="Backup", value="✅ Created", inline=True)
-
-        if result.get('deployed'):
-            embed.add_field(name="Deployed", value="✅ Yes", inline=True)
+        # Gesammelte Deploy-Steps als Timeline
+        steps = getattr(self, '_deploy_steps', {}).get(project_name, [])
+        if steps:
+            embed.add_field(name="Verlauf", value="\n".join(steps[-10:])[:1024], inline=False)
+            self._deploy_steps.pop(project_name, None)  # Cleanup
 
         try:
             await channel.send(embed=embed)
-            self.logger.debug(f"📢 Sent deployment success notification for {project_name}")
         except Exception as e:
             self.logger.error(f"❌ Failed to send Discord notification: {e}", exc_info=True)
 
@@ -759,31 +744,25 @@ class DeploymentManager:
             timestamp=datetime.now(timezone.utc)
         )
 
-        embed.add_field(name="Project", value=project_name, inline=True)
+        embed.add_field(name="Projekt", value=f"`{project_name}`", inline=True)
         embed.add_field(name="Branch", value=f"`{branch}`", inline=True)
-        embed.add_field(name="Duration", value=f"{duration:.1f}s", inline=True)
+        embed.add_field(name="Dauer", value=f"{duration:.1f}s", inline=True)
 
-        # Truncate error if too long
-        if len(error) > 500:
-            error = error[:497] + "..."
-        embed.add_field(name="Error", value=f"```{error}```", inline=False)
+        if len(error) > 400:
+            error = error[:397] + "..."
+        embed.add_field(name="Fehler", value=f"```{error}```", inline=False)
 
-        if rolled_back:
-            embed.add_field(
-                name="Rollback",
-                value="✅ Automatic rollback successful - previous version restored",
-                inline=False
-            )
-        elif result.get('backup_created'):
-            embed.add_field(
-                name="Rollback",
-                value="❌ Rollback failed or not attempted",
-                inline=False
-            )
+        rollback_msg = "✅ Rollback erfolgreich" if rolled_back else "❌ Kein Rollback"
+        embed.add_field(name="Rollback", value=rollback_msg, inline=True)
+
+        # Gesammelte Deploy-Steps als Timeline
+        steps = getattr(self, '_deploy_steps', {}).get(project_name, [])
+        if steps:
+            embed.add_field(name="Verlauf", value="\n".join(steps[-10:])[:1024], inline=False)
+            self._deploy_steps.pop(project_name, None)
 
         try:
             await channel.send(embed=embed)
-            self.logger.debug(f"📢 Sent deployment failure notification for {project_name}")
         except Exception as e:
             self.logger.error(f"❌ Failed to send Discord notification: {e}", exc_info=True)
 
