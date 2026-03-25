@@ -436,6 +436,38 @@ class LearningNotifier:
             embed.add_field(name="🔧 Fix-Effektivitaet", value=fix_text[:1024], inline=True)
             embed.add_field(name="💡 Top-Insights", value=insight_text[:1024], inline=False)
 
+            # ── 7. Proactive Report (aus Security Engine) ──
+            try:
+                engine = getattr(self.bot, 'security_engine', None)
+                proactive = getattr(engine, '_last_proactive_report', None) if engine else None
+                if proactive:
+                    gaps = proactive.get('coverage_gaps', [])
+                    eff = proactive.get('fix_effectiveness', {})
+                    recs = proactive.get('recommendations', [])
+
+                    proactive_parts = []
+                    if gaps:
+                        gap_names = [g.get('area', '?') for g in gaps[:5]]
+                        proactive_parts.append(f"Coverage-Luecken: {', '.join(gap_names)}")
+                    if eff:
+                        eff_items = []
+                        for src, stats in eff.items():
+                            rate = stats.get('success_rate', 0)
+                            emoji = '🟢' if rate >= 0.8 else '🟡' if rate >= 0.5 else '🔴'
+                            eff_items.append(f"{emoji} {src}: {rate:.0%}")
+                        proactive_parts.append("Fix-Rate: " + " · ".join(eff_items))
+                    if recs:
+                        proactive_parts.append(f"{len(recs)} Empfehlungen")
+
+                    if proactive_parts:
+                        embed.add_field(
+                            name="📊 Proactive Report",
+                            value="\n".join(proactive_parts)[:1024],
+                            inline=False,
+                        )
+            except Exception:
+                pass
+
             embed.set_footer(text="Weekly Security Recap · SecurityScanAgent")
 
             await channel.send(embed=embed)
