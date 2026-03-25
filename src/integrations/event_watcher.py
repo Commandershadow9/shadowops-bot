@@ -189,7 +189,8 @@ class SecurityEventWatcher:
                    FROM ip_reputation WHERE total_bans > 0"""
             )
             for r in rows:
-                ip = r['ip_address']
+                # INET::TEXT gibt "1.2.3.4/32" zurueck — CIDR-Maske entfernen
+                ip = r['ip_address'].split('/')[0]
                 self._ban_counts[ip] = r['total_bans']
                 if r['permanent_blocked']:
                     self._permanent_blocked.add(ip)
