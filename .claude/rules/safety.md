@@ -40,8 +40,15 @@ Bei Aenderungen an Shared-Services (Redis, PostgreSQL, Traefik) MUESSEN alle Kon
 - **Semantic Versionierung:** `_calculate_semver()` berechnet Version aus Commit-Typen — NICHT die KI
 - **Kollisionsschutz:** `_ensure_unique_version()` verhindert doppelte Versionen
 - **Projekt-Kontext:** `project_description` + `target_audience` pro Projekt in config.yaml
+- **PR-Label Integration:** `_enrich_commits_with_pr_data()` holt Labels + Body via `gh pr view`. Labels ueberschreiben Commit-Prefix (zuverlaessiger)
+- **Smart Diff:** `_build_code_changes_context()` gruppiert Dateien nach 8 Kategorien statt rohem Diff
+- **A/B-Regelblock:** `_CLASSIFICATION_RULES_DE/EN` wird IMMER angehaengt — alte Varianten profitieren automatisch
+- **Conventional Commit Hook:** Auf allen 5 Projekten deployed. Re-Deploy: `scripts/deploy-commit-hook.sh --all`
+- **Auto-Label Action:** `.github/workflows/auto-label-pr.yml` — Labels muessen im Repo existieren
+- **Pipeline-Metriken:** Jede Generierung loggt Commit-Typen, PR-Labels, Halluzinationen, Version-Source
 - NIEMALS den globalen min_commits Check entfernen — er ist die letzte Verteidigungslinie
 - NIEMALS `_validate_ai_output()` deaktivieren — er faengt halluzinierte Features ab
+- NIEMALS `_CLASSIFICATION_RULES` entfernen — sie schuetzen A/B-Varianten vor Regression
 
 ## Learning-System (agent_learning DB)
 - DB-Passwort `agent_learn_2026` steht in `patch_notes_learning.py` DSN — nicht aendern ohne alle Referenzen

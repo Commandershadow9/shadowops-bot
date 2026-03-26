@@ -151,6 +151,11 @@
 | `commit-msg-hook.sh` | Conventional Commit Hook — validiert Commit-Messages (Prefix, Beschreibungslaenge). Auf allen 5 Projekten deployed |
 | `deploy-commit-hook.sh` | Deployt den Commit-Hook auf ein/alle Projekte (`--all` fuer alle 5) |
 
+### GitHub Actions (`.github/workflows/`)
+| Datei | Zweck |
+|-------|-------|
+| `auto-label-pr.yml` | Auto-Label PRs aus Conventional Commit Prefixen (feat→feature, fix→bugfix, etc.). SHA-gepinnter actions/github-script, 10 Labels konfiguriert |
+
 ### Dokumentation
 | Pfad | Inhalt |
 |------|--------|
@@ -283,6 +288,12 @@
 - **Projekt-Kontext:** `project_description` + `target_audience` in config.yaml pro Projekt
 - **Semantic Versionierung:** `_calculate_semver()` berechnet MINOR/PATCH/MAJOR aus Commit-Typen statt KI-Erfindung. Kollisionsschutz via `_ensure_unique_version()`
 - **Alle 4 Trigger-Pfade gesichert:** Webhook Push, Local Polling, Woechentlicher Cron, Manueller /release-notes
+- **PR-Label Integration:** GitHub PR-Labels (16 Mappings) via `gh pr view --json labels` als zuverlaessigere Klassifizierung. Labels ueberschreiben Commit-Prefix
+- **Smart Diff-Analyse:** Dateien nach 8 Kategorien gruppiert (Frontend, Backend, DB, Config, Tests, Docs, CI/CD, Dependencies). Strukturierte Uebersicht statt roher Diff-Output
+- **Conventional Commit Hook:** `scripts/commit-msg-hook.sh` validiert Prefix + Beschreibungslaenge. Deployed auf alle 5 Projekte via `scripts/deploy-commit-hook.sh --all`
+- **Auto-Label GitHub Action:** `.github/workflows/auto-label-pr.yml` setzt Labels aus Commit-Prefixen automatisch auf PRs
+- **A/B-Varianten-Regelblock:** `_CLASSIFICATION_RULES_DE/EN` wird IMMER an den Prompt angehaengt, egal welche A/B-Variante gewaehlt wird
+- **Pipeline-Metriken:** Kompakte Log-Zeile bei jeder Generierung (Commits nach Typ, PR-Labels, Halluzinationen, Version-Source)
 
 ### Security Engine v6 (seit 2026-03-24)
 - **Vorher:** 4 isolierte Systeme (EventWatcher, Orchestrator, Self-Healing, Analyst) mit 2 DB-Layern (psycopg2 + asyncpg)
