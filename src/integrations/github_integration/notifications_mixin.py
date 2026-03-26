@@ -160,6 +160,7 @@ class NotificationsMixin:
                 ai_result = sanitizer.sanitize(ai_result)
 
         # === HALLUZINATIONS-VALIDIERUNG ===
+        validation = {'valid': True, 'warnings': [], 'fixes_applied': []}
         if isinstance(ai_result, dict):
             validation = self._validate_ai_output(ai_result, commits)
             if validation['warnings']:
@@ -169,8 +170,43 @@ class NotificationsMixin:
                 for f in validation['fixes_applied']:
                     self.logger.info(f"🔧 Patch Notes Auto-Fix ({repo_name}): {f}")
 
-        # === UNIFIED EMBED + WEB EXPORT ===
+        # === PIPELINE-METRIKEN ===
         version = self._resolve_version(ai_result, commits, repo_name)
+        metrics = {
+            'project': repo_name,
+            'version': version,
+            'total_commits': len(commits),
+            'classified': {
+                tag: 0 for tag in ['FEATURE', 'BUGFIX', 'DOCS', 'DESIGN-DOC',
+                                   'SEO-AUTO', 'DEPS-AUTO', 'MERGE', 'REVERT', 'OTHER']
+            },
+            'pr_labels_found': sum(1 for c in commits if c.get('pr_label_tag')),
+            'pr_bodies_found': sum(1 for c in commits if c.get('pr_body')),
+            'hallucinations_caught': len(validation.get('fixes_applied', [])),
+            'warnings': len(validation.get('warnings', [])),
+            'version_source': 'explicit' if self._extract_version_from_commits(commits) else
+                              ('semver' if self._calculate_semver(commits, repo_name) else 'fallback'),
+        }
+        for commit in commits:
+            tag, _ = self._classify_commit(commit)
+            if tag in metrics['classified']:
+                metrics['classified'][tag] += 1
+            else:
+                metrics['classified']['OTHER'] += 1
+
+        # Kompakte Metriken-Zeile
+        clf = metrics['classified']
+        self.logger.info(
+            f"📊 Patch Notes Pipeline ({repo_name} v{version}): "
+            f"{metrics['total_commits']} Commits "
+            f"({clf['FEATURE']}F {clf['BUGFIX']}B {clf['DOCS']}D "
+            f"{clf['SEO-AUTO']+clf['DEPS-AUTO']}Auto {clf['MERGE']}M) | "
+            f"PR-Labels: {metrics['pr_labels_found']}, PR-Bodies: {metrics['pr_bodies_found']} | "
+            f"Halluzinationen: {metrics['hallucinations_caught']} gefangen | "
+            f"Version: {metrics['version_source']}"
+        )
+
+        # === UNIFIED EMBED + WEB EXPORT ===
         customer_embed = self._build_unified_embed(
             repo_name, project_color, commits, language,
             ai_result, project_config, git_stats

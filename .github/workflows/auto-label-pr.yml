@@ -1,0 +1,109 @@
+# ============================================================================
+# Auto-Label PRs basierend auf Conventional Commit Prefixen
+# ============================================================================
+#
+# Setzt automatisch Labels auf PRs anhand der Commit-Messages.
+# Nutzt actions/github-script (kein shell=run, kein Injection-Risiko).
+#
+# Labels muessen im Repo existieren (werden NICHT automatisch erstellt).
+# Erstellen: gh label create feature --color 0E8A16 --description "New feature"
+#
+# ============================================================================
+
+name: Auto-Label PR
+
+on:
+  pull_request:
+    types: [opened, synchronize]
+
+permissions:
+  pull-requests: write
+
+jobs:
+  label:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Auto-Label basierend auf Commits
+        uses: actions/github-script@60a0d83039c74a4aee543508d2ffcb1c3799cdea # v7.0.1
+        with:
+          script: |
+            // Commits der PR holen (kein User-Input in Shell — alles in JS)
+            const { data: commits } = await github.rest.pulls.listCommits({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              pull_number: context.payload.pull_request.number,
+              per_page: 100
+            });
+
+            const prefixMap = {
+              'feat': 'feature',
+              'fix': 'bugfix',
+              'docs': 'documentation',
+              'doc': 'documentation',
+              'chore': 'maintenance',
+              'refactor': 'refactor',
+              'test': 'test',
+              'perf': 'performance',
+              'ci': 'ci',
+              'build': 'dependencies',
+              'style': 'maintenance',
+              'revert': 'revert',
+              'security': 'security',
+            };
+
+            const breakingPattern = /^\w+(?:\([^)]*\))?!:/;
+            const breakingBodyPattern = /BREAKING[ -]CHANGE:/;
+
+            const labelsToAdd = new Set();
+
+            for (const { commit } of commits) {
+              const msg = commit.message || '';
+              const title = msg.split('\n')[0];
+
+              if (breakingPattern.test(title) || breakingBodyPattern.test(msg)) {
+                labelsToAdd.add('breaking-change');
+              }
+
+              const match = title.match(/^(\w+)(?:\([^)]*\))?[!:]/);
+              if (match) {
+                const prefix = match[1].toLowerCase();
+                if (prefixMap[prefix]) {
+                  labelsToAdd.add(prefixMap[prefix]);
+                }
+              }
+
+              if (/^SEO:\s*Automatische/i.test(title) || /^fix\(seo\):\s*\d+\s+SEO/i.test(title)) {
+                labelsToAdd.add('seo-auto');
+              }
+
+              if (/^(chore|build|fix)\(deps\)/i.test(title)) {
+                labelsToAdd.add('dependencies');
+              }
+            }
+
+            if (labelsToAdd.size === 0) {
+              core.info('Keine Labels erkannt');
+              return;
+            }
+
+            const { data: repoLabels } = await github.rest.issues.listLabelsForRepo({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              per_page: 100
+            });
+            const existingLabels = new Set(repoLabels.map(l => l.name));
+            const validLabels = [...labelsToAdd].filter(l => existingLabels.has(l));
+
+            if (validLabels.length === 0) {
+              core.info(`Labels ${[...labelsToAdd].join(', ')} existieren nicht im Repo — erstelle mit: gh label create <name>`);
+              return;
+            }
+
+            await github.rest.issues.addLabels({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              issue_number: context.payload.pull_request.number,
+              labels: validLabels
+            });
+
+            core.info(`Labels gesetzt: ${validLabels.join(', ')}`);

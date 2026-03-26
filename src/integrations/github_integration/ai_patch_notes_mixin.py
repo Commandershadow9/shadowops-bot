@@ -804,6 +804,33 @@ class AIPatchNotesMixin:
             'fixes_applied': fixes,
         }
 
+    # Basis-Regelblock der IMMER an jeden Prompt angehaengt wird (A/B-Varianten-sicher)
+    _CLASSIFICATION_RULES_DE = """
+COMMIT-TYP-REGELN (IMMER BEACHTEN):
+- [FEATURE] = Implementiertes Feature → als "Neues Feature" listen
+- [BUGFIX] = Behobener Bug → als "Bugfix" listen
+- [SECURITY] = Sicherheitsfix → vage beschreiben (kein WIE)
+- [DESIGN-DOC: GEPLANT, NICHT IMPLEMENTIERT] = NUR ein Planungsdokument → NIEMALS als Feature!
+- [SEO-AUTO] / [DEPS-AUTO] = Automatisiert → kurz zusammenfassen
+- [DOCS] / [CHORE] / [CI] / [TEST] = Intern → nur erwaehnen wenn nutzerrelevant
+- [REVERT] = Rueckgaengig gemacht → erwaehnen wenn nutzerrelevant
+- [BREAKING] = Breaking Change → IMMER prominent erwaehnen
+- PR-Label-Tags (pr_label_tag) haben Vorrang vor Commit-Prefix-Tags
+ERFINDE KEINE Features die nicht als [FEATURE] getaggt sind!"""
+
+    _CLASSIFICATION_RULES_EN = """
+COMMIT TYPE RULES (ALWAYS OBSERVE):
+- [FEATURE] = Implemented feature → list as "New Feature"
+- [BUGFIX] = Fixed bug → list as "Bug Fix"
+- [SECURITY] = Security fix → describe vaguely (not HOW)
+- [DESIGN-DOC: GEPLANT, NICHT IMPLEMENTIERT] = Planning doc only → NEVER list as feature!
+- [SEO-AUTO] / [DEPS-AUTO] = Automated → summarize briefly
+- [DOCS] / [CHORE] / [CI] / [TEST] = Internal → mention only if user-relevant
+- [REVERT] = Reverted → mention if user-relevant
+- [BREAKING] = Breaking change → ALWAYS mention prominently
+- PR label tags (pr_label_tag) take precedence over commit prefix tags
+Do NOT invent features that are not tagged [FEATURE]!"""
+
     # Pfad zur Changelog-DB (relativ zum Projekt-Root)
     _CHANGELOGS_DB = Path(__file__).resolve().parent.parent.parent.parent / 'data' / 'changelogs.db'
 
@@ -1111,6 +1138,10 @@ class AIPatchNotesMixin:
                     for i, example in enumerate(self.patch_notes_trainer.good_examples[:2], 1):
                         prompt += f"## Example {i} ({example['project']} v{example['version']}):\n"
                         prompt += f"```\n{example['generated_notes'][:400]}...\n```\n\n"
+
+                # Basis-Regelblock IMMER anhaengen (A/B-Varianten-sicher)
+                rules = self._CLASSIFICATION_RULES_DE if language == 'de' else self._CLASSIFICATION_RULES_EN
+                prompt += f"\n\n{rules}"
 
                 if code_changes_context:
                     prompt += f"\n\n{code_changes_context}"
