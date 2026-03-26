@@ -140,11 +140,17 @@ class NotificationsMixin:
             )
             if isinstance(ai_result, dict):
                 ai_result = sanitizer.sanitize_dict(ai_result)
-                # Verschachtelte Felder: changes[].description und breaking_changes[]
+                # Verschachtelte Felder: changes[].description, changes[].details[] und breaking_changes[]
                 if 'changes' in ai_result:
                     for change in ai_result['changes']:
-                        if isinstance(change, dict) and 'description' in change:
-                            change['description'] = sanitizer.sanitize(change['description'])
+                        if isinstance(change, dict):
+                            if 'description' in change:
+                                change['description'] = sanitizer.sanitize(change['description'])
+                            if 'details' in change and isinstance(change['details'], list):
+                                change['details'] = [
+                                    sanitizer.sanitize(d) if isinstance(d, str) else d
+                                    for d in change['details']
+                                ]
                 if 'breaking_changes' in ai_result:
                     ai_result['breaking_changes'] = [
                         sanitizer.sanitize(b) if isinstance(b, str) else b
@@ -153,8 +159,18 @@ class NotificationsMixin:
             elif isinstance(ai_result, str):
                 ai_result = sanitizer.sanitize(ai_result)
 
+        # === HALLUZINATIONS-VALIDIERUNG ===
+        if isinstance(ai_result, dict):
+            validation = self._validate_ai_output(ai_result, commits)
+            if validation['warnings']:
+                for w in validation['warnings']:
+                    self.logger.warning(f"⚠️ Patch Notes Validierung ({repo_name}): {w}")
+            if validation['fixes_applied']:
+                for f in validation['fixes_applied']:
+                    self.logger.info(f"🔧 Patch Notes Auto-Fix ({repo_name}): {f}")
+
         # === UNIFIED EMBED + WEB EXPORT ===
-        version = self._resolve_version(ai_result, commits)
+        version = self._resolve_version(ai_result, commits, repo_name)
         customer_embed = self._build_unified_embed(
             repo_name, project_color, commits, language,
             ai_result, project_config, git_stats
@@ -175,21 +191,144 @@ class NotificationsMixin:
 
     # ── Unified Embed + Version + Web-Export (v5) ──────────────────────
 
-    def _resolve_version(self, ai_result, commits: list) -> str:
-        """Bestimme Version: Commits > AI > Auto-Version. NIE None."""
-        # 1. Aus Commits (expliziter Version-Tag)
+    def _resolve_version(self, ai_result, commits: list, repo_name: str = "") -> str:
+        """Bestimme Version: Commits > SemVer-Berechnung > AI > Auto-Version. NIE None."""
+        # 1. Aus Commits (expliziter Version-Tag, z.B. "feat: Release v2.1.0")
         v = self._extract_version_from_commits(commits)
         if v:
             return v
 
-        # 2. Aus AI-Ergebnis (nur echte Versionen)
+        # 2. Semantic Versioning: Letzte Version + Commit-Typen → naechste Version
+        sem_v = self._calculate_semver(commits, repo_name)
+        if sem_v:
+            return sem_v
+
+        # 3. Aus AI-Ergebnis (nur echte Versionen, NICHT von AI erfundene Major-Bumps)
         if isinstance(ai_result, dict):
             ai_v = ai_result.get('version')
             if ai_v and ai_v != 'patch' and not ai_v.startswith('0.0.'):
                 return ai_v
 
-        # 3. Auto-Version (Fallback, IMMER)
+        # 4. Auto-Version (Fallback, IMMER)
         return f"patch.{datetime.now(timezone.utc).strftime('%Y.%m.%d')}"
+
+    def _calculate_semver(self, commits: list, repo_name: str) -> Optional[str]:
+        """
+        Berechne naechste Semantic Version basierend auf Commit-Typen.
+
+        Logik:
+        - Mindestens 1 Breaking Change (feat!:, fix!:) → MAJOR Bump
+        - Mindestens 1 [FEATURE] Commit → MINOR Bump
+        - Nur [BUGFIX], [IMPROVEMENT], etc. → PATCH Bump
+        """
+        if not repo_name:
+            return None
+
+        # Letzte Version aus Changelog-DB laden
+        last_version = self._get_last_version_from_db(repo_name)
+        if not last_version:
+            return None
+
+        # Commit-Typen zaehlen (nutzt _classify_commit aus AIPatchNotesMixin)
+        has_breaking = False
+        has_feature = False
+
+        for commit in commits:
+            msg = commit.get('message', '')
+            title = msg.split('\n')[0]
+
+            # Breaking Change: "feat!:" oder "fix!:" oder "BREAKING CHANGE:" im Body
+            if re.match(r'^\w+(?:\([^)]*\))?!:', title):
+                has_breaking = True
+            elif 'BREAKING CHANGE:' in msg or 'BREAKING-CHANGE:' in msg:
+                has_breaking = True
+            # Feature: "feat:" oder "feat(scope):"
+            elif re.match(r'^feat(?:\([^)]*\))?:', title):
+                has_feature = True
+
+        # Version parsen und bumpen
+        try:
+            parts = last_version.split('.')
+            if len(parts) != 3:
+                return None
+            major, minor, patch = int(parts[0]), int(parts[1]), int(parts[2])
+
+            if has_breaking:
+                new_version = f"{major + 1}.0.0"
+            elif has_feature:
+                new_version = f"{major}.{minor + 1}.0"
+            else:
+                new_version = f"{major}.{minor}.{patch + 1}"
+
+            # Kollisionsschutz: Wenn Version schon existiert, Patch hochzaehlen
+            return self._ensure_unique_version(new_version, repo_name)
+        except (ValueError, IndexError):
+            return None
+
+    def _ensure_unique_version(self, version: str, repo_name: str) -> str:
+        """Stelle sicher, dass die Version noch nicht in der DB existiert."""
+        try:
+            import sqlite3
+            from pathlib import Path
+            db_path = Path(__file__).resolve().parent.parent.parent.parent / 'data' / 'changelogs.db'
+            if not db_path.exists():
+                return version
+
+            with sqlite3.connect(str(db_path)) as conn:
+                cursor = conn.cursor()
+                # Alle existierenden Versionen fuer dieses Projekt laden
+                cursor.execute(
+                    "SELECT version FROM changelogs WHERE project = ?",
+                    (repo_name,)
+                )
+                existing = {row[0] for row in cursor.fetchall()}
+
+            if version not in existing:
+                return version
+
+            # Version existiert → Patch hochzaehlen bis frei
+            parts = version.split('.')
+            major, minor = int(parts[0]), int(parts[1])
+            patch_num = int(parts[2])
+            for _ in range(100):  # Max 100 Versuche
+                patch_num += 1
+                candidate = f"{major}.{minor}.{patch_num}"
+                if candidate not in existing:
+                    return candidate
+
+            return version  # Sollte nie passieren
+        except Exception:
+            return version
+
+    def _get_last_version_from_db(self, repo_name: str) -> Optional[str]:
+        """Lade die letzte semantische Version aus der Changelog-DB."""
+        try:
+            import sqlite3
+            from pathlib import Path
+            db_path = Path(__file__).resolve().parent.parent.parent.parent / 'data' / 'changelogs.db'
+            if not db_path.exists():
+                return None
+
+            with sqlite3.connect(str(db_path)) as conn:
+                cursor = conn.cursor()
+                cursor.execute(
+                    "SELECT version FROM changelogs "
+                    "WHERE project = ? AND version NOT LIKE 'patch.%' "
+                    "ORDER BY created_at DESC LIMIT 1",
+                    (repo_name,)
+                )
+                row = cursor.fetchone()
+
+            if not row:
+                return None
+
+            # Nur echte SemVer-Versionen (X.Y.Z)
+            version = row[0]
+            if re.match(r'^\d+\.\d+\.\d+$', version):
+                return version
+            return None
+        except Exception:
+            return None
 
     def _resolve_title(self, ai_result, version: str) -> str:
         """Titel aus AI oder Fallback. Doppelte Version entfernen."""
@@ -310,7 +449,7 @@ class NotificationsMixin:
                               project_config: Dict,
                               git_stats: Optional[Dict] = None) -> discord.Embed:
         """EIN Embed-Builder für alle Fälle (dict/str/None)."""
-        version = self._resolve_version(ai_result, commits)
+        version = self._resolve_version(ai_result, commits, repo_name)
         title = self._resolve_title(ai_result, version)
         changelog_url = project_config.get('patch_notes', {}).get('changelog_url', '')
 

@@ -250,6 +250,10 @@ projects:
       diff_max_commits: 5
       diff_max_lines: 200
 
+      # Projekt-Kontext fuer zielgruppengerechte Patch Notes (optional)
+      # project_description: "Discord-Bot für WoW-Gilden-Management"
+      # target_audience: "Gildenleiter und WoW-Spieler"
+
       # Kontext-Dateien für reichere Prompts (optional)
       # context_files:
       #   - "docs/CHANGELOG.md"

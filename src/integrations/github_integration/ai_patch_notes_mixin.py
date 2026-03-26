@@ -198,6 +198,162 @@ class AIPatchNotesMixin:
 
         return chunks
 
+    # Conventional-Commit-Prefix → Tag-Mapping
+    _COMMIT_TYPE_TAGS = {
+        'feat': 'FEATURE',
+        'fix': 'BUGFIX',
+        'docs': 'DOCS',
+        'doc': 'DOCS',
+        'chore': 'CHORE',
+        'refactor': 'REFACTOR',
+        'test': 'TEST',
+        'perf': 'PERFORMANCE',
+        'ci': 'CI',
+        'build': 'BUILD',
+        'style': 'STYLE',
+        'improve': 'IMPROVEMENT',
+        'update': 'UPDATE',
+        'revert': 'REVERT',
+    }
+
+    # Muster die auf Design-Docs / Planungs-Dokumente hindeuten
+    _DESIGN_DOC_PATTERNS = [
+        r'docs?[:/]\s*.*(?:design|plan|spec|rfc|adr|proposal|konzept)',
+        r'docs?[:/]\s*.*(?:Design-Doc|Implementierungsplan|Spezifikation)',
+        r'(?:design|plan|spec|rfc|proposal)[\s-](?:doc|document|dokument)',
+    ]
+
+    # Muster fuer automatisierte Commits (werden gruppiert)
+    _AUTO_COMMIT_PATTERNS = {
+        'SEO-AUTO': [
+            r'^SEO:\s*Automatische\s+Optimierungen',
+            r'^fix\(seo\):\s*\d+\s+SEO-Verbesserungen',
+        ],
+        'DEPS-AUTO': [
+            r'^chore\(deps\):',
+            r'^build\(deps\):',
+            r'^fix\(deps\):',
+            r'^\[?dependabot\]?',
+            r'^\[?renovate\]?',
+        ],
+    }
+
+    def _classify_commit(self, commit: dict) -> tuple:
+        """
+        Klassifiziere einen Commit anhand von Prefix, Pfaden und Mustern.
+
+        Returns:
+            (tag: str, auto_group: str|None)
+            auto_group ist z.B. 'SEO-AUTO' oder 'DEPS-AUTO' fuer gruppierbare Commits,
+            None fuer normale Commits.
+        """
+        full_msg = commit.get('message', '')
+        title = full_msg.split('\n')[0]
+
+        # 1. Merge-Commits erkennen (branch + PR)
+        if title.startswith('Merge branch') or title.startswith('Merge pull request'):
+            return ('MERGE', None)
+
+        # 2. Revert-Commits erkennen
+        if title.startswith('Revert "') or title.startswith('Revert \''):
+            return ('REVERT', None)
+
+        # 3. Design-Doc erkennen (hoechste Prioritaet bei docs)
+        for pattern in self._DESIGN_DOC_PATTERNS:
+            if re.search(pattern, title, re.IGNORECASE):
+                return ('DESIGN-DOC', None)
+
+        # 4. Automatisierte Commits erkennen (SEO, Dependabot, Renovate)
+        for group_name, patterns in self._AUTO_COMMIT_PATTERNS.items():
+            for pattern in patterns:
+                if re.search(pattern, title, re.IGNORECASE):
+                    return (group_name, group_name)
+
+        # 5. Conventional Commit Prefix parsen
+        prefix_match = re.match(r'^(\w+)(?:\([^)]*\))?[!:]', title)
+        if prefix_match:
+            prefix = prefix_match.group(1).lower()
+            tag = self._COMMIT_TYPE_TAGS.get(prefix, prefix.upper())
+            return (tag, None)
+
+        # 6. Fallback
+        return ('OTHER', None)
+
+    def _build_classified_commits_text(self, commits: list) -> str:
+        """
+        Baue annotierten Commit-Text mit Typ-Tags fuer den AI-Prompt.
+
+        - Merge-Commits werden uebersprungen
+        - Design-Doc-Bodies werden abgeschnitten (kein Halluzinations-Material)
+        - Automatisierte Commits (SEO, Deps) werden pro Gruppe zusammengefasst
+        """
+        classified_lines = []
+        # Zaehler fuer automatisierte Commit-Gruppen: {group: (count, sample_title)}
+        auto_groups: dict = {}
+
+        for commit in commits:
+            full_msg = commit.get('message', '')
+            lines = full_msg.split('\n')
+            title = lines[0]
+            author = commit.get('author', {}).get('name', 'Unknown')
+
+            tag, auto_group = self._classify_commit(commit)
+
+            # Merge-Commits komplett ueberspringen
+            if tag == 'MERGE':
+                continue
+
+            # Automatisierte Commits zaehlen und spaeter zusammenfassen
+            if auto_group:
+                if auto_group not in auto_groups:
+                    auto_groups[auto_group] = (0, title)
+                count, sample = auto_groups[auto_group]
+                auto_groups[auto_group] = (count + 1, sample)
+                continue
+
+            # Design-Docs: Nur Titel, Body NICHT an AI (verhindert Halluzination)
+            if tag == 'DESIGN-DOC':
+                classified_lines.append(
+                    f"- [DESIGN-DOC: GEPLANT, NICHT IMPLEMENTIERT] {title} (by {author})"
+                )
+                continue
+
+            # Normale Commits: Body bereinigt (max 30 Zeilen, kein Git-Metadata-Noise)
+            body_lines = [
+                line for line in lines[1:]
+                if line.strip()
+                and not line.strip().startswith('Co-Authored-By:')
+                and not line.strip().startswith('Co-authored-by:')
+                and not line.strip().startswith('Signed-off-by:')
+                and not re.match(r'^\s*(Fixes?|Closes?|Resolves?)\s+#\d+', line, re.IGNORECASE)
+            ]
+
+            # PR-Beschreibung als zusaetzlichen Kontext anfuegen (wenn vorhanden)
+            pr_body = commit.get('pr_body', '')
+            if pr_body:
+                body_lines.append(f"PR-Beschreibung: {pr_body}")
+
+            if len(body_lines) > 2:
+                body = '\n'.join(body_lines[:30])
+                classified_lines.append(
+                    f"- [{tag}] {title}\n  {body}\n  (by {author})"
+                )
+            else:
+                classified_lines.append(f"- [{tag}] {title} (by {author})")
+
+        # Automatisierte Commit-Gruppen als Zusammenfassung anfuegen
+        _AUTO_LABELS = {
+            'SEO-AUTO': 'automatisierte SEO-Commits',
+            'DEPS-AUTO': 'automatisierte Dependency-Updates',
+        }
+        for group_name, (count, sample) in auto_groups.items():
+            label = _AUTO_LABELS.get(group_name, f'automatisierte {group_name} Commits')
+            classified_lines.append(
+                f"- [{group_name}: {count} {label}] Beispiel: {sample}"
+            )
+
+        return "\n".join(classified_lines)
+
     def _format_user_friendly_commit(self, message: str) -> str:
         """Convert technical commit message to user-friendly text."""
         # Remove conventional commit prefixes
@@ -221,6 +377,54 @@ class AIPatchNotesMixin:
             message = message[0].upper() + message[1:]
 
         return message
+
+    def _enrich_commits_with_pr_descriptions(self, commits: list,
+                                                project_path: Optional[Path]) -> list:
+        """
+        Reichere Commits mit PR-Beschreibungen an.
+
+        Sucht PR-Nummern in Commit-Titeln (z.B. "(#86)") und holt die
+        PR-Beschreibung ueber `gh pr view`. Fuegt 'pr_body' zum Commit hinzu.
+        Max 5 PRs um API-Calls zu begrenzen.
+        """
+        if not project_path or not Path(project_path).exists():
+            return commits
+
+        pr_count = 0
+        for commit in commits:
+            if pr_count >= 5:
+                break
+
+            msg = commit.get('message', '')
+            title = msg.split('\n')[0]
+
+            # PR-Nummer aus Titel extrahieren: "(#86)", "Merge pull request #47"
+            pr_match = re.search(r'#(\d+)', title)
+            if not pr_match:
+                continue
+
+            pr_number = pr_match.group(1)
+
+            try:
+                result = subprocess.run(
+                    ['gh', 'pr', 'view', pr_number, '--json', 'title,body',
+                     '--jq', '.body'],
+                    capture_output=True, text=True, cwd=str(project_path),
+                    timeout=10
+                )
+                if result.returncode == 0 and result.stdout.strip():
+                    body = result.stdout.strip()
+                    # Nur nutzen wenn substantiell (>50 Zeichen, nicht nur Template)
+                    if len(body) > 50 and not body.startswith('<!--'):
+                        # Auf 500 Zeichen kuerzen
+                        if len(body) > 500:
+                            body = body[:500] + '...'
+                        commit['pr_body'] = body
+                        pr_count += 1
+            except Exception:
+                continue
+
+        return commits
 
     def _build_code_changes_context(self, commits: list, project_path: Optional[Path]) -> str:
         """Build a truncated diff summary for a handful of commits."""
@@ -260,19 +464,39 @@ class AIPatchNotesMixin:
 
     def _load_patch_notes_context(self, project_config: Optional[Dict],
                                   project_path: Optional[Path]) -> str:
-        """Load optional context files for richer patch notes prompts."""
+        """Load optional context files + project description for richer prompts."""
         if not project_config:
             return ""
 
         patch_config = project_config.get('patch_notes', {})
+
+        # Projekt-Beschreibung und Zielgruppe (fuer zielgruppengerechte Patch Notes)
+        sections = []
+        project_desc = patch_config.get('project_description', '')
+        target_audience = patch_config.get('target_audience', '')
+        if project_desc or target_audience:
+            meta_parts = []
+            if project_desc:
+                meta_parts.append(f"Projekt: {project_desc}")
+            if target_audience:
+                meta_parts.append(f"Zielgruppe: {target_audience}")
+            sections.append(
+                "PROJEKT-KONTEXT (schreibe Patch Notes passend fuer diese Zielgruppe):\n"
+                + "\n".join(meta_parts)
+            )
+
         context_files = patch_config.get('context_files') or patch_config.get('context_file')
-        if not context_files:
+        if not context_files and not sections:
             return ""
 
-        if isinstance(context_files, str):
-            context_files = [context_files]
-        if not isinstance(context_files, list):
-            return ""
+        # Context-Dateien laden (wenn vorhanden)
+        if context_files:
+            if isinstance(context_files, str):
+                context_files = [context_files]
+            if not isinstance(context_files, list):
+                context_files = []
+        else:
+            context_files = []
 
         base_path = project_path
         if not base_path:
@@ -281,8 +505,6 @@ class AIPatchNotesMixin:
 
         per_file_limit = int(patch_config.get('context_max_chars', 1500))
         total_limit = int(patch_config.get('context_total_max_chars', 4000))
-
-        sections = []
         total_chars = 0
 
         for entry in context_files:
@@ -347,6 +569,214 @@ class AIPatchNotesMixin:
             return True
 
         return False
+
+    def _validate_ai_output(self, ai_result, commits: list) -> dict:
+        """
+        Post-Generierungs-Validierung: Pruefe ob AI-Output zu den Commits passt.
+
+        Returns:
+            dict mit 'valid' (bool), 'warnings' (list), 'fixes_applied' (list)
+        """
+        warnings = []
+        fixes = []
+
+        if not ai_result or not isinstance(ai_result, dict):
+            return {'valid': True, 'warnings': [], 'fixes_applied': []}
+
+        # 1. Feature-Count-Check: AI darf nicht mehr Features nennen als [FEATURE] Commits
+        feature_commits = sum(
+            1 for c in commits
+            if re.match(r'^feat(?:\([^)]*\))?[!:]', c.get('message', '').split('\n')[0])
+        )
+        ai_features = [
+            ch for ch in ai_result.get('changes', [])
+            if isinstance(ch, dict) and ch.get('type') == 'feature'
+        ]
+        if len(ai_features) > max(feature_commits * 2, feature_commits + 2):
+            warnings.append(
+                f"AI nennt {len(ai_features)} Features, aber nur {feature_commits} feat:-Commits vorhanden"
+            )
+
+        # 2. Design-Doc-Leak-Check: Themen aus Design-Docs duerfen nicht als Features auftauchen
+        design_doc_keywords = []
+        for c in commits:
+            tag, _ = self._classify_commit(c)
+            if tag == 'DESIGN-DOC':
+                title = c.get('message', '').split('\n')[0].lower()
+                # Extrahiere Schluesselwoerter aus dem Design-Doc-Titel
+                for word in re.findall(r'[a-zäöü]{4,}', title):
+                    if word not in ('docs', 'design', 'system', 'creator', 'vollständige',
+                                    'spezifikation', 'empfehlung', 'dokument'):
+                        design_doc_keywords.append(word)
+
+        if design_doc_keywords and ai_features:
+            # Pruefe ob Design-Doc-Keywords in Feature-Beschreibungen auftauchen
+            for feature in ai_features:
+                desc = (feature.get('description', '') + ' '.join(feature.get('details', []))).lower()
+                matched = [kw for kw in design_doc_keywords if kw in desc]
+                if matched:
+                    warnings.append(
+                        f"Design-Doc-Thema '{matched[0]}' als Feature erkannt — wird entfernt"
+                    )
+                    # Feature entfernen (halluziniert aus Design-Doc)
+                    ai_result['changes'] = [
+                        ch for ch in ai_result['changes']
+                        if ch is not feature
+                    ]
+                    fixes.append(f"Feature '{feature.get('description', '')[:50]}' entfernt (Design-Doc-Leak)")
+
+        # 3. Web-Content-Check: Pruefe ob web_content Design-Doc-Themen enthaelt
+        web_content = ai_result.get('web_content', '') or ai_result.get('content', '')
+        if web_content and design_doc_keywords:
+            for kw in design_doc_keywords:
+                # Nur warnen wenn das Keyword im Feature-Kontext steht
+                pattern = rf'(?:feature|neu|new|eingeführt|implementiert|hinzugefügt).*{re.escape(kw)}'
+                if re.search(pattern, web_content, re.IGNORECASE):
+                    warnings.append(
+                        f"web_content erwähnt Design-Doc-Thema '{kw}' als Feature"
+                    )
+
+        # 4. Leere-Changes-Check
+        if not ai_result.get('changes'):
+            warnings.append("AI hat keine changes generiert")
+
+        return {
+            'valid': len(warnings) == 0,
+            'warnings': warnings,
+            'fixes_applied': fixes,
+        }
+
+    # Pfad zur Changelog-DB (relativ zum Projekt-Root)
+    _CHANGELOGS_DB = Path(__file__).resolve().parent.parent.parent.parent / 'data' / 'changelogs.db'
+
+    def _load_previous_version_context(self, repo_name: str) -> str:
+        """
+        Lade den Content der letzten Version aus der Changelog-DB.
+
+        Wird als BEREITS-ABGEDECKT Kontext in den Prompt injiziert,
+        damit die KI keine Duplikate erzeugt.
+        """
+        try:
+            import sqlite3
+            if not self._CHANGELOGS_DB.exists():
+                return ""
+
+            with sqlite3.connect(str(self._CHANGELOGS_DB)) as conn:
+                cursor = conn.cursor()
+                cursor.execute(
+                    "SELECT version, title, content FROM changelogs "
+                    "WHERE project = ? ORDER BY created_at DESC LIMIT 1",
+                    (repo_name,)
+                )
+                row = cursor.fetchone()
+
+            if not row or not row[2]:
+                return ""
+
+            version, title, content = row
+            # Content auf max 1500 Zeichen kuerzen
+            if len(content) > 1500:
+                content = content[:1500] + "\n... (gekuerzt)"
+
+            return (
+                f"BEREITS ABGEDECKT IN VORHERIGER VERSION (v{version}: {title}):\n"
+                f"{content}\n"
+                "→ Diese Punkte NICHT erneut erwaehnen! Nur NEUE Aenderungen beschreiben."
+            )
+        except Exception as e:
+            logger.debug(f"Konnte vorherige Version nicht laden: {e}")
+            return ""
+
+    def _scan_dev_branch_teasers(self, project_path: Optional[Path],
+                                  min_commits: int = 5) -> str:
+        """
+        Scanne aktive feat/* Branches fuer Coming-Soon Teaser.
+
+        Sammelt Fortschritt, Feature-Highlights und Beschreibungen.
+        Gibt formatierten Kontext fuer den AI-Prompt zurueck.
+        """
+        if not project_path or not Path(project_path).exists():
+            return ""
+
+        try:
+            # Alle Remote feat/* Branches holen
+            result = subprocess.run(
+                ['git', 'branch', '-r', '--list', 'origin/feat/*'],
+                capture_output=True, text=True, cwd=str(project_path),
+                timeout=10
+            )
+            if result.returncode != 0 or not result.stdout.strip():
+                return ""
+
+            teasers = []
+            for line in result.stdout.strip().splitlines():
+                branch = line.strip()
+                if not branch or '->' in branch:
+                    continue
+
+                # Commits ahead of main zaehlen
+                count_result = subprocess.run(
+                    ['git', 'rev-list', '--count', f'origin/main..{branch}'],
+                    capture_output=True, text=True, cwd=str(project_path),
+                    timeout=10
+                )
+                if count_result.returncode != 0:
+                    continue
+                try:
+                    ahead_count = int(count_result.stdout.strip())
+                except (ValueError, AttributeError):
+                    continue
+                if ahead_count < min_commits:
+                    continue
+
+                # Feature-Highlights: Alle feat:-Commits sammeln (max 3)
+                feat_result = subprocess.run(
+                    ['git', 'log', '--oneline', '--grep=^feat',
+                     f'origin/main..{branch}'],
+                    capture_output=True, text=True, cwd=str(project_path),
+                    timeout=10
+                )
+                feat_titles = []
+                if feat_result.stdout.strip():
+                    for feat_line in feat_result.stdout.strip().splitlines()[:3]:
+                        # Hash entfernen, Prefix bereinigen
+                        title = feat_line.split(' ', 1)[-1] if ' ' in feat_line else feat_line
+                        title = re.sub(r'^feat(?:\([^)]*\))?:\s*', '', title)
+                        feat_titles.append(title)
+
+                # Branch-Name bereinigen
+                feature_name = branch.replace('origin/feat/', '').replace('-', ' ').title()
+
+                # Fortschritts-Indikator
+                if ahead_count >= 20:
+                    progress = "weit fortgeschritten"
+                elif ahead_count >= 10:
+                    progress = "in aktiver Entwicklung"
+                else:
+                    progress = "in fruehen Phasen"
+
+                teaser = f"- **{feature_name}** ({ahead_count} Commits, {progress})"
+                if feat_titles:
+                    teaser += "\n  Highlights: " + ", ".join(feat_titles[:3])
+                teasers.append(teaser)
+
+            if not teasers:
+                return ""
+
+            return (
+                "FEATURES IN ENTWICKLUNG (aktive Feature-Branches, NICHT auf main):\n"
+                + "\n".join(teasers) + "\n\n"
+                "TEASER-ANWEISUNGEN:\n"
+                "→ Fuege am Ende IMMER eine '🔮 Demnächst' oder '🔮 Coming Soon' Sektion ein.\n"
+                "→ Formuliere spannend und vorfreudig, aber EHRLICH — das Feature ist noch NICHT fertig.\n"
+                "→ Nutze Formulierungen wie: 'Wir arbeiten bereits an...', 'Demnächst erwartet euch...', "
+                "'Freut euch auf...', 'Stay tuned für...'\n"
+                "→ Erwähne die Highlights kurz, aber verspreche NICHTS Konkretes.\n"
+                "→ Maximal 2-3 Sätze pro Feature. Mache Lust auf das nächste Update!"
+            )
+        except Exception as e:
+            logger.debug(f"Dev-Branch-Scan fehlgeschlagen: {e}")
+            return ""
 
     async def _generate_ai_patch_notes(self, commits: list, language: str, repo_name: str,
                                        project_config: Optional[Dict] = None):
@@ -416,6 +846,25 @@ class AIPatchNotesMixin:
 
         project_context = self._load_patch_notes_context(project_config, project_path)
 
+        # PR-Beschreibungen als zusaetzlichen Kontext anreichern
+        if project_path:
+            commits = self._enrich_commits_with_pr_descriptions(commits, project_path)
+            enriched_count = sum(1 for c in commits if c.get('pr_body'))
+            if enriched_count:
+                self.logger.info(f"📝 {enriched_count} Commits mit PR-Beschreibungen angereichert")
+
+        # Duplikat-Vermeidung: Vorherige Version als Kontext laden
+        previous_version_context = self._load_previous_version_context(repo_name)
+        if previous_version_context:
+            project_context = (project_context + "\n\n" + previous_version_context).strip()
+            self.logger.info(f"📋 Vorherige Version als Duplikat-Guard geladen")
+
+        # Dev-Branch Teaser: Aktive Feature-Branches scannen
+        dev_teasers = self._scan_dev_branch_teasers(project_path)
+        if dev_teasers:
+            project_context = (project_context + "\n\n" + dev_teasers).strip()
+            self.logger.info(f"🔮 Dev-Branch-Teaser fuer Prompt geladen")
+
         # Collect git stats
         git_stats = self._collect_git_stats(commits, project_path)
         stats_line = self._format_stats_line(git_stats, language)
@@ -467,10 +916,12 @@ class AIPatchNotesMixin:
                 # format_map mit DefaultDict um KeyError bei alten Templates zu vermeiden
                 from collections import defaultdict
 
+                # Klassifizierte Commits fuer Trainer-Prompt (mit Typ-Tags)
+                classified_commits_text = self._build_classified_commits_text(commits[:10])
                 format_values = defaultdict(str, {
                     'project': repo_name,
                     'changelog': changelog_content or "No CHANGELOG available",
-                    'commits': '\n'.join([f"- {c.get('message', '')}" for c in commits[:10]]),
+                    'commits': classified_commits_text,
                     'stats_section': stats_section,
                     'stats_line': stats_line if git_stats.get('commits', 0) >= 5 else '',
                 })
@@ -508,9 +959,11 @@ class AIPatchNotesMixin:
             except Exception as e:
                 self.logger.warning(f"⚠️ A/B Testing failed, using enhanced prompt: {e}")
                 try:
+                    # Klassifizierten Text an Trainer uebergeben statt rohe Commits
+                    classified_for_trainer = self._build_classified_commits_text(commits[:10])
                     prompt = self.patch_notes_trainer.build_enhanced_prompt(
                         changelog_content=changelog_content,
-                        commits=commits,
+                        commits=classified_for_trainer,
                         language=language,
                         project=repo_name
                     )
@@ -683,6 +1136,14 @@ WICHTIG — KONSISTENZ-REGELN:
 - Erfinde NICHTS was nicht in den Commits steht
 - Alle Felder beziehen sich auf denselben Release
 
+COMMIT-TYP-TAGS — STRIKT BEACHTEN:
+- Commits mit [DESIGN-DOC: GEPLANT, NICHT IMPLEMENTIERT] sind Planungsdokumente fuer ZUKUENFTIGE Features!
+  → NIEMALS als implementiertes Feature in title/tldr/summary/web_content/changes auflisten!
+  → Hoechstens unter einer "Geplant"-Sektion erwaehnen oder ganz weglassen
+- Commits mit [SEO-AUTO] sind automatisierte SEO-Optimierungen → kurz zusammenfassen
+- Commits mit [DOCS] sind Dokumentationsaenderungen → kein Feature!
+- Nur [FEATURE] Commits sind tatsaechlich neue Features
+
 FELD-ANWEISUNGEN:
 - title: Kurzer, praegananter Titel (z.B. "Performance & Security Update")
 - tldr: EIN praegnanter Satz, der die wichtigste Aenderung zusammenfasst
@@ -727,6 +1188,14 @@ IMPORTANT — CONSISTENCY RULES:
 - Do NOT invent anything not in the commits
 - All fields refer to the same release
 
+COMMIT TYPE TAGS — STRICTLY OBSERVE:
+- Commits tagged [DESIGN-DOC: GEPLANT, NICHT IMPLEMENTIERT] are planning documents for FUTURE features!
+  → NEVER list as implemented features in title/tldr/summary/web_content/changes!
+  → At most mention under a "Planned" section or omit entirely
+- Commits tagged [SEO-AUTO] are automated SEO optimizations → summarize briefly
+- Commits tagged [DOCS] are documentation changes → not a feature!
+- Only [FEATURE] commits are actually new features
+
 FIELD INSTRUCTIONS:
 - title: Short, catchy title (e.g. "Performance & Security Update")
 - tldr: ONE concise sentence summarizing the most important change
@@ -760,29 +1229,9 @@ SEO CATEGORY:
                                changelog_content: str = "", code_changes_context: str = "",
                                project_context: str = "", strict: bool = False) -> str:
         """Build fallback prompt when trainer is not available."""
-        # Build commit summary for AI
-        commit_summaries = []
-        for commit in commits:
-            full_msg = commit.get('message', '')
-            lines = full_msg.split('\n')
-            title = lines[0]
-
-            # Get body (skip empty lines after title)
-            body_lines = []
-            for line in lines[1:]:
-                if line.strip():
-                    body_lines.append(line)
-
-            author = commit.get('author', {}).get('name', 'Unknown')
-
-            # Include full message if it has substantial body
-            if len(body_lines) > 2:
-                body = '\n'.join(body_lines[:30])
-                commit_summaries.append(f"- {title}\n  {body}\n  (by {author})")
-            else:
-                commit_summaries.append(f"- {title} (by {author})")
-
-        commits_text = "\n".join(commit_summaries)
+        # Build classified commit summary for AI (mit Typ-Tags)
+        # Max 50 Commits im Prompt um Token-Budget nicht zu sprengen
+        commits_text = self._build_classified_commits_text(commits[:50])
         num_commits = len(commits)
         detail_instruction = ""
 
@@ -852,8 +1301,22 @@ KRITISCHE REGELN:
 ⚠️ Nutze CHANGELOG INFORMATION und CODE CHANGES (falls vorhanden) für Details.
 ⚠️ Wenn Texte "offen", "todo", "still open" oder "risiken" nennen, markiere sie NICHT als abgeschlossen.
 
+COMMIT-TYP-TAGS — SO INTERPRETIERST DU SIE:
+📋 Jeder Commit hat einen Tag in eckigen Klammern. Beachte diese STRIKT:
+- [FEATURE] = Tatsächlich implementiertes neues Feature → als "Neues Feature" auflisten
+- [BUGFIX] = Tatsächlich behobener Bug → als "Bugfix" auflisten
+- [IMPROVEMENT] / [REFACTOR] / [PERFORMANCE] = Verbesserung → als "Verbesserung" auflisten
+- [DOCS] = Reine Dokumentationsänderung → nur erwähnen wenn für Nutzer relevant, KEIN Feature!
+- [DESIGN-DOC: GEPLANT, NICHT IMPLEMENTIERT] = Design-Dokument für ZUKÜNFTIGES Feature!
+  → NIEMALS als implementiertes Feature auflisten!
+  → Höchstens kurz unter "📋 Geplant" erwähnen oder ganz weglassen
+  → Der Body wurde absichtlich entfernt — die Details sind NICHT implementiert!
+- [SEO-AUTO] = Automatisierte SEO-Optimierungen → kurz als "SEO-Verbesserungen" zusammenfassen
+- [CHORE] / [CI] / [BUILD] / [TEST] / [STYLE] = Interne Wartung → nur erwähnen wenn nutzerrelevant
+- [MERGE] = Ignorieren
+
 WICHTIG - ZUSAMMENHÄNGENDE FEATURES ERKENNEN:
-🔍 Suche nach VERWANDTEN Commits die zusammengehören (z.B. mehrere "fix:" oder "feat:" Commits für das gleiche Feature)
+🔍 Suche nach VERWANDTEN Commits die zusammengehören (z.B. mehrere [BUGFIX] Commits für das gleiche Feature)
 🔍 Release-Commits (feat: Release v...) enthalten oft GROSSE Änderungen - beschreibe diese DETAILLIERT!
 🔍 Commit-Serien mit gleichem Feature-Namen sind EINZELNE Features, nicht getrennte Punkte!
 🔍 Bei großen Refactorings: Erkenne die GESAMTBEDEUTUNG, nicht nur Einzelschritte!
@@ -913,8 +1376,22 @@ CRITICAL RULES:
 ⚠️ Use CHANGELOG INFORMATION and CODE CHANGES (if present) for details.
 ⚠️ If text says "open", "todo", "still open", or "risks", do NOT mark it as completed.
 
+COMMIT TYPE TAGS — HOW TO INTERPRET THEM:
+📋 Each commit has a tag in square brackets. STRICTLY observe:
+- [FEATURE] = Actually implemented new feature → list as "New Feature"
+- [BUGFIX] = Actually fixed bug → list as "Bug Fix"
+- [IMPROVEMENT] / [REFACTOR] / [PERFORMANCE] = Improvement → list as "Improvement"
+- [DOCS] = Documentation change only → mention only if user-relevant, NOT a feature!
+- [DESIGN-DOC: GEPLANT, NICHT IMPLEMENTIERT] = Planning document for a FUTURE feature!
+  → NEVER list as an implemented feature!
+  → At most briefly mention under "📋 Planned" or omit entirely
+  → The body was intentionally removed — the details are NOT implemented!
+- [SEO-AUTO] = Automated SEO optimizations → briefly summarize as "SEO improvements"
+- [CHORE] / [CI] / [BUILD] / [TEST] / [STYLE] = Internal maintenance → mention only if user-relevant
+- [MERGE] = Ignore
+
 IMPORTANT - RECOGNIZE RELATED FEATURES:
-🔍 Look for RELATED commits that belong together (e.g., multiple "fix:" or "feat:" commits for the same feature)
+🔍 Look for RELATED commits that belong together (e.g., multiple [BUGFIX] commits for the same feature)
 🔍 Release commits (feat: Release v...) often contain MAJOR changes - describe these in DETAIL!
 🔍 Commit series with the same feature name are SINGLE features, not separate items!
 🔍 For large refactorings: Recognize the OVERALL SIGNIFICANCE, not just individual steps!

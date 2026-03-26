@@ -177,17 +177,28 @@ Deine Aufgabe: Erstelle professionelle, detaillierte Patch Notes für {project}.
         # Add current context
         prompt += f"# VOLLSTÄNDIGE CHANGELOG-INFORMATION\n\n{changelog}\n\n"
 
-        # Add commits for reference
+        # Add commits for reference (pre-classified if available)
         if commits:
             prompt += "# ZUSÄTZLICHE COMMIT-INFORMATIONEN\n\n"
-            for commit in commits[:10]:
-                prompt += f"- {commit.get('message', '')}\n"
+            # Versuche klassifizierten Text zu nutzen (wenn von AIPatchNotesMixin aufgerufen)
+            if isinstance(commits, str):
+                # Bereits klassifizierter Text
+                prompt += commits + "\n"
+            else:
+                for commit in commits[:10]:
+                    prompt += f"- {commit.get('message', '').split(chr(10))[0]}\n"
             prompt += "\n"
 
         # Instructions
         prompt += """# ANWEISUNGEN
 
 Erstelle jetzt professionelle Patch Notes basierend auf dem CHANGELOG und den Commits.
+
+COMMIT-TYP-REGELN:
+- Commits mit [DESIGN-DOC: GEPLANT, NICHT IMPLEMENTIERT] sind Planungsdokumente → NICHT als Feature listen!
+- Commits mit [SEO-AUTO] oder [DEPS-AUTO] kurz zusammenfassen
+- Commits mit [DOCS] sind Dokumentation → kein Feature!
+- Nur [FEATURE] Commits sind tatsächlich implementierte Features
 
 Anforderungen:
 - Nutze die CHANGELOG-Information als Hauptquelle (sie ist am vollständigsten)
@@ -242,17 +253,26 @@ Your task: Create professional, detailed patch notes for {project}.
         # Add current context
         prompt += f"# COMPLETE CHANGELOG INFORMATION\n\n{changelog}\n\n"
 
-        # Add commits for reference
+        # Add commits for reference (pre-classified if available)
         if commits:
             prompt += "# ADDITIONAL COMMIT INFORMATION\n\n"
-            for commit in commits[:10]:
-                prompt += f"- {commit.get('message', '')}\n"
+            if isinstance(commits, str):
+                prompt += commits + "\n"
+            else:
+                for commit in commits[:10]:
+                    prompt += f"- {commit.get('message', '').split(chr(10))[0]}\n"
             prompt += "\n"
 
         # Instructions
         prompt += """# INSTRUCTIONS
 
 Now create professional patch notes based on the CHANGELOG and commits.
+
+COMMIT TYPE RULES:
+- Commits tagged [DESIGN-DOC: GEPLANT, NICHT IMPLEMENTIERT] are planning docs → NOT features!
+- Commits tagged [SEO-AUTO] or [DEPS-AUTO] → summarize briefly
+- Commits tagged [DOCS] are documentation → not a feature!
+- Only [FEATURE] commits are actually implemented features
 
 Requirements:
 - Use CHANGELOG information as primary source (it's most complete)
