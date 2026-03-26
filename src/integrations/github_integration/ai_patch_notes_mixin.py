@@ -269,14 +269,22 @@ class AIPatchNotesMixin:
                 if re.search(pattern, title, re.IGNORECASE):
                     return (group_name, group_name)
 
-        # 5. Conventional Commit Prefix parsen
+        # 5. PR-Label hat Vorrang vor Commit-Prefix (zuverlaessiger)
+        pr_label_tag = commit.get('pr_label_tag')
+        if pr_label_tag:
+            # DEPS-AUTO als Auto-Gruppe behandeln
+            if pr_label_tag == 'DEPS-AUTO':
+                return (pr_label_tag, pr_label_tag)
+            return (pr_label_tag, None)
+
+        # 6. Conventional Commit Prefix parsen
         prefix_match = re.match(r'^(\w+)(?:\([^)]*\))?[!:]', title)
         if prefix_match:
             prefix = prefix_match.group(1).lower()
             tag = self._COMMIT_TYPE_TAGS.get(prefix, prefix.upper())
             return (tag, None)
 
-        # 6. Fallback
+        # 7. Fallback
         return ('OTHER', None)
 
     def _build_classified_commits_text(self, commits: list) -> str:
@@ -378,89 +386,239 @@ class AIPatchNotesMixin:
 
         return message
 
-    def _enrich_commits_with_pr_descriptions(self, commits: list,
-                                                project_path: Optional[Path]) -> list:
-        """
-        Reichere Commits mit PR-Beschreibungen an.
+    # PR-Label → Commit-Tag Mapping (ueberschreibt Commit-Prefix wenn gesetzt)
+    _PR_LABEL_TAG_MAP = {
+        'feature': 'FEATURE',
+        'enhancement': 'FEATURE',
+        'bug': 'BUGFIX',
+        'bugfix': 'BUGFIX',
+        'fix': 'BUGFIX',
+        'security': 'SECURITY',
+        'breaking': 'BREAKING',
+        'breaking-change': 'BREAKING',
+        'documentation': 'DOCS',
+        'docs': 'DOCS',
+        'internal': 'INTERNAL',
+        'dependencies': 'DEPS-AUTO',
+        'maintenance': 'CHORE',
+        'performance': 'PERFORMANCE',
+        'refactor': 'REFACTOR',
+    }
 
-        Sucht PR-Nummern in Commit-Titeln (z.B. "(#86)") und holt die
-        PR-Beschreibung ueber `gh pr view`. Fuegt 'pr_body' zum Commit hinzu.
-        Max 5 PRs um API-Calls zu begrenzen.
+    def _enrich_commits_with_pr_data(self, commits: list,
+                                      project_path: Optional[Path]) -> list:
+        """
+        Reichere Commits mit PR-Beschreibungen und Labels an.
+
+        Holt PR-Body + Labels in einem gh-Call. Labels ueberschreiben
+        die Commit-Prefix-Klassifizierung wenn vorhanden.
+        Max 8 PRs um API-Calls zu begrenzen.
         """
         if not project_path or not Path(project_path).exists():
             return commits
 
-        pr_count = 0
-        for commit in commits:
-            if pr_count >= 5:
-                break
-
-            msg = commit.get('message', '')
-            title = msg.split('\n')[0]
-
-            # PR-Nummer aus Titel extrahieren: "(#86)", "Merge pull request #47"
+        # Alle PR-Nummern sammeln (Deduplizierung)
+        pr_commits = {}  # pr_number → list of commit indices
+        for i, commit in enumerate(commits):
+            title = commit.get('message', '').split('\n')[0]
             pr_match = re.search(r'#(\d+)', title)
-            if not pr_match:
-                continue
+            if pr_match:
+                pr_num = pr_match.group(1)
+                if pr_num not in pr_commits:
+                    pr_commits[pr_num] = []
+                pr_commits[pr_num].append(i)
 
-            pr_number = pr_match.group(1)
+        if not pr_commits:
+            return commits
 
+        # Batch-Abfrage: Alle PRs auf einmal holen (max 8)
+        pr_numbers = list(pr_commits.keys())[:8]
+        for pr_number in pr_numbers:
             try:
                 result = subprocess.run(
-                    ['gh', 'pr', 'view', pr_number, '--json', 'title,body',
-                     '--jq', '.body'],
+                    ['gh', 'pr', 'view', pr_number,
+                     '--json', 'body,labels,title'],
                     capture_output=True, text=True, cwd=str(project_path),
                     timeout=10
                 )
-                if result.returncode == 0 and result.stdout.strip():
-                    body = result.stdout.strip()
-                    # Nur nutzen wenn substantiell (>50 Zeichen, nicht nur Template)
-                    if len(body) > 50 and not body.startswith('<!--'):
-                        # Auf 500 Zeichen kuerzen
-                        if len(body) > 500:
-                            body = body[:500] + '...'
-                        commit['pr_body'] = body
-                        pr_count += 1
-            except Exception:
+                if result.returncode != 0:
+                    continue
+
+                pr_data = json.loads(result.stdout)
+
+                # Labels extrahieren und auf Tag mappen
+                labels = pr_data.get('labels', [])
+                label_names = [
+                    lbl.get('name', '').lower()
+                    for lbl in labels if isinstance(lbl, dict)
+                ]
+                pr_tag = None
+                for label_name in label_names:
+                    if label_name in self._PR_LABEL_TAG_MAP:
+                        pr_tag = self._PR_LABEL_TAG_MAP[label_name]
+                        break
+
+                # Body extrahieren
+                body = (pr_data.get('body') or '').strip()
+                # Nur nutzen wenn substantiell (>50 Zeichen, kein Template)
+                pr_body = None
+                if body and len(body) > 50 and not body.startswith('<!--'):
+                    if len(body) > 500:
+                        body = body[:500] + '...'
+                    pr_body = body
+
+                # Auf alle Commits dieser PR anwenden
+                for idx in pr_commits.get(pr_number, []):
+                    if pr_body:
+                        commits[idx]['pr_body'] = pr_body
+                    if pr_tag:
+                        commits[idx]['pr_label_tag'] = pr_tag
+                    if label_names:
+                        commits[idx]['pr_labels'] = label_names
+
+            except (json.JSONDecodeError, Exception):
                 continue
 
         return commits
 
+    # Datei-Kategorie-Erkennung fuer Smart Diff
+    _FILE_CATEGORIES = {
+        'Frontend': [r'\.tsx?$', r'\.jsx?$', r'\.css$', r'\.scss$', r'\.vue$', r'\.svelte$',
+                     r'/components/', r'/pages/', r'/app/', r'/web/', r'/styles/'],
+        'Backend/API': [r'\.go$', r'\.py$', r'\.rs$', r'/api/', r'/server/', r'/routes/',
+                        r'/handlers/', r'/middleware/', r'/services/'],
+        'Datenbank': [r'migration', r'\.sql$', r'prisma/', r'schema\.prisma', r'/db/'],
+        'Konfiguration': [r'\.ya?ml$', r'\.toml$', r'\.json$', r'\.env', r'docker',
+                          r'Dockerfile', r'compose', r'nginx', r'traefik'],
+        'Tests': [r'test[_s]', r'spec[_s]', r'__tests__', r'\.test\.', r'\.spec\.'],
+        'Dokumentation': [r'\.md$', r'docs/', r'README', r'CHANGELOG', r'LICENSE'],
+        'CI/CD': [r'\.github/', r'workflows/', r'\.gitlab-ci', r'Jenkinsfile'],
+        'Dependencies': [r'package\.json$', r'go\.mod$', r'go\.sum$', r'requirements',
+                         r'pyproject\.toml$', r'Cargo\.toml$', r'\.lock$'],
+    }
+
+    def _categorize_file(self, filepath: str) -> str:
+        """Ordne eine Datei einer Kategorie zu."""
+        for category, patterns in self._FILE_CATEGORIES.items():
+            for pattern in patterns:
+                if re.search(pattern, filepath, re.IGNORECASE):
+                    return category
+        return 'Sonstiges'
+
     def _build_code_changes_context(self, commits: list, project_path: Optional[Path]) -> str:
-        """Build a truncated diff summary for a handful of commits."""
+        """
+        Strukturierte Diff-Analyse: Dateien nach Kategorie gruppiert.
+
+        Statt roher Diffs gibt es eine Uebersicht welche Bereiche
+        des Projekts betroffen sind — das hilft der AI bessere Patch Notes
+        zu schreiben ohne Token fuer Diff-Details zu verschwenden.
+        """
         if not self.patch_notes_include_diffs or not commits or not project_path:
             return ""
 
         try:
-            repo_path = Path(project_path)
+            repo_path = str(Path(project_path))
         except Exception:
             return ""
 
-        analyzer = GitHistoryAnalyzer(str(repo_path))
-        if not analyzer.is_git_repository():
+        # Alle geaenderten Dateien ueber den gesamten Commit-Range sammeln
+        first_sha = None
+        last_sha = None
+        for commit in commits:
+            sha = commit.get('id') or commit.get('sha') or commit.get('hash')
+            if sha:
+                if not first_sha:
+                    first_sha = sha
+                last_sha = sha
+
+        if not first_sha:
             return ""
 
-        max_commits = min(self.patch_notes_diff_max_commits, len(commits))
-        if max_commits <= 0:
+        # git diff --stat ueber den gesamten Range
+        try:
+            diff_range = f"{first_sha}^..{last_sha}" if first_sha != last_sha else f"{first_sha}^..{first_sha}"
+            result = subprocess.run(
+                ['git', 'diff', '--stat', '--stat-width=120', diff_range],
+                capture_output=True, text=True, cwd=repo_path, timeout=15
+            )
+            if result.returncode != 0 or not result.stdout.strip():
+                return ""
+        except Exception:
             return ""
 
-        sections = []
-        for commit in commits[-max_commits:]:
-            commit_id = commit.get('id') or commit.get('sha') or commit.get('hash')
-            if not commit_id:
+        # Dateien parsen und kategorisieren
+        categories: dict = {}  # category → {'files': [], 'added': 0, 'removed': 0}
+        new_files = []
+        deleted_files = []
+
+        for line in result.stdout.strip().splitlines():
+            # Format: " path/to/file.py | 42 +++---"
+            match = re.match(r'\s*(.+?)\s*\|\s*(\d+)\s*([+-]*)', line)
+            if not match:
                 continue
-            diff = analyzer.get_code_changes_for_commit(commit_id, self.patch_notes_diff_max_lines)
-            if not diff:
-                continue
-            title = commit.get('message', '').split('\n')[0].strip()
-            short_id = commit_id[:7]
-            label = f"{short_id} {title}".strip()
-            sections.append(f"## {label}\n{diff}")
 
-        if not sections:
+            filepath = match.group(1).strip()
+            changes = int(match.group(2))
+            change_str = match.group(3)
+            added = change_str.count('+')
+            removed = change_str.count('-')
+
+            category = self._categorize_file(filepath)
+
+            if category not in categories:
+                categories[category] = {'files': [], 'added': 0, 'removed': 0}
+            categories[category]['files'].append(filepath)
+            categories[category]['added'] += added
+            categories[category]['removed'] += removed
+
+        # Neue/geloeschte Dateien erkennen
+        try:
+            new_result = subprocess.run(
+                ['git', 'diff', '--diff-filter=A', '--name-only', diff_range],
+                capture_output=True, text=True, cwd=repo_path, timeout=10
+            )
+            if new_result.returncode == 0:
+                new_files = [f for f in new_result.stdout.strip().splitlines() if f.strip()]
+
+            del_result = subprocess.run(
+                ['git', 'diff', '--diff-filter=D', '--name-only', diff_range],
+                capture_output=True, text=True, cwd=repo_path, timeout=10
+            )
+            if del_result.returncode == 0:
+                deleted_files = [f for f in del_result.stdout.strip().splitlines() if f.strip()]
+        except Exception:
+            pass
+
+        if not categories:
             return ""
 
-        return "CODE CHANGES (DIFF SUMMARY, MAY BE TRUNCATED):\n\n" + "\n\n".join(sections)
+        # Strukturierte Zusammenfassung bauen
+        parts = ["CODE-ÄNDERUNGEN (strukturierte Übersicht):\n"]
+
+        # Sortiert nach Anzahl Dateien (wichtigste Kategorie zuerst)
+        for cat, data in sorted(categories.items(), key=lambda x: len(x[1]['files']), reverse=True):
+            file_count = len(data['files'])
+            parts.append(f"  {cat}: {file_count} Dateien geändert")
+            # Top-3 Dateien pro Kategorie anzeigen
+            for f in data['files'][:3]:
+                parts.append(f"    - {Path(f).name}")
+            if file_count > 3:
+                parts.append(f"    - ... und {file_count - 3} weitere")
+
+        if new_files:
+            parts.append(f"\n  Neue Dateien: {len(new_files)}")
+            for f in new_files[:3]:
+                parts.append(f"    + {f}")
+
+        if deleted_files:
+            parts.append(f"\n  Gelöschte Dateien: {len(deleted_files)}")
+            for f in deleted_files[:3]:
+                parts.append(f"    - {f}")
+
+        total_files = sum(len(d['files']) for d in categories.values())
+        parts.append(f"\n  Gesamt: {total_files} Dateien in {len(categories)} Bereichen")
+
+        return "\n".join(parts)
 
     def _load_patch_notes_context(self, project_config: Optional[Dict],
                                   project_path: Optional[Path]) -> str:
@@ -846,12 +1004,15 @@ class AIPatchNotesMixin:
 
         project_context = self._load_patch_notes_context(project_config, project_path)
 
-        # PR-Beschreibungen als zusaetzlichen Kontext anreichern
+        # PR-Daten anreichern (Body + Labels in einem Call)
         if project_path:
-            commits = self._enrich_commits_with_pr_descriptions(commits, project_path)
-            enriched_count = sum(1 for c in commits if c.get('pr_body'))
-            if enriched_count:
-                self.logger.info(f"📝 {enriched_count} Commits mit PR-Beschreibungen angereichert")
+            commits = self._enrich_commits_with_pr_data(commits, project_path)
+            enriched_body = sum(1 for c in commits if c.get('pr_body'))
+            enriched_labels = sum(1 for c in commits if c.get('pr_label_tag'))
+            if enriched_body or enriched_labels:
+                self.logger.info(
+                    f"📝 PR-Enrichment: {enriched_body} Bodies, {enriched_labels} Labels"
+                )
 
         # Duplikat-Vermeidung: Vorherige Version als Kontext laden
         previous_version_context = self._load_previous_version_context(repo_name)

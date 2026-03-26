@@ -148,6 +148,8 @@
 | `run_tests_with_coverage.sh` | Tests mit Coverage ausfuehren, Ergebnisse nach data/test_results.json |
 | `migrate_changelogs.py` | Migration: ZERODOX + GuildScout PG-Changelogs → zentrale SQLite DB |
 | `setup_zerodox_channels.py` | Einmalig: ZERODOX Discord-Channels (Patch Notes) einrichten (Kategorie + Permissions) |
+| `commit-msg-hook.sh` | Conventional Commit Hook — validiert Commit-Messages (Prefix, Beschreibungslaenge). Auf allen 5 Projekten deployed |
+| `deploy-commit-hook.sh` | Deployt den Commit-Hook auf ein/alle Projekte (`--all` fuer alle 5) |
 
 ### Dokumentation
 | Pfad | Inhalt |
