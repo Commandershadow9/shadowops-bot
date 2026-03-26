@@ -34,6 +34,9 @@ class ProjectStatus:
         # Systemd-basiertes Health-Checking (für Services ohne HTTP-Endpoint)
         self.systemd_services = config.get('systemd_services', [])
 
+        # TCP-Port-basiertes Health-Checking (für DB-Ports etc.)
+        self.tcp_ports = config.get('tcp_ports', [])
+
         # Current status
         self.is_online = False
         self.last_check_time: Optional[datetime] = None
@@ -352,6 +355,11 @@ class ProjectMonitor:
         Args:
             project: ProjectStatus instance to check
         """
+        # TCP-Port-basiertes Health-Checking (für DB-Ports etc.)
+        if project.tcp_ports:
+            await self._check_tcp_ports(project)
+            return
+
         # Systemd-basiertes Health-Checking (für Services ohne HTTP-Endpoint)
         if project.systemd_services:
             await self._check_systemd_health(project)
@@ -517,6 +525,55 @@ class ProjectMonitor:
             error = f"Services down: {', '.join(failed_services)}"
             was_new_incident = project.update_offline(error)
             self.logger.warning(f"⚠️ {project.name}: {error}")
+            if was_new_incident:
+                await self._send_incident_alert(project, error)
+            await self._attempt_remediation(project, error)
+
+        self._save_state()
+
+    async def _check_tcp_ports(self, project: ProjectStatus):
+        """
+        Check health via TCP port connectivity.
+        All configured ports must be reachable for the project to be online.
+        """
+        start_time = time.time()
+        failed_ports = []
+
+        for port_config in project.tcp_ports:
+            if isinstance(port_config, int):
+                host, port, label = '127.0.0.1', port_config, f'localhost:{port_config}'
+            else:
+                host = port_config.get('host', '127.0.0.1')
+                port = port_config['port']
+                label = port_config.get('label', f'{host}:{port}')
+
+            try:
+                _, writer = await asyncio.wait_for(
+                    asyncio.open_connection(host, port),
+                    timeout=project.timeout
+                )
+                writer.close()
+                await writer.wait_closed()
+            except (OSError, asyncio.TimeoutError) as e:
+                failed_ports.append(f'{label} ({e.__class__.__name__})')
+
+        response_time_ms = (time.time() - start_time) * 1000
+
+        if not failed_ports:
+            was_recovering = project.update_online(response_time_ms)
+            port_labels = ', '.join(
+                str(p) if isinstance(p, int) else p.get('label', f":{p.get('port')}")
+                for p in project.tcp_ports
+            )
+            self.logger.info(
+                f'✅ {project.name} ports healthy ({port_labels}, {response_time_ms:.0f}ms)'
+            )
+            if was_recovering:
+                await self._send_recovery_alert(project)
+        else:
+            error = f'TCP ports unreachable: {", ".join(failed_ports)}'
+            was_new_incident = project.update_offline(error)
+            self.logger.warning(f'⚠️ {project.name}: {error}')
             if was_new_incident:
                 await self._send_incident_alert(project, error)
             await self._attempt_remediation(project, error)
