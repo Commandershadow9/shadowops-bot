@@ -268,11 +268,18 @@
 - **Interner Channel:** `_send_to_internal_customer_channel()` in `notifications_mixin.py` — postet Embed + `<@&role_id> Neues Update verfuegbar!` mit `AllowedMentions(roles=True)`
 - **Setup-Script:** `scripts/setup_zerodox_channels.py` (einmalig, nutzt ShadowOps Bot-Token via Discord REST API)
 
-### Patch Notes Safety — 3-Schichten-Schutz (20.03.2026)
+### Patch Notes Safety — 5-Schichten-Schutz (26.03.2026)
 - **Vorfall 18.03.2026:** Batcher-Referenz ging verloren → 1-Commit Patch Notes fuer ZERODOX v2.9.2 (KI halluzinierte Features aus Doku-Commit)
-- **Schicht 1 — Globaler min_commits Check:** `_send_push_notification()` blockiert ALLE Pfade bei `< min_commits` (Default 2, konfigurierbar per Projekt via `patch_notes.min_commits`)
-- **Schicht 2 — Batcher Self-Healing + Fail-Closed:** Batcher wird bei fehlender Referenz vom Bot-Objekt wiederhergestellt. Ist er trotzdem None → Commits werden uebersprungen (kein ungepufferter Release)
-- **Schicht 3 — /release-notes Minimum:** Manueller Release erfordert mindestens `cron_min_commits` (Default 3) Commits
+- **Vorfall 25.03.2026:** Design-Doc Commit (733 Zeilen Referral-Spec) wurde als implementiertes Feature halluziniert → v3.0.8 enthielt "Referral-System" + "Enterprise Backup" die nicht auf main waren
+- **Schicht 1 — Commit-Klassifizierung (Pre-Generation):** `_classify_commit()` taggt jeden Commit ([FEATURE], [BUGFIX], [DESIGN-DOC], [SEO-AUTO], [DEPS-AUTO], [REVERT], [MERGE], etc.). Design-Doc-Bodies werden abgeschnitten. Merge/Auto-Commits gefiltert/gruppiert. Body-Noise (Co-Authored-By, Signed-off-by) entfernt. PR-Beschreibungen via `gh pr view` angereichert
+- **Schicht 2 — Prompt-Regeln (During Generation):** Explizite Typ-Interpretations-Regeln in allen 4 Prompt-Pfaden (DE+EN Structured, DE+EN Fallback). "[DESIGN-DOC] = GEPLANT, NICHT IMPLEMENTIERT → NIEMALS als Feature listen"
+- **Schicht 3 — Post-Generierungs-Validierung:** `_validate_ai_output()` prueft Feature-Count gegen tatsaechliche feat:-Commits, erkennt Design-Doc-Keywords in Feature-Beschreibungen und entfernt halluzinierte Features automatisch
+- **Schicht 4 — Batcher + min_commits:** Globaler min_commits Check, Batcher Self-Healing, /release-notes Minimum
+- **Schicht 5 — Content Sanitizer:** Pfade, IPs, Ports, Secrets + `changes[].details` Array
+- **Duplikat-Guard:** Vorherige Version aus Changelog-DB als "BEREITS ABGEDECKT" Kontext
+- **Dev-Branch Teaser:** Aktive feat/* Branches mit Fortschrittsindikator + Hype-Prompt ("🔮 Demnächst")
+- **Projekt-Kontext:** `project_description` + `target_audience` in config.yaml pro Projekt
+- **Semantic Versionierung:** `_calculate_semver()` berechnet MINOR/PATCH/MAJOR aus Commit-Typen statt KI-Erfindung. Kollisionsschutz via `_ensure_unique_version()`
 - **Alle 4 Trigger-Pfade gesichert:** Webhook Push, Local Polling, Woechentlicher Cron, Manueller /release-notes
 
 ### Security Engine v6 (seit 2026-03-24)

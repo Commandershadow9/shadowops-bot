@@ -29,13 +29,19 @@ Bei Aenderungen an Shared-Services (Redis, PostgreSQL, Traefik) MUESSEN alle Kon
 - **Vorfaelle:** 2026-03-17 Bind-Address (11h Ausfall), 2026-03-18 Redis-Auth (SEO-Audit ausgefallen)
 - **Checkliste vor Auth-Aenderungen:** `grep -r "redis-cli\|redis://\|5433\|6379" ~/agents/ ~/shadowops-bot/scripts/`
 
-## Patch Notes Safety
+## Patch Notes Safety (5 Schichten, seit 26.03.2026)
 - **Vorfall 2026-03-18:** Batcher-Referenz verloren → Einzelcommit-Patchnotes (KI-Halluzination)
-- Globaler `min_commits` Check (Default 2) in `notifications_mixin.py` — blockiert ALLE Pfade
-- Batcher Self-Healing: Fallback vom Bot-Objekt bei None-Referenz
-- `/release-notes` erfordert min `cron_min_commits` (3) Commits
-- Pro Projekt konfigurierbar: `patch_notes.min_commits` in config.yaml
+- **Vorfall 2026-03-25:** Design-Doc Commit als Feature halluziniert → v3.0.8 mit erfundenen Features
+- **Schicht 1 — Commit-Klassifizierung:** `_classify_commit()` in `ai_patch_notes_mixin.py`. Design-Doc-Bodies werden abgeschnitten, Auto-Commits gruppiert, Merge gefiltert
+- **Schicht 2 — Prompt-Regeln:** Typ-Tags in allen 4 Prompt-Pfaden (DE+EN). "[DESIGN-DOC] = NICHT implementiert"
+- **Schicht 3 — Post-Validierung:** `_validate_ai_output()` erkennt Design-Doc-Leaks und entfernt sie automatisch
+- **Schicht 4 — Batcher + min_commits:** Globaler Check (Default 2), Self-Healing, /release-notes min 3
+- **Schicht 5 — Content Sanitizer:** Pfade, IPs, Secrets + changes[].details
+- **Semantic Versionierung:** `_calculate_semver()` berechnet Version aus Commit-Typen — NICHT die KI
+- **Kollisionsschutz:** `_ensure_unique_version()` verhindert doppelte Versionen
+- **Projekt-Kontext:** `project_description` + `target_audience` pro Projekt in config.yaml
 - NIEMALS den globalen min_commits Check entfernen — er ist die letzte Verteidigungslinie
+- NIEMALS `_validate_ai_output()` deaktivieren — er faengt halluzinierte Features ab
 
 ## Learning-System (agent_learning DB)
 - DB-Passwort `agent_learn_2026` steht in `patch_notes_learning.py` DSN — nicht aendern ohne alle Referenzen
