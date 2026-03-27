@@ -41,9 +41,12 @@ class NotificationsMixin:
         patch_config = project_config.get('patch_notes', {})
         language = patch_config.get('language', 'de')
 
-        # === GLOBALER SAFETY-CHECK: Mindestens 2 Commits für Patch Notes ===
+        # === GLOBALER SAFETY-CHECK: Mindestens N Commits für Patch Notes ===
+        # WICHTIG: Dieser Check gilt nur fuer direkte Releases (skip_batcher=True).
+        # Bei normalem Flow muessen auch Einzel-Commits zum Batcher durchkommen,
+        # damit sie gesammelt werden koennen (Threshold wird im Batcher geprueft).
         min_commits_global = patch_config.get('min_commits', 2)
-        if len(commits) < min_commits_global:
+        if skip_batcher and len(commits) < min_commits_global:
             self.logger.warning(
                 f"⛔ Patch Notes für {repo_name} blockiert: "
                 f"nur {len(commits)} Commit(s), Minimum ist {min_commits_global}. "
