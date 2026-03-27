@@ -74,7 +74,7 @@
 | `server_assistant.py` | Server Assistant (ersetzt Legacy Learning System) |
 | `changelog_db.py` | Zentrale Changelog-DB (SQLite, alle Projekte, Upsert + Paginierung) |
 | `content_sanitizer.py` | Security-Filter fuer Patch Notes (Pfade, IPs, Ports, Secrets) |
-| `patch_notes_batcher.py` | Sammelt ALLE Commits ohne Ausnahme. Release nur via Cron (Sonntag 20:00), manuell (/release-notes mit min 3 Commits), oder Notbremse (≥20 Commits). Globaler min_commits Safety-Check (Default 2) blockiert Einzelcommit-Releases auf allen Pfaden |
+| `patch_notes_batcher.py` | Sammelt ALLE Commits ohne Ausnahme. Release nur via Cron (Sonntag 20:00), manuell (/release-notes mit min 3 Commits), oder Notbremse (≥20 Commits). min_commits Check (Default 2) gilt NUR bei skip_batcher=True (manuelle/Cron-Releases) — normale Pushes kommen IMMER zum Batcher durch |
 | `patch_notes_feedback.py` | Discord Feedback (Persistent Buttons: Like + Bewerten, Text-Modal) + Learning-DB Integration |
 | `patch_notes_learning.py` | Patch Notes Learning Pipeline (PostgreSQL agent_learning DB, Varianten-Gewichtung, Feedback-Loop) |
 | `patch_notes_web_exporter.py` | Web-Export (zentrale DB Upsert + File-Backup + optional HTTP POST). Frontend: shared-ui v0.2.0 Changelog-Komponenten |
@@ -281,7 +281,7 @@
 - **Schicht 1 — Commit-Klassifizierung (Pre-Generation):** `_classify_commit()` taggt jeden Commit ([FEATURE], [BUGFIX], [DESIGN-DOC], [SEO-AUTO], [DEPS-AUTO], [REVERT], [MERGE], etc.). Design-Doc-Bodies werden abgeschnitten. Merge/Auto-Commits gefiltert/gruppiert. Body-Noise (Co-Authored-By, Signed-off-by) entfernt. PR-Beschreibungen via `gh pr view` angereichert
 - **Schicht 2 — Prompt-Regeln (During Generation):** Explizite Typ-Interpretations-Regeln in allen 4 Prompt-Pfaden (DE+EN Structured, DE+EN Fallback). "[DESIGN-DOC] = GEPLANT, NICHT IMPLEMENTIERT → NIEMALS als Feature listen"
 - **Schicht 3 — Post-Generierungs-Validierung:** `_validate_ai_output()` prueft Feature-Count gegen tatsaechliche feat:-Commits, erkennt Design-Doc-Keywords in Feature-Beschreibungen und entfernt halluzinierte Features automatisch
-- **Schicht 4 — Batcher + min_commits:** Globaler min_commits Check, Batcher Self-Healing, /release-notes Minimum
+- **Schicht 4 — Batcher + min_commits:** min_commits Check NUR bei skip_batcher (Fix 2026-03-27: vorher blockierte er Einzel-Commits VOR dem Batcher). Batcher Self-Healing, /release-notes Minimum
 - **Schicht 5 — Content Sanitizer:** Pfade, IPs, Ports, Secrets + `changes[].details` Array
 - **Duplikat-Guard:** Vorherige Version aus Changelog-DB als "BEREITS ABGEDECKT" Kontext
 - **Dev-Branch Teaser:** Aktive feat/* Branches mit Fortschrittsindikator + Hype-Prompt ("🔮 Demnächst")
@@ -326,6 +326,19 @@
   - **Force-Scan Flags:** `touch data/force_scan` (taeglich), `touch data/force_deep_scan` (weekly) — umgeht Activity-Check, Session-Limit und Maintenance-Check
 - **Design-Doc:** `docs/plans/2026-03-24-security-engine-v6.md`, `docs/plans/2026-03-24-security-scan-agent-design.md`
 - **Architektur-Doc:** `docs/security-engine-v6-overview.md`
+
+### Discord-only Patch Notes (seit 2026-03-27)
+- **Erkennung:** Projekte ohne `changelog_url` bekommen automatisch das Community-Format
+- **Unterschied:** Summary als Einleitung, mehr Features (6-8), Details pro Feature (2 Unterpunkte), mehr Fixes/Improvements
+- **Projekte mit `changelog_url`:** Kurzformat + "Alle Details" Web-Link (unveraendert)
+- **Betrifft:** MayDay Sim (Discord-only), alle zukuenftigen Projekte ohne Web-Changelog
+
+### Externes Mini-Dashboard (seit 2026-03-27)
+- **Feature:** Projekte mit `external_notifications` bekommen ein eigenes Status-Embed auf ihrem Discord-Server
+- **Aktualisierung:** Alle 5 Minuten (Edit statt neue Nachricht), Message-ID persistiert in state.json
+- **Service-Details:** Einzelne TCP-Ports mit Status-Icons (🟢/🔴 Web, DB, Redis, OSRM)
+- **DEV-Dashboard:** Gleiches Service-Detail-Format, Tags aus Config, deutsches Layout
+- **Implementierung:** `_update_external_dashboards()`, `_create_single_project_dashboard()` in project_monitor.py
 
 ### Discord-Nachrichten-Optimierung (seit 2026-03-25)
 - **Startup:** 8-10 einzelne Embeds → 1 kompaktes Summary-Embed (`_send_startup_summary`)
