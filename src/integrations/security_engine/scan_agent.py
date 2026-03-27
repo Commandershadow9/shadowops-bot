@@ -92,6 +92,9 @@ PROJECT_REPO_MAP = {
     'shadowops': 'Commandershadow9/shadowops-bot',
     'sicherheitsdienst': 'Commandershadow9/sicherheitsdienst-tool',
     'project': 'Commandershadow9/sicherheitsdienst-tool',
+    'mayday_sim': 'Commandershadow9/mayday-sim',
+    'mayday-sim': 'Commandershadow9/mayday-sim',
+    'leitstelle': 'Commandershadow9/mayday-sim',
 }
 DEFAULT_REPO = 'Commandershadow9/shadowops-bot'
 SKIP_ISSUE_PROJECTS = {'openclaw', 'agents', 'blogger', 'content-pipeline'}
@@ -117,6 +120,9 @@ PROTECTED_PORT_BINDINGS = {
     8766: 'Health/Changelog API (GuildScout+ZERODOX Proxy)',
     9090: 'GitHub Webhook (Traefik→Host)',
     9091: 'GuildScout Alerts (Docker→Host)',
+    3200: 'MayDay Sim Web (leitstelle-web)',
+    5436: 'MayDay Sim PostgreSQL (leitstelle-db)',
+    6380: 'MayDay Sim Redis (leitstelle-redis)',
 }
 
 # Projekt-Security-Profile
@@ -201,6 +207,29 @@ PROJECT_SECURITY_PROFILES = {
         'services': 'systemd: shadowops-bot (system-level), Ports: 8766, 9090, 9091',
         'auth': 'Discord Bot Token, GitHub Token, HMAC Webhook Secret',
         'secrets': 'config/config.yaml (Discord Token, GitHub Token, API Keys, DB DSNs)',
+    },
+    'mayday_sim': {
+        'path': '/srv/leitstelle/app',
+        'stack': 'Next.js 16, React 19, Prisma v7, PostgreSQL 16, Redis 7, Socket.io, MapLibre GL',
+        'attack_surface': [
+            'NextAuth v5 Credentials (E-Mail + Passwort, bcrypt)',
+            'REST API Endpoints (/api/leitstelle, /api/einsatz, /api/lobby)',
+            'WebSocket Server (Socket.io fuer Multiplayer)',
+            'OpenAI API Integration (GPT-4o-mini Einsatzgenerierung)',
+            'Registrierung mit eigenem /api/auth/register Endpoint',
+        ],
+        'critical_files': [
+            'web/src/lib/auth.ts',
+            'web/src/lib/auth/index.ts',
+            'web/src/proxy.ts',
+            'web/src/app/api/auth/register/route.ts',
+            'web/prisma/schema.prisma',
+            'web/server.ts',
+            'docker-compose.yml',
+        ],
+        'services': 'Docker: leitstelle-web(3200), leitstelle-db(5436), leitstelle-redis(6380)',
+        'auth': 'NextAuth v5: Credentials (bcrypt 12 Rounds), JWT Sessions (30d), Account-Lockout (5/30min)',
+        'secrets': '/srv/leitstelle/.env (DATABASE_URL, AUTH_SECRET, OPENAI_API_KEY, MAYDAY_BOT_TOKEN)',
     },
 }
 
