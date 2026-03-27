@@ -123,6 +123,7 @@ PROTECTED_PORT_BINDINGS = {
     3200: 'MayDay Sim Web (leitstelle-web)',
     5436: 'MayDay Sim PostgreSQL (leitstelle-db)',
     6380: 'MayDay Sim Redis (leitstelle-redis)',
+    5000: 'MayDay Sim OSRM Routing (leitstelle-osrm)',
 }
 
 # Projekt-Security-Profile
