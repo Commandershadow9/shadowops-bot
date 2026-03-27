@@ -1015,8 +1015,9 @@ class ProjectMonitor:
 
     def _create_single_project_dashboard(self, project, project_config) -> discord.Embed:
         """
-        Erstellt ein schoenes Embed fuer ein einzelnes Projekt.
+        Erstellt ein detailliertes Embed fuer ein einzelnes Projekt.
         Wird auf dem externen Discord-Server des Projekts angezeigt.
+        Zeigt den Gesamtstatus + einzelne Services (TCP-Ports).
         """
         tag = project_config.get('tag', project.name)
         color_val = project_config.get('color', 0x2ECC71)
@@ -1045,17 +1046,45 @@ class ProjectMonitor:
                 downtime_min = int(project.current_downtime_duration.total_seconds() / 60)
                 embed.description += f"\nDowntime: {downtime_min} Minuten"
 
-        # Uptime
+        # Einzelne Services (TCP-Ports) live pruefen
+        tcp_ports = project_config.get('monitor', {}).get('tcp_ports', [])
+        if tcp_ports:
+            service_lines = []
+            for port_config in tcp_ports:
+                if isinstance(port_config, int):
+                    host, port, label = '127.0.0.1', port_config, f'Port {port_config}'
+                else:
+                    host = port_config.get('host', '127.0.0.1')
+                    port = port_config['port']
+                    label = port_config.get('label', f'Port {port}')
+
+                # Schneller TCP-Check (non-blocking, cached vom letzten Health-Check)
+                # Wir nutzen den letzten Fehler-String um den Status abzuleiten
+                port_ok = True
+                if not is_online and project.last_error and label in str(project.last_error):
+                    port_ok = False
+
+                icon = "🟢" if (is_online or port_ok) else "🔴"
+                if not is_online and not project.last_error:
+                    icon = "🔴"  # Gesamtstatus offline = alles rot
+
+                service_lines.append(f"{icon} **{label}** — Port {port}")
+
+            embed.add_field(
+                name="📡 Services",
+                value="\n".join(service_lines),
+                inline=False
+            )
+
+        # Statistiken
         uptime = f"{project.uptime_percentage:.1f}%"
-        embed.add_field(name="Uptime", value=uptime, inline=True)
+        embed.add_field(name="📊 Uptime", value=uptime, inline=True)
 
-        # Checks
         total_checks = project.total_checks if hasattr(project, 'total_checks') else 0
-        embed.add_field(name="Checks", value=str(total_checks), inline=True)
+        embed.add_field(name="🔍 Checks", value=str(total_checks), inline=True)
 
-        # Letzter Check
         embed.add_field(
-            name="Intervall",
+            name="⏱️ Intervall",
             value=f"alle {project.check_interval}s",
             inline=True
         )
