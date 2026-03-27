@@ -278,7 +278,7 @@ class CustomerServerSetup:
         """
         self.logger.info("🔍 Checking all guilds for missing channel setups...")
 
-        dev_server_ids = [1438065435496157267]  # Your dev server
+        dev_server_ids = [1438065435496157267, 1486692590198853672]  # DEV + MayDay Sim
 
         for guild in self.bot.guilds:
             if guild.id in dev_server_ids:
@@ -304,7 +304,7 @@ class CustomerServerSetup:
         self.logger.info(f"🎉 Setting up guild: {guild.name} (ID: {guild.id})")
 
         # Check if this is a customer server (not your dev server)
-        dev_server_ids = [1438065435496157267]  # Your dev server
+        dev_server_ids = [1438065435496157267, 1486692590198853672]  # DEV + MayDay Sim
 
         if guild.id in dev_server_ids:
             self.logger.info(f"ℹ️ Skipping auto-setup for dev server: {guild.name}")
