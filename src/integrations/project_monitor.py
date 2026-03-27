@@ -917,47 +917,73 @@ class ProjectMonitor:
         await self._update_external_dashboards()
 
     def _create_dashboard_embed(self) -> discord.Embed:
-        """Create Discord embed for project dashboard"""
-        embed = discord.Embed(
-            title="📊 Project Status Dashboard",
-            description="Real-time status of all monitored projects",
-            color=discord.Color.blue(),
-            timestamp=datetime.now(timezone.utc)
-        )
-
-        # Count online/offline projects
+        """Create Discord embed for project dashboard with per-service details"""
         online_count = sum(1 for p in self.projects.values() if p.is_online)
         total_count = len(self.projects)
 
-        embed.add_field(
-            name="Overview",
-            value=f"🟢 {online_count}/{total_count} projects online",
-            inline=False
+        status_line = f"{'✅' if online_count == total_count else '⚠️'} {online_count}/{total_count} Projekte online"
+
+        embed = discord.Embed(
+            title="📊 ShadowOps — Projekt-Dashboard",
+            description=status_line,
+            color=discord.Color.green() if online_count == total_count else discord.Color.orange(),
+            timestamp=datetime.now(timezone.utc)
         )
 
-        # List each project
         for project in sorted(self.projects.values(), key=lambda p: p.name):
             status_emoji = "🟢" if project.is_online else "🔴"
-            uptime = f"{project.uptime_percentage:.1f}%"
-            response_time = f"{project.average_response_time:.0f}ms" if project.is_online else "N/A"
+            tag = project.name
 
-            value_parts = [
-                f"Status: {status_emoji} {'Online' if project.is_online else 'Offline'}",
-                f"Uptime: {uptime}",
-                f"Avg Response: {response_time}"
-            ]
+            # Tag aus Config holen (falls vorhanden)
+            for pname, pcfg in self.config.projects.items():
+                if pname == project.name and pcfg.get('tag'):
+                    tag = pcfg['tag']
+                    break
 
-            if not project.is_online and project.current_downtime_duration:
-                downtime_minutes = int(project.current_downtime_duration.total_seconds() / 60)
-                value_parts.append(f"Downtime: {downtime_minutes}m")
+            # Hauptzeile
+            if project.is_online:
+                response = f"{project.average_response_time:.0f}ms"
+                header = f"{status_emoji} {tag}"
+                main_line = f"**Online**\nAntwortzeit: {response}\nUptime: {project.uptime_percentage:.1f}%"
+            else:
+                header = f"{status_emoji} {tag}"
+                error_short = (project.last_error or "Unbekannt")[:80]
+                main_line = f"**Offline**\nFehler: {error_short}\nUptime: {project.uptime_percentage:.1f}%"
+                if project.current_downtime_duration:
+                    mins = int(project.current_downtime_duration.total_seconds() / 60)
+                    main_line += f"\nDowntime: {mins}m"
 
-            embed.add_field(
-                name=f"**{project.name}**",
-                value="\n".join(value_parts),
-                inline=True
-            )
+            # TCP-Port Details (Services)
+            for pname, pcfg in self.config.projects.items():
+                if pname != project.name:
+                    continue
+                tcp_ports = pcfg.get('monitor', {}).get('tcp_ports', [])
+                if tcp_ports:
+                    port_lines = []
+                    for pc in tcp_ports:
+                        if isinstance(pc, int):
+                            label = f"Port {pc}"
+                        else:
+                            label = pc.get('label', f"Port {pc.get('port')}")
+                        port_ok = project.is_online or (label not in str(project.last_error or ''))
+                        if not project.is_online and not project.last_error:
+                            port_ok = False
+                        icon = "🟢" if port_ok else "🔴"
+                        port_lines.append(f"{icon} {label}")
+                    main_line += "\n" + " · ".join(port_lines)
+                break
 
-        embed.set_footer(text=f"Last updated")
+            # Letzter Check Zeitstempel
+            last_check = getattr(project, 'last_check_time', None)
+            if last_check:
+                from datetime import timezone as tz
+                now = datetime.now(tz.utc)
+                ago = int((now - last_check).total_seconds() / 60)
+                main_line += f"\nLetzter Check: vor {ago} Minuten"
+
+            embed.add_field(name=header, value=main_line, inline=True)
+
+        embed.set_footer(text="Aktualisiert alle 5 Minuten")
 
         return embed
 
