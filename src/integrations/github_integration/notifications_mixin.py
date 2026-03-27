@@ -390,23 +390,37 @@ class NotificationsMixin:
             title = 'Update'
         return title
 
-    def _build_description(self, ai_result, commits: list, language: str) -> str:
+    def _build_description(self, ai_result, commits: list, language: str,
+                            discord_only: bool = False) -> str:
         """Baut Description aus AI-Ergebnis (dict/str/None)."""
         if isinstance(ai_result, dict):
-            return self._description_from_structured(ai_result, commits, language)
+            return self._description_from_structured(ai_result, commits, language, discord_only=discord_only)
         elif isinstance(ai_result, str) and ai_result.strip():
             return ai_result.strip()
         else:
             return self._categorize_commits_text(commits, language)
 
-    def _description_from_structured(self, ai_data: dict, commits: list, language: str) -> str:
-        """Strukturierte AI-Daten → fließende Discord Description."""
+    def _description_from_structured(self, ai_data: dict, commits: list, language: str,
+                                      discord_only: bool = False) -> str:
+        """Strukturierte AI-Daten → fließende Discord Description.
+
+        Args:
+            discord_only: Wenn True, werden Details mit angezeigt (kein Web-Link verfuegbar).
+                          Community-optimiertes Format: ausfuehrlicher aber nicht zu lang.
+        """
         parts = []
 
         tldr = ai_data.get('tldr', '')
         if tldr:
             parts.append(f"> {tldr}")
             parts.append("")
+
+        # Bei Discord-only: Summary als Einleitung hinzufuegen
+        if discord_only:
+            summary = ai_data.get('summary', '')
+            if summary and summary != tldr:
+                parts.append(summary)
+                parts.append("")
 
         changes = ai_data.get('changes', [])
         features = [c for c in changes if c.get('type') == 'feature']
@@ -415,13 +429,22 @@ class NotificationsMixin:
         breaking = ai_data.get('breaking_changes', [])
         is_major = len(commits) >= 15
 
+        # Bei Discord-only: Mehr Features zeigen + Details
+        max_features = (8 if is_major else 6) if discord_only else (6 if is_major else 4)
+        max_fixes = 6 if discord_only else 4
+        max_improvements = 5 if discord_only else 3
+
         if features:
-            max_show = 6 if is_major else 4
             parts.append("**\U0001f195 Neue Features**")
-            for f in features[:max_show]:
+            for f in features[:max_features]:
                 parts.append(f"\u2192 {f.get('description', '')}")
-            if len(features) > max_show:
-                parts.append(f"  *+{len(features) - max_show} weitere*")
+                # Discord-only: Details mit anzeigen (kurz)
+                if discord_only:
+                    details = f.get('details', [])
+                    for d in details[:2]:
+                        parts.append(f"  \u2022 {d}")
+            if len(features) > max_features:
+                parts.append(f"  *+{len(features) - max_features} weitere*")
             parts.append("")
 
         if breaking:
@@ -432,18 +455,18 @@ class NotificationsMixin:
 
         if fixes:
             parts.append("**\U0001f41b Bugfixes**")
-            for f in fixes[:4]:
+            for f in fixes[:max_fixes]:
                 parts.append(f"\u2192 {f.get('description', '')}")
-            if len(fixes) > 4:
-                parts.append(f"  *+{len(fixes) - 4} weitere*")
+            if len(fixes) > max_fixes:
+                parts.append(f"  *+{len(fixes) - max_fixes} weitere*")
             parts.append("")
 
         if improvements:
             parts.append("**\u26a1 Verbesserungen**")
-            for i in improvements[:3]:
+            for i in improvements[:max_improvements]:
                 parts.append(f"\u2192 {i.get('description', '')}")
-            if len(improvements) > 3:
-                parts.append(f"  *+{len(improvements) - 3} weitere*")
+            if len(improvements) > max_improvements:
+                parts.append(f"  *+{len(improvements) - max_improvements} weitere*")
             parts.append("")
 
         # Fallback wenn keine changes
@@ -451,7 +474,7 @@ class NotificationsMixin:
             highlights = ai_data.get('discord_highlights', [])
             if highlights:
                 parts.append("**\U0001f525 Highlights**")
-                for h in highlights[:5]:
+                for h in highlights[:7 if discord_only else 5]:
                     parts.append(f"\u2192 {h}")
                 parts.append("")
 
@@ -509,10 +532,11 @@ class NotificationsMixin:
         )
         embed.set_author(name=repo_name.upper())
 
-        # Description bauen — EIN Weg für alle Inputs
-        description = self._build_description(ai_result, commits, language)
+        # Description bauen — Discord-only wenn keine Changelog-Page existiert
+        is_discord_only = not changelog_link
+        description = self._build_description(ai_result, commits, language, discord_only=is_discord_only)
 
-        # Changelog-Link am Ende
+        # Changelog-Link am Ende (nur wenn Page vorhanden)
         if changelog_link:
             link_text = "Alle Details & vollständige Patch Notes" if language == 'de' else "Full details & complete patch notes"
             description += f"\n\n\U0001f4d6 [{link_text}]({changelog_link})"
