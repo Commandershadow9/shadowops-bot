@@ -238,8 +238,9 @@ class ProjectMonitor:
             with open(self.state_file, 'r') as f:
                 state = json.load(f)
 
-            # Load dashboard message ID
+            # Load dashboard message IDs
             self.dashboard_message_id = state.get('dashboard_message_id')
+            self._ext_dashboard_ids = state.get('ext_dashboard_ids', {})
 
             # Load project states
             project_states = state.get('projects', {})
@@ -266,6 +267,7 @@ class ProjectMonitor:
             # Build state structure
             state = {
                 'dashboard_message_id': self.dashboard_message_id,
+                'ext_dashboard_ids': getattr(self, '_ext_dashboard_ids', {}),
                 'projects': {}
             }
 
@@ -882,7 +884,8 @@ class ProjectMonitor:
                 await asyncio.sleep(self.dashboard_update_interval)
 
     async def _update_dashboard(self):
-        """Update or create the dashboard message"""
+        """Update or create the dashboard message (main + external)"""
+        # === Haupt-Dashboard (DEV Server, alle Projekte) ===
         channel = self.bot.get_channel(self.customer_status_channel_id)
         if not channel:
             return
@@ -909,6 +912,9 @@ class ProjectMonitor:
 
         except Exception as e:
             self.logger.error(f"❌ Error updating dashboard: {e}", exc_info=True)
+
+        # === Externe Mini-Dashboards (pro Projekt auf deren Server) ===
+        await self._update_external_dashboards()
 
     def _create_dashboard_embed(self) -> discord.Embed:
         """Create Discord embed for project dashboard"""
@@ -952,6 +958,109 @@ class ProjectMonitor:
             )
 
         embed.set_footer(text=f"Last updated")
+
+        return embed
+
+    async def _update_external_dashboards(self):
+        """
+        Aktualisiert Mini-Dashboards auf externen Servern.
+        Zeigt nur den Status des jeweiligen Projekts — nicht alle Projekte.
+        Konfiguriert via external_notifications[].channel_id pro Projekt.
+        """
+        for proj_name, proj_cfg in self.config.projects.items():
+            external_notifs = proj_cfg.get('external_notifications', [])
+            if not external_notifs:
+                continue
+
+            project = self.projects.get(proj_name)
+            if not project:
+                continue
+
+            for notif_config in external_notifs:
+                if not notif_config.get('enabled', False):
+                    continue
+
+                channel_id = notif_config.get('channel_id')
+                if not channel_id:
+                    continue
+
+                channel = self.bot.get_channel(int(channel_id))
+                if not channel:
+                    continue
+
+                # Mini-Dashboard Embed fuer dieses eine Projekt
+                embed = self._create_single_project_dashboard(project, proj_cfg)
+
+                # State-Key fuer die externe Dashboard-Message-ID
+                state_key = f"ext_dashboard_{proj_name}_{channel_id}"
+
+                try:
+                    existing_msg_id = getattr(self, '_ext_dashboard_ids', {}).get(state_key)
+                    if existing_msg_id:
+                        try:
+                            msg = await channel.fetch_message(existing_msg_id)
+                            await msg.edit(embed=embed)
+                            continue
+                        except discord.NotFound:
+                            pass  # Nachricht geloescht, neue erstellen
+
+                    # Neue Nachricht senden
+                    msg = await channel.send(embed=embed)
+                    if not hasattr(self, '_ext_dashboard_ids'):
+                        self._ext_dashboard_ids = {}
+                    self._ext_dashboard_ids[state_key] = msg.id
+
+                except Exception as e:
+                    self.logger.error(f"❌ Fehler beim externen Dashboard fuer {proj_name}: {e}")
+
+    def _create_single_project_dashboard(self, project, project_config) -> discord.Embed:
+        """
+        Erstellt ein schoenes Embed fuer ein einzelnes Projekt.
+        Wird auf dem externen Discord-Server des Projekts angezeigt.
+        """
+        tag = project_config.get('tag', project.name)
+        color_val = project_config.get('color', 0x2ECC71)
+        if isinstance(color_val, str) and color_val.startswith('0x'):
+            color_val = int(color_val, 16)
+
+        is_online = project.is_online
+        status_emoji = "🟢" if is_online else "🔴"
+        status_text = "Online" if is_online else "Offline"
+        color = discord.Color(color_val) if is_online else discord.Color.red()
+
+        embed = discord.Embed(
+            title=f"{status_emoji} Server Status — {tag}",
+            color=color,
+            timestamp=datetime.now(timezone.utc)
+        )
+
+        # Hauptstatus
+        if is_online:
+            response_time = f"{project.average_response_time:.0f}ms"
+            embed.description = f"**{status_text}** — Antwortzeit: {response_time}"
+        else:
+            error_msg = project.last_error or "Unbekannter Fehler"
+            embed.description = f"**{status_text}** — {error_msg}"
+            if project.current_downtime_duration:
+                downtime_min = int(project.current_downtime_duration.total_seconds() / 60)
+                embed.description += f"\nDowntime: {downtime_min} Minuten"
+
+        # Uptime
+        uptime = f"{project.uptime_percentage:.1f}%"
+        embed.add_field(name="Uptime", value=uptime, inline=True)
+
+        # Checks
+        total_checks = project.total_checks if hasattr(project, 'total_checks') else 0
+        embed.add_field(name="Checks", value=str(total_checks), inline=True)
+
+        # Letzter Check
+        embed.add_field(
+            name="Intervall",
+            value=f"alle {project.check_interval}s",
+            inline=True
+        )
+
+        embed.set_footer(text="ShadowOps Monitoring • Aktualisiert alle 5 Minuten")
 
         return embed
 
