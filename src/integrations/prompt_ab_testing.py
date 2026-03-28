@@ -427,6 +427,10 @@ FORMAT (choose fitting categories — not all are required):
 🛡️ **Stability & Performance** (only if relevant)
 → Grouped stability improvements
 
+📖 **How to use** (ONLY if FEATURE GUIDES exist in context!)
+→ Copy the Release Guide text VERBATIM, do NOT invent instructions!
+→ If no Release Guide exists → SKIP this section entirely
+
 🔮 **In Development** (when feature branches exist)
 → "We're working on: [Feature-Name] — [1 sentence what it brings]"
 → Clearly mark as NOT LIVE — build hype, don't promise!
@@ -492,6 +496,10 @@ FORMAT (wähle die passenden Kategorien — nicht alle sind Pflicht):
 
 🛡️ **Stabilität & Performance** (nur wenn relevant)
 → Zusammengefasste Stabilitätsverbesserungen
+
+📖 **So funktioniert's** (NUR wenn FEATURE-ANLEITUNGEN im Kontext vorhanden!)
+→ Den Text aus dem Release-Guide WÖRTLICH übernehmen, NICHT erfinden!
+→ Wenn kein Release-Guide vorhanden → diese Sektion KOMPLETT weglassen
 
 🔮 **In Entwicklung** (wenn Feature-Branches vorhanden)
 → "Wir arbeiten gerade an: [Feature-Name] — [1 Satz was es bringt]"

@@ -684,6 +684,42 @@ class AIPatchNotesMixin:
             self.logger.debug(f"Feature-Branch-Teasers: {e}")
             return ""
 
+    def _load_release_guide(self, project_path: Optional[Path]) -> str:
+        """Lade manuell geschriebene Feature-Anleitungen aus release_guide.md.
+
+        Sucht in: release_guide.md, docs/release_guide.md, RELEASE_GUIDE.md
+        Der Inhalt wird WÖRTLICH in den Prompt übernommen (kein AI-Rewrite).
+        Nach dem Laden wird die Datei NICHT gelöscht — der Entwickler räumt sie
+        manuell auf wenn das Release durch ist.
+        """
+        if not project_path:
+            return ""
+
+        candidates = [
+            project_path / 'release_guide.md',
+            project_path / 'docs' / 'release_guide.md',
+            project_path / 'RELEASE_GUIDE.md',
+        ]
+
+        for path in candidates:
+            if path.exists():
+                try:
+                    content = path.read_text(encoding='utf-8').strip()
+                    if not content or len(content) < 20:
+                        continue
+
+                    self.logger.info(f"📋 Release-Guide geladen: {path} ({len(content)} Zeichen)")
+                    return (
+                        "FEATURE-ANLEITUNGEN (vom Entwickler geschrieben — WÖRTLICH übernehmen!):\n"
+                        "Füge diese Anleitungen als '📖 So funktioniert's'-Absatz ein.\n"
+                        "NICHT umschreiben oder halluzinieren — der Text ist verifiziert!\n\n"
+                        + content[:2000]
+                    )
+                except Exception:
+                    continue
+
+        return ""
+
     def _load_patch_notes_context(self, project_config: Optional[Dict],
                                   project_path: Optional[Path]) -> str:
         """Load optional context files + project description for richer prompts."""
@@ -706,6 +742,12 @@ class AIPatchNotesMixin:
                 "PROJEKT-KONTEXT (schreibe Patch Notes passend fuer diese Zielgruppe):\n"
                 + "\n".join(meta_parts)
             )
+
+        # Release-Guide laden (manuell geschriebene Feature-Anleitungen)
+        # Sucht automatisch nach release_guide.md — keine Config nötig
+        release_guide = self._load_release_guide(project_path)
+        if release_guide:
+            sections.append(release_guide)
 
         context_files = patch_config.get('context_files') or patch_config.get('context_file')
         if not context_files and not sections:
