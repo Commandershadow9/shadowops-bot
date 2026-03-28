@@ -44,11 +44,24 @@ class GitOpsMixin:
             self.logger.debug(f"Git fetch failed for {repo_path}")
 
     def _get_repo_branch(self, repo_path: Path, project_config: Dict) -> str:
+        """Deploy-Branch aus Config nehmen, NICHT den aktuell ausgecheckten Branch.
+
+        Vorher: git rev-parse HEAD → gab den ausgecheckten Branch zurück.
+        Problem: Wenn ein Feature-Branch ausgecheckt ist (z.B. feat/referral-system),
+        wurden unveröffentlichte Commits als "neue Updates" erkannt und Patchnotes
+        für nicht-live Features generiert.
+
+        Jetzt: Config-Branch (deploy.branch) hat Vorrang. Nur wenn nicht konfiguriert,
+        wird der aktuelle Branch als Fallback verwendet.
+        """
+        deploy_branch = project_config.get('deploy', {}).get('branch')
+        if deploy_branch:
+            return deploy_branch
+        # Fallback: aktuell ausgecheckter Branch
         branch = self._run_git(repo_path, ['rev-parse', '--abbrev-ref', 'HEAD'])
         if branch and branch != 'HEAD':
             return branch
-        deploy_branch = project_config.get('deploy', {}).get('branch')
-        return deploy_branch or 'main'
+        return 'main'
 
     def _get_upstream_ref(self, repo_path: Path) -> Optional[str]:
         return self._run_git(repo_path, ['rev-parse', '--abbrev-ref', '--symbolic-full-name', '@{u}'])

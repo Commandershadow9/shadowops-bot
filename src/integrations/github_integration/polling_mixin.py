@@ -64,17 +64,12 @@ class PollingMixin:
                 continue
 
             branch = self._get_repo_branch(repo_path, project_config)
-            upstream_ref = self._get_upstream_ref(repo_path)
-            fallback_upstream = None
-            if not upstream_ref:
-                remote_url = self._run_git(repo_path, ['config', '--get', 'remote.origin.url'])
-                if remote_url:
-                    fallback_upstream = f"origin/{branch}"
-
-            if self.local_polling_fetch and (upstream_ref or fallback_upstream):
+            # IMMER origin/{deploy_branch} als Referenz — nicht den lokalen Branch
+            # Verhindert dass Feature-Branch-Commits als "neue Updates" erkannt werden
+            if self.local_polling_fetch:
                 self._safe_git_fetch(repo_path)
 
-            head_ref = upstream_ref or fallback_upstream or "HEAD"
+            head_ref = f"origin/{branch}"
             head_sha = self._get_commit_sha(repo_path, head_ref)
             if not head_sha:
                 continue
