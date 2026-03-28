@@ -1147,14 +1147,16 @@ Do NOT invent features that are not tagged [FEATURE]!"""
                         prompt += f"## Example {i} ({example['project']} v{example['version']}):\n"
                         prompt += f"```\n{example['generated_notes'][:400]}...\n```\n\n"
 
-                # Basis-Regelblock IMMER anhaengen (A/B-Varianten-sicher)
-                rules = self._CLASSIFICATION_RULES_DE if language == 'de' else self._CLASSIFICATION_RULES_EN
-                prompt += f"\n\n{rules}"
+                # Projekt-Kontext VOR Regeln (damit AI die Zielgruppe kennt)
+                if project_context:
+                    prompt += f"\n\n{project_context}"
 
                 if code_changes_context:
                     prompt += f"\n\n{code_changes_context}"
-                if project_context:
-                    prompt += f"\n\n{project_context}"
+
+                # Basis-Regelblock IMMER anhaengen (A/B-Varianten-sicher)
+                rules = self._CLASSIFICATION_RULES_DE if language == 'de' else self._CLASSIFICATION_RULES_EN
+                prompt += f"\n\n{rules}"
 
             except Exception as e:
                 self.logger.warning(f"⚠️ A/B Testing failed, using enhanced prompt: {e}")

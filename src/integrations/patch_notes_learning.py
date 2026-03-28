@@ -331,6 +331,27 @@ class PatchNotesLearning:
 
         return [dict(r) for r in rows]
 
+    async def prune_bad_examples(self, min_score: int = 40) -> int:
+        """Deaktiviere Beispiele mit niedrigem combined_score.
+
+        Verhindert dass schlechte Patchnotes als Few-Shot-Beispiele genutzt werden.
+
+        Returns:
+            Anzahl deaktivierter Beispiele
+        """
+        result = await self.pool.execute(
+            """UPDATE pn_examples
+               SET is_active = FALSE
+               WHERE is_active = TRUE
+                 AND combined_score < $1
+                 AND combined_score > 0""",
+            min_score,
+        )
+        count = int(result.split()[-1]) if result else 0
+        if count > 0:
+            logger.info(f"🗑️ {count} Beispiele mit Score < {min_score} deaktiviert")
+        return count
+
     # ─────────────────────────────────────────────
     # Offene Feedback-Windows pruefen
     # ─────────────────────────────────────────────

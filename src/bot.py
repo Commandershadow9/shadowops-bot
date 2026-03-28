@@ -1438,11 +1438,41 @@ class ShadowOpsBot(commands.Bot):
 
     @tasks.loop(hours=12)
     async def learning_maintenance(self):
-        """Learning-Maintenance alle 12h: Feedback schliessen + Meilensteine + Weekly."""
+        """Learning-Maintenance alle 12h: Feedback schliessen + Auto-Tuning + Meilensteine + Weekly."""
         try:
             fc = getattr(self, 'feedback_collector', None)
             if fc:
                 await fc.close_old_feedback_windows()
+
+            # Auto-Tuning: Analysiere Performance und tune Varianten wenn nötig
+            auto_tuner = getattr(self, 'prompt_auto_tuner', None)
+            if auto_tuner:
+                try:
+                    for project_name in self.config.projects:
+                        project_config = self.config.projects[project_name]
+                        patch_config = project_config.get('patch_notes', {})
+                        if not patch_config.get('enabled'):
+                            continue
+                        # Nur auto-tunen wenn KEIN preferred_variant gepinnt ist
+                        if patch_config.get('preferred_variant'):
+                            continue
+                        auto_tuner.schedule_auto_tuning(
+                            project=project_name,
+                            min_samples=5,
+                            improvement_threshold=5.0
+                        )
+                except Exception as e:
+                    self.logger.debug("Auto-Tuning: %s", e)
+
+            # Negative Beispiele deaktivieren (combined_score < 40)
+            try:
+                from integrations.patch_notes_learning import PatchNotesLearning
+                learning = PatchNotesLearning()
+                await learning.connect()
+                await learning.prune_bad_examples(min_score=40)
+                await learning.close()
+            except Exception:
+                pass
 
             # Meilensteine prüfen
             if self.learning_notifier:
