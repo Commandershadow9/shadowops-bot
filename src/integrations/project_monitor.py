@@ -252,6 +252,9 @@ class ProjectMonitor:
                 project.total_checks = project_state.get('total_checks', 0)
                 project.successful_checks = project_state.get('successful_checks', 0)
                 project.failed_checks = project_state.get('failed_checks', 0)
+                # is_online aus State wiederherstellen (verhindert "Offline"-Flash nach Restart)
+                if project_state.get('is_online') is not None:
+                    project.is_online = project_state['is_online']
 
             self.logger.info(
                 f"📂 Loaded monitoring state from {self.state_file} "
@@ -276,7 +279,8 @@ class ProjectMonitor:
                 state['projects'][project_name] = {
                     'total_checks': project.total_checks,
                     'successful_checks': project.successful_checks,
-                    'failed_checks': project.failed_checks
+                    'failed_checks': project.failed_checks,
+                    'is_online': project.is_online
                 }
 
             with open(self.state_file, 'w') as f:
@@ -1094,7 +1098,7 @@ class ProjectMonitor:
                 if not is_online and not project.last_error:
                     icon = "🔴"  # Gesamtstatus offline = alles rot
 
-                service_lines.append(f"{icon} **{label}** — Port {port}")
+                service_lines.append(f"{icon} **{label}**")
 
             embed.add_field(
                 name="📡 Services",
