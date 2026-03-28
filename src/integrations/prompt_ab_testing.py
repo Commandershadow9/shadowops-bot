@@ -427,8 +427,10 @@ FORMAT (choose fitting categories — not all are required):
 🛡️ **Stability & Performance** (only if relevant)
 → Grouped stability improvements
 
-🔮 **Coming Soon**
-→ Brief teaser (optional)
+🔮 **In Development** (when feature branches exist)
+→ "We're working on: [Feature-Name] — [1 sentence what it brings]"
+→ Clearly mark as NOT LIVE — build hype, don't promise!
+→ Use the FEATURE BRANCHES info from the context
 
 {stats_line}"""
         else:  # German
@@ -491,8 +493,10 @@ FORMAT (wähle die passenden Kategorien — nicht alle sind Pflicht):
 🛡️ **Stabilität & Performance** (nur wenn relevant)
 → Zusammengefasste Stabilitätsverbesserungen
 
-🔮 **Demnächst**
-→ Kurzer Teaser (optional)
+🔮 **In Entwicklung** (wenn Feature-Branches vorhanden)
+→ "Wir arbeiten gerade an: [Feature-Name] — [1 Satz was es bringt]"
+→ Klar als NICHT LIVE kennzeichnen — Vorfreude wecken, nicht versprechen!
+→ Nutze die FEATURE BRANCHES Infos aus dem Kontext
 
 {stats_line}"""
 

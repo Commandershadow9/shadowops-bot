@@ -620,6 +620,70 @@ class AIPatchNotesMixin:
 
         return "\n".join(parts)
 
+    def _collect_feature_branch_teasers(self, project_path: Optional[Path],
+                                        deploy_branch: str = 'main') -> str:
+        """Sammle aktive Feature-Branches als Teaser für 'Demnächst'-Sektion.
+
+        Scannt alle feat/* und fix/*-Branches, holt die letzten Commit-Messages
+        und formatiert sie als Kontext für die AI.
+        """
+        if not project_path:
+            return ""
+
+        import subprocess
+        repo_path = str(project_path)
+
+        try:
+            # Alle Remote-Branches holen
+            result = subprocess.run(
+                ['git', 'branch', '-r', '--list', 'origin/feat/*', 'origin/fix/*'],
+                capture_output=True, text=True, cwd=repo_path, timeout=5
+            )
+            if result.returncode != 0 or not result.stdout.strip():
+                return ""
+
+            branches = [b.strip() for b in result.stdout.strip().splitlines() if b.strip()]
+            if not branches:
+                return ""
+
+            teasers = []
+            for branch in branches[:8]:  # Max 8 Branches
+                # Branch-Name extrahieren (origin/feat/referral-system → Referral System)
+                short_name = branch.replace('origin/', '')
+                display_name = short_name.split('/')[-1].replace('-', ' ').replace('_', ' ').title()
+                branch_type = 'Feature' if '/feat/' in branch else 'Fix'
+
+                # Letzte 3 Commits auf diesem Branch (die nicht auf deploy_branch sind)
+                commits_result = subprocess.run(
+                    ['git', 'log', branch, f'--not=origin/{deploy_branch}',
+                     '--oneline', '-3', '--format=%s'],
+                    capture_output=True, text=True, cwd=repo_path, timeout=5
+                )
+                commit_msgs = []
+                if commits_result.returncode == 0 and commits_result.stdout.strip():
+                    commit_msgs = [m.strip() for m in commits_result.stdout.strip().splitlines()
+                                   if m.strip() and not m.strip().startswith('Merge')]
+
+                if commit_msgs:
+                    teasers.append(f"- [{branch_type}] {display_name}: {'; '.join(commit_msgs[:2])}")
+                else:
+                    teasers.append(f"- [{branch_type}] {display_name}")
+
+            if not teasers:
+                return ""
+
+            return (
+                "FEATURE BRANCHES (NICHT LIVE — in aktiver Entwicklung, NICHT als fertig darstellen!):\n"
+                "Nutze diese Infos für einen '🔮 Demnächst / In Entwicklung'-Absatz.\n"
+                "Formuliere es als spannende Vorschau, z.B. 'Wir arbeiten an...' oder 'Bald verfügbar...'\n"
+                "WICHTIG: Klar kennzeichnen dass diese Features NOCH NICHT LIVE sind!\n\n"
+                + "\n".join(teasers)
+            )
+
+        except Exception as e:
+            self.logger.debug(f"Feature-Branch-Teasers: {e}")
+            return ""
+
     def _load_patch_notes_context(self, project_config: Optional[Dict],
                                   project_path: Optional[Path]) -> str:
         """Load optional context files + project description for richer prompts."""
@@ -1161,6 +1225,12 @@ Do NOT invent features that are not tagged [FEATURE]!"""
 
                 if code_changes_context:
                     prompt += f"\n\n{code_changes_context}"
+
+                # Feature-Branch-Teasers (für "Demnächst"-Sektion)
+                deploy_branch = project_config.get('deploy', {}).get('branch', 'main') if project_config else 'main'
+                feature_teasers = self._collect_feature_branch_teasers(project_path, deploy_branch)
+                if feature_teasers:
+                    prompt += f"\n\n{feature_teasers}"
 
                 # Basis-Regelblock IMMER anhaengen (A/B-Varianten-sicher)
                 rules = self._CLASSIFICATION_RULES_DE if language == 'de' else self._CLASSIFICATION_RULES_EN
