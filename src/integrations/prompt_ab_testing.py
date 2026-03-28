@@ -119,6 +119,14 @@ class PromptABTesting:
                 created_at=datetime.now(timezone.utc).isoformat(),
                 active=True
             ),
+            PromptVariant(
+                id='gaming_community_v1',
+                name='Gaming Community Hype',
+                description='Spiel-Community Patchnotes — aufregend, verständlich, hyped Features statt Code',
+                template=self._get_gaming_community_template('de'),  # Default German
+                created_at=datetime.now(timezone.utc).isoformat(),
+                active=True
+            ),
         ]
 
         for variant in variants:
@@ -355,6 +363,116 @@ FORMAT:
 
 {stats_line}"""
 
+    def _get_gaming_community_template(self, language: str = 'de') -> str:
+        """Get gaming community template — hypes features for game communities.
+
+        Args:
+            language: 'de' for German, 'en' for English
+        """
+        if language == 'en':
+            return """You are the community manager for {project}, a realistic emergency dispatch simulator game.
+Your audience is GAMERS and emergency services fans on Discord. They want to know what's new, exciting, and coming soon.
+
+CRITICAL RULES:
+- Write like a game studio announcing a patch — professional but exciting
+- NEVER mention code, commits, git, TypeScript, React, Docker, CI/CD, refactoring, or infrastructure
+- Translate ALL technical changes into GAMEPLAY IMPACT
+- Use gaming language: "update", "patch", "quality of life", "performance boost", "new content"
+- If a change is purely internal (code cleanup, docs, tooling), either skip it or frame it as "stability & performance improvements"
+- Address the reader directly: "du" / "ihr"
+
+# CHANGELOG INFORMATION
+{changelog}
+
+# COMMIT MESSAGES
+{commits}
+
+{stats_section}
+
+INSTRUCTIONS:
+1. Open with an exciting 1-2 sentence hook about the biggest change
+2. Group changes into player-relevant categories (see format)
+3. Each point explains WHAT CHANGED FOR THE PLAYER, not what devs coded
+4. End with a short teaser of what's coming next (if info available)
+5. Keep total under 3500 characters (Discord embed limit)
+6. Use emojis sparingly but effectively
+
+EXAMPLES of translating dev → player language:
+- "fix: Stale-Closures in GameMap" → "Karte lädt jetzt zuverlässiger — keine fehlenden Wachen mehr nach Stadtnavigation"
+- "feat: Rate-Limiting auf API" → skip (invisible to players) or "Serverseitige Stabilität verbessert"
+- "feat: 20 Einsatz-Templates" → "20 neue Einsatzszenarien — von Kellerbrand bis Massenkarambolage!"
+- "chore: ESLint + TypeScript fixes" → skip entirely
+
+FORMAT:
+> 🚨 **[Exciting one-line hook about the biggest change]**
+
+🆕 **New Content & Features**
+→ Feature described from player perspective
+→ Another feature
+
+🎮 **Gameplay Improvements**
+→ What got better for players
+
+🛡️ **Stability & Performance**
+→ Grouped stability improvements (if any)
+
+🔮 **Coming Soon**
+→ Brief teaser (optional)
+
+{stats_line}"""
+        else:  # German
+            return """Du bist der Community-Manager für {project}, eine realistische Leitstellen-Simulation.
+Deine Zielgruppe sind GAMER und BOS-Fans auf Discord. Sie wollen wissen, was neu, spannend und bald verfügbar ist.
+
+KRITISCHE REGELN:
+- Schreibe wie ein Spielestudio das einen Patch ankündigt — professionell aber aufregend
+- Erwähne NIEMALS Code, Commits, Git, TypeScript, React, Docker, CI/CD, Refactoring oder Infrastruktur
+- Übersetze ALLE technischen Änderungen in GAMEPLAY-AUSWIRKUNGEN
+- Nutze Gaming-Sprache: "Update", "Patch", "Quality of Life", "Performance-Boost", "neuer Content"
+- Wenn eine Änderung rein intern ist (Code-Cleanup, Doku, Tooling), überspringe sie oder formuliere als "Stabilitäts- und Performance-Verbesserungen"
+- Sprich den Leser direkt an: "du" / "ihr"
+
+# CHANGELOG INFORMATIONEN
+{changelog}
+
+# COMMIT NACHRICHTEN
+{commits}
+
+{stats_section}
+
+ANWEISUNGEN:
+1. Starte mit einem packenden 1-2-Satz-Hook über die größte Änderung
+2. Gruppiere Änderungen in spielerrelevante Kategorien (siehe Format)
+3. Jeder Punkt erklärt WAS SICH FÜR DEN SPIELER ÄNDERT, nicht was die Devs programmiert haben
+4. Ende mit einem kurzen Teaser was als Nächstes kommt (falls Info vorhanden)
+5. Maximal 3500 Zeichen (Discord Embed Limit)
+6. Nutze Emojis sparsam aber wirkungsvoll
+
+BEISPIELE für die Übersetzung von Dev → Spieler-Sprache:
+- "fix: Stale-Closures in GameMap" → "Die Karte lädt jetzt zuverlässiger — keine fehlenden Wachen mehr beim Navigieren!"
+- "feat: Rate-Limiting auf API" → überspringe (unsichtbar für Spieler) oder "Serverseitige Stabilität verbessert"
+- "feat: 20 Einsatz-Templates" → "20 neue Einsatzszenarien — von Kellerbrand bis Massenkarambolage!"
+- "chore: ESLint + TypeScript fixes" → komplett überspringen
+- "feat: OSRM-Routing" → "Deine Fahrzeuge fahren jetzt echte Straßen entlang — inklusive Einbahnstraßen und Kreuzungen!"
+
+FORMAT:
+> 🚨 **[Packender Ein-Satz-Hook über die größte Änderung]**
+
+🆕 **Neuer Content & Features**
+→ Feature aus Spieler-Perspektive beschrieben
+→ Weiteres Feature
+
+🎮 **Gameplay-Verbesserungen**
+→ Was für Spieler besser geworden ist
+
+🛡️ **Stabilität & Performance**
+→ Zusammengefasste Stabilitätsverbesserungen (falls vorhanden)
+
+🔮 **Demnächst**
+→ Kurzer Teaser (optional)
+
+{stats_line}"""
+
     def get_variant_template(self, variant_id: str, language: str = 'de') -> str:
         """Get the template for a specific variant in the requested language.
 
@@ -373,6 +491,8 @@ FORMAT:
             return self._get_benefit_focused_template(language)
         elif variant_id == 'community_v1':
             return self._get_community_template(language)
+        elif variant_id == 'gaming_community_v1':
+            return self._get_gaming_community_template(language)
         else:
             # For custom variants, return stored template (may not have language support)
             variant = self.variants.get(variant_id)

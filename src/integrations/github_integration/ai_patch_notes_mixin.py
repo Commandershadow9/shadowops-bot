@@ -1077,8 +1077,16 @@ Do NOT invent features that are not tagged [FEATURE]!"""
                 except Exception:
                     pass
 
-                if db_variant_id:
-                    # DB hat genug Daten → bevorzugte Variante nutzen
+                # 1. Config-Preferred-Variant (höchste Prio — Projekt pinnt Variante)
+                patch_config = project_config.get('patch_notes', {}) if project_config else {}
+                config_variant_id = patch_config.get('preferred_variant')
+
+                if config_variant_id and config_variant_id in self.prompt_ab_testing.variants:
+                    variant_id = config_variant_id
+                    selected_variant = self.prompt_ab_testing.variants[variant_id]
+                    self.logger.info(f"📌 Config: Gepinnte Variante '{variant_id}' für {repo_name}")
+                elif db_variant_id:
+                    # 2. DB hat genug Daten → bevorzugte Variante nutzen
                     variant_id = db_variant_id
                     selected_variant = self.prompt_ab_testing.variants.get(variant_id)
                     if not selected_variant:
@@ -1089,7 +1097,7 @@ Do NOT invent features that are not tagged [FEATURE]!"""
                         variant_id = selected_variant.id
                     self.logger.info(f"🧪 Learning-DB: Beste Variante '{variant_id}' für {repo_name}")
                 else:
-                    # Nicht genug DB-Daten → klassisches A/B Testing
+                    # 3. Nicht genug DB-Daten → klassisches A/B Testing
                     selected_variant = self.prompt_ab_testing.select_variant(
                         project=repo_name, strategy='weighted_random'
                     )
