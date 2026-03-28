@@ -340,7 +340,13 @@ class NotificationsMixin:
             return version
 
     def _get_last_version_from_db(self, repo_name: str) -> Optional[str]:
-        """Lade die letzte semantische Version aus der Changelog-DB."""
+        """Lade die letzte semantische Version — Git-Tags zuerst, DB als Fallback."""
+        # 1. Git-Tags als primäre Quelle (zuverlässigste Versionierung)
+        git_version = self._get_last_version_from_git(repo_name)
+        if git_version:
+            return git_version
+
+        # 2. Fallback: Changelog-DB
         try:
             import sqlite3
             from pathlib import Path
@@ -363,6 +369,34 @@ class NotificationsMixin:
 
             # Nur echte SemVer-Versionen (X.Y.Z)
             version = row[0]
+            if re.match(r'^\d+\.\d+\.\d+$', version):
+                return version
+            return None
+        except Exception:
+            return None
+
+    def _get_last_version_from_git(self, repo_name: str) -> Optional[str]:
+        """Lade die letzte Version aus Git-Tags (zuverlässigste Quelle)."""
+        try:
+            import subprocess
+            # Projektpfad aus Config holen
+            project_config = self.bot.config.projects.get(repo_name, {})
+            project_path = project_config.get('path', '')
+            if not project_path:
+                return None
+
+            # Neuesten Semver-Tag holen (z.B. v0.12.0)
+            result = subprocess.run(
+                ['git', 'tag', '-l', 'v*', '--sort=-v:refname'],
+                capture_output=True, text=True, cwd=project_path, timeout=5
+            )
+            if result.returncode != 0 or not result.stdout.strip():
+                return None
+
+            # Ersten Tag nehmen (neueste Version)
+            latest_tag = result.stdout.strip().splitlines()[0]
+            # v0.12.0 → 0.12.0
+            version = latest_tag.lstrip('v')
             if re.match(r'^\d+\.\d+\.\d+$', version):
                 return version
             return None
@@ -530,7 +564,9 @@ class NotificationsMixin:
             color=project_color,
             timestamp=datetime.now(timezone.utc),
         )
-        embed.set_author(name=repo_name.upper())
+        # Projektname hübsch formatieren (mayday_sim → MAYDAY SIM, zerodox → ZERODOX)
+        display_name = repo_name.replace('_', ' ').replace('-', ' ').upper()
+        embed.set_author(name=display_name)
 
         # Description bauen — Discord-only wenn keine Changelog-Page existiert
         is_discord_only = not changelog_link
