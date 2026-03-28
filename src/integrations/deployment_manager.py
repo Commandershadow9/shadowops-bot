@@ -726,6 +726,9 @@ class DeploymentManager:
         except Exception as e:
             self.logger.error(f"❌ Failed to send Discord notification: {e}", exc_info=True)
 
+        # External-Guilds benachrichtigen (Kunden-Discord)
+        await self._forward_deploy_to_external(project_name, embed)
+
     async def _send_deployment_failure(
         self, project_name: str, branch: str, duration: float, result: Dict
     ):
@@ -766,6 +769,9 @@ class DeploymentManager:
         except Exception as e:
             self.logger.error(f"❌ Failed to send Discord notification: {e}", exc_info=True)
 
+        # External-Guilds benachrichtigen (Kunden-Discord)
+        await self._forward_deploy_to_external(project_name, embed)
+
     async def _send_deployment_exception(
         self, project_name: str, error: str, duration: float
     ):
@@ -800,6 +806,48 @@ class DeploymentManager:
             self.logger.debug(f"📢 Sent deployment exception notification for {project_name}")
         except Exception as e:
             self.logger.error(f"❌ Failed to send Discord notification: {e}", exc_info=True)
+
+
+    async def _forward_deploy_to_external(self, project_name: str, embed: discord.Embed):
+        """Deployment-Embed an externe Guilds weiterleiten (Kunden-Discord)."""
+        try:
+            project_config = self.bot.config.projects.get(project_name, {})
+            notifications = project_config.get('external_notifications', [])
+
+            for notif in notifications:
+                if not notif.get('enabled'):
+                    continue
+                if not notif.get('notify_on', {}).get('deployments'):
+                    continue
+
+                channel_id = notif.get('deploy_channel_id')
+                if not channel_id:
+                    continue
+
+                channel = self.bot.get_channel(int(channel_id))
+                if not channel:
+                    continue
+
+                # Embed kopieren (ohne interne Details wie Verlauf/Steps)
+                ext_embed = discord.Embed(
+                    title=embed.title,
+                    description=embed.description,
+                    color=embed.color,
+                    timestamp=embed.timestamp,
+                )
+                # Nur Projekt, Branch, Dauer übernehmen (keine Fehlerdetails/Steps)
+                for field in embed.fields:
+                    if field.name in ("Projekt", "Branch", "Dauer", "Rollback"):
+                        ext_embed.add_field(
+                            name=field.name, value=field.value, inline=field.inline
+                        )
+
+                await channel.send(embed=ext_embed)
+                self.logger.info(
+                    f"📢 Deployment-Status für {project_name} an externen Channel gesendet"
+                )
+        except Exception as e:
+            self.logger.debug(f"External deploy notification: {e}")
 
 
 class DeploymentError(Exception):
