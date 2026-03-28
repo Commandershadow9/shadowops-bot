@@ -393,9 +393,12 @@ INSTRUCTIONS:
 1. Open with an exciting 1-2 sentence hook about the biggest change
 2. Group changes into player-relevant categories (see format)
 3. Each point explains WHAT CHANGED FOR THE PLAYER, not what devs coded
-4. End with a short teaser of what's coming next (if info available)
-5. Keep total under 3500 characters (Discord embed limit)
-6. Use emojis sparingly but effectively
+4. Describe EACH visible feature separately — do NOT merge them! A new loading overlay, a city search, a fly-in animation are THREE separate points
+5. Per feature 2-3 sentences: What is it? How does it feel? Why is it cool?
+6. End with a short teaser of what's coming next (if info available)
+7. MINIMUM 2500 characters, maximum 3500 characters (Discord embed limit) — use the space!
+8. Use emojis sparingly but effectively
+9. Skip empty categories (e.g. no "Stability" section if there are only features)
 
 EXAMPLES of translating dev → player language:
 - "fix: Stale-Closures in GameMap" → "Karte lädt jetzt zuverlässiger — keine fehlenden Wachen mehr nach Stadtnavigation"
@@ -444,9 +447,12 @@ ANWEISUNGEN:
 1. Starte mit einem packenden 1-2-Satz-Hook über die größte Änderung
 2. Gruppiere Änderungen in spielerrelevante Kategorien (siehe Format)
 3. Jeder Punkt erklärt WAS SICH FÜR DEN SPIELER ÄNDERT, nicht was die Devs programmiert haben
-4. Ende mit einem kurzen Teaser was als Nächstes kommt (falls Info vorhanden)
-5. Maximal 3500 Zeichen (Discord Embed Limit)
-6. Nutze Emojis sparsam aber wirkungsvoll
+4. JEDES sichtbare Feature einzeln beschreiben — NICHT zusammenfassen! Ein neues Loading-Overlay, eine Stadtsuche, eine Fly-In-Animation sind DREI separate Punkte
+5. Pro Feature 2-3 Sätze: Was ist es? Wie fühlt es sich an? Warum ist es cool?
+6. Ende mit einem kurzen Teaser was als Nächstes kommt (falls Info vorhanden)
+7. MINDESTENS 2500 Zeichen, maximal 3500 Zeichen (Discord Embed Limit) — nutze den Platz!
+8. Nutze Emojis sparsam aber wirkungsvoll
+9. Leere Kategorien weglassen (z.B. keine "Stabilität"-Sektion wenn es nur Features gibt)
 
 BEISPIELE für die Übersetzung von Dev → Spieler-Sprache:
 - "fix: Stale-Closures in GameMap" → "Die Karte lädt jetzt zuverlässiger — keine fehlenden Wachen mehr beim Navigieren!"

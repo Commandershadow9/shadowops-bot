@@ -1012,17 +1012,25 @@ Do NOT invent features that are not tagged [FEATURE]!"""
                             self.logger.info(f"⚠️ Version {version} not found in CHANGELOG, using commits only")
                     else:
                         # Kein Version-Bump in Commits erkannt.
-                        # CHANGELOG-Content als Kontext nutzen, aber Version NICHT übernehmen
-                        # (sonst bekommen kleine Fix-Batches die letzte Release-Version)
-                        latest = parser.get_latest_version()
-                        if latest:
-                            version_data = parser.get_version_section(latest)
-                            if version_data:
-                                changelog_content = version_data['content']
-                                self.logger.info(
-                                    f"📖 Using latest CHANGELOG.md as context (v{latest}), "
-                                    f"but NOT setting version ({len(changelog_content)} chars)"
-                                )
+                        # [Unreleased]-Sektion bevorzugen (enthält laufende Änderungen)
+                        unreleased = parser.get_unreleased_section()
+                        if unreleased:
+                            changelog_content = unreleased
+                            self.logger.info(
+                                f"📖 Using [Unreleased] CHANGELOG section as context "
+                                f"({len(changelog_content)} chars)"
+                            )
+                        else:
+                            # Fallback: letzte Released-Version
+                            latest = parser.get_latest_version()
+                            if latest:
+                                version_data = parser.get_version_section(latest)
+                                if version_data:
+                                    changelog_content = version_data['content']
+                                    self.logger.info(
+                                        f"📖 Using latest CHANGELOG.md as context (v{latest}), "
+                                        f"but NOT setting version ({len(changelog_content)} chars)"
+                                    )
                         if not changelog_content:
                             self.logger.info("⚠️ No version detected in commits, using commits only")
 
@@ -1113,7 +1121,7 @@ Do NOT invent features that are not tagged [FEATURE]!"""
                 from collections import defaultdict
 
                 # Klassifizierte Commits fuer Trainer-Prompt (mit Typ-Tags)
-                classified_commits_text = self._build_classified_commits_text(commits[:10])
+                classified_commits_text = self._build_classified_commits_text(commits[:25])
                 format_values = defaultdict(str, {
                     'project': repo_name,
                     'changelog': changelog_content or "No CHANGELOG available",

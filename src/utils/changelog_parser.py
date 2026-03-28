@@ -126,6 +126,36 @@ class ChangelogParser:
 
         return subsections
 
+    def get_unreleased_section(self) -> Optional[str]:
+        """Extract the [Unreleased] section from CHANGELOG — enthält alle laufenden Änderungen."""
+        content = self._load_content()
+        if not content:
+            return None
+
+        lines = content.split('\n')
+        start_idx = None
+
+        # [Unreleased] Header finden
+        for idx, line in enumerate(lines):
+            if re.match(r'^##\s+\[?Unreleased\]?', line, re.IGNORECASE):
+                start_idx = idx
+                break
+
+        if start_idx is None:
+            return None
+
+        # Ende der Sektion finden (nächster ## Header)
+        end_idx = len(lines)
+        for idx in range(start_idx + 1, len(lines)):
+            if re.match(r'^##\s+', lines[idx]):
+                end_idx = idx
+                break
+
+        section = '\n'.join(lines[start_idx + 1:end_idx]).strip()
+        # "Geplant"-Sektion entfernen (Zukunftspläne, nicht im Patch)
+        section = re.sub(r'###\s*Geplant\b.*?(?=###|\Z)', '', section, flags=re.DOTALL).strip()
+        return section if section else None
+
     def get_latest_version(self) -> Optional[str]:
         """Get the latest version from CHANGELOG."""
         content = self._load_content()
