@@ -401,23 +401,31 @@ INSTRUCTIONS:
 9. Skip empty categories (e.g. no "Stability" section if there are only features)
 
 EXAMPLES of translating dev → player language:
-- "fix: Stale-Closures in GameMap" → "Karte lädt jetzt zuverlässiger — keine fehlenden Wachen mehr nach Stadtnavigation"
-- "feat: Rate-Limiting auf API" → skip (invisible to players) or "Serverseitige Stabilität verbessert"
-- "feat: 20 Einsatz-Templates" → "20 neue Einsatzszenarien — von Kellerbrand bis Massenkarambolage!"
+- "fix: Stale-Closures in GameMap" → "Map loads more reliably — no more disappearing stations"
+- "feat: Landing Page redesigned" → 🎨 Design rework, NOT a "new feature"!
+- "feat: 20 Einsatz-Templates" → "20 new emergency scenarios — from basement fires to pile-ups!"
 - "chore: ESLint + TypeScript fixes" → skip entirely
 
-FORMAT:
+IMPORTANT — Choose the right category:
+- Only TRULY new functionality goes under "New Content" (e.g. city search, new missions)
+- Visual overhauls (redesign, rework, new layouts) go under "Design & Look"
+- Improved existing features go under "Gameplay Improvements"
+- If the patch is mainly a design rework, "Design & Look" MUST be the FIRST category
+
+FORMAT (choose fitting categories — not all are required):
 > 🚨 **[Exciting one-line hook about the biggest change]**
 
-🆕 **New Content & Features**
-→ Feature described from player perspective
-→ Another feature
+🎨 **Design & Look** (for redesigns, visual overhauls, new UI)
+→ What changed visually and how it feels
 
-🎮 **Gameplay Improvements**
+🆕 **New Content & Features** (only NEW functionality!)
+→ Feature described from player perspective
+
+🎮 **Gameplay Improvements** (existing features improved)
 → What got better for players
 
-🛡️ **Stability & Performance**
-→ Grouped stability improvements (if any)
+🛡️ **Stability & Performance** (only if relevant)
+→ Grouped stability improvements
 
 🔮 **Coming Soon**
 → Brief teaser (optional)
@@ -458,21 +466,30 @@ BEISPIELE für die Übersetzung von Dev → Spieler-Sprache:
 - "fix: Stale-Closures in GameMap" → "Die Karte lädt jetzt zuverlässiger — keine fehlenden Wachen mehr beim Navigieren!"
 - "feat: Rate-Limiting auf API" → überspringe (unsichtbar für Spieler) oder "Serverseitige Stabilität verbessert"
 - "feat: 20 Einsatz-Templates" → "20 neue Einsatzszenarien — von Kellerbrand bis Massenkarambolage!"
+- "feat: Landing Page komplett überarbeitet" → 🎨 Design-Rework, NICHT als "neues Feature" verkaufen!
+- "feat: Dashboard Redesign" → "Das Dashboard wurde komplett überarbeitet — klarere Übersicht, bessere Lesbarkeit"
 - "chore: ESLint + TypeScript fixes" → komplett überspringen
-- "feat: OSRM-Routing" → "Deine Fahrzeuge fahren jetzt echte Straßen entlang — inklusive Einbahnstraßen und Kreuzungen!"
 
-FORMAT:
+WICHTIG — Richtige Kategorie wählen:
+- Nur WIRKLICH neue Funktionalität gehört unter "Neuer Content" (z.B. Stadtsuche, neue Einsätze)
+- Visuelle Überarbeitungen (Redesign, Rework, neue Layouts) gehören unter "Design & Look"
+- Verbesserte bestehende Features gehören unter "Gameplay-Verbesserungen"
+- Wenn der Patch hauptsächlich ein Design-Rework ist, MUSS "Design & Look" die ERSTE Kategorie sein
+
+FORMAT (wähle die passenden Kategorien — nicht alle sind Pflicht):
 > 🚨 **[Packender Ein-Satz-Hook über die größte Änderung]**
 
-🆕 **Neuer Content & Features**
-→ Feature aus Spieler-Perspektive beschrieben
-→ Weiteres Feature
+🎨 **Design & Look** (für Redesigns, visuelle Überarbeitungen, neues UI)
+→ Was sich visuell geändert hat und wie es sich anfühlt
 
-🎮 **Gameplay-Verbesserungen**
+🆕 **Neuer Content & Features** (nur NEUE Funktionalität!)
+→ Feature aus Spieler-Perspektive beschrieben
+
+🎮 **Gameplay-Verbesserungen** (bestehende Features verbessert)
 → Was für Spieler besser geworden ist
 
-🛡️ **Stabilität & Performance**
-→ Zusammengefasste Stabilitätsverbesserungen (falls vorhanden)
+🛡️ **Stabilität & Performance** (nur wenn relevant)
+→ Zusammengefasste Stabilitätsverbesserungen
 
 🔮 **Demnächst**
 → Kurzer Teaser (optional)

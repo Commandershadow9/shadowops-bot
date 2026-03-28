@@ -162,6 +162,10 @@ class NotificationsMixin:
             elif isinstance(ai_result, str):
                 ai_result = sanitizer.sanitize(ai_result)
 
+        # === UMLAUT-NORMALISIERUNG (AI gibt manchmal ae/oe/ue statt ä/ö/ü) ===
+        if language == 'de' and ai_result:
+            ai_result = self._normalize_german_umlauts(ai_result)
+
         # === HALLUZINATIONS-VALIDIERUNG ===
         validation = {'valid': True, 'warnings': [], 'fixes_applied': []}
         if isinstance(ai_result, dict):
@@ -1138,3 +1142,93 @@ class NotificationsMixin:
 
             except Exception as e:
                 self.logger.error(f"❌ Failed to send external git notification for {repo_name}: {e}")
+
+    @staticmethod
+    def _normalize_german_umlauts(data):
+        """Normalisiere AI-Output: ae→ä, oe→ö, ue→ü, ss→ß (kontextsensitiv).
+
+        AI-Engines geben manchmal ASCII-safe Text statt Umlaute zurück.
+        Ersetzt nur in typisch deutschen Wörtern, nicht in Fremdwörtern.
+        """
+        import re
+
+        # Häufige Wörter mit falschem Umlaut → korrekte Form
+        # Nur sichere Ersetzungen (keine Fremdwörter wie "Blue", "Queue")
+        SAFE_REPLACEMENTS = {
+            # ue → ü
+            'fuer': 'für', 'Fuer': 'Für', 'ueber': 'über', 'Ueber': 'Über',
+            'ueberarbeitet': 'überarbeitet', 'Ueberarbeitet': 'Überarbeitet',
+            'Ueberblick': 'Überblick', 'ueberblick': 'überblick',
+            'Uebergaeng': 'Übergäng', 'uebergaeng': 'übergäng',
+            'Uebergang': 'Übergang', 'uebergang': 'übergang',
+            'gruess': 'grüß', 'Gruess': 'Grüß',
+            'spuerbar': 'spürbar', 'fluessig': 'flüssig',
+            'Einfuehrung': 'Einführung', 'einfuehrung': 'einführung',
+            'verfuegbar': 'verfügbar', 'Verfuegbar': 'Verfügbar',
+            'unterstuetz': 'unterstütz', 'Unterstuetz': 'Unterstütz',
+            'zuverlaessig': 'zuverlässig', 'Zuverlaessig': 'Zuverlässig',
+            'Ausfuehrlich': 'Ausführlich', 'ausfuehrlich': 'ausführlich',
+            'natuerlich': 'natürlich', 'Natuerlich': 'Natürlich',
+            'genuegt': 'genügt',
+            # ae → ä
+            'Aenderung': 'Änderung', 'aenderung': 'änderung',
+            'Aenderungen': 'Änderungen', 'aenderungen': 'änderungen',
+            'Uebersicht': 'Übersicht', 'uebersicht': 'übersicht',
+            'naechst': 'nächst', 'Naechst': 'Nächst',
+            'staerker': 'stärker', 'Staerker': 'Stärker',
+            'waehrend': 'während', 'Waehrend': 'Während',
+            'spaeter': 'später', 'Spaeter': 'Später',
+            'haeufig': 'häufig', 'Haeufig': 'Häufig',
+            'schaerfer': 'schärfer', 'faehig': 'fähig',
+            'vollstaendig': 'vollständig', 'Vollstaendig': 'Vollständig',
+            'Atmosphaere': 'Atmosphäre', 'atmosphaere': 'atmosphäre',
+            'Stabilitaet': 'Stabilität', 'stabilitaet': 'stabilität',
+            'Qualitaet': 'Qualität', 'qualitaet': 'qualität',
+            # oe → ö
+            'groesser': 'größer', 'Groesser': 'Größer',
+            'groesste': 'größte', 'Groesste': 'Größte',
+            'koennen': 'können', 'Koennen': 'Können',
+            'koennt': 'könnt', 'moechte': 'möchte',
+            'moeglich': 'möglich', 'Moeglich': 'Möglich',
+            'geloest': 'gelöst', 'Geloest': 'Gelöst',
+            'hoechst': 'höchst', 'Hoechst': 'Höchst',
+            'Loeschung': 'Löschung', 'loeschung': 'löschung',
+            # ss → ß (kontextsensitiv)
+            'grosse': 'große', 'Grosse': 'Große',
+            'grosser': 'großer', 'grosses': 'großes',
+            'schliessen': 'schließen', 'Schliessen': 'Schließen',
+            'Strasse': 'Straße', 'strasse': 'straße',
+            'Strassen': 'Straßen', 'strassen': 'straßen',
+            'heisst': 'heißt', 'Heisst': 'Heißt',
+            'weiss': 'weiß', 'Weiss': 'Weiß',
+            'draussen': 'draußen', 'Draussen': 'Draußen',
+            'schliesslich': 'schließlich',
+        }
+
+        def _replace_in_text(text: str) -> str:
+            if not isinstance(text, str):
+                return text
+            for wrong, correct in SAFE_REPLACEMENTS.items():
+                # Wortgrenzen-Match um Teilwörter korrekt zu ersetzen
+                text = re.sub(rf'\b{re.escape(wrong)}', correct, text)
+            return text
+
+        if isinstance(data, str):
+            return _replace_in_text(data)
+        elif isinstance(data, dict):
+            result = {}
+            for key, value in data.items():
+                if isinstance(value, str):
+                    result[key] = _replace_in_text(value)
+                elif isinstance(value, list):
+                    result[key] = [
+                        _replace_in_text(item) if isinstance(item, str)
+                        else (NotificationsMixin._normalize_german_umlauts(item) if isinstance(item, dict) else item)
+                        for item in value
+                    ]
+                elif isinstance(value, dict):
+                    result[key] = NotificationsMixin._normalize_german_umlauts(value)
+                else:
+                    result[key] = value
+            return result
+        return data
