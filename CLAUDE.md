@@ -338,7 +338,7 @@
 - **daily_release_hour: 22** — Uhrzeit für täglichen Release (Default: 22:00)
 - **daily_min_commits: 3** — Minimum Commits für täglichen Release
 - **Fallback:** Sonntag 20:00 wenn daily nicht getriggert hat (weekly cron bleibt aktiv)
-- **Emergency:** ≥30 Commits löst Sofort-Release aus (erhöht von 20 für daily-Projekte)
+- **Emergency:** Globaler Threshold bleibt 20 Commits (Batcher-Default). Bei daily-Projekten irrelevant — der Daily-Cron um 22:00 greift bei ≥3 Commits
 - **Git-Tag-Aware:** Version wird aus Git-Tags im Commit-Batch erkannt (Priorität 1 in _resolve_version)
 - **gaming_community_v2:** Story-Telling Template mit konkretem Spielgefühl, → Pfeil-Format, ausführlichen Feature-Beschreibungen
 - **Projekte mit daily Mode:** mayday_sim (22:00 Uhr)

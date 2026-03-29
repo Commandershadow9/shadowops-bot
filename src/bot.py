@@ -1452,6 +1452,7 @@ class ShadowOpsBot(commands.Bot):
             if not batcher or not gh:
                 return
 
+            # Lokalzeit (nicht UTC) — daily_release_hour ist in Serverzeit konfiguriert
             now = datetime.now()
 
             # Nur Projekte mit release_mode: daily und passender Stunde
