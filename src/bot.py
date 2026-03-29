@@ -1382,6 +1382,11 @@ class ShadowOpsBot(commands.Bot):
                 return
 
             releasable = batcher.get_cron_releasable_projects()
+            # Daily-Projekte beim Weekly-Cron ueberspringen (haben eigenen Cron)
+            releasable = [
+                p for p in releasable
+                if self.config.projects.get(p, {}).get('patch_notes', {}).get('release_mode') != 'daily'
+            ]
             if not releasable:
                 self.logger.info("📅 Wöchentlicher Patch-Notes-Check: Keine Projekte mit genug Commits")
                 return
@@ -1449,6 +1454,7 @@ class ShadowOpsBot(commands.Bot):
 
             now = datetime.now()
 
+            # Nur Projekte mit release_mode: daily und passender Stunde
             for project_name, project_config in self.config.projects.items():
                 if not isinstance(project_config, dict):
                     continue
@@ -1460,13 +1466,10 @@ class ShadowOpsBot(commands.Bot):
                 if now.hour != daily_hour:
                     continue
 
+                # Batcher-Methode nutzen fuer Min-Commits-Check
                 daily_min = pn_config.get('daily_min_commits', 3)
-                if not batcher.has_pending(project_name):
-                    continue
-
-                pending = batcher.pending.get(project_name, {})
-                commit_count = len(pending.get('commits', []))
-                if commit_count < daily_min:
+                releasable = batcher.get_daily_releasable_projects(daily_min_commits=daily_min)
+                if project_name not in releasable:
                     continue
 
                 commits = batcher.release_batch(project_name)

@@ -178,7 +178,7 @@ class NotificationsMixin:
                     self.logger.info(f"🔧 Patch Notes Auto-Fix ({repo_name}): {f}")
 
         # === PIPELINE-METRIKEN ===
-        version = self._resolve_version(ai_result, commits, repo_name)
+        version, version_source = self._resolve_version_with_source(ai_result, commits, repo_name)
         metrics = {
             'project': repo_name,
             'version': version,
@@ -191,9 +191,7 @@ class NotificationsMixin:
             'pr_bodies_found': sum(1 for c in commits if c.get('pr_body')),
             'hallucinations_caught': len(validation.get('fixes_applied', [])),
             'warnings': len(validation.get('warnings', [])),
-            'version_source': 'git_tag' if self._get_version_from_commit_tags(commits, repo_name) else
-                              ('explicit' if self._extract_version_from_commits(commits) else
-                              ('semver' if self._calculate_semver(commits, repo_name) else 'fallback')),
+            'version_source': version_source,
         }
         for commit in commits:
             tag, _ = self._classify_commit(commit)
@@ -237,29 +235,38 @@ class NotificationsMixin:
 
     def _resolve_version(self, ai_result, commits: list, repo_name: str = "") -> str:
         """Bestimme Version: Git-Tags > Commit-Text > SemVer > AI > Fallback. NIE None."""
+        version, _ = self._resolve_version_with_source(ai_result, commits, repo_name)
+        return version
+
+    def _resolve_version_with_source(self, ai_result, commits: list, repo_name: str = "") -> tuple:
+        """Bestimme Version + Quelle. Kein doppelter subprocess-Aufruf fuer Metriken.
+
+        Returns:
+            (version: str, source: str) — source ist git_tag/explicit/semver/ai/fallback
+        """
         # 1. Git-Tags auf Commits im Batch (zuverlaessigste Quelle)
         tag_v = self._get_version_from_commit_tags(commits, repo_name)
         if tag_v:
-            return tag_v
+            return (tag_v, 'git_tag')
 
         # 2. Aus Commits (expliziter Version-Tag, z.B. "feat: Release v2.1.0")
         v = self._extract_version_from_commits(commits)
         if v:
-            return v
+            return (v, 'explicit')
 
         # 3. Semantic Versioning: Letzte Version + Commit-Typen → naechste Version
         sem_v = self._calculate_semver(commits, repo_name)
         if sem_v:
-            return sem_v
+            return (sem_v, 'semver')
 
         # 4. Aus AI-Ergebnis (nur echte Versionen, NICHT von AI erfundene Major-Bumps)
         if isinstance(ai_result, dict):
             ai_v = ai_result.get('version')
             if ai_v and ai_v != 'patch' and not ai_v.startswith('0.0.'):
-                return ai_v
+                return (ai_v, 'ai')
 
         # 5. Auto-Version (Fallback, IMMER)
-        return f"patch.{datetime.now(timezone.utc).strftime('%Y.%m.%d')}"
+        return (f"patch.{datetime.now(timezone.utc).strftime('%Y.%m.%d')}", 'fallback')
 
     def _calculate_semver(self, commits: list, repo_name: str) -> Optional[str]:
         """
@@ -436,8 +443,11 @@ class NotificationsMixin:
                 return None
 
             # Alle Semver-Tags mit ihren Commits holen
+            # %(*objectname:short) = Commit-SHA bei annotated Tags (leer bei lightweight)
+            # %(objectname:short) = Tag-Object-SHA (annotated) oder Commit-SHA (lightweight)
             result = subprocess.run(
-                ['git', 'tag', '-l', 'v*', '--format=%(refname:short) %(objectname:short)'],
+                ['git', 'tag', '-l', 'v*',
+                 '--format=%(refname:short) %(*objectname:short) %(objectname:short)'],
                 capture_output=True, text=True, cwd=project_path, timeout=5
             )
             if result.returncode != 0 or not result.stdout.strip():
@@ -446,9 +456,12 @@ class NotificationsMixin:
             matched_tags = []
             for line in result.stdout.strip().splitlines():
                 parts = line.split()
-                if len(parts) != 2:
+                if len(parts) < 2:
                     continue
-                tag_name, tag_sha = parts
+                tag_name = parts[0]
+                # Annotated: parts = [name, deref_commit_sha, tag_object_sha]
+                # Lightweight: parts = [name, commit_sha] (kein deref)
+                tag_sha = parts[1] if len(parts) == 3 and parts[1] else parts[-1]
                 for commit_sha in commit_shas:
                     if commit_sha.startswith(tag_sha) or tag_sha.startswith(commit_sha[:7]):
                         version = tag_name.lstrip('v')
