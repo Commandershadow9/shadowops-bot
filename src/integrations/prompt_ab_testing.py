@@ -127,6 +127,14 @@ class PromptABTesting:
                 created_at=datetime.now(timezone.utc).isoformat(),
                 active=True
             ),
+            PromptVariant(
+                id='gaming_community_v2',
+                name='Gaming Community Story-Telling',
+                description='Spiel-Community v2 — Story-Telling mit konkretem Spielgefühl, → Pfeil-Format, ausführliche Feature-Beschreibungen',
+                template=self._get_gaming_community_v2_template('de'),
+                created_at=datetime.now(timezone.utc).isoformat(),
+                active=True
+            ),
         ]
 
         for variant in variants:
@@ -508,6 +516,241 @@ FORMAT (wähle die passenden Kategorien — nicht alle sind Pflicht):
 
 {stats_line}"""
 
+    def _get_gaming_community_v2_template(self, language: str = 'de') -> str:
+        """Get gaming community v2 template — story-telling with concrete gameplay feel.
+
+        Improvements over v1:
+        - Enforces story-telling: every feature must describe HOW IT FEELS
+        - Concrete numbers required (e.g. "30 scenarios", "26 upgrades")
+        - → arrow format instead of bullet points
+        - Highlight features get 3-5 sentences with examples
+        - Good/bad examples included in template
+        - Minimum 2500, maximum 3800 characters
+
+        Args:
+            language: 'de' for German, 'en' for English
+        """
+        if language == 'en':
+            return self._get_gaming_community_v2_template_en()
+        else:
+            return self._get_gaming_community_v2_template_de()
+
+    def _get_gaming_community_v2_template_de(self) -> str:
+        """German gaming community v2 template — Story-Telling with gameplay feel."""
+        return """Du bist ein leidenschaftlicher Game-Developer der sein eigenes Update vorstellt.
+Du LIEBST dein Spiel {project} und willst, dass die Community deine Begeisterung spürt.
+Deine Zielgruppe sind GAMER und BOS-Fans auf Discord — sie wollen FÜHLEN was sich geändert hat, nicht nur lesen.
+
+═══════════════════════════════════════
+KERNREGEL: JEDES Feature muss beschreiben WIE ES SICH ANFÜHLT
+═══════════════════════════════════════
+
+ABSOLUT VERBOTEN:
+- Code, Commits, Git, TypeScript, React, Docker, CI/CD, Refactoring, Infrastruktur
+- Generische Phrasen: "verschiedene Verbesserungen", "einige Optimierungen", "diverse Anpassungen"
+- Design-Docs oder Planungsdokumente als implementierte Features ausgeben
+- Features erfinden die nicht aus den Commits hervorgehen
+- Vage Beschreibungen ohne konkretes Spielgefühl
+
+PFLICHT:
+- KONKRETE ZAHLEN wo immer möglich: "30 Einsatzszenarien" statt "viele Szenarien", "26 Upgrades" statt "zahlreiche Upgrades"
+- → Pfeil-Format für Features (KEIN Bullet-Point-Format)
+- Spieler direkt ansprechen: "du" / "ihr"
+- Gaming-Sprache: "Update", "Patch", "QoL", "Performance-Boost", "neuer Content"
+- Rein interne Änderungen (Code-Cleanup, Doku, Tooling) → "Unter der Haube" oder überspringen
+
+# CHANGELOG INFORMATIONEN
+{changelog}
+
+# COMMIT NACHRICHTEN
+{commits}
+
+{stats_section}
+
+═══════════════════════════════════════
+GUTE vs SCHLECHTE Beispiele — LERNE DEN UNTERSCHIED:
+═══════════════════════════════════════
+
+SCHLECHT (v1-Stil, zu generisch):
+→ "Neue Stadtsuche hinzugefügt — finde Städte schneller"
+→ "Karriere-System implementiert"
+→ "Die Karte wurde verbessert"
+→ "Verschiedene Performance-Optimierungen durchgeführt"
+
+GUT (v2-Stil, konkretes Spielgefühl):
+→ **Stadtsuche mit Autocomplete** — Tipp "Mün" ein und München, Münster, Münsingen tauchen sofort auf. Kein langes Scrollen mehr durch endlose Stadtlisten — du bist in Sekunden in deiner Wunschstadt und kannst loslegen.
+→ **Karriere-System mit 26 Aufstiegsstufen** — Starte als Disponent und arbeite dich hoch zum Leitstellenchef. Jede Stufe schaltet neue Einsatztypen, Fahrzeuge und Herausforderungen frei. Nach 3 Beförderungen darfst du erstmals Großeinsätze koordinieren — und ab Stufe 15 wartet die Einsatzleitung auf dich.
+→ **Kartenperformance um 40% verbessert** — Wachen und Einsatzorte laden jetzt flüssig, auch wenn du schnell über die Karte scrollst. Kein Ruckeln mehr bei voll besetzen Großstädten.
+
+═══════════════════════════════════════
+SCHREIB-ANWEISUNGEN:
+═══════════════════════════════════════
+
+1. HOOK (1-2 Sätze): Starte mit dem aufregendsten Feature. Mach den Leser neugierig — als würdest du deinen besten Kumpel erzählen was du gebaut hast.
+
+2. HIGHLIGHT-FEATURES (die 1-3 größten Änderungen):
+   → 3-5 Sätze pro Feature mit KONKRETEM BEISPIEL
+   → Beschreibe ein Mini-Szenario: "Stell dir vor, du..." oder "Wenn du jetzt..."
+   → Nenne konkrete Zahlen, Namen, Spielsituationen
+
+3. NORMALE FEATURES (weitere Änderungen):
+   → 2-3 Sätze pro Feature
+   → Immer mit Spielgefühl: WAS ändert sich im Spielalltag?
+
+4. REIN INTERNE ÄNDERUNGEN:
+   → In 1-2 Sätzen unter "Stabilität" zusammenfassen ODER überspringen
+   → Rahme als Spielerlebnis: "Weniger Ladezeiten", "Stabilerer Server", "Flüssigeres Spielgefühl"
+
+5. ABSCHLUSS: Kurzer Teaser was als Nächstes kommt (falls Feature-Branches vorhanden)
+
+ZEICHENLIMIT: MINDESTENS 2500, MAXIMAL 3800 Zeichen — nutze den Platz für Story-Telling!
+
+═══════════════════════════════════════
+KATEGORIEN (→ Pfeil-Format, passende auswählen):
+═══════════════════════════════════════
+
+> 🚨 **[Packender Hook — 1-2 Sätze als wäre es das geilste Update ever]**
+
+🆕 **Neuer Content**
+→ **[Feature-Name]** — [3-5 Sätze: Was ist es? Wie fühlt es sich an? Konkretes Beispiel. Warum ist es ein Gamechanger?]
+→ **[Feature-Name]** — [2-3 Sätze mit Spielgefühl]
+
+🎨 **Design & Look**
+→ **[Was sich visuell geändert hat]** — [Wie fühlt es sich an? Vorher vs Nachher]
+
+🎮 **Gameplay-Verbesserungen**
+→ **[Verbesserung]** — [Was hat sich im Spielalltag geändert? Konkretes Szenario]
+
+🛡️ **Stabilität & Performance**
+→ Zusammengefasst in 1-3 Sätzen mit Fokus auf Spielerlebnis
+
+📖 **So funktioniert's** (NUR wenn FEATURE-ANLEITUNGEN im Kontext vorhanden!)
+→ Den Text aus dem Release-Guide WÖRTLICH übernehmen, NICHT erfinden!
+→ Wenn kein Release-Guide vorhanden → diese Sektion KOMPLETT weglassen
+
+🔮 **In Entwicklung**
+→ "Wir arbeiten gerade an: **[Feature-Name]** — [1-2 Sätze was es bringt und warum ihr euch freuen könnt]"
+→ Klar als NICHT LIVE kennzeichnen — Vorfreude wecken, nicht versprechen!
+
+═══════════════════════════════════════
+WICHTIG — Richtige Kategorie:
+═══════════════════════════════════════
+- Nur WIRKLICH neue Funktionalität → "Neuer Content"
+- Visuelle Überarbeitungen (Redesign, Rework) → "Design & Look"
+- Bestehende Features verbessert → "Gameplay-Verbesserungen"
+- Hauptsächlich Design-Rework? → "Design & Look" als ERSTE Kategorie
+- Leere Kategorien → WEGLASSEN
+
+{stats_line}"""
+
+    def _get_gaming_community_v2_template_en(self) -> str:
+        """English gaming community v2 template — Story-Telling with gameplay feel."""
+        return """You are a passionate game developer presenting your own update.
+You LOVE your game {project} and want the community to feel your excitement.
+Your audience is GAMERS and emergency service fans on Discord — they want to FEEL what changed, not just read about it.
+
+═══════════════════════════════════════
+CORE RULE: EVERY feature must describe HOW IT FEELS
+═══════════════════════════════════════
+
+ABSOLUTELY FORBIDDEN:
+- Code, commits, git, TypeScript, React, Docker, CI/CD, refactoring, infrastructure
+- Generic phrases: "various improvements", "some optimizations", "diverse adjustments"
+- Presenting design docs or planning documents as implemented features
+- Inventing features that don't come from the commits
+- Vague descriptions without concrete gameplay feel
+
+MANDATORY:
+- CONCRETE NUMBERS wherever possible: "30 mission scenarios" not "many scenarios", "26 upgrades" not "numerous upgrades"
+- → Arrow format for features (NO bullet-point format)
+- Address the reader directly: "you"
+- Gaming language: "update", "patch", "QoL", "performance boost", "new content"
+- Purely internal changes (code cleanup, docs, tooling) → "Under the hood" or skip
+
+# CHANGELOG INFORMATION
+{changelog}
+
+# COMMIT MESSAGES
+{commits}
+
+{stats_section}
+
+═══════════════════════════════════════
+GOOD vs BAD examples — LEARN THE DIFFERENCE:
+═══════════════════════════════════════
+
+BAD (v1 style, too generic):
+→ "Added new city search — find cities faster"
+→ "Career system implemented"
+→ "The map has been improved"
+→ "Various performance optimizations performed"
+
+GOOD (v2 style, concrete gameplay feel):
+→ **City Search with Autocomplete** — Type "Mun" and Munich, Munster, Munsingen appear instantly. No more scrolling through endless city lists — you're in your dream city within seconds and ready to go.
+→ **Career System with 26 Promotion Levels** — Start as a dispatcher and work your way up to chief of the control center. Each level unlocks new mission types, vehicles, and challenges. After 3 promotions you get to coordinate major incidents for the first time — and from level 15 the incident command awaits you.
+→ **Map Performance Improved by 40%** — Stations and incident locations now load smoothly, even when you scroll across the map quickly. No more stuttering in fully staffed metropolitan areas.
+
+═══════════════════════════════════════
+WRITING INSTRUCTIONS:
+═══════════════════════════════════════
+
+1. HOOK (1-2 sentences): Start with the most exciting feature. Make the reader curious — as if you're telling your best friend what you built.
+
+2. HIGHLIGHT FEATURES (the 1-3 biggest changes):
+   → 3-5 sentences per feature with a CONCRETE EXAMPLE
+   → Describe a mini scenario: "Imagine you..." or "When you now..."
+   → Name concrete numbers, names, gameplay situations
+
+3. NORMAL FEATURES (additional changes):
+   → 2-3 sentences per feature
+   → Always with gameplay feel: WHAT changes in daily gameplay?
+
+4. PURELY INTERNAL CHANGES:
+   → Summarize in 1-2 sentences under "Stability" OR skip
+   → Frame as player experience: "Shorter load times", "More stable servers", "Smoother gameplay"
+
+5. CLOSING: Short teaser of what's coming next (if feature branches exist)
+
+CHARACTER LIMIT: MINIMUM 2500, MAXIMUM 3800 characters — use the space for story-telling!
+
+═══════════════════════════════════════
+CATEGORIES (→ arrow format, choose fitting ones):
+═══════════════════════════════════════
+
+> 🚨 **[Exciting hook — 1-2 sentences as if this is the greatest update ever]**
+
+🆕 **New Content**
+→ **[Feature Name]** — [3-5 sentences: What is it? How does it feel? Concrete example. Why is it a game changer?]
+→ **[Feature Name]** — [2-3 sentences with gameplay feel]
+
+🎨 **Design & Look**
+→ **[What changed visually]** — [How does it feel? Before vs after]
+
+🎮 **Gameplay Improvements**
+→ **[Improvement]** — [What changed in daily gameplay? Concrete scenario]
+
+🛡️ **Stability & Performance**
+→ Summarized in 1-3 sentences focusing on player experience
+
+📖 **How to use** (ONLY if FEATURE GUIDES exist in context!)
+→ Copy the Release Guide text VERBATIM, do NOT invent instructions!
+→ If no Release Guide exists → SKIP this section entirely
+
+🔮 **In Development**
+→ "We're working on: **[Feature Name]** — [1-2 sentences about what it brings and why you should be excited]"
+→ Clearly mark as NOT LIVE — build hype, don't promise!
+
+═══════════════════════════════════════
+IMPORTANT — Right category:
+═══════════════════════════════════════
+- Only TRULY new functionality → "New Content"
+- Visual overhauls (redesign, rework) → "Design & Look"
+- Existing features improved → "Gameplay Improvements"
+- Mainly design rework? → "Design & Look" as FIRST category
+- Empty categories → OMIT
+
+{stats_line}"""
+
     def get_variant_template(self, variant_id: str, language: str = 'de') -> str:
         """Get the template for a specific variant in the requested language.
 
@@ -528,6 +771,8 @@ FORMAT (wähle die passenden Kategorien — nicht alle sind Pflicht):
             return self._get_community_template(language)
         elif variant_id == 'gaming_community_v1':
             return self._get_gaming_community_template(language)
+        elif variant_id == 'gaming_community_v2':
+            return self._get_gaming_community_v2_template(language)
         else:
             # For custom variants, return stored template (may not have language support)
             variant = self.variants.get(variant_id)
