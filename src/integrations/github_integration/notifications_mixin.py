@@ -191,8 +191,9 @@ class NotificationsMixin:
             'pr_bodies_found': sum(1 for c in commits if c.get('pr_body')),
             'hallucinations_caught': len(validation.get('fixes_applied', [])),
             'warnings': len(validation.get('warnings', [])),
-            'version_source': 'explicit' if self._extract_version_from_commits(commits) else
-                              ('semver' if self._calculate_semver(commits, repo_name) else 'fallback'),
+            'version_source': 'git_tag' if self._get_version_from_commit_tags(commits, repo_name) else
+                              ('explicit' if self._extract_version_from_commits(commits) else
+                              ('semver' if self._calculate_semver(commits, repo_name) else 'fallback')),
         }
         for commit in commits:
             tag, _ = self._classify_commit(commit)
@@ -235,24 +236,29 @@ class NotificationsMixin:
     # ── Unified Embed + Version + Web-Export (v5) ──────────────────────
 
     def _resolve_version(self, ai_result, commits: list, repo_name: str = "") -> str:
-        """Bestimme Version: Commits > SemVer-Berechnung > AI > Auto-Version. NIE None."""
-        # 1. Aus Commits (expliziter Version-Tag, z.B. "feat: Release v2.1.0")
+        """Bestimme Version: Git-Tags > Commit-Text > SemVer > AI > Fallback. NIE None."""
+        # 1. Git-Tags auf Commits im Batch (zuverlaessigste Quelle)
+        tag_v = self._get_version_from_commit_tags(commits, repo_name)
+        if tag_v:
+            return tag_v
+
+        # 2. Aus Commits (expliziter Version-Tag, z.B. "feat: Release v2.1.0")
         v = self._extract_version_from_commits(commits)
         if v:
             return v
 
-        # 2. Semantic Versioning: Letzte Version + Commit-Typen → naechste Version
+        # 3. Semantic Versioning: Letzte Version + Commit-Typen → naechste Version
         sem_v = self._calculate_semver(commits, repo_name)
         if sem_v:
             return sem_v
 
-        # 3. Aus AI-Ergebnis (nur echte Versionen, NICHT von AI erfundene Major-Bumps)
+        # 4. Aus AI-Ergebnis (nur echte Versionen, NICHT von AI erfundene Major-Bumps)
         if isinstance(ai_result, dict):
             ai_v = ai_result.get('version')
             if ai_v and ai_v != 'patch' and not ai_v.startswith('0.0.'):
                 return ai_v
 
-        # 4. Auto-Version (Fallback, IMMER)
+        # 5. Auto-Version (Fallback, IMMER)
         return f"patch.{datetime.now(timezone.utc).strftime('%Y.%m.%d')}"
 
     def _calculate_semver(self, commits: list, repo_name: str) -> Optional[str]:
@@ -405,6 +411,58 @@ class NotificationsMixin:
                 return version
             return None
         except Exception:
+            return None
+
+    def _get_version_from_commit_tags(self, commits: list, repo_name: str) -> Optional[str]:
+        """Suche Git-Tags auf den Commits im aktuellen Batch.
+
+        Wenn ein Commit exakt auf einem Tag liegt (z.B. v0.15.0),
+        nutze diesen Tag als Version statt Semver zu berechnen.
+        """
+        try:
+            import subprocess
+            project_config = self.bot.config.projects.get(repo_name, {})
+            project_path = project_config.get('path', '')
+            if not project_path:
+                return None
+
+            commit_shas = set()
+            for commit in commits:
+                sha = commit.get('id', commit.get('sha', ''))
+                if sha:
+                    commit_shas.add(sha)
+
+            if not commit_shas:
+                return None
+
+            # Alle Semver-Tags mit ihren Commits holen
+            result = subprocess.run(
+                ['git', 'tag', '-l', 'v*', '--format=%(refname:short) %(objectname:short)'],
+                capture_output=True, text=True, cwd=project_path, timeout=5
+            )
+            if result.returncode != 0 or not result.stdout.strip():
+                return None
+
+            matched_tags = []
+            for line in result.stdout.strip().splitlines():
+                parts = line.split()
+                if len(parts) != 2:
+                    continue
+                tag_name, tag_sha = parts
+                for commit_sha in commit_shas:
+                    if commit_sha.startswith(tag_sha) or tag_sha.startswith(commit_sha[:7]):
+                        version = tag_name.lstrip('v')
+                        if re.match(r'^\d+\.\d+\.\d+$', version):
+                            matched_tags.append(version)
+
+            if not matched_tags:
+                return None
+
+            matched_tags.sort(key=lambda v: [int(x) for x in v.split('.')], reverse=True)
+            self.logger.info(f"🏷️ Git-Tag im Batch gefunden: v{matched_tags[0]} ({repo_name})")
+            return matched_tags[0]
+        except Exception as e:
+            self.logger.debug(f"Git-Tag-Suche fehlgeschlagen: {e}")
             return None
 
     def _resolve_title(self, ai_result, version: str) -> str:
