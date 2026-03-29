@@ -333,6 +333,16 @@
 - **Projekte mit `changelog_url`:** Kurzformat + "Alle Details" Web-Link (unveraendert)
 - **Betrifft:** MayDay Sim (Discord-only), alle zukuenftigen Projekte ohne Web-Changelog
 
+### Täglicher Release-Mode (seit 2026-03-29)
+- **release_mode: daily** — Täglicher Release um konfigurierbare Uhrzeit statt nur wöchentlichem Cron
+- **daily_release_hour: 22** — Uhrzeit für täglichen Release (Default: 22:00)
+- **daily_min_commits: 3** — Minimum Commits für täglichen Release
+- **Fallback:** Sonntag 20:00 wenn daily nicht getriggert hat (weekly cron bleibt aktiv)
+- **Emergency:** ≥30 Commits löst Sofort-Release aus (erhöht von 20 für daily-Projekte)
+- **Git-Tag-Aware:** Version wird aus Git-Tags im Commit-Batch erkannt (Priorität 1 in _resolve_version)
+- **gaming_community_v2:** Story-Telling Template mit konkretem Spielgefühl, → Pfeil-Format, ausführlichen Feature-Beschreibungen
+- **Projekte mit daily Mode:** mayday_sim (22:00 Uhr)
+
 ### Externes Mini-Dashboard (seit 2026-03-27)
 - **Feature:** Projekte mit `external_notifications` bekommen ein eigenes Status-Embed auf ihrem Discord-Server
 - **Aktualisierung:** Alle 5 Minuten (Edit statt neue Nachricht), Message-ID persistiert in state.json
