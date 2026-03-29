@@ -156,6 +156,15 @@ class PatchNotesBatcher:
                 releasable.append(project)
         return releasable
 
+    def get_daily_releasable_projects(self, daily_min_commits: int = 3) -> List[str]:
+        """Projekte die beim täglichen Release freigegeben werden sollen."""
+        releasable = []
+        for project, batch in self.pending.items():
+            count = len(batch.get('commits', []))
+            if count >= daily_min_commits:
+                releasable.append(project)
+        return releasable
+
     def has_pending(self, project: str) -> bool:
         """Prüfe ob ein Projekt ausstehende Commits hat."""
         return project in self.pending and len(self.pending[project].get('commits', [])) > 0

@@ -1116,6 +1116,8 @@ class ShadowOpsBot(commands.Bot):
             self.update_dashboard.start()
         if not self.weekly_patch_notes_release.is_running():
             self.weekly_patch_notes_release.start()
+        if not self.daily_patch_notes_release.is_running():
+            self.daily_patch_notes_release.start()
         if not self.learning_maintenance.is_running():
             self.learning_maintenance.start()
 
@@ -1380,6 +1382,11 @@ class ShadowOpsBot(commands.Bot):
                 return
 
             releasable = batcher.get_cron_releasable_projects()
+            # Daily-Projekte beim Weekly-Cron ueberspringen (haben eigenen Cron)
+            releasable = [
+                p for p in releasable
+                if self.config.projects.get(p, {}).get('patch_notes', {}).get('release_mode') != 'daily'
+            ]
             if not releasable:
                 self.logger.info("📅 Wöchentlicher Patch-Notes-Check: Keine Projekte mit genug Commits")
                 return
@@ -1435,6 +1442,87 @@ class ShadowOpsBot(commands.Bot):
         if batcher:
             cron_info = f"{batcher.cron_day.capitalize()} {batcher.cron_hour}:00"
         self.logger.info(f"📅 Wöchentlicher Patch-Notes-Cron gestartet ({cron_info})")
+
+    @tasks.loop(hours=1)
+    async def daily_patch_notes_release(self):
+        """Täglicher Patch-Notes-Release für Projekte mit release_mode: daily."""
+        try:
+            batcher = getattr(self, 'patch_notes_batcher', None)
+            gh = getattr(self, 'github_integration', None)
+            if not batcher or not gh:
+                return
+
+            # Lokalzeit (nicht UTC) — daily_release_hour ist in Serverzeit konfiguriert
+            now = datetime.now()
+
+            # Nur Projekte mit release_mode: daily und passender Stunde
+            for project_name, project_config in self.config.projects.items():
+                if not isinstance(project_config, dict):
+                    continue
+                pn_config = project_config.get('patch_notes', {})
+                if pn_config.get('release_mode') != 'daily':
+                    continue
+
+                daily_hour = pn_config.get('daily_release_hour', 22)
+                if now.hour != daily_hour:
+                    continue
+
+                # Batcher-Methode nutzen fuer Min-Commits-Check
+                daily_min = pn_config.get('daily_min_commits', 3)
+                releasable = batcher.get_daily_releasable_projects(daily_min_commits=daily_min)
+                if project_name not in releasable:
+                    continue
+
+                commits = batcher.release_batch(project_name)
+                if not commits:
+                    continue
+
+                self.logger.info(
+                    f"📅 Täglicher Release für {project_name}: {len(commits)} Commits"
+                )
+
+                try:
+                    repo_url = (
+                        project_config.get('repo_url')
+                        or project_config.get('repository_url')
+                        or ''
+                    )
+                    pusher = commits[-1].get('author', {}).get('name', 'daily-release')
+
+                    await gh._send_push_notification(
+                        repo_name=project_name,
+                        repo_url=repo_url,
+                        branch='main',
+                        pusher=pusher,
+                        commits=commits,
+                        skip_batcher=True,
+                    )
+                except Exception as e:
+                    self.logger.error(
+                        f"❌ Täglicher Release für {project_name} fehlgeschlagen: {e}",
+                        exc_info=True
+                    )
+        except Exception as e:
+            self.logger.error(f"❌ Täglicher Patch-Notes-Cron Fehler: {e}", exc_info=True)
+
+    @daily_patch_notes_release.before_loop
+    async def before_daily_patch_notes(self):
+        """Warte bis Bot bereit ist."""
+        await self.wait_until_ready()
+        daily_projects = [
+            name for name, cfg in self.config.projects.items()
+            if isinstance(cfg, dict) and cfg.get('patch_notes', {}).get('release_mode') == 'daily'
+        ]
+        if daily_projects:
+            hours = set()
+            for name in daily_projects:
+                h = self.config.projects[name].get('patch_notes', {}).get('daily_release_hour', 22)
+                hours.add(h)
+            self.logger.info(
+                f"📅 Täglicher Patch-Notes-Cron gestartet "
+                f"(Projekte: {', '.join(daily_projects)}, "
+                f"Uhrzeiten: {', '.join(f'{h}:00' for h in sorted(hours))})"
+            )
 
     @tasks.loop(hours=12)
     async def learning_maintenance(self):
