@@ -341,7 +341,7 @@ class AIPatchNotesMixin:
             if pr_body:
                 body_lines.append(f"PR-Beschreibung: {pr_body}")
 
-            if len(body_lines) > 2:
+            if body_lines:
                 body = '\n'.join(body_lines[:30])
                 classified_lines.append(
                     f"- [{tag}] {title}\n  {body}\n  (by {author})"
