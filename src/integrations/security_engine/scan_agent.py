@@ -23,7 +23,7 @@ import json
 import logging
 import os
 import time
-from datetime import datetime, timezone, date
+from datetime import datetime, timezone, date, timedelta
 from typing import Dict, List, Optional
 
 import discord
@@ -46,7 +46,7 @@ SESSION_MODES = {
     'quick_scan':   (1200, 50,  'Schnellcheck der kritischsten Bereiche'),
     'fix_only':     (7200, 200, 'Nur Findings abarbeiten, kein Scan'),
     'maintenance':  (600,  15,  'Nur Verifikation + Maintenance, kein Scan/Fix'),
-    'weekly_deep':  (3600, 150, 'Woechentlicher Deep-Scan mit Code-Review (nur Claude)'),
+    'weekly_deep':  (3600, 150, 'Woechentlicher Deep-Scan mit Code-Review (Claude bevorzugt, Codex Fallback)'),
 }
 
 # Wochentag fuer Weekly-Deep-Scan (0=Mo, 6=So)
@@ -287,6 +287,7 @@ class SecurityScanAgent:
         self._consecutive_failures: int = 0
         self._failure_cooldown_until: float = 0.0
         self._last_event_scan: float = 0.0
+        self._disabled_notification_sent_on: Optional[date] = None
 
     # ─── Lifecycle ────────────────────────────────────────────────────
 
@@ -336,7 +337,10 @@ class SecurityScanAgent:
                     self._sessions_today = await self._count_sessions_today()
                     self._consecutive_failures = 0
                     self._failure_cooldown_until = 0.0
+                    self._disabled_notification_sent_on = None
                     logger.info("Neuer Tag — Sessions: %d, Fehler zurueckgesetzt", self._sessions_today)
+
+                await self._sync_sessions_today()
 
                 if self._briefing_pending and self._pending_result:
                     ds = await self.activity_monitor.is_user_on_discord()
@@ -386,6 +390,17 @@ class SecurityScanAgent:
                 if not user_active and self._current_session_id is None:
                     # Weekly-Deep-Scan (Sonntag oder Force)
                     if force_deep or (is_weekly_deep_day and not force_scan):
+                        if (not force_deep
+                                and (self._is_disabled_for_today()
+                                     or not self._has_session_budget(self.max_sessions_per_day))):
+                            self._weekly_deep_done_this_week = True
+                            logger.info(
+                                "Weekly-Deep-Scan uebersprungen (disabled=%s, sessions=%d/%d)",
+                                self._is_disabled_for_today(),
+                                self._sessions_today,
+                                self.max_sessions_per_day,
+                            )
+                            continue
                         logger.info("Starte Weekly-Deep-Scan (trigger=%s)",
                                     'force_deep' if force_deep else 'sunday_auto')
                         await self._run_weekly_deep(
@@ -395,12 +410,14 @@ class SecurityScanAgent:
                     try:
                         fixable = await self._get_fixable_findings()
                         plan = self._plan_session(len(fixable))
-                        effective_limit = min(plan['max_sessions'],
-                                              self.max_sessions_per_day + plan['max_sessions'] - 1)
+                        effective_limit = self._get_effective_session_limit(plan)
                     except Exception:
                         effective_limit = self.max_sessions_per_day
 
-                    if force_scan or self._sessions_today < effective_limit:
+                    if force_scan or (
+                        not self._is_disabled_for_today()
+                        and self._has_session_budget(effective_limit)
+                    ):
                         trigger = 'force_scan' if force_scan else 'idle_detected'
                         logger.info("User idle, Sessions %d/%d — starte Analyse (trigger=%s)",
                                     self._sessions_today, effective_limit, trigger)
@@ -442,15 +459,26 @@ class SecurityScanAgent:
     async def _run_session_inner(self, trigger_type: str = 'idle_detected'):
         session_id = None
         try:
+            await self._sync_sessions_today()
+            if trigger_type != 'force_scan' and self._is_disabled_for_today():
+                logger.info("Session-Start blockiert — Analyst fuer heute deaktiviert")
+                return
+
             self._mark_token_start()
             await self._pre_session_maintenance()
 
             fixable = await self._get_fixable_findings()
             plan = self._plan_session(len(fixable))
             mode_config = SESSION_MODES[plan['mode']]
+            effective_limit = self._get_effective_session_limit(plan)
 
             logger.info("Session-Plan: %s (Backlog: %d, Reason: %s)",
                         plan['mode'], len(fixable), plan['reason'])
+
+            if trigger_type != 'force_scan' and not self._has_session_budget(effective_limit):
+                logger.info("Session-Limit erreicht (%d/%d) — ueberspringe %s",
+                            self._sessions_today, effective_limit, plan['mode'])
+                return
 
             # Maintenance: Bei 0 Backlog trotzdem regelmässig scannen
             # Force-Scan umgeht den Date-Check komplett
@@ -554,6 +582,7 @@ class SecurityScanAgent:
                 model_used = result.pop('_model', 'unknown')
                 self._consecutive_failures = 0
                 self._failure_cooldown_until = 0.0
+                self._disabled_notification_sent_on = None
                 logger.info("Session #%d OK via %s/%s", session_id, provider, model_used)
                 await self._process_results(session_id, result, health_ok, model_used)
                 await self._notify_learning(session_id, plan['mode'], result)
@@ -567,7 +596,8 @@ class SecurityScanAgent:
                 await self._end_session(session_id=session_id,
                     summary=f"Fehler #{self._consecutive_failures}",
                     topics=[], model=self.codex_model,
-                    findings_count=0, auto_fixes=0, issues_created=0)
+                    findings_count=0, auto_fixes=0, issues_created=0,
+                    status='failed')
 
         except asyncio.CancelledError:
             if session_id:
@@ -586,7 +616,8 @@ class SecurityScanAgent:
                     await self._end_session(session_id=session_id,
                         summary=f"Fehler: {str(e)[:200]}",
                         topics=[], model=self.codex_model,
-                        findings_count=0, auto_fixes=0, issues_created=0)
+                        findings_count=0, auto_fixes=0, issues_created=0,
+                        status='failed')
                 except Exception:
                     pass
         finally:
@@ -1199,13 +1230,14 @@ class SecurityScanAgent:
         return row['id']
 
     async def _end_session(self, session_id: int, summary: str, topics: List[str],
-                           model: str, findings_count: int, auto_fixes: int, issues_created: int):
+                           model: str, findings_count: int, auto_fixes: int, issues_created: int,
+                           status: str = 'completed'):
         await self.db.pool.execute("""
             UPDATE sessions SET ended_at=$1, ai_summary=$2, topics_investigated=$3,
                 tokens_used=$4, model_used=$5, findings_count=$6,
-                auto_fixes_count=$7, issues_created=$8, status='completed' WHERE id=$9
+                auto_fixes_count=$7, issues_created=$8, status=$9 WHERE id=$10
         """, datetime.now(timezone.utc), summary, topics, self._get_session_tokens(),
-            model, findings_count, auto_fixes, issues_created, session_id)
+            model, findings_count, auto_fixes, issues_created, status, session_id)
 
     async def _pause_session(self, session_id: int):
         await self.db.pool.execute(
@@ -1217,10 +1249,27 @@ class SecurityScanAgent:
             return 0
         count = await self.db.pool.fetchval("""
             SELECT COUNT(*) FROM sessions WHERE started_at::date=CURRENT_DATE
-              AND status IN ('completed','running')
-              AND (findings_count>0 OR tokens_used>0 OR status='running')
+              AND status IN ('completed','failed','running')
         """)
         return count or 0
+
+    async def _sync_sessions_today(self):
+        if not self.db or not self.db.pool:
+            return
+        counted = await self._count_sessions_today()
+        if counted > self._sessions_today:
+            self._sessions_today = counted
+
+    def _get_effective_session_limit(self, plan: Optional[Dict] = None) -> int:
+        planned_limit = plan.get('max_sessions', self.max_sessions_per_day) if plan else self.max_sessions_per_day
+        return max(1, min(self.max_sessions_per_day, planned_limit))
+
+    def _has_session_budget(self, limit: Optional[int] = None) -> bool:
+        effective_limit = self.max_sessions_per_day if limit is None else limit
+        return self._sessions_today < effective_limit
+
+    def _is_disabled_for_today(self) -> bool:
+        return self._consecutive_failures >= MAX_CONSECUTIVE_FAILURES
 
     async def _get_last_session(self) -> Optional[Dict]:
         """Letzte ERFOLGREICHE Session (mit Findings oder Auto-Fixes)."""
@@ -1408,7 +1457,11 @@ class SecurityScanAgent:
     def _apply_failure_backoff(self, session_id: Optional[int]):
         if self._consecutive_failures >= MAX_CONSECUTIVE_FAILURES:
             self._sessions_today = self.max_sessions_per_day
-            logger.error("Session #%s: %d Fehler — deaktiviert", session_id, self._consecutive_failures)
+            next_day = datetime.now().astimezone() + timedelta(days=1)
+            next_midnight = datetime.combine(next_day.date(), datetime.min.time(), tzinfo=next_day.tzinfo)
+            self._failure_cooldown_until = next_midnight.timestamp()
+            logger.error("Session #%s: %d Fehler — deaktiviert bis Tageswechsel",
+                         session_id, self._consecutive_failures)
             return
         idx = min(self._consecutive_failures - 1, len(FAILURE_BACKOFF_SECONDS) - 1)
         self._failure_cooldown_until = time.time() + FAILURE_BACKOFF_SECONDS[idx]
@@ -1564,18 +1617,24 @@ class SecurityScanAgent:
         ch = self._get_briefing_channel()
         if not ch:
             return
-        disabled = self._consecutive_failures >= MAX_CONSECUTIVE_FAILURES
+        disabled = self._is_disabled_for_today()
+        if disabled and self._disabled_notification_sent_on == self._today:
+            logger.info("Disabled-Failure-Notification fuer %s bereits gesendet — skip", self._today)
+            return
+        failure_count = min(self._consecutive_failures, MAX_CONSECUTIVE_FAILURES)
         color = discord.Color.red() if disabled else discord.Color.orange()
         status = "DEAKTIVIERT" if disabled else (
             f"Retry in {FAILURE_BACKOFF_SECONDS[min(self._consecutive_failures-1, len(FAILURE_BACKOFF_SECONDS)-1)]//60}m")
         embed = discord.Embed(
             title=f"❌ Session #{session_id or '?'} fehlgeschlagen",
-            description=f"**Fehler:** {self._consecutive_failures}/{MAX_CONSECUTIVE_FAILURES}\n**Status:** {status}"
+            description=f"**Fehler:** {failure_count}/{MAX_CONSECUTIVE_FAILURES}\n**Status:** {status}"
                         + (f"\n**Details:** `{error}`" if error else ""),
             color=color, timestamp=datetime.now(timezone.utc))
         embed.set_footer(text="SecurityScanAgent")
         try:
             await ch.send(embed=embed)
+            if disabled:
+                self._disabled_notification_sent_on = self._today
         except Exception:
             pass
 
@@ -1727,12 +1786,24 @@ class SecurityScanAgent:
     # ─── Weekly Deep-Scan ──────────────────────────────────────────────
 
     async def _run_weekly_deep(self, trigger: str = 'weekly_auto'):
-        """Woechentlicher Deep-Scan mit Claude (tiefere Analyse als taeglich)."""
+        """Woechentlicher Deep-Scan mit Claude-Praferenz und Codex-Fallback."""
         if self._session_lock.locked():
             return
         async with self._session_lock:
             session_id = None
             try:
+                await self._sync_sessions_today()
+                if trigger != 'force_deep':
+                    if self._is_disabled_for_today():
+                        logger.info("Weekly-Deep blockiert — Analyst fuer heute deaktiviert")
+                        self._weekly_deep_done_this_week = True
+                        return
+                    if not self._has_session_budget(self.max_sessions_per_day):
+                        logger.info("Weekly-Deep blockiert — Session-Limit erreicht (%d/%d)",
+                                    self._sessions_today, self.max_sessions_per_day)
+                        self._weekly_deep_done_this_week = True
+                        return
+
                 self._mark_token_start()
                 await self._pre_session_maintenance()
                 await self._knowledge_maintenance()
@@ -1772,12 +1843,23 @@ class SecurityScanAgent:
                                "Code-Review, CVE-Details, Cross-Projekt-Analyse.\n\n")
                 prompt += context
 
-                # Weekly-Deep nutzt IMMER Claude (nicht Codex)
+                # Weekly-Deep startet bevorzugt direkt mit Claude.
+                # Wenn Claude heute im Limit haengt, wird derselbe Lauf auf Codex umgelegt.
                 result = await self.ai_engine.run_analyst_session(
                     prompt=prompt, timeout=mode_config[0], max_turns=mode_config[1],
-                    codex_model=None,  # Kein Codex, direkt Claude
+                    codex_model=None,
                     claude_model=self.claude_model,
                 )
+                if not result and self.ai_engine.is_claude_quota_exhausted():
+                    logger.warning(
+                        "Weekly-Deep #%d: Claude-Quota erschopft — Retry via Codex (%s)",
+                        session_id, self.codex_model,
+                    )
+                    result = await self.ai_engine.run_analyst_session(
+                        prompt=prompt, timeout=mode_config[0], max_turns=mode_config[1],
+                        codex_model=self.codex_model,
+                        claude_model=self.claude_model,
+                    )
 
                 health_after = await self._take_health_snapshot(session_id)
                 health_ok = self._compare_health(health_before, health_after)
@@ -1788,6 +1870,8 @@ class SecurityScanAgent:
                     provider = result.pop('_provider', 'unknown')
                     model_used = result.pop('_model', 'unknown')
                     self._consecutive_failures = 0
+                    self._failure_cooldown_until = 0.0
+                    self._disabled_notification_sent_on = None
                     logger.info("Weekly-Deep #%d OK via %s/%s", session_id, provider, model_used)
 
                     await self._process_results(session_id, result, health_ok, model_used)
@@ -1812,7 +1896,10 @@ class SecurityScanAgent:
                     await self._end_session(session_id=session_id,
                         summary=f"Weekly-Deep Fehler #{self._consecutive_failures}",
                         topics=[], model=self.claude_model,
-                        findings_count=0, auto_fixes=0, issues_created=0)
+                        findings_count=0, auto_fixes=0, issues_created=0,
+                        status='failed')
+                    if trigger != 'force_deep':
+                        self._weekly_deep_done_this_week = True
 
             except asyncio.CancelledError:
                 if session_id:
@@ -1823,13 +1910,19 @@ class SecurityScanAgent:
                 raise
             except Exception as e:
                 logger.error("Weekly-Deep Fehler: %s", e, exc_info=True)
+                self._consecutive_failures += 1
+                self._apply_failure_backoff(session_id)
+                await self._notify_session_failure(session_id, error=str(e)[:200])
                 if session_id:
                     try:
                         await self._end_session(session_id=session_id,
                             summary=f"Fehler: {str(e)[:200]}", topics=[], model=self.claude_model,
-                            findings_count=0, auto_fixes=0, issues_created=0)
+                            findings_count=0, auto_fixes=0, issues_created=0,
+                            status='failed')
                     except Exception:
                         pass
+                if trigger != 'force_deep':
+                    self._weekly_deep_done_this_week = True
             finally:
                 self._current_session_id = None
 
@@ -2032,10 +2125,13 @@ class SecurityScanAgent:
     async def can_start_session(self) -> bool:
         if not self._running:
             return False
+        await self._sync_sessions_today()
+        if self._is_disabled_for_today():
+            return False
         fixable = await self._get_fixable_findings()
         plan = self._plan_session(len(fixable))
-        limit = min(plan['max_sessions'], self.max_sessions_per_day + plan['max_sessions'] - 1)
-        return self._sessions_today < limit
+        limit = self._get_effective_session_limit(plan)
+        return self._has_session_budget(limit)
 
     async def run_session(self) -> Dict:
         if self._session_lock.locked():

@@ -20,6 +20,8 @@ import logging
 import os
 import re
 import tempfile
+import time
+from datetime import datetime, timedelta
 from typing import Dict, Optional, List
 from pathlib import Path
 
@@ -43,7 +45,7 @@ class CodexProvider:
     Provider fuer OpenAI Codex CLI.
 
     CLI-Aufruf (via create_subprocess_exec, kein Shell):
-        codex  exec  --ephemeral  -s  workspace-write  -m  MODEL  -q  PROMPT
+        codex  exec  -s  workspace-write  -m  MODEL  PROMPT
         Bei Schema: --output-schema SCHEMA_PATH
 
     Modelle:
@@ -142,7 +144,7 @@ class CodexProvider:
         # --skip-git-repo-check: Kein trusted directory noetig
         # -c mcp_servers={}: Keine MCP-Server laden (schneller, keine Auth-Fehler)
         args = [
-            'codex', 'exec', '--ephemeral',
+            'codex', 'exec',
             '--skip-git-repo-check',
             '-c', 'mcp_servers={}',
             '-s', 'workspace-write',
@@ -209,7 +211,7 @@ class CodexProvider:
         env = self._get_clean_env()
 
         args = [
-            'codex', 'exec', '--ephemeral',
+            'codex', 'exec',
             '--skip-git-repo-check',
             '-c', 'mcp_servers={}',
             '-s', 'workspace-write',
@@ -682,6 +684,7 @@ class AIEngine:
         # Codex-Quota-Cache: Überspringt Codex wenn Quota erschöpft
         # Wird gesetzt wenn "usage limit" Fehler erkannt wird
         self._codex_quota_exhausted_until: float = 0.0
+        self._claude_quota_exhausted_until: float = 0.0
 
         # Stats-Tracking
         self.stats = {
@@ -1007,11 +1010,10 @@ class AIEngine:
         )
 
         # 1. Primaer: Codex (überspringen wenn Quota erschöpft oder explizit deaktiviert)
-        import time as _time
         if not codex_model:
             logger.info("Analyst-Session: Codex deaktiviert — direkt Claude (%s)", claude_model)
-        elif _time.time() < self._codex_quota_exhausted_until:
-            remaining_h = (self._codex_quota_exhausted_until - _time.time()) / 3600
+        elif time.time() < self._codex_quota_exhausted_until:
+            remaining_h = (self._codex_quota_exhausted_until - time.time()) / 3600
             logger.info(
                 "Analyst-Session: Codex-Quota erschöpft (noch %.1fh) — direkt Claude (%s)",
                 remaining_h, claude_model,
@@ -1027,9 +1029,17 @@ class AIEngine:
 
         # 2. Fallback: Claude
         self.stats['codex_failures'] = self.stats.get('codex_failures', 0) + 1
-        result = await self._run_analyst_claude(
-            prompt, schema_path, claude_model, timeout, max_turns,
-        )
+        if self.is_claude_quota_exhausted():
+            remaining_min = max(1, int((self._claude_quota_exhausted_until - time.time()) / 60))
+            logger.info(
+                "Analyst-Session: Claude-Quota erschöpft (noch %d Min) — Claude uebersprungen",
+                remaining_min,
+            )
+            result = None
+        else:
+            result = await self._run_analyst_claude(
+                prompt, schema_path, claude_model, timeout, max_turns,
+            )
         if result:
             result['_provider'] = 'claude'
             result['_model'] = claude_model
@@ -1038,6 +1048,65 @@ class AIEngine:
         self.stats['claude_failures'] = self.stats.get('claude_failures', 0) + 1
         logger.error("Analyst-Session: Beide Engines (Codex + Claude) ohne Ergebnis")
         return None
+
+    def is_claude_quota_exhausted(self) -> bool:
+        return time.time() < self._claude_quota_exhausted_until
+
+    def _extract_quota_reset_timestamp(
+        self,
+        message: str,
+        default_seconds: int = 3600,
+    ) -> Optional[float]:
+        text = (message or "").strip()
+        if not text:
+            return None
+
+        lower = text.lower()
+        quota_markers = (
+            'hit your limit',
+            'usage limit',
+            'rate limit',
+            'quota',
+            'overloaded',
+            'too many requests',
+        )
+        if not any(marker in lower for marker in quota_markers):
+            return None
+
+        match_12h = re.search(
+            r'(?:resets?|try again(?: at)?)\s+(?:at\s+)?(\d{1,2})(?::(\d{2}))?\s*(am|pm)\b',
+            lower,
+        )
+        if match_12h:
+            hour = int(match_12h.group(1))
+            minute = int(match_12h.group(2) or 0)
+            meridiem = match_12h.group(3)
+            if meridiem == 'pm' and hour != 12:
+                hour += 12
+            elif meridiem == 'am' and hour == 12:
+                hour = 0
+
+            now = datetime.now().astimezone()
+            reset_at = now.replace(hour=hour, minute=minute, second=0, microsecond=0)
+            if reset_at <= now:
+                reset_at += timedelta(days=1)
+            return reset_at.timestamp()
+
+        match_24h = re.search(
+            r'(?:resets?|try again(?: at)?)\s+(?:at\s+)?(\d{1,2}):(\d{2})\b',
+            lower,
+        )
+        if match_24h:
+            hour = int(match_24h.group(1))
+            minute = int(match_24h.group(2))
+            if 0 <= hour <= 23 and 0 <= minute <= 59:
+                now = datetime.now().astimezone()
+                reset_at = now.replace(hour=hour, minute=minute, second=0, microsecond=0)
+                if reset_at <= now:
+                    reset_at += timedelta(days=1)
+                return reset_at.timestamp()
+
+        return time.time() + default_seconds
 
     async def run_fix_session(
         self,
@@ -1194,17 +1263,20 @@ class AIEngine:
         damit der Security-Scan dieselbe Tiefe wie Claude erreicht.
         """
         env = self.codex._get_clean_env()
+        fd, tmp_path = tempfile.mkstemp(suffix='.json', prefix='analyst_codex_')
+        os.close(fd)
 
         # Prompt via stdin (ARG_MAX Limit bei grossen Prompts vermeiden)
         # -c mcp_servers={}: Keine MCP-Server laden (schneller, keine Auth-Fehler)
         # --dangerously-bypass-approvals-and-sandbox: Voller Zugriff fuer Security-Scans
         args = [
-            'codex', 'exec', '--ephemeral',
+            'codex', 'exec',
             '--skip-git-repo-check',
             '-c', 'mcp_servers={}',
-            '--dangerously-bypass-approvals-and-sandbox',
+            '-s', 'workspace-write',
             '-m', model,
             '--output-schema', schema_path,
+            '-o', tmp_path,
         ]
 
         logger.info("Codex-Analyst gestartet (Modell: %s, Timeout: %ds)", model, timeout)
@@ -1227,25 +1299,25 @@ class AIEngine:
 
             stdout = stdout_bytes.decode('utf-8', errors='replace') if stdout_bytes else ''
             stderr = stderr_bytes.decode('utf-8', errors='replace') if stderr_bytes else ''
+            combined_output = "\n".join(
+                part.strip() for part in (stderr, stdout) if part and part.strip()
+            )
 
             if proc.returncode != 0:
-                # Quota-/Limit-Erkennung (Fehlermeldung steht oft am Ende von stderr)
-                if 'usage limit' in stderr.lower() or 'rate limit' in stderr.lower():
-                    # Quota-Cache: Codex für 6h überspringen (oder bis Reset-Datum aus Meldung)
-                    import time as _time
-                    self._codex_quota_exhausted_until = _time.time() + 6 * 3600
-                    # Versuche Reset-Datum aus Fehlermeldung zu parsen
-                    reset_match = re.search(r'try again at (.+?)\.', stderr)
-                    if reset_match:
-                        logger.info("Codex-Quota-Reset laut API: %s", reset_match.group(1))
-                    logger.error(
-                        "Codex-Analyst: API-Quota erreicht (Skip für 6h): %s",
-                        stderr[-300:],
+                quota_reset_at = self._extract_quota_reset_timestamp(combined_output, default_seconds=6 * 3600)
+                if quota_reset_at is not None:
+                    self._codex_quota_exhausted_until = max(
+                        self._codex_quota_exhausted_until,
+                        quota_reset_at,
                     )
-                    return None
+                    logger.error(
+                        "Codex-Analyst: API-Quota erreicht: %s",
+                        (combined_output or '(leer)')[-1500:],
+                    )
+                    return self._read_analyst_result(tmp_path, stdout)
 
                 # Falls --skip-git-repo-check nicht unterstuetzt: Retry ohne Flag
-                if first_attempt and 'skip-git-repo-check' in stderr:
+                if first_attempt and 'skip-git-repo-check' in combined_output:
                     logger.info("--skip-git-repo-check nicht unterstuetzt, Retry ohne Flag")
                     first_attempt = False
                     args = [a for a in args if a != '--skip-git-repo-check']
@@ -1262,25 +1334,24 @@ class AIEngine:
                     )
                     stdout = stdout_bytes.decode('utf-8', errors='replace') if stdout_bytes else ''
                     stderr = stderr_bytes.decode('utf-8', errors='replace') if stderr_bytes else ''
+                    combined_output = "\n".join(
+                        part.strip() for part in (stderr, stdout) if part and part.strip()
+                    )
                     if proc.returncode != 0:
                         logger.warning(
                             "Codex-Analyst fehlgeschlagen (rc=%d, ohne Flag): %s",
-                            proc.returncode, stderr[-1500:],
+                            proc.returncode, (combined_output or '(leer)')[-1500:],
                         )
-                        return None
+                        return self._read_analyst_result(tmp_path, stdout)
                 else:
                     logger.warning(
                         "Codex-Analyst fehlgeschlagen (rc=%d): %s",
-                        proc.returncode, stderr[-1500:],
+                        proc.returncode, (combined_output or '(leer)')[-1500:],
                     )
-                    return None
+                    return self._read_analyst_result(tmp_path, stdout)
 
-            if not stdout.strip():
-                logger.warning("Codex-Analyst: Leere Antwort")
-                return None
-
-            # Codex mit --output-schema liefert JSON in stdout
-            result = self.codex._extract_json(stdout)
+            self._codex_quota_exhausted_until = 0.0
+            result = self._read_analyst_result(tmp_path, stdout) or self.codex._extract_json(stdout)
             if result and ('summary' in result or 'findings' in result):
                 findings_count = len(result.get('findings', []))
                 knowledge_count = len(result.get('knowledge_updates', []))
@@ -1291,7 +1362,11 @@ class AIEngine:
                 self.stats['codex_success'] = self.stats.get('codex_success', 0) + 1
                 return result
 
-            logger.warning("Codex-Analyst: Output kein gueltiges Analyst-Schema")
+            logger.warning(
+                "Codex-Analyst: Output kein gueltiges Analyst-Schema "
+                "(stdout=%d Bytes, tmp_exists=%s)",
+                len(stdout), os.path.exists(tmp_path),
+            )
             return None
 
         except asyncio.TimeoutError:
@@ -1311,6 +1386,12 @@ class AIEngine:
         except Exception as e:
             logger.error("Codex-Analyst Fehler: %s", e, exc_info=True)
             return None
+        finally:
+            try:
+                if os.path.exists(tmp_path):
+                    os.unlink(tmp_path)
+            except OSError:
+                pass
 
     async def _run_analyst_claude(
         self,
@@ -1403,18 +1484,29 @@ class AIEngine:
 
             stdout = stdout_bytes.decode('utf-8', errors='replace') if stdout_bytes else ''
             stderr = stderr_bytes.decode('utf-8', errors='replace') if stderr_bytes else ''
+            combined_output = "\n".join(
+                part.strip() for part in (stderr, stdout) if part and part.strip()
+            )
 
             if proc.returncode != 0:
-                # Quota-Erkennung fuer Anthropic API
-                if 'overloaded' in stderr.lower() or 'rate limit' in stderr.lower():
-                    logger.error("Claude-Analyst: API-Limit erreicht: %s", stderr[-300:])
+                quota_reset_at = self._extract_quota_reset_timestamp(combined_output, default_seconds=3600)
+                if quota_reset_at is not None:
+                    self._claude_quota_exhausted_until = max(
+                        self._claude_quota_exhausted_until,
+                        quota_reset_at,
+                    )
+                    logger.error(
+                        "Claude-Analyst: API-Limit erreicht: %s",
+                        (combined_output or '(leer)')[-1500:],
+                    )
                 else:
                     logger.error(
                         "Claude-Analyst fehlgeschlagen (rc=%d): %s",
-                        proc.returncode, stderr[-1500:],
+                        proc.returncode, (combined_output or '(leer)')[-1500:],
                     )
-                return None
+                return self._read_analyst_result(tmp_path, stdout)
 
+            self._claude_quota_exhausted_until = 0.0
             result = self._read_analyst_result(tmp_path, stdout)
 
             if result:

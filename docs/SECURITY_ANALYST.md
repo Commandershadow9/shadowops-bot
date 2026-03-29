@@ -97,6 +97,16 @@ Kodifizierte Incidents:
 | Modell | `gpt-5.3-codex` (konfigurierbar) | `claude-opus-4-6` (konfigurierbar) |
 | Output | Strukturiertes JSON via Schema | JSON in Temp-Datei + stdout-Extraktion |
 
+### Provider-Resilienz und AI-Governance
+
+Der Analyst behandelt Provider-Limits und CLI-Inkompatibilitaeten als **betriebliche Stoerungen**, nicht als Endlosschleifen:
+
+- **Quota-aware Execution:** Codex- und Claude-Limits werden aus dem echten CLI-Output erkannt und bis zum gemeldeten Reset-Zeitpunkt gecacht.
+- **No blind retry:** Wenn ein Provider bereits im Limit ist, wird er fuer denselben Zeitraum uebersprungen statt erneut gestartet.
+- **Weekly-Deep Failover:** Der Wochen-Deep-Scan startet bevorzugt mit Claude; wenn Claude im Limit ist, wird derselbe Lauf sofort ueber Codex fortgesetzt.
+- **Partial-result salvage:** Falls ein Provider vor dem Exit bereits strukturierte Daten geschrieben hat, werden diese vor dem finalen Fehler verwertet.
+- **Provider transparency:** Logs unterscheiden zwischen Provider-Quota, CLI-Fehlern und Session-Backoff. Dadurch bleiben Ursache und Wirkung auditierbar.
+
 ### Fehlerbehandlung
 
 | Fehler # | Backoff | Aktion |
@@ -104,6 +114,12 @@ Kodifizierte Incidents:
 | 1 | 30 Minuten | Discord-Alert, naechster Versuch nach Cooldown |
 | 2 | 2 Stunden | Discord-Alert, naechster Versuch nach Cooldown |
 | 3+ | Tages-Sperre | Discord-Alert (rot), Analyst fuer heute deaktiviert |
+
+**Wichtig:** Provider-Quota und Session-Backoff sind getrennte Schutzmechanismen.
+
+- **Provider-Quota** sperrt nur den betroffenen AI-Provider bis zum Reset.
+- **Session-Backoff** sperrt neue Sessions nach wiederholten Gesamtfehlern des Analysten.
+- **Disable-Alerts** werden bei Tages-Sperre genau einmal pro Tag gesendet, um Discord-Spam zu vermeiden.
 
 ### Discord-Notifications
 
@@ -183,6 +199,10 @@ Das dynamische Session-Limit wird automatisch basierend auf offenen Findings ber
 # Analyst-Logs pruefen
 sudo journalctl -u shadowops-bot --since "1 hour ago" | grep -i analyst
 
+# Provider-Quota / Weekly-Deep-Failover pruefen
+sudo journalctl -u shadowops-bot --since "6 hours ago" --no-pager | \
+  grep -iE "quota|limit erreicht|Retry via Codex|Weekly-Deep"
+
 # DB-Verbindung testen
 docker exec -i guildscout-postgres psql -U security_analyst -d security_analyst \
   -c "SELECT COUNT(*) FROM sessions;"
@@ -209,6 +229,15 @@ docker exec -i guildscout-postgres psql -U security_analyst -d security_analyst 
 # ActivityMonitor debuggen
 sudo journalctl -u shadowops-bot | grep -i "activity\|idle\|session-plan"
 ```
+
+### Erwartetes Verhalten bei Provider-Stoerungen
+
+| Symptom | Erwartetes Verhalten |
+|---------|----------------------|
+| `Claude-Analyst: API-Limit erreicht` | Claude wird bis zum Reset uebersprungen |
+| `Weekly-Deep ... Retry via Codex` | Derselbe Deep-Scan laeuft ohne neue Session-ID ueber Codex weiter |
+| `Codex-Analyst: API-Quota erreicht` | Codex wird temporaer gecacht, normale Sessions koennen auf Claude fallen |
+| `Fehler: 3/3` + `DEAKTIVIERT` | Tages-Sperre des Analysten; kein weiterer Session-Start bis Tageswechsel |
 
 ## Design-Dokument
 

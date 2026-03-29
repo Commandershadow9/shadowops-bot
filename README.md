@@ -1,6 +1,6 @@
 # 🗡️ ShadowOps - Active Security Guardian v5.0 🚀
 
-**Status:** AKTIV | **Version:** 5.0.0 | **Letzte Aktualisierung:** 18.03.2026
+**Status:** AKTIV | **Version:** 5.0.0 | **Letzte Aktualisierung:** 29.03.2026
 
 **ShadowOps** ist ein **vollständig autonomer Security Guardian** mit lernfähigem AI Security Analyst, KI-gesteuerter Auto-Remediation, adaptiver Session-Steuerung und wachsender Knowledge-DB — kein statischer Scanner, sondern ein **System das aus seinen Erfahrungen lernt und immer besser wird**.
 
@@ -27,6 +27,7 @@
 - ✅ **Codex CLI (Primary, 97%)**: gpt-4o (fast), gpt-5.3-codex (standard), o3 (thinking)
 - ✅ **Claude CLI (Fallback + Verify, 3%)**: claude-sonnet-4-6 (standard), claude-opus-4-6 (thinking)
 - ✅ **Config-basierter TaskRouter**: Routing nach Severity (CRITICAL→o3, HIGH→gpt-5.3-codex, LOW→gpt-4o)
+- ✅ **Quota-aware Failover**: Provider-Limits werden aus CLI-Output erkannt; Weekly-Deep scannt bei Claude-Limit automatisch via Codex weiter
 - ✅ **SmartQueue**: 3 parallele Analysen (Semaphore), serieller Fix-Lock, Circuit Breaker, Batch-Erkennung
 - ✅ **VerificationPipeline**: 4-Stufen Pre-Push (Confidence ≥85% → Tests → Claude-Verify → KB-Check)
 - ✅ **JSON-Schemas**: Structured Output für Codex (`--output-schema`) — fix_strategy, patch_notes, incident_analysis

@@ -15,6 +15,8 @@ Dual-Engine-Architektur mit zwei CLI-basierten Providern:
 
 Beide Provider nutzen `asyncio.create_subprocess_exec` (kein `shell=True`). Die `CLAUDECODE` Umgebungsvariable wird aus Subprocess-Umgebungen entfernt, um "nested session"-Fehler zu vermeiden.
 
+Provider-Limits werden nicht als generische "Fehler" behandelt. Stattdessen liest die `AIEngine` Reset-Hinweise aus dem CLI-Output, cached den betroffenen Provider bis zum Reset und ueberspringt ihn in dieser Zeit. Fuer den `weekly_deep` Pfad gilt zusaetzlich: Claude bleibt die bevorzugte Engine fuer tiefe Code-Reviews, aber bei erkanntem Claude-Limit wird derselbe Lauf sofort ueber Codex fortgesetzt.
+
 ## Alternativen
 
 - **Nur OpenAI API direkt:** Kein Fallback bei Ausfaellen, API-Key-Management noetig.
@@ -27,8 +29,11 @@ Beide Provider nutzen `asyncio.create_subprocess_exec` (kein `shell=True`). Die 
 - Resilient gegen Ausfaelle einzelner AI-Provider.
 - Severity-basiertes Routing: schnelle Modelle fuer LOW, Thinking-Modelle fuer CRITICAL.
 - Strukturierter Output (JSON-Schema) reduziert Parsing-Fehler bei Codex.
+- Provider-Quoten fuehren nicht mehr zu Retry-Loops oder Discord-Spam, sondern zu kontrolliertem Failover.
+- Weekly-Deep-Scans bleiben auch bei temporarem Claude-Limit funktionsfaehig.
 
 **Negativ:**
 - Zwei CLI-Tools (`codex`, `claude`) als externe Dependencies auf dem Host.
 - Schema-Dateien muessen OpenAI-kompatibel sein (alle Properties in `required`).
 - Claude-Fallback liefert weniger zuverlaessig strukturierten Output als Codex mit `--output-schema`.
+- Betriebslogik wird komplexer: Provider-Quota, Session-Backoff und Tages-Disable muessen getrennt beobachtet werden.

@@ -7,7 +7,7 @@ Phase 3 (Reflection): AI bewertet eigene Arbeit, generiert Insights.
 
 Drei Scan-Tiefen:
 - ANALYST_SYSTEM_PROMPT: Taeglicher umfassender Scan (Codex oder Claude)
-- WEEKLY_DEEP_PROMPT: Woechentlicher Deep-Scan mit Code-Review (nur Claude)
+- WEEKLY_DEEP_PROMPT: Woechentlicher Deep-Scan mit Code-Review (Claude bevorzugt, Codex Fallback)
 - REFLECTION_PROMPT: Post-Scan Selbstbewertung nach jeder Session
 """
 

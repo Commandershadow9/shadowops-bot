@@ -3,6 +3,7 @@ Unit Tests für AI Engine — Dual-Engine (Codex CLI + Claude CLI)
 Ersetzt das alte Ollama-basierte AIService.
 """
 
+import time
 import pytest
 import json
 import asyncio
@@ -591,6 +592,88 @@ class TestAIEngine:
         assert engine.stats['claude_calls'] == 0
         assert engine.stats['claude_success'] == 0
         assert engine.stats['claude_failures'] == 0
+
+    @pytest.mark.asyncio
+    async def test_run_analyst_claude_marks_quota_from_stdout(self, ai_config):
+        """Claude-Limit aus stdout erkennen und cachen."""
+        from src.integrations.ai_engine import AIEngine
+
+        engine = AIEngine(ai_config)
+        mock_proc = make_mock_process(
+            stdout="You've hit your limit · resets 2pm (Europe/Berlin)",
+            stderr='',
+            returncode=1,
+        )
+
+        with patch('asyncio.create_subprocess_exec', return_value=mock_proc):
+            result = await engine._run_analyst_claude(
+                prompt='Test',
+                schema_path=str(Path('/home/cmdshadow/shadowops-bot/src/schemas/analyst_session.json')),
+                model='claude-opus-4-6',
+                timeout=5,
+                max_turns=1,
+            )
+
+        assert result is None
+        assert engine.is_claude_quota_exhausted() is True
+
+    @pytest.mark.asyncio
+    async def test_run_analyst_session_skips_claude_when_quota_cached(self, ai_config):
+        """Bei aktivem Claude-Quota-Cache wird Claude nicht erneut gestartet."""
+        from src.integrations.ai_engine import AIEngine
+
+        engine = AIEngine(ai_config)
+        engine._claude_quota_exhausted_until = time.time() + 300
+        engine._run_analyst_codex = AsyncMock(return_value=None)
+        engine._run_analyst_claude = AsyncMock(return_value={'summary': 'should not happen'})
+
+        result = await engine.run_analyst_session(
+            prompt='Test',
+            codex_model=None,
+            claude_model='claude-opus-4-6',
+        )
+
+        assert result is None
+        engine._run_analyst_codex.assert_not_awaited()
+        engine._run_analyst_claude.assert_not_awaited()
+
+    @pytest.mark.asyncio
+    async def test_run_analyst_codex_uses_current_cli_flags(self, ai_config):
+        """Analyst-Codex nutzt keine veralteten CLI-Flags mehr."""
+        from src.integrations.ai_engine import AIEngine
+
+        engine = AIEngine(ai_config)
+        captured_args = []
+        mock_proc = make_mock_process(
+            stdout=json.dumps({
+                'summary': 'ok',
+                'topics_investigated': [],
+                'findings': [],
+                'knowledge_updates': [],
+                'health_check_passed': True,
+                'next_priority': 'none',
+                'areas_checked': [],
+                'areas_deferred': [],
+                'finding_assessments': [],
+            }),
+        )
+
+        async def capture_exec(*args, **kwargs):
+            captured_args.extend(args)
+            return mock_proc
+
+        with patch('asyncio.create_subprocess_exec', side_effect=capture_exec):
+            result = await engine._run_analyst_codex(
+                prompt='Test',
+                schema_path='/home/cmdshadow/shadowops-bot/src/schemas/analyst_session.json',
+                model='gpt-5.3-codex',
+                timeout=5,
+            )
+
+        assert result is not None
+        assert '--ephemeral' not in captured_args
+        assert '-s' in captured_args
+        assert 'workspace-write' in captured_args
 
     @pytest.mark.asyncio
     async def test_generate_fix_strategy_with_codex(self, ai_config):
