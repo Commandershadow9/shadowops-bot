@@ -55,6 +55,9 @@ class PromptABTesting:
         # Create default variants if none exist
         if not self.variants:
             self._create_default_variants()
+        else:
+            # Sync: Neue Default-Varianten nachtragen die in der Datei fehlen
+            self._sync_default_variants()
 
         logger.info(f"✅ Prompt A/B Testing initialized with {len(self.variants)} variants")
 
@@ -142,6 +145,41 @@ class PromptABTesting:
 
         self._save_variants()
         logger.info(f"Created {len(variants)} default prompt variants")
+
+    def _sync_default_variants(self) -> None:
+        """Sync neue Default-Varianten in bestehende Datei nach.
+
+        Wird aufgerufen wenn die Varianten-Datei schon existiert,
+        aber neue Varianten im Code hinzugekommen sind.
+        """
+        # Temporär alle Defaults erzeugen ohne zu speichern
+        defaults = {}
+        for variant_data in [
+            ('detailed_v1', 'Detailed Grouping', 'Emphasizes grouping related commits into detailed feature descriptions', self._get_detailed_template('de')),
+            ('concise_v1', 'Concise Overview', 'Focuses on concise, high-level overview with key points', self._get_concise_template('de')),
+            ('benefit_focused_v1', 'Benefit-Focused', 'Emphasizes user benefits and impact rather than technical details', self._get_benefit_focused_template('de')),
+            ('community_v1', 'Community-Friendly', 'TL;DR + Benefit-Focus + Stats — optimiert für Community und SEO', self._get_community_template('de')),
+            ('gaming_community_v1', 'Gaming Community Hype', 'Spiel-Community Patchnotes — aufregend, verständlich, hyped Features statt Code', self._get_gaming_community_template('de')),
+            ('gaming_community_v2', 'Gaming Community Story-Telling', 'Spiel-Community v2 — Story-Telling mit konkretem Spielgefühl, → Pfeil-Format, ausführliche Feature-Beschreibungen', self._get_gaming_community_v2_template('de')),
+        ]:
+            defaults[variant_data[0]] = variant_data
+
+        added = []
+        for variant_id, (vid, name, desc, template) in defaults.items():
+            if variant_id not in self.variants:
+                self.variants[variant_id] = PromptVariant(
+                    id=vid,
+                    name=name,
+                    description=desc,
+                    template=template,
+                    created_at=datetime.now(timezone.utc).isoformat(),
+                    active=True
+                )
+                added.append(variant_id)
+
+        if added:
+            self._save_variants()
+            logger.info(f"🔄 {len(added)} neue Default-Variante(n) nachgetragen: {', '.join(added)}")
 
     def _get_detailed_template(self, language: str = 'de') -> str:
         """Get detailed grouping template.
@@ -641,6 +679,49 @@ WICHTIG — Richtige Kategorie:
 - Hauptsächlich Design-Rework? → "Design & Look" als ERSTE Kategorie
 - Leere Kategorien → WEGLASSEN
 
+═══════════════════════════════════════
+CHANGE-TYPES FÜR DAS CHANGES-ARRAY:
+═══════════════════════════════════════
+
+Jeder Change im `changes` Array MUSS einen dieser Types haben:
+- "feature" → Komplett neue Mechanik/System
+- "content" → Neue Szenarien, Fahrzeuge, Karten, Wachen
+- "gameplay" → Balancing, Scoring, Schwierigkeit
+- "design" → UI, Animationen, Sounds, Visuals
+- "performance" → Ladezeiten, Sync, Optimierung
+- "multiplayer" → Lobby, Co-op, Sync-spezifisch
+- "fix" → Bugfix
+- "breaking" → Entfernungen, Breaking Changes
+- "infrastructure" → Server, Stabilität, Backend
+- "improvement" → Allgemeine Verbesserung (Fallback)
+- "docs" → Nur Dokumentation
+
+Wähle den SPEZIFISCHSTEN Type. "content" statt "feature" wenn es neue Szenarien/Fahrzeuge sind.
+"gameplay" statt "improvement" wenn es Balancing betrifft.
+
+═══════════════════════════════════════
+DISCORD-TEASER (PFLICHT):
+═══════════════════════════════════════
+
+Generiere ein zusätzliches Feld "discord_teaser" (max 1000 Zeichen):
+
+FORMAT:
+🚨 {project} — v[Version]
+
+[2-3 Hype-Sätze die erzählen was sich verändert hat — als würdest du einem Kumpel davon erzählen]
+
+[Emoji] [Highlight 1 — 1 packender Satz]
+[Emoji] [Highlight 2 — 1 packender Satz]
+[Emoji] [Highlight 3 — 1 packender Satz]
+[Emoji] [Highlight 4 — 1 packender Satz]
+[Emoji] [Highlight 5 — 1 packender Satz]
+[Emoji] [Highlight 6 — 1 packender Satz]
+
+[Cliffhanger-Satz der neugierig macht, z.B. "Aber das war noch nicht alles..."]
+
+EMOJIS pro Type:
+🔵 feature, 🗺️ content, 🎮 gameplay, 🎨 design, ⚡ performance, 👥 multiplayer, 🔴 fix, ⚠️ breaking, 🛡️ infrastructure
+
 {stats_line}"""
 
     def _get_gaming_community_v2_template_en(self) -> str:
@@ -748,6 +829,49 @@ IMPORTANT — Right category:
 - Existing features improved → "Gameplay Improvements"
 - Mainly design rework? → "Design & Look" as FIRST category
 - Empty categories → OMIT
+
+═══════════════════════════════════════
+CHANGE TYPES FOR THE CHANGES ARRAY:
+═══════════════════════════════════════
+
+Every change in the `changes` array MUST have one of these types:
+- "feature" → Completely new mechanic/system
+- "content" → New scenarios, vehicles, maps, stations
+- "gameplay" → Balancing, scoring, difficulty
+- "design" → UI, animations, sounds, visuals
+- "performance" → Load times, sync, optimization
+- "multiplayer" → Lobby, co-op, sync-specific
+- "fix" → Bugfix
+- "breaking" → Removals, breaking changes
+- "infrastructure" → Server, stability, backend
+- "improvement" → General improvement (fallback)
+- "docs" → Documentation only
+
+Choose the MOST SPECIFIC type. "content" instead of "feature" for new scenarios/vehicles.
+"gameplay" instead of "improvement" for balancing changes.
+
+═══════════════════════════════════════
+DISCORD TEASER (MANDATORY):
+═══════════════════════════════════════
+
+Generate an additional field "discord_teaser" (max 1000 characters):
+
+FORMAT:
+🚨 {project} — v[Version]
+
+[2-3 hype sentences telling what changed — as if you're telling a friend about it]
+
+[Emoji] [Highlight 1 — 1 exciting sentence]
+[Emoji] [Highlight 2 — 1 exciting sentence]
+[Emoji] [Highlight 3 — 1 exciting sentence]
+[Emoji] [Highlight 4 — 1 exciting sentence]
+[Emoji] [Highlight 5 — 1 exciting sentence]
+[Emoji] [Highlight 6 — 1 exciting sentence]
+
+[Cliffhanger sentence that sparks curiosity, e.g. "But that's not all..."]
+
+EMOJIS per type:
+🔵 feature, 🗺️ content, 🎮 gameplay, 🎨 design, ⚡ performance, 👥 multiplayer, 🔴 fix, ⚠️ breaking, 🛡️ infrastructure
 
 {stats_line}"""
 

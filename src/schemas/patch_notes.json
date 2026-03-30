@@ -18,7 +18,7 @@
       "items": {
         "type": "object",
         "properties": {
-          "type": { "type": "string", "enum": ["feature", "fix", "improvement", "breaking", "docs"] },
+          "type": { "type": "string", "enum": ["feature", "content", "gameplay", "design", "performance", "multiplayer", "fix", "breaking", "infrastructure", "improvement", "docs", "security"] },
           "description": { "type": "string" },
           "details": {
             "type": "array",
@@ -58,8 +58,12 @@
       "type": "string",
       "enum": ["feature", "security", "performance", "bugfix", "maintenance"],
       "description": "Hauptkategorie dieses Releases"
+    },
+    "discord_teaser": {
+      "type": "string",
+      "description": "Kurzer Discord-Teaser mit Cliffhanger (max 1000 Zeichen). Leer-String wenn kein Teaser gewuenscht."
     }
   },
-  "required": ["title", "tldr", "summary", "discord_highlights", "web_content", "breaking_changes", "changes", "stats", "version", "language", "seo_keywords", "seo_category"],
+  "required": ["title", "tldr", "summary", "discord_highlights", "web_content", "breaking_changes", "changes", "stats", "version", "language", "seo_keywords", "seo_category", "discord_teaser"],
   "additionalProperties": false
 }

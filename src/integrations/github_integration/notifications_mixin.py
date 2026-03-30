@@ -645,7 +645,12 @@ class NotificationsMixin:
 
         # Description bauen — Discord-only wenn keine Changelog-Page existiert
         is_discord_only = not changelog_link
-        description = self._build_description(ai_result, commits, language, discord_only=is_discord_only)
+
+        # Teaser-Modus: Discord-Kurzversion wenn changelog_url gesetzt
+        if not is_discord_only and isinstance(ai_result, dict) and ai_result.get('discord_teaser'):
+            description = ai_result['discord_teaser']
+        else:
+            description = self._build_description(ai_result, commits, language, discord_only=is_discord_only)
 
         # Changelog-Link am Ende (nur wenn Page vorhanden)
         if changelog_link:

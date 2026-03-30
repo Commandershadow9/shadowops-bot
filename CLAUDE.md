@@ -331,7 +331,19 @@
 - **Erkennung:** Projekte ohne `changelog_url` bekommen automatisch das Community-Format
 - **Unterschied:** Summary als Einleitung, mehr Features (6-8), Details pro Feature (2 Unterpunkte), mehr Fixes/Improvements
 - **Projekte mit `changelog_url`:** Kurzformat + "Alle Details" Web-Link (unveraendert)
-- **Betrifft:** MayDay Sim (Discord-only), alle zukuenftigen Projekte ohne Web-Changelog
+- **Betrifft:** Alle zukuenftigen Projekte ohne Web-Changelog
+
+### MayDay Sim Changelog — Einsatzprotokoll (seit 2026-03-30)
+- **Web-Changelog:** `https://maydaysim.de/changelog` mit Detail-Seiten `/changelog/[version]`
+- **Design:** "Einsatzprotokoll"-Stil mit BOS-Farben, Notrufzentrale-HG-Bild, Timeline
+- **Architektur:** Einheitliches Pattern — ShadowOps Bot API (8766) → MayDay Next.js API-Proxy → SSR Frontend
+- **9 Gaming-Badges:** feature, content, gameplay, design, performance, multiplayer, fix, breaking, infrastructure (Schema + Template)
+- **Discord-Teaser:** `discord_teaser` Feld im gaming_community_v2 Template — Hype-Text + Cliffhanger + Link zur Website
+- **OG-Images:** Dynamisch generiert via `next/og` pro Version (BOS-Design, Version, Titel, Stats)
+- **SEO:** JSON-LD TechArticle + Breadcrumbs, dynamische Sitemap, Keywords-Tags
+- **Varianten-Sync:** `_sync_default_variants()` in prompt_ab_testing.py traegt neue Varianten automatisch nach
+- **CORS:** `maydaysim.de` + `www.maydaysim.de` + `localhost:3200` in health_server.py
+- **Design-Doc:** `docs/plans/2026-03-30-mayday-changelog-design.md`
 
 ### Täglicher Release-Mode (seit 2026-03-29)
 - **release_mode: daily** — Täglicher Release um konfigurierbare Uhrzeit statt nur wöchentlichem Cron

@@ -46,6 +46,8 @@ Bei Aenderungen an Shared-Services (Redis, PostgreSQL, Traefik) MUESSEN alle Kon
 - **Conventional Commit Hook:** Auf allen 5 Projekten deployed. Re-Deploy: `scripts/deploy-commit-hook.sh --all`
 - **Auto-Label Action:** `.github/workflows/auto-label-pr.yml` — Labels muessen im Repo existieren
 - **Pipeline-Metriken:** Jede Generierung loggt Commit-Typen, PR-Labels, Halluzinationen, Version-Source
+- **Varianten-Sync:** `_sync_default_variants()` in prompt_ab_testing.py traegt neue Code-Varianten automatisch in die persistierte JSON-Datei nach — NIEMALS manuell prompt_variants.json editieren
+- **Gaming-Badges:** Schema hat 12 Change-Types (feature, content, gameplay, design, performance, multiplayer, fix, breaking, infrastructure, improvement, docs, security) — bei Schema-Aenderungen ALLE in required und enum aufnehmen
 - NIEMALS den globalen min_commits Check entfernen — er ist die letzte Verteidigungslinie
 - NIEMALS `_validate_ai_output()` deaktivieren — er faengt halluzinierte Features ab
 - NIEMALS `_CLASSIFICATION_RULES` entfernen — sie schuetzen A/B-Varianten vor Regression

@@ -25,8 +25,11 @@ CORS_ALLOWED_ORIGINS: set[str] = {
     'https://guildscout.zerodox.de',
     'https://zerodox.de',
     'https://www.zerodox.de',
+    'https://maydaysim.de',
+    'https://www.maydaysim.de',
     'http://localhost:3000',
     'http://localhost:3001',
+    'http://localhost:3200',
 }
 
 
