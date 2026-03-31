@@ -499,6 +499,82 @@ class NotificationsMixin:
             title = 'Update'
         return title
 
+    def _build_discord_summary(self, ai_result, commits: list, language: str) -> str:
+        """Kürzt Content für Discord wenn changelog_url gesetzt ist (Teaser-Ersatz).
+
+        Extrahiert TL;DR + max 6 Highlights aus dem Content, egal ob dict oder Raw-Text.
+        Der "Alle Details" Link wird danach vom Caller angehängt.
+        """
+        MAX_HIGHLIGHTS = 6
+
+        # Strukturiert: TL;DR + Highlights aus changes
+        if isinstance(ai_result, dict):
+            parts = []
+            tldr = ai_result.get('tldr', '')
+            if tldr:
+                parts.append(f"> {tldr}")
+                parts.append("")
+
+            changes = ai_result.get('changes', [])
+            highlights = ai_result.get('discord_highlights', [])
+
+            if changes:
+                for c in changes[:MAX_HIGHLIGHTS]:
+                    desc = c.get('description', '')
+                    parts.append(f"\u2192 {desc}")
+                if len(changes) > MAX_HIGHLIGHTS:
+                    parts.append(f"*+{len(changes) - MAX_HIGHLIGHTS} weitere Änderungen*")
+            elif highlights:
+                for h in highlights[:MAX_HIGHLIGHTS]:
+                    parts.append(f"\u2192 {h}")
+            elif ai_result.get('summary', ''):
+                parts.append(ai_result['summary'][:500])
+
+            return '\n'.join(parts) if parts else self._categorize_commits_text(commits, language)
+
+        # Raw-Text: Ersten Absatz als TL;DR, dann Zeilen mit • oder → als Highlights
+        elif isinstance(ai_result, str) and ai_result.strip():
+            text = ai_result.strip()
+            lines = text.split('\n')
+
+            parts = []
+            highlights = []
+
+            for line in lines:
+                stripped = line.strip()
+                # TL;DR: Erster nicht-leerer, nicht-Header Absatz
+                if not parts and stripped and not stripped.startswith('#') and not stripped.startswith('**'):
+                    if stripped.startswith('>'):
+                        parts.append(stripped)
+                    else:
+                        parts.append(f"> {stripped[:200]}")
+                    continue
+                # Highlights: Zeilen mit •, →, - als Aufzählungen
+                if stripped and (stripped.startswith(('\u2022 ', '\u2192 ', '- **', '• **'))):
+                    # Feature-Name extrahieren (fett)
+                    highlight = stripped.lstrip('\u2022\u2192- ').strip()
+                    # Nach dem ersten Satz abschneiden
+                    if ' — ' in highlight:
+                        highlight = highlight.split(' — ')[0]
+                    elif ' – ' in highlight:
+                        highlight = highlight.split(' – ')[0]
+                    highlights.append(f"\u2192 {highlight}")
+
+            if parts:
+                parts.append("")
+            for h in highlights[:MAX_HIGHLIGHTS]:
+                parts.append(h)
+            if len(highlights) > MAX_HIGHLIGHTS:
+                parts.append(f"*+{len(highlights) - MAX_HIGHLIGHTS} weitere Änderungen*")
+
+            if not parts:
+                # Fallback: Ersten 400 Zeichen
+                parts.append(text[:400] + ('...' if len(text) > 400 else ''))
+
+            return '\n'.join(parts)
+
+        return self._categorize_commits_text(commits, language)
+
     def _build_description(self, ai_result, commits: list, language: str,
                             discord_only: bool = False) -> str:
         """Baut Description aus AI-Ergebnis (dict/str/None)."""
@@ -649,6 +725,9 @@ class NotificationsMixin:
         # Teaser-Modus: Discord-Kurzversion wenn changelog_url gesetzt
         if not is_discord_only and isinstance(ai_result, dict) and ai_result.get('discord_teaser'):
             description = ai_result['discord_teaser']
+        elif not is_discord_only:
+            # changelog_url gesetzt aber kein Teaser → Content kürzen für Discord
+            description = self._build_discord_summary(ai_result, commits, language)
         else:
             description = self._build_description(ai_result, commits, language, discord_only=is_discord_only)
 

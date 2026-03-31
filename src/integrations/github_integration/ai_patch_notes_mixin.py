@@ -287,9 +287,12 @@ class AIPatchNotesMixin:
         # 7. Fallback
         return ('OTHER', None)
 
-    def _build_classified_commits_text(self, commits: list) -> str:
+    def _build_classified_commits_text(self, commits: list, compact: bool = False) -> str:
         """
         Baue annotierten Commit-Text mit Typ-Tags fuer den AI-Prompt.
+
+        Args:
+            compact: Bei True werden Bodies auf 5 Zeilen limitiert (fuer viele Commits).
 
         - Merge-Commits werden uebersprungen
         - Design-Doc-Bodies werden abgeschnitten (kein Halluzinations-Material)
@@ -342,7 +345,8 @@ class AIPatchNotesMixin:
                 body_lines.append(f"PR-Beschreibung: {pr_body}")
 
             if body_lines:
-                body = '\n'.join(body_lines[:30])
+                max_body = 5 if compact else 30
+                body = '\n'.join(body_lines[:max_body])
                 classified_lines.append(
                     f"- [{tag}] {title}\n  {body}\n  (by {author})"
                 )
@@ -1227,7 +1231,9 @@ Do NOT invent features that are not tagged [FEATURE]!"""
                 from collections import defaultdict
 
                 # Klassifizierte Commits fuer Trainer-Prompt (mit Typ-Tags)
-                classified_commits_text = self._build_classified_commits_text(commits[:25])
+                classified_commits_text = self._build_classified_commits_text(
+                    commits[:25], compact=len(commits) > 15
+                )
                 format_values = defaultdict(str, {
                     'project': repo_name,
                     'changelog': changelog_content or "No CHANGELOG available",
