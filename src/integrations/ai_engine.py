@@ -864,11 +864,15 @@ class AIEngine:
 
         schema_path = self.router._resolve_schema_path('patch_notes')
 
+        # Patch Notes brauchen mehr Zeit als normale Queries (langer Prompt + Schema)
+        pn_timeout = max(self.codex.timeout_thinking, 300)
+
         route = {
             'engine': 'codex',
             'model': self.router._get_engine_models('codex').get(model_class, model_class),
             'model_class': model_class,
             'schema_path': schema_path,
+            'timeout': pn_timeout,
         }
 
         result = await self._execute_with_fallback(prompt, route)
@@ -1717,6 +1721,9 @@ class AIEngine:
             primary_name = 'claude'
             fallback_name = 'codex'
 
+        # Optionaler Timeout aus Route (z.B. Patch Notes brauchen mehr Zeit)
+        route_timeout = route.get('timeout')
+
         # Codex-Quota-Cache: direkt Fallback wenn Quota erschöpft
         import time as _time
         if primary_name == 'codex' and _time.time() < self._codex_quota_exhausted_until:
@@ -1728,6 +1735,7 @@ class AIEngine:
                 prompt,
                 model=model_class,
                 schema_path=schema_path,
+                timeout=route_timeout,
             )
 
             if result:
@@ -1748,6 +1756,7 @@ class AIEngine:
             prompt,
             model=model_class,
             schema_path=schema_path,
+            timeout=route_timeout,
         )
 
         if result:
