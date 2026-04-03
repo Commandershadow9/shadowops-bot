@@ -53,6 +53,9 @@ class ProjectStatus:
         self.max_response_times = 100
         self.last_log_pos: int = 0
 
+        # Erweiterte Health-Daten (Latenz, Memory, Version)
+        self.health_details: dict = {}
+
         # Incident tracking
         self.consecutive_failures = 0
         self.last_error: Optional[str] = None
@@ -241,6 +244,7 @@ class ProjectMonitor:
             # Load dashboard message IDs
             self.dashboard_message_id = state.get('dashboard_message_id')
             self._ext_dashboard_ids = state.get('ext_dashboard_ids', {})
+            self._ext_alert_ids = state.get('ext_alert_ids', {})
 
             # Load project states
             project_states = state.get('projects', {})
@@ -271,6 +275,7 @@ class ProjectMonitor:
             state = {
                 'dashboard_message_id': self.dashboard_message_id,
                 'ext_dashboard_ids': getattr(self, '_ext_dashboard_ids', {}),
+                'ext_alert_ids': getattr(self, '_ext_alert_ids', {}),
                 'projects': {}
             }
 
@@ -386,6 +391,13 @@ class ProjectMonitor:
                     response_time_ms = (time.time() - start_time) * 1000
 
                     if response.status == project.expected_status:
+                        # Parse health details wenn verfügbar
+                        try:
+                            health_data = await response.json()
+                            project.health_details = health_data
+                        except Exception:
+                            project.health_details = {}
+
                         # Health check succeeded
                         was_recovering = project.update_online(response_time_ms)
 
@@ -805,7 +817,23 @@ class ProjectMonitor:
                 else:
                     continue
 
-                await channel.send(embed=embed)
+                # Persistente Alert-Nachricht: Edit statt neu senden (Anti-Flooding)
+                alert_key = f"ext_alert_{project.name}_{channel_id}"
+                if not hasattr(self, '_ext_alert_ids'):
+                    self._ext_alert_ids = {}
+
+                existing_alert_id = self._ext_alert_ids.get(alert_key)
+                if existing_alert_id:
+                    try:
+                        msg = await channel.fetch_message(existing_alert_id)
+                        await msg.edit(embed=embed)
+                    except discord.NotFound:
+                        msg = await channel.send(embed=embed)
+                        self._ext_alert_ids[alert_key] = msg.id
+                else:
+                    msg = await channel.send(embed=embed)
+                    self._ext_alert_ids[alert_key] = msg.id
+
                 self.logger.info(f"📤 Sent {event_type} notification for {project.name} to external server")
 
             except Exception as e:
@@ -977,6 +1005,30 @@ class ProjectMonitor:
                     main_line += "\n" + " · ".join(port_lines)
                 break
 
+            # Erweiterte Health-Daten (wenn verfügbar)
+            hd = project.health_details
+            if hd:
+                latency = hd.get('latency', {})
+                memory = hd.get('memory', {})
+                version = hd.get('version')
+
+                if latency:
+                    lat_parts = []
+                    if latency.get('db_ms') is not None:
+                        lat_parts.append(f"DB:{latency['db_ms']}ms")
+                    if latency.get('redis_ms') is not None:
+                        lat_parts.append(f"Redis:{latency['redis_ms']}ms")
+                    if latency.get('osrm_ms') is not None:
+                        lat_parts.append(f"OSRM:{latency['osrm_ms']}ms")
+                    if lat_parts:
+                        main_line += f"\n⚡ {' · '.join(lat_parts)}"
+
+                if memory:
+                    main_line += f"\n💾 RAM: {memory.get('rss_mb', '?')} MB · Heap: {memory.get('heap_used_mb', '?')} MB"
+
+                if version:
+                    main_line += f"\n📦 v{version}"
+
             # Letzter Check Zeitstempel
             last_check = getattr(project, 'last_check_time', None)
             if last_check:
@@ -1105,6 +1157,31 @@ class ProjectMonitor:
                 value="\n".join(service_lines),
                 inline=False
             )
+
+        # Erweiterte Health-Daten (wenn verfügbar)
+        hd = project.health_details
+        if hd:
+            latency = hd.get('latency', {})
+            memory = hd.get('memory', {})
+            version = hd.get('version')
+
+            if latency:
+                latency_lines = []
+                if latency.get('db_ms') is not None:
+                    latency_lines.append(f"DB: {latency['db_ms']}ms")
+                if latency.get('redis_ms') is not None:
+                    latency_lines.append(f"Redis: {latency['redis_ms']}ms")
+                if latency.get('osrm_ms') is not None:
+                    latency_lines.append(f"OSRM: {latency['osrm_ms']}ms")
+                if latency_lines:
+                    embed.add_field(name="⚡ Latenz", value=" · ".join(latency_lines), inline=False)
+
+            if memory:
+                mem_text = f"RAM: {memory.get('rss_mb', '?')} MB · Heap: {memory.get('heap_used_mb', '?')} MB"
+                embed.add_field(name="💾 Memory", value=mem_text, inline=True)
+
+            if version:
+                embed.add_field(name="📦 Version", value=f"v{version}", inline=True)
 
         # Statistiken
         uptime = f"{project.uptime_percentage:.1f}%"
