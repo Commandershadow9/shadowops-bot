@@ -369,7 +369,10 @@ class ProjectMonitor:
         # TCP-Port-basiertes Health-Checking (für DB-Ports etc.)
         if project.tcp_ports:
             await self._check_tcp_ports(project)
-            return
+            # Wenn AUCH eine URL vorhanden ist → HTTP-Health-Check zusätzlich machen
+            # (liefert erweiterte Daten: Latenz, Memory, Version)
+            if not project.url:
+                return
 
         # Systemd-basiertes Health-Checking (für Services ohne HTTP-Endpoint)
         if project.systemd_services:

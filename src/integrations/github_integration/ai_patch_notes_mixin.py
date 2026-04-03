@@ -135,9 +135,16 @@ class AIPatchNotesMixin:
             return ""
 
         if language == 'de':
-            section = "# TEAM-CREDITS (für die Credits-Sektion in den Patch Notes)\n"
+            section = "# TEAM-CREDITS (PFLICHT — als LETZTE Zeile in den Patch Notes einfügen!)\n"
+            section += "# WICHTIG: Diese Zeile MUSS WÖRTLICH am Ende der Patch Notes stehen!\n"
+            section += "# Formatiere EXAKT so:\n"
         else:
-            section = "# TEAM CREDITS (for the credits section in patch notes)\n"
+            section = "# TEAM CREDITS (MANDATORY — insert as LAST line in patch notes!)\n"
+            section += "# IMPORTANT: This line MUST appear VERBATIM at the end of the patch notes!\n"
+            section += "# Format EXACTLY like this:\n"
+
+        team_parts = []
+        auto_parts = []
 
         for name, info in credits.items():
             if name == '__autonomous__':
@@ -148,9 +155,16 @@ class AIPatchNotesMixin:
                 types_str = ', '.join(
                     _AUTO_LABELS.get(t, t) for t in info['types']
                 )
-                section += f"- KI-Agents: {info['commits']} automatische Commits ({types_str})\n"
+                auto_parts.append(f"🤖 **Automatisiert:** {types_str}")
             else:
-                section += f"- {name} ({info['rolle']}): {info['commits']} Commits\n"
+                team_parts.append(f"{name} ({info['rolle']})")
+
+        if team_parts:
+            credits_line = "👥 **Dieses Update:** " + " · ".join(team_parts)
+            section += f"# → {credits_line}\n"
+        if auto_parts:
+            for ap in auto_parts:
+                section += f"# → {ap}\n"
 
         return section
 

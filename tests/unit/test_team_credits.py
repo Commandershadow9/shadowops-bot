@@ -163,7 +163,7 @@ class TestFormatCreditsSection:
         }
         result = mixin._format_credits_section(credits, 'de')
         assert 'Shadow (Backend)' in result
-        assert '5 Commits' in result
+        assert 'Dieses Update' in result
 
     def test_mit_autonomous(self, mixin):
         credits = {
@@ -171,5 +171,5 @@ class TestFormatCreditsSection:
             '__autonomous__': {'commits': 2, 'types': ['SEO-AUTO']},
         }
         result = mixin._format_credits_section(credits, 'de')
-        assert 'KI-Agents' in result
+        assert 'Automatisiert' in result
         assert 'SEO-Optimierungen' in result
