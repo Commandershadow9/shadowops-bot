@@ -16,6 +16,144 @@ logger = logging.getLogger('shadowops')
 
 class AIPatchNotesMixin:
 
+    # =============================================
+    # Team-Mapping: Git-Autor → Display-Name + Rolle
+    # =============================================
+    # Erweiterbar für neue Teammitglieder (Game Designer etc.)
+    # Key: Git-Autorname (case-insensitive Match)
+    # Value: (Display-Name, Rolle)
+
+    TEAM_MAPPING: Dict[str, tuple[str, str]] = {
+        # MayDay Sim Core Team
+        'commandershadow9': ('Shadow', 'Backend & Infrastruktur'),
+        'cmdshadow': ('Shadow', 'Backend & Infrastruktur'),
+        'shadow': ('Shadow', 'Backend & Infrastruktur'),
+        'renjihoshida': ('Mapu', 'Frontend & Design'),
+        'mapu': ('Mapu', 'Frontend & Design'),
+        # GuildScout / ZERODOX
+        'commandershadow': ('Shadow', 'Backend & Infrastruktur'),
+    }
+
+    # Git-Autoren die NICHT als eigenständige Credits erscheinen sollen
+    # (Co-Authored-By wird bereits in _build_classified_commits_text gefiltert)
+    AI_AUTHOR_NAMES: set[str] = {
+        'claude', 'claude opus', 'claude sonnet', 'claude haiku',
+        'github-actions', 'github-actions[bot]', 'dependabot', 'dependabot[bot]',
+        'noreply', 'copilot',
+    }
+
+    def _resolve_team_member(self, git_author: str) -> tuple[str, str] | None:
+        """
+        Löse einen Git-Autornamen zu Team-Member auf.
+
+        Returns:
+            (display_name, rolle) oder None wenn unbekannt/AI
+        """
+        name_lower = git_author.lower().strip()
+
+        # AI-Autoren rausfiltern
+        if name_lower in self.AI_AUTHOR_NAMES:
+            return None
+
+        # Exakter Match im Team-Mapping
+        if name_lower in self.TEAM_MAPPING:
+            return self.TEAM_MAPPING[name_lower]
+
+        # Partial Match (z.B. "Commandershadow9 via GitHub")
+        for key, value in self.TEAM_MAPPING.items():
+            if key in name_lower or name_lower in key:
+                return value
+
+        # Unbekannter Autor → Display-Name = Git-Name, Rolle = "Contributor"
+        return (git_author, 'Contributor')
+
+    def _build_team_credits(self, commits: list) -> Dict[str, Dict]:
+        """
+        Gruppiere Commits nach Team-Mitglied für Credits-Sektion.
+
+        Returns:
+            {
+                "Shadow": {"rolle": "Backend", "commits": 12, "features": ["feat: ...", ...]},
+                "Mapu": {"rolle": "Frontend", "commits": 5, "features": [...]},
+                "__autonomous__": {"commits": 3, "types": ["SEO-AUTO", "DEPS-AUTO"]},
+            }
+        """
+        credits: Dict[str, Dict] = {}
+        autonomous_types: set[str] = set()
+        autonomous_count = 0
+
+        for commit in commits:
+            author_name = commit.get('author', {}).get('name') or \
+                          commit.get('author', {}).get('username', 'Unknown')
+
+            tag, auto_group = self._classify_commit(commit)
+
+            # Merge-Commits überspringen
+            if tag == 'MERGE':
+                continue
+
+            # Autonome Commits separat sammeln
+            if auto_group:
+                autonomous_count += 1
+                autonomous_types.add(auto_group)
+                continue
+
+            # Team-Member auflösen
+            member = self._resolve_team_member(author_name)
+            if member is None:
+                continue  # AI-Autor, wird dem Committer zugeordnet
+
+            display_name, rolle = member
+
+            if display_name not in credits:
+                credits[display_name] = {
+                    'rolle': rolle,
+                    'commits': 0,
+                    'features': [],
+                }
+
+            credits[display_name]['commits'] += 1
+
+            # Feature-Titel sammeln (nur FEATURE/BUGFIX/IMPROVEMENT, max 5)
+            title = commit.get('message', '').split('\n')[0]
+            if tag in ('FEATURE', 'BUGFIX', 'IMPROVEMENT', 'PERFORMANCE', 'SECURITY'):
+                if len(credits[display_name]['features']) < 5:
+                    credits[display_name]['features'].append(title)
+
+        # Autonome Agent-Arbeit
+        if autonomous_count > 0:
+            credits['__autonomous__'] = {
+                'commits': autonomous_count,
+                'types': sorted(autonomous_types),
+            }
+
+        return credits
+
+    def _format_credits_section(self, credits: Dict[str, Dict], language: str = 'de') -> str:
+        """Formatiere Credits als Kontext-Sektion für den AI-Prompt."""
+        if not credits:
+            return ""
+
+        if language == 'de':
+            section = "# TEAM-CREDITS (für die Credits-Sektion in den Patch Notes)\n"
+        else:
+            section = "# TEAM CREDITS (for the credits section in patch notes)\n"
+
+        for name, info in credits.items():
+            if name == '__autonomous__':
+                _AUTO_LABELS = {
+                    'SEO-AUTO': 'SEO-Optimierungen',
+                    'DEPS-AUTO': 'Dependency-Updates',
+                }
+                types_str = ', '.join(
+                    _AUTO_LABELS.get(t, t) for t in info['types']
+                )
+                section += f"- KI-Agents: {info['commits']} automatische Commits ({types_str})\n"
+            else:
+                section += f"- {name} ({info['rolle']}): {info['commits']} Commits\n"
+
+        return section
+
     def _collect_git_stats(self, commits: list, project_path: Optional[Path]) -> Dict:
         """
         Sammle Git-Statistiken aus Commits und Repository.
@@ -1171,10 +1309,12 @@ Do NOT invent features that are not tagged [FEATURE]!"""
             project_context = (project_context + "\n\n" + dev_teasers).strip()
             self.logger.info(f"🔮 Dev-Branch-Teaser fuer Prompt geladen")
 
-        # Collect git stats
+        # Collect git stats + team credits
         git_stats = self._collect_git_stats(commits, project_path)
         stats_line = self._format_stats_line(git_stats, language)
         stats_section = self._format_stats_section(git_stats, language)
+        team_credits = self._build_team_credits(commits)
+        credits_section = self._format_credits_section(team_credits, language)
 
         # Build enhanced prompt with A/B Testing
         selected_variant = None
@@ -1239,6 +1379,7 @@ Do NOT invent features that are not tagged [FEATURE]!"""
                     'changelog': changelog_content or "No CHANGELOG available",
                     'commits': classified_commits_text,
                     'stats_section': stats_section,
+                    'credits_section': credits_section,
                     'stats_line': stats_line if git_stats.get('commits', 0) >= 5 else '',
                 })
                 prompt = variant_template.format_map(format_values)

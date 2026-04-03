@@ -700,6 +700,30 @@ Wähle den SPEZIFISCHSTEN Type. "content" statt "feature" wenn es neue Szenarien
 "gameplay" statt "improvement" wenn es Balancing betrifft.
 
 ═══════════════════════════════════════
+TEAM-CREDITS (OPTIONAL — nur wenn credits_section vorhanden):
+═══════════════════════════════════════
+
+{credits_section}
+
+Wenn TEAM-CREDITS oben vorhanden sind, füge am Ende der Patch Notes eine Credits-Zeile ein:
+
+FORMAT (als letzte Zeile, NACH allen Features):
+👥 **Dieses Update:** [Name] ([Bereich]) · [Name] ([Bereich])
+
+REGELN:
+- Nur Team-Mitglieder mit echten Commits nennen (NICHT erfinden!)
+- Rollen aus den Credits übernehmen
+- Wenn KI-Agents Commits haben: "🤖 Automatisiert: [was sie gemacht haben]" als separate Zeile
+- KI-Agents sind ein FEATURE — zeige dass das Projekt aktive Automatisierung hat
+- Die Credits-Zeile soll kurz und knapp sein (1 Zeile für Team, optional 1 für AI-Agents)
+- Wenn nur 1 Person → trotzdem zeigen, z.B. "👥 **Dieses Update:** Shadow (Backend)"
+
+BEISPIELE:
+- "👥 **Dieses Update:** Shadow (Backend & Infrastruktur) · Mapu (Frontend & Design)"
+- "👥 **Dieses Update:** Shadow (Backend) · Mapu (UI)"
+  "🤖 **Automatisiert:** SEO-Optimierungen, Dependency-Updates"
+
+═══════════════════════════════════════
 DISCORD-TEASER (PFLICHT):
 ═══════════════════════════════════════
 
@@ -849,6 +873,25 @@ Every change in the `changes` array MUST have one of these types:
 
 Choose the MOST SPECIFIC type. "content" instead of "feature" for new scenarios/vehicles.
 "gameplay" instead of "improvement" for balancing changes.
+
+═══════════════════════════════════════
+TEAM CREDITS (OPTIONAL — only if credits_section is present):
+═══════════════════════════════════════
+
+{credits_section}
+
+If TEAM CREDITS are present above, add a credits line at the end of the patch notes:
+
+FORMAT (as last line, AFTER all features):
+👥 **This Update:** [Name] ([Area]) · [Name] ([Area])
+
+RULES:
+- Only name team members with real commits (do NOT invent!)
+- Use roles from the credits
+- If AI agents have commits: "🤖 Automated: [what they did]" as a separate line
+- AI agents are a FEATURE — show that the project has active automation
+- The credits line should be short and concise (1 line for team, optionally 1 for AI agents)
+- If only 1 person → still show, e.g. "👥 **This Update:** Shadow (Backend)"
 
 ═══════════════════════════════════════
 DISCORD TEASER (MANDATORY):
