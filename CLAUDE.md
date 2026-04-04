@@ -286,7 +286,8 @@
 - **Duplikat-Guard:** Vorherige Version aus Changelog-DB als "BEREITS ABGEDECKT" Kontext
 - **Dev-Branch Teaser:** Aktive feat/* Branches mit Fortschrittsindikator + Hype-Prompt ("🔮 Demnächst")
 - **Projekt-Kontext:** `project_description` + `target_audience` in config.yaml pro Projekt
-- **Semantic Versionierung:** `_calculate_semver()` berechnet MINOR/PATCH/MAJOR aus Commit-Typen statt KI-Erfindung. Kollisionsschutz via `_ensure_unique_version()`
+- **Semantic Versionierung:** `_calculate_semver()` berechnet MINOR/PATCH/MAJOR aus Commit-Typen statt KI-Erfindung. Kollisionsschutz via `_ensure_unique_version()` — wird jetzt bei ALLEN 4 Quellen aufgerufen (git_tag, explicit, semver, ai), nicht nur bei semver
+- **Team-Credits:** `TEAM_MAPPING` in ai_patch_notes_mixin.py — Git-Autoren → Display-Name + Rolle. Credits zeigen wer was gebaut hat mit Feature-Details aus Commits (max 4 pro Person). Format: "Shadow (Founder & Lead Dev) — Feature 1, Feature 2"
 - **Alle 4 Trigger-Pfade gesichert:** Webhook Push, Local Polling, Woechentlicher Cron, Manueller /release-notes
 - **PR-Label Integration:** GitHub PR-Labels (16 Mappings) via `gh pr view --json labels` als zuverlaessigere Klassifizierung. Labels ueberschreiben Commit-Prefix
 - **Smart Diff-Analyse:** Dateien nach 8 Kategorien gruppiert (Frontend, Backend, DB, Config, Tests, Docs, CI/CD, Dependencies). Strukturierte Uebersicht statt roher Diff-Output

@@ -247,23 +247,23 @@ class NotificationsMixin:
         # 1. Git-Tags auf Commits im Batch (zuverlaessigste Quelle)
         tag_v = self._get_version_from_commit_tags(commits, repo_name)
         if tag_v:
-            return (tag_v, 'git_tag')
+            return (self._ensure_unique_version(tag_v, repo_name), 'git_tag')
 
         # 2. Aus Commits (expliziter Version-Tag, z.B. "feat: Release v2.1.0")
         v = self._extract_version_from_commits(commits)
         if v:
-            return (v, 'explicit')
+            return (self._ensure_unique_version(v, repo_name), 'explicit')
 
         # 3. Semantic Versioning: Letzte Version + Commit-Typen → naechste Version
         sem_v = self._calculate_semver(commits, repo_name)
         if sem_v:
-            return (sem_v, 'semver')
+            return (sem_v, 'semver')  # _calculate_semver ruft bereits _ensure_unique_version auf
 
         # 4. Aus AI-Ergebnis (nur echte Versionen, NICHT von AI erfundene Major-Bumps)
         if isinstance(ai_result, dict):
             ai_v = ai_result.get('version')
             if ai_v and ai_v != 'patch' and not ai_v.startswith('0.0.'):
-                return (ai_v, 'ai')
+                return (self._ensure_unique_version(ai_v, repo_name), 'ai')
 
         # 5. Auto-Version (Fallback, IMMER)
         return (f"patch.{datetime.now(timezone.utc).strftime('%Y.%m.%d')}", 'fallback')

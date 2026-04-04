@@ -48,6 +48,8 @@ Bei Aenderungen an Shared-Services (Redis, PostgreSQL, Traefik) MUESSEN alle Kon
 - **Pipeline-Metriken:** Jede Generierung loggt Commit-Typen, PR-Labels, Halluzinationen, Version-Source
 - **Varianten-Sync:** `_sync_default_variants()` in prompt_ab_testing.py traegt neue Code-Varianten automatisch in die persistierte JSON-Datei nach — NIEMALS manuell prompt_variants.json editieren
 - **Gaming-Badges:** Schema hat 12 Change-Types (feature, content, gameplay, design, performance, multiplayer, fix, breaking, infrastructure, improvement, docs, security) — bei Schema-Aenderungen ALLE in required und enum aufnehmen
+- **Version-Uniqueness:** `_ensure_unique_version()` wird bei ALLEN 4 Version-Quellen aufgerufen (git_tag, explicit, semver, ai). NIEMALS eine Quelle ohne Uniqueness-Check durchlassen — Vorfall 2026-04-04: v0.17.0 nach v0.17.2 erstellt weil explicit keine Pruefung hatte
+- **Team-Credits:** TEAM_MAPPING pflegen bei neuen Teammitgliedern. Rollen: Shadow="Founder & Lead Dev", Mapu="Co-Founder & Dev". Credits enthalten Feature-Details aus Commits
 - NIEMALS den globalen min_commits Check entfernen — er ist die letzte Verteidigungslinie
 - NIEMALS `_validate_ai_output()` deaktivieren — er faengt halluzinierte Features ab
 - NIEMALS `_CLASSIFICATION_RULES` entfernen — sie schuetzen A/B-Varianten vor Regression
