@@ -731,11 +731,12 @@ class NotificationsMixin:
         else:
             description = self._build_description(ai_result, commits, language, discord_only=is_discord_only)
 
-        # Team-Credits aus git_stats
+        # Team-Credits aus git_stats (mit Rollen + Features)
         contributors = (git_stats or {}).get('contributors', [])
         if contributors:
-            credits_text = ' · '.join(contributors)
-            description += f"\n\n\U0001f465 **Dieses Update:** {credits_text}"
+            description += "\n\n\U0001f465 **Dieses Update:**"
+            for c in contributors:
+                description += f"\n\u2192 {c}"
 
         # Changelog-Link am Ende (nur wenn Page vorhanden)
         if changelog_link:
