@@ -186,14 +186,22 @@ class AIPatchNotesMixin:
             'coverage_percent': None,
         }
 
-        # Contributors aus Commits
-        authors = set()
+        # Contributors aus Commits — mit Display-Name und Rolle aufgelöst
+        seen = set()
+        contributor_list = []
         for commit in commits:
             author = commit.get('author', {})
             name = author.get('name') or author.get('username', '')
-            if name:
-                authors.add(name)
-        stats['contributors'] = sorted(authors)
+            if not name:
+                continue
+            member = self._resolve_team_member(name)
+            if member is None:
+                continue  # AI-Autor
+            display_name, rolle = member
+            if display_name not in seen:
+                seen.add(display_name)
+                contributor_list.append(f"{display_name} ({rolle})")
+        stats['contributors'] = contributor_list
 
         # Git diff stats berechnen
         if project_path and project_path.exists():
