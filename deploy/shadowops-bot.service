@@ -16,9 +16,17 @@ ExecStartPre=/bin/bash -c 'PID_FILE=/home/cmdshadow/shadowops-bot/.bot.pid; if [
 # Python mit Bot-Script (uv Virtual Environment)
 ExecStart=/home/cmdshadow/shadowops-bot/.venv/bin/python3 /home/cmdshadow/shadowops-bot/src/bot.py
 
+# Graceful Shutdown: SIGTERM → close() mit per-Component Timeouts
+# Security Engine allein braucht bis zu 20s, Discord-Close bis zu 15s
+KillMode=mixed
+TimeoutStopSec=120
+SuccessExitStatus=143 SIGTERM
+
 # Restart-Policy
-Restart=always
-RestartSec=10
+Restart=on-abnormal
+RestartSec=30
+StartLimitIntervalSec=300
+StartLimitBurst=3
 
 # Limits
 LimitNOFILE=65536

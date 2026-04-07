@@ -241,10 +241,11 @@ class DiscordUIMixin:
             # Approval in DB persistieren (überlebt Bot-Restart)
             try:
                 import asyncpg
-                pool = await asyncpg.create_pool(
-                    'postgresql://security_analyst:sec_analyst_2026@127.0.0.1:5433/security_analyst',
-                    min_size=1, max_size=1,
-                )
+                from src.utils.config import get_config
+                sa_dsn = get_config().security_analyst_dsn
+                if not sa_dsn:
+                    raise RuntimeError("security_analyst DSN nicht konfiguriert")
+                pool = await asyncpg.create_pool(sa_dsn, min_size=1, max_size=1)
                 await pool.execute(
                     """INSERT INTO pending_approvals (batch_id, plan_description, message_id, channel_id)
                        VALUES ($1, $2, $3, $4)
@@ -284,15 +285,15 @@ class DiscordUIMixin:
             # DB-Status aktualisieren
             try:
                 import asyncpg
-                pool = await asyncpg.create_pool(
-                    'postgresql://security_analyst:sec_analyst_2026@127.0.0.1:5433/security_analyst',
-                    min_size=1, max_size=1,
-                )
-                await pool.execute(
-                    "UPDATE pending_approvals SET status = $1, resolved_at = NOW() WHERE batch_id = $2",
-                    resolution, batch.batch_id,
-                )
-                await pool.close()
+                from src.utils.config import get_config
+                sa_dsn = get_config().security_analyst_dsn
+                if sa_dsn:
+                    pool = await asyncpg.create_pool(sa_dsn, min_size=1, max_size=1)
+                    await pool.execute(
+                        "UPDATE pending_approvals SET status = $1, resolved_at = NOW() WHERE batch_id = $2",
+                        resolution, batch.batch_id,
+                    )
+                    await pool.close()
             except Exception:
                 pass
 

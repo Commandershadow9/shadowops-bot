@@ -3,7 +3,13 @@
 import psycopg2
 import psycopg2.extras
 
-DSN = "dbname=security_analyst user=security_analyst password=sec_analyst_2026 host=127.0.0.1 port=5433"
+import os
+import sys
+sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..'))
+from src.utils.config import get_config
+DSN = get_config().security_analyst_dsn
+if not DSN:
+    raise RuntimeError("security_analyst DSN nicht konfiguriert")
 
 
 def migrate():

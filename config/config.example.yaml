@@ -178,6 +178,10 @@ security_analyst:
   # Knowledge-Decay: -5%/Lauf bei Wissen >14 Tage alt (Minimum: 20%)
   # Fix-Verifikation: Letzte 14 Tage, max 10 Fixes pro Session
 
+# Agent Learning DB (Cross-Agent Feedback, Patch Notes Learning)
+agent_learning:
+  database_dsn: "postgresql://agent_learning:SICHERES_PASSWORT@127.0.0.1:5433/agent_learning"
+
 # ╔═══════════════════════════════════════════════════════════════════════════╗
 # ║ AI LEARNING (Patch Notes Training + A/B Testing)                         ║
 # ║ Aktiviert: Trainierte Prompts, Few-Shot Beispiele, Feedback-Loop        ║

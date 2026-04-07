@@ -20,14 +20,20 @@ import asyncpg
 
 logger = logging.getLogger('shadowops.pn_learning')
 
-DSN = 'postgresql://agent_learning:agent_learn_2026@127.0.0.1:5433/agent_learning'
+def _get_agent_learning_dsn() -> str:
+    """Agent-Learning DSN aus Config/Env laden."""
+    from src.utils.config import get_config
+    dsn = get_config().agent_learning_dsn
+    if not dsn:
+        raise RuntimeError("agent_learning DSN nicht konfiguriert (AGENT_LEARNING_DB_URL oder config.yaml)")
+    return dsn
 
 
 class PatchNotesLearning:
     """PostgreSQL-basiertes Learning fuer Patch Notes."""
 
-    def __init__(self, dsn: str = DSN):
-        self.dsn = dsn
+    def __init__(self, dsn: str = None):
+        self.dsn = dsn or _get_agent_learning_dsn()
         self.pool: Optional[asyncpg.Pool] = None
 
     async def connect(self):

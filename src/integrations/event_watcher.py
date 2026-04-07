@@ -173,10 +173,11 @@ class SecurityEventWatcher:
         """Lazy DB-Pool für Security-Events."""
         if self._db_pool is None:
             import asyncpg
-            self._db_pool = await asyncpg.create_pool(
-                'postgresql://security_analyst:sec_analyst_2026@127.0.0.1:5433/security_analyst',
-                min_size=1, max_size=2,
-            )
+            from src.utils.config import get_config
+            sa_dsn = get_config().security_analyst_dsn
+            if not sa_dsn:
+                raise RuntimeError("security_analyst DSN nicht konfiguriert")
+            self._db_pool = await asyncpg.create_pool(sa_dsn, min_size=1, max_size=2)
         return self._db_pool
 
     async def _init_recidive_from_db(self):

@@ -187,6 +187,20 @@ class Config:
         return self._get_secret('OPENAI_API_KEY', ['ai', 'openai', 'api_key'])
 
     @property
+    def security_analyst_dsn(self) -> Optional[str]:
+        return self._get_secret(
+            'SECURITY_ANALYST_DB_URL',
+            ['security_analyst', 'database_dsn'],
+        )
+
+    @property
+    def agent_learning_dsn(self) -> Optional[str]:
+        return self._get_secret(
+            'AGENT_LEARNING_DB_URL',
+            ['agent_learning', 'database_dsn'],
+        )
+
+    @property
     def guild_id(self) -> int:
         return int(self.discord.get('guild_id', 0))
 

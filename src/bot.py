@@ -24,6 +24,7 @@ from utils.logger import setup_logger
 from utils.embeds import EmbedBuilder, Severity
 from utils.discord_logger import DiscordChannelLogger
 from utils.health_server import HealthCheckServer
+from utils.process_lock import ProcessLock
 from utils.state_manager import get_state_manager
 
 from integrations.fail2ban import Fail2banMonitor
@@ -732,10 +733,10 @@ class ShadowOpsBot(commands.Bot):
             # Pending Approvals aus DB prüfen (überlebten Bot-Restart?)
             try:
                 import asyncpg
-                pool = await asyncpg.create_pool(
-                    'postgresql://security_analyst:sec_analyst_2026@127.0.0.1:5433/security_analyst',
-                    min_size=1, max_size=1,
-                )
+                sa_dsn = self.config.security_analyst_dsn
+                if not sa_dsn:
+                    raise RuntimeError("security_analyst DSN nicht konfiguriert (SECURITY_ANALYST_DB_URL oder config.yaml)")
+                pool = await asyncpg.create_pool(sa_dsn, min_size=1, max_size=1)
                 pending = await pool.fetch(
                     "SELECT batch_id, plan_description, channel_id FROM pending_approvals WHERE status = 'pending'"
                 )
@@ -756,10 +757,7 @@ class ShadowOpsBot(commands.Bot):
                             embed.set_footer(text="Approval war aktiv bei Bot-Restart")
                             await channel.send(embed=embed)
                     # Pending Approvals als expired markieren
-                    pool = await asyncpg.create_pool(
-                        'postgresql://security_analyst:sec_analyst_2026@127.0.0.1:5433/security_analyst',
-                        min_size=1, max_size=1,
-                    )
+                    pool = await asyncpg.create_pool(sa_dsn, min_size=1, max_size=1)
                     await pool.execute(
                         "UPDATE pending_approvals SET status = 'expired_restart', resolved_at = NOW() WHERE status = 'pending'"
                     )
@@ -1177,65 +1175,51 @@ class ShadowOpsBot(commands.Bot):
         """Error Handler"""
         self.logger.error(f"❌ Fehler in Event {event}", exc_info=True)
 
+    async def _shutdown_component(self, name: str, coro, timeout: float = 10.0):
+        """Einzelne Komponente mit Timeout herunterfahren."""
+        try:
+            await asyncio.wait_for(coro, timeout=timeout)
+            self.logger.info(f"   ✅ {name} gestoppt")
+        except asyncio.TimeoutError:
+            self.logger.warning(f"   ⏰ {name} Shutdown-Timeout ({timeout}s) — uebersprungen")
+        except Exception as e:
+            self.logger.warning(f"   ⚠️ {name} Shutdown-Fehler: {e}")
+
     async def close(self):
-        """Clean shutdown of the bot"""
+        """Clean shutdown of the bot mit Timeouts pro Komponente"""
         import traceback
         self.logger.info("🛑 Shutting down ShadowOps Bot...")
         self.logger.info(f"   Close() aufgerufen von: {''.join(traceback.format_stack()[-3:-1])}")
 
-        # Stop Security Engine v6
+        # Stop Security Engine v6 (DB-Pools, ScanAgent, LearningBridge — braucht am laengsten)
         if self.security_engine:
-            try:
-                await self.security_engine.shutdown()
-            except Exception as e:
-                self.logger.warning(f"Security Engine Shutdown Fehler: {e}")
-
-        # Security Analyst wird jetzt durch security_engine.shutdown() gestoppt
-        # (scan_agent.stop() wird dort aufgerufen)
+            await self._shutdown_component("Security Engine", self.security_engine.shutdown(), timeout=20.0)
 
         # Stop Server Assistant
         if self.server_assistant:
-            try:
-                await self.server_assistant.stop()
-            except Exception as e:
-                self.logger.error(f"Error stopping server assistant: {e}")
+            await self._shutdown_component("Server Assistant", self.server_assistant.stop())
 
         # Stop continuous learning system (Legacy)
         if self.continuous_learning:
-            try:
-                await self.continuous_learning.stop()
-            except Exception as e:
-                self.logger.error(f"Error stopping continuous learning: {e}")
+            await self._shutdown_component("Continuous Learning", self.continuous_learning.stop())
 
         # Stop health check server
-        try:
-            await self.health_server.stop()
-        except Exception as e:
-            self.logger.error(f"Error stopping health server: {e}")
+        await self._shutdown_component("Health Server", self.health_server.stop())
 
         # Stop project monitor
         if self.project_monitor:
-            try:
-                await self.project_monitor.stop_monitoring()
-            except Exception as e:
-                self.logger.error(f"Error stopping project monitor: {e}")
+            await self._shutdown_component("Project Monitor", self.project_monitor.stop_monitoring())
 
         # Stop GitHub webhook server
         if self.github_integration and self.github_integration.enabled:
-            try:
-                await self.github_integration.stop_webhook_server()
-            except Exception as e:
-                self.logger.error(f"Error stopping GitHub integration: {e}")
+            await self._shutdown_component("GitHub Integration", self.github_integration.stop_webhook_server())
 
         # Stop GuildScout alerts webhook server
         if hasattr(self, 'guildscout_alerts') and self.guildscout_alerts:
-            try:
-                await self.guildscout_alerts.stop_webhook_server()
-            except Exception as e:
-                self.logger.error(f"Error stopping GuildScout alerts: {e}")
+            await self._shutdown_component("GuildScout Alerts", self.guildscout_alerts.stop_webhook_server())
 
-        # Close parent bot
-        await super().close()
+        # Close parent bot (Discord Connection)
+        await self._shutdown_component("Discord Connection", super().close(), timeout=15.0)
 
         self.logger.info("✅ ShadowOps Bot shutdown complete")
 
@@ -1897,6 +1881,7 @@ class ShadowOpsBot(commands.Bot):
 
 def main():
     """Hauptfunktion"""
+    lock = ProcessLock(Path(__file__).resolve().parent.parent / ".shadowops.lock")
     try:
         config = get_config()
         logger = setup_logger("shadowops", config.debug_mode)
@@ -1905,27 +1890,41 @@ def main():
         logger.info("🗡️  ShadowOps Security Bot")
         logger.info("=" * 60)
 
+        if not lock.acquire():
+            owner_pid = lock.read_owner_pid()
+            if owner_pid:
+                logger.warning(
+                    "ShadowOps laeuft bereits (PID %s) - zweite Instanz wird beendet",
+                    owner_pid,
+                )
+            else:
+                logger.warning("ShadowOps laeuft bereits - zweite Instanz wird beendet")
+            return 0
+
         # bot.run() nutzt intern asyncio.run() mit async with (garantiertes close()).
         # SIGTERM wird im setup_hook() via Event-Loop-Signal-Handler behandelt,
         # damit bot.close() die HTTP-Server-Sockets sauber freigibt.
         bot = ShadowOpsBot()
         bot.run(config.discord_token, log_handler=None)
+        return 0
 
     except FileNotFoundError as e:
         print(f"❌ Config-Fehler: {e}")
-        sys.exit(1)
+        return 1
     except ValueError as e:
         print(f"❌ Config-Fehler: {e}")
-        sys.exit(1)
+        return 1
     except KeyboardInterrupt:
         print("\n👋 Bot wird beendet...")
-        sys.exit(0)
+        return 0
     except Exception as e:
         print(f"❌ Kritischer Fehler: {e}")
         import traceback
         traceback.print_exc()
-        sys.exit(1)
+        return 1
+    finally:
+        lock.release()
 
 
 if __name__ == "__main__":
-    main()
+    sys.exit(main())

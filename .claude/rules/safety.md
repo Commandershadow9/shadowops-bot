@@ -55,8 +55,9 @@ Bei Aenderungen an Shared-Services (Redis, PostgreSQL, Traefik) MUESSEN alle Kon
 - NIEMALS `_CLASSIFICATION_RULES` entfernen — sie schuetzen A/B-Varianten vor Regression
 
 ## Learning-System (agent_learning DB)
-- DB-Passwort `agent_learn_2026` steht in `patch_notes_learning.py` DSN — nicht aendern ohne alle Referenzen
-- `security_analyst` DB-DSN wird aus `config.yaml` (`security_analyst.database_dsn`) oder `SECURITY_ANALYST_DB_URL` env var geladen — KEIN Hardcoded-Fallback mehr
+- **KEINE hardcoded DB-Passwörter im Source Code!** Alle DSNs kommen aus `config.yaml` oder Env-Vars:
+  - `security_analyst` DB: Config-Property `config.security_analyst_dsn` (Env: `SECURITY_ANALYST_DB_URL`, Config: `security_analyst.database_dsn`)
+  - `agent_learning` DB: Config-Property `config.agent_learning_dsn` (Env: `AGENT_LEARNING_DB_URL`, Config: `agent_learning.database_dsn`)
 - `PROJECT_SECURITY_PROFILES` in `security_engine/scan_agent.py` manuell pflegen bei Projektaenderungen
 - `PROTECTED_PORT_BINDINGS` in `security_engine/scan_agent.py` muss bei neuen Ports aktualisiert werden
 - Token-Tracking: `_get_session_tokens()` misst Delta — NICHT manuell auf 0 setzen

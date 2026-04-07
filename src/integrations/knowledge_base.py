@@ -33,13 +33,18 @@ class KnowledgeBase:
     - Koordinierte Remediations-Pläne
     """
 
-    def __init__(self, dsn: str = "dbname=security_analyst user=security_analyst password=sec_analyst_2026 host=127.0.0.1 port=5433"):
+    def __init__(self, dsn: str = None):
         """
         Initialize Knowledge Base
 
         Args:
-            dsn: PostgreSQL DSN-String für psycopg2.connect()
+            dsn: PostgreSQL DSN-String für psycopg2.connect(). Wird aus Config/Env geladen wenn None.
         """
+        if dsn is None:
+            from src.utils.config import get_config
+            dsn = get_config().security_analyst_dsn
+            if not dsn:
+                raise RuntimeError("security_analyst DSN nicht konfiguriert (SECURITY_ANALYST_DB_URL oder config.yaml)")
         self.dsn = dsn
         self.conn = None
         self._initialize_database()
@@ -630,7 +635,7 @@ class KnowledgeBase:
 _kb_instance: Optional[KnowledgeBase] = None
 
 
-def get_knowledge_base(dsn: str = "dbname=security_analyst user=security_analyst password=sec_analyst_2026 host=127.0.0.1 port=5433") -> KnowledgeBase:
+def get_knowledge_base(dsn: str = None) -> KnowledgeBase:
     """Singleton Knowledge Base Instanz abrufen"""
     global _kb_instance
     if _kb_instance is None:

@@ -56,15 +56,12 @@ class SecurityEngine:
         self.ai_service = ai_service
         self.context_manager = context_manager
 
-        # DB DSN aus Config oder Parameter
+        # DB DSN aus Parameter, Config-Property oder Env
         self._db_dsn = db_dsn
         if not self._db_dsn and config:
-            self._db_dsn = getattr(config, 'security_db_dsn', None)
-            if not self._db_dsn:
-                # Fallback: aus security_analyst config
-                sa_cfg = config._config.get('security_analyst', {}) if hasattr(config, '_config') else {}
-                self._db_dsn = sa_cfg.get('database_dsn',
-                    'postgresql://security_analyst:sec_analyst_2026@127.0.0.1:5433/security_analyst')
+            self._db_dsn = getattr(config, 'security_analyst_dsn', None)
+        if not self._db_dsn:
+            logger.error("security_analyst DSN nicht konfiguriert (SECURITY_ANALYST_DB_URL oder config.yaml)")
 
         # Unified DB
         self.db: Optional[SecurityDB] = None
