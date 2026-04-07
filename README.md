@@ -107,7 +107,7 @@ Event → TaskRouter → Codex CLI (Primary)
 ```yaml
 projects:
   guildscout:
-    webhook_secret: guildscout_shadowops_secure_key_2024
+    webhook_secret: YOUR_RANDOM_SECRET_HERE  # python -c "import secrets; print(secrets.token_urlsafe(32))"
     # Muss identisch mit GuildScout Config sein!
 ```
 
