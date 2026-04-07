@@ -130,41 +130,25 @@ class AIPatchNotesMixin:
         return credits
 
     def _format_credits_section(self, credits: Dict[str, Dict], language: str = 'de') -> str:
-        """Formatiere Credits als Kontext-Sektion für den AI-Prompt."""
+        """Formatiere Credits als Author-Mapping-Hilfe für den AI-Prompt.
+
+        Gibt der AI eine Zuordnung: Git-Autor → Display-Name,
+        damit sie das 'author' Feld pro Change korrekt füllen kann.
+        """
         if not credits:
             return ""
 
         if language == 'de':
-            section = "# TEAM-CREDITS (PFLICHT — als LETZTE Zeile in den Patch Notes einfügen!)\n"
-            section += "# WICHTIG: Diese Zeile MUSS WÖRTLICH am Ende der Patch Notes stehen!\n"
-            section += "# Formatiere EXAKT so:\n"
+            section = "# AUTOR-MAPPING (für das 'author' Feld pro Change)\n"
+            section += "# Nutze den Display-Namen (NICHT den Git-Usernamen) im author-Feld:\n"
         else:
-            section = "# TEAM CREDITS (MANDATORY — insert as LAST line in patch notes!)\n"
-            section += "# IMPORTANT: This line MUST appear VERBATIM at the end of the patch notes!\n"
-            section += "# Format EXACTLY like this:\n"
-
-        team_parts = []
-        auto_parts = []
+            section = "# AUTHOR MAPPING (for the 'author' field per change)\n"
+            section += "# Use the display name (NOT the Git username) in the author field:\n"
 
         for name, info in credits.items():
             if name == '__autonomous__':
-                _AUTO_LABELS = {
-                    'SEO-AUTO': 'SEO-Optimierungen',
-                    'DEPS-AUTO': 'Dependency-Updates',
-                }
-                types_str = ', '.join(
-                    _AUTO_LABELS.get(t, t) for t in info['types']
-                )
-                auto_parts.append(f"🤖 **Automatisiert:** {types_str}")
-            else:
-                team_parts.append(f"{name} ({info['rolle']})")
-
-        if team_parts:
-            credits_line = "👥 **Dieses Update:** " + " · ".join(team_parts)
-            section += f"# → {credits_line}\n"
-        if auto_parts:
-            for ap in auto_parts:
-                section += f"# → {ap}\n"
+                continue  # AI-Agents bekommen keinen Author-Eintrag
+            section += f"# → Commits von '{name}' → author: \"{name}\"\n"
 
         return section
 
@@ -186,8 +170,8 @@ class AIPatchNotesMixin:
             'coverage_percent': None,
         }
 
-        # Contributors aus Commits — mit Display-Name, Rolle und Feature-Zusammenfassung
-        contributor_data: Dict[str, Dict] = {}
+        # Contributors aus Commits — nur Display-Namen (Inline-Credits sind jetzt pro Change)
+        contributor_names: set[str] = set()
         for commit in commits:
             author = commit.get('author', {})
             name = author.get('name') or author.get('username', '')
@@ -196,28 +180,10 @@ class AIPatchNotesMixin:
             member = self._resolve_team_member(name)
             if member is None:
                 continue  # AI-Autor
-            display_name, rolle = member
+            display_name, _ = member
+            contributor_names.add(display_name)
 
-            if display_name not in contributor_data:
-                contributor_data[display_name] = {'rolle': rolle, 'features': []}
-
-            # Feature-Titel aus Commit extrahieren (nur feat/fix/improvement, max 4)
-            tag, _ = self._classify_commit(commit)
-            if tag in ('FEATURE', 'BUGFIX', 'IMPROVEMENT', 'PERFORMANCE', 'CONTENT', 'GAMEPLAY', 'DESIGN'):
-                title = commit.get('message', '').split('\n')[0]
-                # Conventional Commit Prefix entfernen
-                clean = re.sub(r'^(feat|fix|chore|docs|perf|refactor|style|test)(\([^)]*\))?[!:]?\s*', '', title).strip()
-                if clean and len(contributor_data[display_name]['features']) < 4:
-                    contributor_data[display_name]['features'].append(clean)
-
-        # Format: "Shadow (Founder & Lead Dev) — Feature 1, Feature 2"
-        contributor_list = []
-        for dname, data in contributor_data.items():
-            entry = f"{dname} ({data['rolle']})"
-            if data['features']:
-                entry += f" — {', '.join(data['features'])}"
-            contributor_list.append(entry)
-        stats['contributors'] = contributor_list
+        stats['contributors'] = sorted(contributor_names)
 
         # Git diff stats berechnen
         if project_path and project_path.exists():
@@ -1570,9 +1536,16 @@ Do NOT invent features that are not tagged [FEATURE]!"""
             self.logger.warning(f"⚠️ Strukturierter Output fehlgeschlagen, Fallback auf Raw-Text: {e}")
 
         # === VERSUCH 2: Raw-Text Fallback (bestehender Flow) ===
+        # WICHTIG: Eigenen Fallback-Prompt verwenden, NICHT den strukturierten A/B-Prompt!
+        # Der strukturierte Prompt fordert JSON-Felder (changes, discord_teaser etc.) an,
+        # aber get_raw_ai_response() erzwingt kein JSON → AI gibt Hybrid-Müll zurück.
+        fallback_prompt = self._build_fallback_prompt(
+            commits, language, repo_name,
+            changelog_content, code_changes_context, project_context
+        )
         try:
             ai_response = await self.ai_service.get_raw_ai_response(
-                prompt=prompt,
+                prompt=fallback_prompt,
                 use_critical_model=use_critical_model
             )
 

@@ -287,6 +287,10 @@ class PatchNotesWebExporter:
                 ctype = change.get('type', 'improvement')
                 grouped.setdefault(ctype, []).append(change)
 
+            # Inline-Credits nur bei >1 verschiedenen Autoren
+            unique_authors = {c.get('author', '') for c in changes if c.get('author', '')}
+            show_author = len(unique_authors) > 1
+
             if grouped:
                 header = '## Änderungen im Detail' if language == 'de' else '## Changes in Detail'
                 lines.append(header)
@@ -300,7 +304,12 @@ class PatchNotesWebExporter:
                     lines.append(f'### {emoji} {label}')
                     lines.append('')
                     for item in items:
-                        lines.append(f'- **{item.get("description", "")}**')
+                        desc = item.get('description', '')
+                        author = item.get('author', '')
+                        if show_author and author:
+                            lines.append(f'- **{desc}** · *{author}*')
+                        else:
+                            lines.append(f'- **{desc}**')
                         for detail in item.get('details', []):
                             lines.append(f'  - {detail}')
                     lines.append('')

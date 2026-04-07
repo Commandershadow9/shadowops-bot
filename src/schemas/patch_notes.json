@@ -23,9 +23,10 @@
           "details": {
             "type": "array",
             "items": { "type": "string" }
-          }
+          },
+          "author": { "type": "string", "description": "Name des Autors (z.B. 'Shadow', 'Mapu'). Leer-String wenn unklar." }
         },
-        "required": ["type", "description", "details"],
+        "required": ["type", "description", "details", "author"],
         "additionalProperties": false
       }
     },

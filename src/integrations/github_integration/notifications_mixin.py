@@ -581,9 +581,20 @@ class NotificationsMixin:
         if isinstance(ai_result, dict):
             return self._description_from_structured(ai_result, commits, language, discord_only=discord_only)
         elif isinstance(ai_result, str) and ai_result.strip():
-            return ai_result.strip()
+            # Raw-Text bereinigen (pseudo-strukturierte Artefakte entfernen)
+            cleaned, _, _ = self._clean_raw_text_content(ai_result)
+            return cleaned
         else:
             return self._categorize_commits_text(commits, language)
+
+    @staticmethod
+    def _format_change_line(change: dict, show_author: bool) -> str:
+        """Formatiere eine Change-Zeile mit optionaler Inline-Attribution."""
+        desc = change.get('description', '')
+        author = change.get('author', '')
+        if show_author and author:
+            return f"\u2192 {desc} \u00b7 *{author}*"
+        return f"\u2192 {desc}"
 
     def _description_from_structured(self, ai_data: dict, commits: list, language: str,
                                       discord_only: bool = False) -> str:
@@ -614,6 +625,10 @@ class NotificationsMixin:
         breaking = ai_data.get('breaking_changes', [])
         is_major = len(commits) >= 15
 
+        # Inline-Credits nur anzeigen wenn >1 verschiedene Autoren
+        unique_authors = {c.get('author', '') for c in changes if c.get('author', '')}
+        show_author = len(unique_authors) > 1
+
         # Bei Discord-only: Mehr Features zeigen + Details
         max_features = (8 if is_major else 6) if discord_only else (6 if is_major else 4)
         max_fixes = 6 if discord_only else 4
@@ -622,7 +637,7 @@ class NotificationsMixin:
         if features:
             parts.append("**\U0001f195 Neue Features**")
             for f in features[:max_features]:
-                parts.append(f"\u2192 {f.get('description', '')}")
+                parts.append(self._format_change_line(f, show_author))
                 # Discord-only: Details mit anzeigen (kurz)
                 if discord_only:
                     details = f.get('details', [])
@@ -641,7 +656,7 @@ class NotificationsMixin:
         if fixes:
             parts.append("**\U0001f41b Bugfixes**")
             for f in fixes[:max_fixes]:
-                parts.append(f"\u2192 {f.get('description', '')}")
+                parts.append(self._format_change_line(f, show_author))
             if len(fixes) > max_fixes:
                 parts.append(f"  *+{len(fixes) - max_fixes} weitere*")
             parts.append("")
@@ -649,7 +664,7 @@ class NotificationsMixin:
         if improvements:
             parts.append("**\u26a1 Verbesserungen**")
             for i in improvements[:max_improvements]:
-                parts.append(f"\u2192 {i.get('description', '')}")
+                parts.append(self._format_change_line(i, show_author))
             if len(improvements) > max_improvements:
                 parts.append(f"  *+{len(improvements) - max_improvements} weitere*")
             parts.append("")
@@ -731,12 +746,6 @@ class NotificationsMixin:
         else:
             description = self._build_description(ai_result, commits, language, discord_only=is_discord_only)
 
-        # Team-Credits aus git_stats (mit Rollen + Features)
-        contributors = (git_stats or {}).get('contributors', [])
-        if contributors:
-            description += "\n\n\U0001f465 **Dieses Update:**"
-            for c in contributors:
-                description += f"\n\u2192 {c}"
 
         # Changelog-Link am Ende (nur wenn Page vorhanden)
         if changelog_link:
@@ -750,6 +759,54 @@ class NotificationsMixin:
 
         return embed
 
+    @staticmethod
+    def _clean_raw_text_content(text: str) -> tuple[str, list, str]:
+        """Bereinige Raw-Text von pseudo-strukturierten Artefakten.
+
+        Wenn die AI statt JSON einen Hybrid aus Markdown + JSON-Blöcken liefert,
+        enthält der Text Felder wie **changes** ```json [...] oder **discord_teaser**.
+        Diese werden extrahiert und aus dem Content entfernt.
+
+        Returns:
+            (cleaned_content, parsed_changes, parsed_teaser)
+        """
+        import json as _json
+
+        parsed_changes = []
+        parsed_teaser = ''
+
+        # 1. **patch_notes** Header entfernen
+        text = re.sub(r'^\*\*patch_notes\*\*\s*\n?', '', text.strip())
+
+        # 2. **changes** ```json [...] ``` Block extrahieren und entfernen
+        changes_match = re.search(
+            r'\*\*changes\*\*\s*\n```json\s*\n(.*?)\n```',
+            text, re.DOTALL
+        )
+        if changes_match:
+            try:
+                parsed_changes = _json.loads(changes_match.group(1))
+            except (_json.JSONDecodeError, ValueError):
+                pass
+            text = text[:changes_match.start()] + text[changes_match.end():]
+
+        # 3. **discord_teaser** Sektion extrahieren und entfernen
+        teaser_match = re.search(
+            r'\*\*discord_teaser\*\*\s*\n(.*?)(?=\n\*\*\w|$)',
+            text, re.DOTALL
+        )
+        if teaser_match:
+            parsed_teaser = teaser_match.group(1).strip()
+            text = text[:teaser_match.start()] + text[teaser_match.end():]
+
+        # 4. Credits-Zeile entfernen (👥 **Dieses Update:** ... oder 👥 **This Update:** ...)
+        text = re.sub(r'→?\s*👥\s*\*\*(?:Dieses Update|This Update):\*\*[^\n]*\n?', '', text)
+
+        # 5. Trailing Whitespace + mehrfache Leerzeilen bereinigen
+        text = re.sub(r'\n{3,}', '\n\n', text).strip()
+
+        return text, parsed_changes, parsed_teaser
+
     def _extract_web_content(self, ai_result, repo_name: str, version: str):
         """Extrahiere Titel, TL;DR, Content, Changes, SEO aus jedem AI-Ergebnis."""
         if isinstance(ai_result, dict):
@@ -761,18 +818,40 @@ class NotificationsMixin:
             return title, tldr, content, changes, seo_keywords
 
         elif isinstance(ai_result, str) and ai_result.strip():
+            # Raw-Text bereinigen (pseudo-strukturierte Artefakte entfernen)
+            text, parsed_changes, parsed_teaser = self._clean_raw_text_content(ai_result)
+
             # TL;DR aus erstem Satz extrahieren
-            text = ai_result.strip()
             tldr_match = re.search(r'\*\*TL;DR:\*\*\s*(.+?)(?:\n|$)', text)
             if tldr_match:
                 tldr = tldr_match.group(1).strip()
             else:
-                first_line = text.split('\n')[0].strip()
-                tldr = first_line[:200] if first_line and not first_line.startswith('**') else f"{repo_name} Update"
+                # Erste Blockquote-Zeile oder erste Nicht-Header-Zeile
+                for line in text.split('\n'):
+                    line = line.strip()
+                    if line.startswith('> '):
+                        tldr = re.sub(r'[>\*]+', '', line).strip()[:200]
+                        break
+                    elif line and not line.startswith('**') and not line.startswith('#'):
+                        tldr = line[:200]
+                        break
+                else:
+                    tldr = f"{repo_name} Update"
 
-            title = f"{repo_name} Update"
+            # Titel aus erster fetter Überschrift extrahieren
+            title_match = re.search(r'\*\*([^*]+)\*\*', text)
+            if title_match:
+                candidate = title_match.group(1).strip()
+                # Nur verwenden wenn es nach einem echten Titel aussieht (keine Kategorie)
+                if len(candidate) > 10 and not any(k in candidate.lower() for k in ['feature', 'bugfix', 'verbesserung', 'neue', 'fix']):
+                    title = candidate[:100]
+                else:
+                    title = f"{repo_name} Update"
+            else:
+                title = f"{repo_name} Update"
+
             content = text
-            changes = []
+            changes = parsed_changes
             seo_keywords = []
             return title, tldr, content, changes, seo_keywords
 
