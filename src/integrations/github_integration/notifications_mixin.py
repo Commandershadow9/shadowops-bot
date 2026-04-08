@@ -499,7 +499,8 @@ class NotificationsMixin:
             title = 'Update'
         return title
 
-    def _build_discord_summary(self, ai_result, commits: list, language: str) -> str:
+    def _build_discord_summary(self, ai_result, commits: list, language: str,
+                                git_stats: Optional[Dict] = None) -> str:
         """Kürzt Content für Discord wenn changelog_url gesetzt ist (Teaser-Ersatz).
 
         Extrahiert TL;DR + max 6 Highlights aus dem Content, egal ob dict oder Raw-Text.
@@ -518,10 +519,16 @@ class NotificationsMixin:
             changes = ai_result.get('changes', [])
             highlights = ai_result.get('discord_highlights', [])
 
+            # Inline-Credits auch im Summary-Modus
+            team_credits = git_stats.get('team_credits', {}) if git_stats else {}
+            if team_credits and changes:
+                self._enrich_changes_with_git_authors(changes, commits, team_credits)
+
             if changes:
+                unique_authors = {c.get('author', '') for c in changes if c.get('author', '')}
+                show_author = len(unique_authors) >= 1
                 for c in changes[:MAX_HIGHLIGHTS]:
-                    desc = c.get('description', '')
-                    parts.append(f"\u2192 {desc}")
+                    parts.append(self._format_change_line(c, show_author))
                 if len(changes) > MAX_HIGHLIGHTS:
                     parts.append(f"*+{len(changes) - MAX_HIGHLIGHTS} weitere Änderungen*")
             elif highlights:
@@ -576,10 +583,13 @@ class NotificationsMixin:
         return self._categorize_commits_text(commits, language)
 
     def _build_description(self, ai_result, commits: list, language: str,
-                            discord_only: bool = False) -> str:
+                            discord_only: bool = False,
+                            git_stats: Optional[Dict] = None) -> str:
         """Baut Description aus AI-Ergebnis (dict/str/None)."""
         if isinstance(ai_result, dict):
-            return self._description_from_structured(ai_result, commits, language, discord_only=discord_only)
+            return self._description_from_structured(
+                ai_result, commits, language, discord_only=discord_only, git_stats=git_stats
+            )
         elif isinstance(ai_result, str) and ai_result.strip():
             # Raw-Text bereinigen (pseudo-strukturierte Artefakte entfernen)
             cleaned, _, _ = self._clean_raw_text_content(ai_result)
@@ -596,13 +606,82 @@ class NotificationsMixin:
             return f"\u2192 {desc} \u00b7 *{author}*"
         return f"\u2192 {desc}"
 
+    def _enrich_changes_with_git_authors(self, changes: list, commits: list,
+                                          team_credits: Dict) -> None:
+        """Reichere AI-generierte Changes mit echten Git-Autoren an.
+
+        Matcht jede Change-Description gegen Commit-Messages per Keyword-Overlap
+        und setzt den Author aus den echten Git-Daten.
+        """
+        if not team_credits or not commits:
+            return
+
+        # Commit-Message → Author-Name Mapping aufbauen
+        commit_authors = {}
+        for commit in commits:
+            author_name = commit.get('author', {}).get('name') or \
+                          commit.get('author', {}).get('username', '')
+            if not author_name:
+                continue
+            # _resolve_team_member lebt auf AIPatchNotesMixin, erreichbar über self (MRO)
+            member = getattr(self, '_resolve_team_member', lambda x: None)(author_name)
+            if member is None:
+                continue
+            display_name = member[0]
+            # Commit-Titel als Key (ohne Conventional-Commit Prefix)
+            title = commit.get('message', '').split('\n')[0]
+            clean_title = re.sub(
+                r'^(feat|fix|chore|docs|perf|refactor|style|test)(\([^)]*\))?[!:]?\s*', '', title
+            ).strip().lower()
+            if clean_title:
+                commit_authors[clean_title] = display_name
+
+        if not commit_authors:
+            return
+
+        # Für jeden Change: Besten Match über Keyword-Overlap finden
+        for change in changes:
+            if change.get('author'):
+                continue  # AI hat schon einen Author gesetzt, nicht überschreiben
+            desc_lower = change.get('description', '').lower()
+            if not desc_lower:
+                continue
+
+            desc_words = set(re.findall(r'\w{3,}', desc_lower))
+            best_match = None
+            best_score = 0
+
+            for commit_title, author in commit_authors.items():
+                commit_words = set(re.findall(r'\w{3,}', commit_title))
+                overlap = len(desc_words & commit_words)
+                if overlap > best_score:
+                    best_score = overlap
+                    best_match = author
+
+            # Mindestens 2 gemeinsame Wörter für Zuordnung
+            if best_match and best_score >= 2:
+                change['author'] = best_match
+            elif best_match and best_score >= 1 and len(desc_words) <= 4:
+                # Bei kurzen Descriptions reicht 1 Match
+                change['author'] = best_match
+
+        # Fallback: Wenn nur 1 Person im Team ist, alle ohne Author zuweisen
+        human_credits = {k: v for k, v in team_credits.items() if k != '__autonomous__'}
+        if len(human_credits) == 1:
+            sole_author = next(iter(human_credits))
+            for change in changes:
+                if not change.get('author'):
+                    change['author'] = sole_author
+
     def _description_from_structured(self, ai_data: dict, commits: list, language: str,
-                                      discord_only: bool = False) -> str:
+                                      discord_only: bool = False,
+                                      git_stats: Optional[Dict] = None) -> str:
         """Strukturierte AI-Daten → fließende Discord Description.
 
         Args:
             discord_only: Wenn True, werden Details mit angezeigt (kein Web-Link verfuegbar).
                           Community-optimiertes Format: ausfuehrlicher aber nicht zu lang.
+            git_stats: Git-Stats mit team_credits für Inline-Author-Attribution.
         """
         parts = []
 
@@ -619,15 +698,21 @@ class NotificationsMixin:
                 parts.append("")
 
         changes = ai_data.get('changes', [])
+
+        # Changes mit echten Git-Autoren anreichern (post-processing)
+        team_credits = git_stats.get('team_credits', {}) if git_stats else {}
+        if team_credits:
+            self._enrich_changes_with_git_authors(changes, commits, team_credits)
+
         features = [c for c in changes if c.get('type') == 'feature']
         fixes = [c for c in changes if c.get('type') == 'fix']
         improvements = [c for c in changes if c.get('type') == 'improvement']
         breaking = ai_data.get('breaking_changes', [])
         is_major = len(commits) >= 15
 
-        # Inline-Credits nur anzeigen wenn >1 verschiedene Autoren
+        # Inline-Credits anzeigen wenn Team-Credits vorhanden
         unique_authors = {c.get('author', '') for c in changes if c.get('author', '')}
-        show_author = len(unique_authors) > 1
+        show_author = len(unique_authors) >= 1
 
         # Bei Discord-only: Mehr Features zeigen + Details
         max_features = (8 if is_major else 6) if discord_only else (6 if is_major else 4)
@@ -742,10 +827,11 @@ class NotificationsMixin:
             description = ai_result['discord_teaser']
         elif not is_discord_only:
             # changelog_url gesetzt aber kein Teaser → Content kürzen für Discord
-            description = self._build_discord_summary(ai_result, commits, language)
+            description = self._build_discord_summary(ai_result, commits, language, git_stats=git_stats)
         else:
-            description = self._build_description(ai_result, commits, language, discord_only=is_discord_only)
-
+            description = self._build_description(
+                ai_result, commits, language, discord_only=is_discord_only, git_stats=git_stats
+            )
 
         # Changelog-Link am Ende (nur wenn Page vorhanden)
         if changelog_link:

@@ -130,27 +130,24 @@ class AIPatchNotesMixin:
         return credits
 
     def _format_credits_section(self, credits: Dict[str, Dict], language: str = 'de') -> str:
-        """Formatiere Credits als Author-Mapping-Hilfe für den AI-Prompt.
+        """Formatiere Credits als kompakte Team-Info für den AI-Prompt.
 
-        Gibt der AI eine Zuordnung: Git-Autor → Display-Name,
-        damit sie das 'author' Feld pro Change korrekt füllen kann.
+        Kurzer Kontext wer am Release beteiligt war — Credits-Darstellung
+        wird NICHT von der AI generiert, sondern aus echten Git-Stats.
         """
         if not credits:
             return ""
 
-        if language == 'de':
-            section = "# AUTOR-MAPPING (für das 'author' Feld pro Change)\n"
-            section += "# Nutze den Display-Namen (NICHT den Git-Usernamen) im author-Feld:\n"
-        else:
-            section = "# AUTHOR MAPPING (for the 'author' field per change)\n"
-            section += "# Use the display name (NOT the Git username) in the author field:\n"
-
+        team_parts = []
         for name, info in credits.items():
             if name == '__autonomous__':
-                continue  # AI-Agents bekommen keinen Author-Eintrag
-            section += f"# → Commits von '{name}' → author: \"{name}\"\n"
+                continue
+            team_parts.append(f"{name} ({info['rolle']})")
 
-        return section
+        if not team_parts:
+            return ""
+
+        return f"# Team: {' · '.join(team_parts)}"
 
     def _collect_git_stats(self, commits: list, project_path: Optional[Path]) -> Dict:
         """
@@ -170,8 +167,8 @@ class AIPatchNotesMixin:
             'coverage_percent': None,
         }
 
-        # Contributors aus Commits — nur Display-Namen (Inline-Credits sind jetzt pro Change)
-        contributor_names: set[str] = set()
+        # Contributors aus Commits — mit Display-Name, Rolle und Feature-Zusammenfassung
+        contributor_data: Dict[str, Dict] = {}
         for commit in commits:
             author = commit.get('author', {})
             name = author.get('name') or author.get('username', '')
@@ -180,10 +177,28 @@ class AIPatchNotesMixin:
             member = self._resolve_team_member(name)
             if member is None:
                 continue  # AI-Autor
-            display_name, _ = member
-            contributor_names.add(display_name)
+            display_name, rolle = member
 
-        stats['contributors'] = sorted(contributor_names)
+            if display_name not in contributor_data:
+                contributor_data[display_name] = {'rolle': rolle, 'features': []}
+
+            # Feature-Titel aus Commit extrahieren (nur feat/fix/improvement, max 4)
+            tag, _ = self._classify_commit(commit)
+            if tag in ('FEATURE', 'BUGFIX', 'IMPROVEMENT', 'PERFORMANCE', 'CONTENT', 'GAMEPLAY', 'DESIGN'):
+                title = commit.get('message', '').split('\n')[0]
+                # Conventional Commit Prefix entfernen
+                clean = re.sub(r'^(feat|fix|chore|docs|perf|refactor|style|test)(\([^)]*\))?[!:]?\s*', '', title).strip()
+                if clean and len(contributor_data[display_name]['features']) < 4:
+                    contributor_data[display_name]['features'].append(clean)
+
+        # Format: "Shadow (Founder & Lead Dev) — Feature 1, Feature 2"
+        contributor_list = []
+        for dname, data in contributor_data.items():
+            entry = f"{dname} ({data['rolle']})"
+            if data['features']:
+                entry += f" — {', '.join(data['features'])}"
+            contributor_list.append(entry)
+        stats['contributors'] = contributor_list
 
         # Git diff stats berechnen
         if project_path and project_path.exists():
@@ -1318,6 +1333,7 @@ Do NOT invent features that are not tagged [FEATURE]!"""
         stats_line = self._format_stats_line(git_stats, language)
         stats_section = self._format_stats_section(git_stats, language)
         team_credits = self._build_team_credits(commits)
+        git_stats['team_credits'] = team_credits  # Durchreichen für Embed-Rendering
         credits_section = self._format_credits_section(team_credits, language)
 
         # Build enhanced prompt with A/B Testing
@@ -1633,7 +1649,7 @@ FELD-ANWEISUNGEN:
 - web_content: Ausfuehrlicher Markdown-Text mit allen Details (1000-5000 Zeichen)
   → Subheadings (##), Bullet-Points, technische Details, Nutzer-Impact
   → Zielgruppe: Interessierte Community-Mitglieder die alles wissen wollen
-- changes: Strukturierte Liste aller Aenderungen mit type (feature/fix/improvement/breaking/docs), description und details-Array
+- changes: Strukturierte Liste aller Aenderungen mit type (feature/fix/improvement/breaking/docs), description und details-Array. Das optionale author-Feld kannst du weglassen — Credits werden separat generiert
 - breaking_changes: Liste von Breaking Changes (leeres Array wenn keine)
 - stats: Wird nachtraeglich mit echten Git-Stats befuellt, setze commits auf {num_commits}
 - version: Die erkannte Versionsnummer (oder "patch" wenn keine erkannt)
@@ -1685,7 +1701,7 @@ FIELD INSTRUCTIONS:
 - web_content: Detailed markdown text with all details (1000-5000 chars)
   → Subheadings (##), bullet points, technical details, user impact
   → Audience: Interested community members who want to know everything
-- changes: Structured list of all changes with type (feature/fix/improvement/breaking/docs), description and details array
+- changes: Structured list of all changes with type (feature/fix/improvement/breaking/docs), description and details array. The optional author field can be omitted — credits are generated separately
 - breaking_changes: List of breaking changes (empty array if none)
 - stats: Will be filled with real git stats afterwards, set commits to {num_commits}
 - version: The detected version number (or "patch" if none detected)
