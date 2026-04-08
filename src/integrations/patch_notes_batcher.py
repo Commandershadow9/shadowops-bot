@@ -2,7 +2,8 @@
 Patch Notes Batcher — Sammelt ALLE Commits und gibt sie kontrolliert frei.
 
 Jeder Commit wird gesammelt, unabhängig von Version-Bumps oder Hotfixes.
-Release nur via: Cron (Sonntag), Notbremse (≥20 Commits), oder manuell.
+Release via: Cron (wöchentlich/täglich), Notbremse (≥20, mit Cooldown), oder manuell.
+Max 1 automatischer Release pro Projekt pro Tag (24h Cooldown).
 """
 
 import json
@@ -20,14 +21,17 @@ class PatchNotesBatcher:
 
     Regeln:
     - ALLE Commits werden gesammelt (keine Ausnahmen)
-    - Release via Cron (wöchentlich), Notbremse (≥ emergency_threshold), oder manuell
+    - Release via Cron (wöchentlich/täglich), oder manuell
+    - Notbremse (≥ emergency_threshold) nur wenn kein Release in den letzten 24h
     - Manuelles Freigeben jederzeit via /release-notes
+    - Max 1 automatischer Release pro Projekt pro Tag (Cooldown)
     """
 
     def __init__(self, data_dir: Path, batch_threshold: int = 8,
                  emergency_threshold: int = 20,
                  cron_day: str = 'sunday', cron_hour: int = 20,
-                 cron_min_commits: int = 3):
+                 cron_min_commits: int = 3,
+                 release_cooldown_hours: int = 24):
         self.data_dir = data_dir
         self.data_dir.mkdir(parents=True, exist_ok=True)
         self.batch_file = self.data_dir / 'pending_batch.json'
@@ -36,13 +40,16 @@ class PatchNotesBatcher:
         self.cron_day = cron_day.lower()
         self.cron_hour = cron_hour
         self.cron_min_commits = cron_min_commits
+        self.release_cooldown_hours = release_cooldown_hours
 
         self.pending: Dict[str, Dict] = self._load_pending()
+        # Letzte Release-Zeitpunkte pro Projekt (persistiert in pending_batch.json)
+        self._last_releases: Dict[str, str] = self._load_last_releases()
 
         logger.info(
             f"✅ PatchNotesBatcher initialisiert "
-            f"(Notbremse: {emergency_threshold}, Cron: {cron_day} {cron_hour}:00, "
-            f"min: {cron_min_commits} Commits)"
+            f"(Notbremse: {emergency_threshold}, Cooldown: {release_cooldown_hours}h, "
+            f"Cron: {cron_day} {cron_hour}:00, min: {cron_min_commits} Commits)"
         )
 
     def _load_pending(self) -> Dict[str, Dict]:
@@ -55,6 +62,43 @@ class PatchNotesBatcher:
         except Exception as e:
             logger.error(f"Fehler beim Laden der Batch-Datei: {e}")
             return {}
+
+    def _load_last_releases(self) -> Dict[str, str]:
+        """Lade letzte Release-Zeitpunkte aus der Batch-Datei."""
+        release_file = self.data_dir / 'last_releases.json'
+        if not release_file.exists():
+            return {}
+        try:
+            with open(release_file, 'r', encoding='utf-8') as f:
+                return json.load(f)
+        except Exception:
+            return {}
+
+    def _save_last_releases(self) -> None:
+        """Speichere letzte Release-Zeitpunkte."""
+        release_file = self.data_dir / 'last_releases.json'
+        try:
+            with open(release_file, 'w', encoding='utf-8') as f:
+                json.dump(self._last_releases, f, indent=2, ensure_ascii=False)
+        except Exception as e:
+            logger.error(f"Fehler beim Speichern der Release-Zeitpunkte: {e}")
+
+    def _record_release(self, project: str) -> None:
+        """Speichere den Zeitpunkt eines Releases."""
+        self._last_releases[project] = datetime.now(timezone.utc).isoformat()
+        self._save_last_releases()
+
+    def _is_in_cooldown(self, project: str) -> bool:
+        """Prüfe ob ein Projekt im Release-Cooldown ist (letzter Release < N Stunden)."""
+        last_release = self._last_releases.get(project)
+        if not last_release:
+            return False
+        try:
+            last_dt = datetime.fromisoformat(last_release)
+            elapsed_hours = (datetime.now(timezone.utc) - last_dt).total_seconds() / 3600
+            return elapsed_hours < self.release_cooldown_hours
+        except Exception:
+            return False
 
     def _save_pending(self) -> None:
         """Speichere ausstehende Batches auf Disk."""
@@ -102,8 +146,17 @@ class PatchNotesBatcher:
         batch['last_added'] = datetime.now(timezone.utc).isoformat()
 
         total = len(batch['commits'])
-        # Notbremse: nur bei sehr vielen Commits auto-releasen
-        ready = total >= self.emergency_threshold
+
+        # Notbremse: nur wenn genug Commits UND kein Cooldown aktiv
+        if total >= self.emergency_threshold and not self._is_in_cooldown(project):
+            ready = True
+        else:
+            ready = False
+            if total >= self.emergency_threshold:
+                logger.info(
+                    f"⏳ {project}: {total} Commits (≥{self.emergency_threshold}), "
+                    f"aber Cooldown aktiv — Release wird beim nächsten Cron gemacht"
+                )
 
         self._save_pending()
 
@@ -132,6 +185,9 @@ class PatchNotesBatcher:
 
         commits = batch.get('commits', [])
         logger.info(f"🚀 Batch für {project} freigegeben: {len(commits)} Commits")
+
+        # Cooldown setzen — verhindert mehrere Releases am selben Tag
+        self._record_release(project)
 
         return commits
 

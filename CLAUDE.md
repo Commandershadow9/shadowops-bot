@@ -74,7 +74,7 @@
 | `server_assistant.py` | Server Assistant (ersetzt Legacy Learning System) |
 | `changelog_db.py` | Zentrale Changelog-DB (SQLite, alle Projekte, Upsert + Paginierung) |
 | `content_sanitizer.py` | Security-Filter fuer Patch Notes (Pfade, IPs, Ports, Secrets) |
-| `patch_notes_batcher.py` | Sammelt ALLE Commits ohne Ausnahme. Release nur via Cron (Sonntag 20:00), manuell (/release-notes mit min 3 Commits), oder Notbremse (≥20 Commits). min_commits Check (Default 2) gilt NUR bei skip_batcher=True (manuelle/Cron-Releases) — normale Pushes kommen IMMER zum Batcher durch |
+| `patch_notes_batcher.py` | Sammelt ALLE Commits ohne Ausnahme. Release via Cron (Sonntag 20:00 / täglich), manuell (/release-notes min 3), oder Notbremse (≥20 mit 24h Cooldown). Max 1 automatischer Release pro Projekt pro Tag. Cooldown persistiert in `last_releases.json` |
 | `patch_notes_feedback.py` | Discord Feedback (Persistent Buttons: Like + Bewerten, Text-Modal) + Learning-DB Integration |
 | `patch_notes_learning.py` | Patch Notes Learning Pipeline (PostgreSQL agent_learning DB, Varianten-Gewichtung, Feedback-Loop) |
 | `patch_notes_web_exporter.py` | Web-Export (zentrale DB Upsert + File-Backup + optional HTTP POST). Frontend: shared-ui v0.2.0 Changelog-Komponenten |
@@ -281,7 +281,7 @@
 - **Schicht 1 — Commit-Klassifizierung (Pre-Generation):** `_classify_commit()` taggt jeden Commit ([FEATURE], [BUGFIX], [DESIGN-DOC], [SEO-AUTO], [DEPS-AUTO], [REVERT], [MERGE], etc.). Design-Doc-Bodies werden abgeschnitten. Merge/Auto-Commits gefiltert/gruppiert. Body-Noise (Co-Authored-By, Signed-off-by) entfernt. PR-Beschreibungen via `gh pr view` angereichert
 - **Schicht 2 — Prompt-Regeln (During Generation):** Explizite Typ-Interpretations-Regeln in allen 4 Prompt-Pfaden (DE+EN Structured, DE+EN Fallback). "[DESIGN-DOC] = GEPLANT, NICHT IMPLEMENTIERT → NIEMALS als Feature listen"
 - **Schicht 3 — Post-Generierungs-Validierung:** `_validate_ai_output()` prueft Feature-Count gegen tatsaechliche feat:-Commits, erkennt Design-Doc-Keywords in Feature-Beschreibungen und entfernt halluzinierte Features automatisch
-- **Schicht 4 — Batcher + min_commits:** min_commits Check NUR bei skip_batcher (Fix 2026-03-27: vorher blockierte er Einzel-Commits VOR dem Batcher). Batcher Self-Healing, /release-notes Minimum
+- **Schicht 4 — Batcher + min_commits + Cooldown:** min_commits Check NUR bei skip_batcher. Batcher Self-Healing, /release-notes Minimum. **24h Release-Cooldown:** Nach einem Release wird die Notbremse für 24h pro Projekt blockiert → max 1 automatischer Release/Tag. Cooldown persistiert in `last_releases.json`. Manuelle Releases (/release-notes) und Cron-Releases setzen den Cooldown ebenfalls
 - **Schicht 5 — Content Sanitizer:** Pfade, IPs, Ports, Secrets + `changes[].details` Array
 - **Duplikat-Guard:** Vorherige Version aus Changelog-DB als "BEREITS ABGEDECKT" Kontext
 - **Dev-Branch Teaser:** Aktive feat/* Branches mit Fortschrittsindikator + Hype-Prompt ("🔮 Demnächst")
