@@ -1366,11 +1366,8 @@ class ShadowOpsBot(commands.Bot):
                 return
 
             releasable = batcher.get_cron_releasable_projects()
-            # Daily-Projekte beim Weekly-Cron ueberspringen (haben eigenen Cron)
-            releasable = [
-                p for p in releasable
-                if self.config.projects.get(p, {}).get('patch_notes', {}).get('release_mode') != 'daily'
-            ]
+            # Weekly fängt ALLE Projekte mit genug Commits auf — auch daily-Projekte
+            # die unter dem daily_min_commits Threshold geblieben sind
             if not releasable:
                 self.logger.info("📅 Wöchentlicher Patch-Notes-Check: Keine Projekte mit genug Commits")
                 return

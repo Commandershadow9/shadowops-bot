@@ -236,13 +236,19 @@ projects:
       # Web-Export: SEO-optimiertes JSON + Markdown
       changelog_output_dir: "" # Leer = Default (~/.shadowops/changelogs/guildscout/)
 
-      # === RELEASE-STEUERUNG ===
-      # Commits ohne Version-Bump werden gesammelt und per Cron/manuell released
-      batch_threshold: 8       # Legacy (nicht mehr für auto-release genutzt)
-      emergency_threshold: 20  # Notbremse: Auto-Release bei ≥20 Commits
-      cron_day: sunday          # Wöchentlicher Release-Tag
-      cron_hour: 20             # Uhrzeit (UTC)
-      cron_min_commits: 3       # Minimum Commits für wöchentlichen Release
+      # === RELEASE-STEUERUNG (Adaptiv) ===
+      # Commits werden gesammelt und automatisch released:
+      # - Täglich 22:00: Projekte mit ≥ daily_min_commits (aktive Projekte)
+      # - Wöchentlich Sonntag 20:00: Alle Projekte mit ≥ cron_min_commits (Auffänger)
+      # - Manuell: /release-notes jederzeit
+      release_mode: daily        # "daily" aktiviert täglichen Release-Check
+      daily_release_hour: 22     # Uhrzeit für täglichen Check (Serverzeit)
+      daily_min_commits: 15      # Minimum Commits für täglichen Release
+      batch_threshold: 8         # Legacy (nicht mehr für auto-release genutzt)
+      emergency_threshold: 100   # Notbremse (praktisch deaktiviert, 24h Cooldown)
+      cron_day: sunday            # Wöchentlicher Fallback Release-Tag
+      cron_hour: 20               # Uhrzeit (Serverzeit)
+      cron_min_commits: 3         # Minimum Commits für wöchentlichen Release
 
       # API-Endpoint für DB-basierte Changelogs (primärer Modus)
       # api_endpoint:

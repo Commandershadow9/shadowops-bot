@@ -346,15 +346,15 @@
 - **CORS:** `maydaysim.de` + `www.maydaysim.de` + `localhost:3200` in health_server.py
 - **Design-Doc:** `docs/plans/2026-03-30-mayday-changelog-design.md`
 
-### Täglicher Release-Mode (seit 2026-03-29)
-- **release_mode: daily** — Täglicher Release um konfigurierbare Uhrzeit statt nur wöchentlichem Cron
-- **daily_release_hour: 22** — Uhrzeit für täglichen Release (Default: 22:00)
-- **daily_min_commits: 3** — Minimum Commits für täglichen Release
-- **Fallback:** Sonntag 20:00 wenn daily nicht getriggert hat (weekly cron bleibt aktiv)
-- **Emergency:** Globaler Threshold bleibt 20 Commits (Batcher-Default). Bei daily-Projekten irrelevant — der Daily-Cron um 22:00 greift bei ≥3 Commits
+### Adaptiver Release-Mode (seit 2026-03-29, überarbeitet 2026-04-08)
+- **Alle 5 Projekte:** `release_mode: daily` mit adaptivem Threshold
+- **Aktive Projekte (≥15 Commits):** Täglicher Release um 22:00 — alle Commits gebündelt in einer Note
+- **Ruhige Projekte (<15 Commits):** Weekly Fallback Sonntag 20:00 (≥3 Commits)
+- **Weekly fängt ALLE Projekte auf** — auch daily-Projekte die unter dem Daily-Threshold geblieben sind
+- **Emergency Threshold: 100** — praktisch deaktiviert, 24h Cooldown verhindert Mehrfach-Releases
+- **Max 1 automatischer Release pro Projekt pro Tag** — Cooldown persistiert in `last_releases.json`
 - **Git-Tag-Aware:** Version wird aus Git-Tags im Commit-Batch erkannt (Priorität 1 in _resolve_version)
 - **gaming_community_v2:** Story-Telling Template mit konkretem Spielgefühl, → Pfeil-Format, ausführlichen Feature-Beschreibungen
-- **Projekte mit daily Mode:** mayday_sim (22:00 Uhr)
 
 ### Externes Mini-Dashboard (seit 2026-03-27)
 - **Feature:** Projekte mit `external_notifications` bekommen ein eigenes Status-Embed auf ihrem Discord-Server
