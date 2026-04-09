@@ -290,7 +290,7 @@
 - **Duplikat-Guard:** Vorherige Version aus Changelog-DB als "BEREITS ABGEDECKT" Kontext
 - **Dev-Branch Teaser:** Aktive feat/* Branches mit Fortschrittsindikator + Hype-Prompt ("🔮 Demnächst")
 - **Projekt-Kontext:** `project_description` + `target_audience` in config.yaml pro Projekt
-- **Semantic Versionierung:** `_calculate_semver()` berechnet MINOR/PATCH/MAJOR aus Commit-Typen statt KI-Erfindung. Kollisionsschutz via `_ensure_unique_version()` — wird jetzt bei ALLEN 4 Quellen aufgerufen (git_tag, explicit, semver, ai), nicht nur bei semver
+- **Semantic Versionierung:** `_calculate_semver()` berechnet MINOR/PATCH/MAJOR aus Commit-Typen statt KI-Erfindung — **Priorität 1** in `_resolve_version`. Konsistent mit DB-History (letzte Version aus Changelog-DB). Git-Tags sind nur Fallback wenn keine DB-History vorhanden. Kollisionsschutz via `_ensure_unique_version()` bei ALLEN Quellen
 - **Team-Credits:** `TEAM_MAPPING` in ai_patch_notes_mixin.py — Git-Autoren → Display-Name + Rolle. Credits erscheinen **inline pro Change** im Discord-Embed (z.B. `→ Score Engine · Shadow`). Author-Zuordnung via Post-Processing: `_enrich_changes_with_git_authors()` matcht AI-Changes gegen echte Git-Commits per Keyword-Overlap. `author`-Feld im Schema ist optional — die AI muss es NICHT füllen, die Zuordnung kommt aus Git-Daten
 - **Discord-Teaser entfernt:** Projekte mit `changelog_url` zeigen jetzt `_build_discord_summary` mit Inline-Credits statt eines nichtssagenden AI-Teasers. Alle Pfade (discord_only + summary) haben Credits
 - **Alle 4 Trigger-Pfade gesichert:** Webhook Push, Local Polling, Woechentlicher Cron, Manueller /release-notes
@@ -358,7 +358,7 @@
 - **Weekly fängt ALLE Projekte auf** — auch daily-Projekte die unter dem Daily-Threshold geblieben sind
 - **Emergency Threshold: 100** — praktisch deaktiviert, 24h Cooldown verhindert Mehrfach-Releases
 - **Max 1 automatischer Release pro Projekt pro Tag** — Cooldown persistiert in `last_releases.json`
-- **Git-Tag-Aware:** Version wird aus Git-Tags im Commit-Batch erkannt (Priorität 1 in _resolve_version)
+- **Git-Tag-Aware:** Version wird aus Git-Tags erkannt — aber nur als Fallback wenn keine DB-basierte SemVer verfügbar
 - **gaming_community_v2:** Story-Telling Template mit konkretem Spielgefühl, → Pfeil-Format, ausführlichen Feature-Beschreibungen
 
 ### Externes Mini-Dashboard (seit 2026-03-27)

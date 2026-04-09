@@ -239,25 +239,33 @@ class NotificationsMixin:
         return version
 
     def _resolve_version_with_source(self, ai_result, commits: list, repo_name: str = "") -> tuple:
-        """Bestimme Version + Quelle. Kein doppelter subprocess-Aufruf fuer Metriken.
+        """Bestimme Version + Quelle. SemVer hat Vorrang — Git-Tags nur als Fallback.
+
+        Priorität:
+        1. SemVer (berechnet aus letzter DB-Version + Commit-Typen) — konsistent, DB-basiert
+        2. Git-Tags auf Commits (Fallback wenn keine DB-Version vorhanden)
+        3. Explizite Version in Commit-Messages (z.B. "feat: Release v2.1.0")
+        4. AI-Ergebnis (nur echte Versionen)
+        5. Auto-Version (Fallback)
 
         Returns:
-            (version: str, source: str) — source ist git_tag/explicit/semver/ai/fallback
+            (version: str, source: str) — source ist semver/git_tag/explicit/ai/fallback
         """
-        # 1. Git-Tags auf Commits im Batch (zuverlaessigste Quelle)
+        # 1. Semantic Versioning: Letzte DB-Version + Commit-Typen → naechste Version
+        #    Konsistenteste Quelle — basiert auf letzter bekannter Version aus der DB
+        sem_v = self._calculate_semver(commits, repo_name)
+        if sem_v:
+            return (sem_v, 'semver')  # _calculate_semver ruft bereits _ensure_unique_version auf
+
+        # 2. Git-Tags auf Commits (Fallback wenn keine DB-History)
         tag_v = self._get_version_from_commit_tags(commits, repo_name)
         if tag_v:
             return (self._ensure_unique_version(tag_v, repo_name), 'git_tag')
 
-        # 2. Aus Commits (expliziter Version-Tag, z.B. "feat: Release v2.1.0")
+        # 3. Aus Commits (expliziter Version-Tag, z.B. "feat: Release v2.1.0")
         v = self._extract_version_from_commits(commits)
         if v:
             return (self._ensure_unique_version(v, repo_name), 'explicit')
-
-        # 3. Semantic Versioning: Letzte Version + Commit-Typen → naechste Version
-        sem_v = self._calculate_semver(commits, repo_name)
-        if sem_v:
-            return (sem_v, 'semver')  # _calculate_semver ruft bereits _ensure_unique_version auf
 
         # 4. Aus AI-Ergebnis (nur echte Versionen, NICHT von AI erfundene Major-Bumps)
         if isinstance(ai_result, dict):
