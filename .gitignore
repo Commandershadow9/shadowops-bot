@@ -53,6 +53,8 @@ htmlcov/
 
 # Runtime
 .bot.pid
+.shadowops.lock
+.codex
 logrotate.state
 
 # Local

@@ -108,6 +108,7 @@
 | `state_manager.py` | `StateManager` — Persistenter Bot-State (`data/state.json`) |
 | `message_handler.py` | `MessageHandler` — Sicheres Senden (Split bei >2000 Zeichen) |
 | `changelog_parser.py` | `ChangelogParser` — CHANGELOG.md Parser fuer Patch Notes |
+| `process_lock.py` | `ProcessLock` — Cross-Process Advisory File Lock (fcntl) fuer Singleton-Services |
 
 ### Schemas (`src/schemas/`)
 | Datei | Zweck |
@@ -130,6 +131,8 @@
 | `data/ai_knowledge.db` | LEGACY SQLite (Daten nach PostgreSQL migriert, wird nicht mehr aktiv genutzt) |
 | `data/changelogs.db` | Zentrale Changelog-DB (alle Projekte, wird zur Laufzeit erstellt) |
 | `data/project_monitor_state.json` | Persistenter Monitor-State (Uptime-Stats pro Projekt) |
+| `data/last_releases.json` | 24h Release-Cooldown Timestamps pro Projekt (Patch Notes Safety Schicht 4) |
+| `.shadowops.lock` | Advisory File Lock — verhindert doppelte Bot-Instanzen (ProcessLock, NICHT in Git) |
 
 ### Deploy
 | Datei | Zweck |
@@ -270,8 +273,9 @@
 - **Zwei Channels auf dem ZERODOX-Server** (Guild `1151330239272730755`), nicht DEV-Server:
   - `📋patch-notes` (ID: `1483892059596132483`) — Lobby-Kanäle, öffentlich, read-only. Sanitisierte Patch Notes.
   - `🔧dev-updates` (ID: `1483892060963475617`) — Community-/Kundenbereich, intern, read-only. Gleiche Patch Notes + Rollen-Ping.
-- **Config-Keys pro Projekt:** `update_channel_id` (öffentlich), `internal_channel_id` (intern), `internal_channel_role_mention` (Rollen-ID fuer Ping)
+- **Config-Keys pro Projekt:** `update_channel_id` (öffentlich), `update_channel_role_mention` (Rollen-Ping im öffentlichen Channel), `internal_channel_id` (intern), `internal_channel_role_mention` (Rollen-ID fuer Ping im internen Channel)
 - **Cross-Guild-Support:** `bot.py` ueberspringt Auto-Channel-Creation wenn `update_channel_id` bereits gesetzt und Channel cross-guild erreichbar
+- **Öffentlicher Channel:** Rollen-Ping via `update_channel_role_mention` — postet `<@&role_id> Neues Update verfuegbar!` mit `AllowedMentions(roles=True)` bei Multi-Chunk-Embeds nur an erste Nachricht
 - **Interner Channel:** `_send_to_internal_customer_channel()` in `notifications_mixin.py` — postet Embed + `<@&role_id> Neues Update verfuegbar!` mit `AllowedMentions(roles=True)`
 - **Setup-Script:** `scripts/setup_zerodox_channels.py` (einmalig, nutzt ShadowOps Bot-Token via Discord REST API)
 
