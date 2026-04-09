@@ -1120,12 +1120,20 @@ class NotificationsMixin:
                 full_url = f"{changelog_url}/{version.replace('.', '-')}"
             view = self.feedback_collector.create_view(full_url)
 
+        # Rollen-Ping für öffentlichen Update-Channel (optional)
+        role_id = project_config.get('update_channel_role_mention')
+        role_mention = f"<@&{role_id}>" if role_id else ""
+
         try:
             description_chunks = self._split_embed_description(embed.description or "")
             sent_message = None
+            mention_content = f"{role_mention} Neues Update verfügbar!" if role_mention else None
+            mention_kwargs = {"allowed_mentions": discord.AllowedMentions(roles=True)} if role_mention else {}
 
             if len(description_chunks) <= 1:
-                sent_message = await customer_channel.send(embed=embed, view=view)
+                sent_message = await customer_channel.send(
+                    content=mention_content, embed=embed, view=view, **mention_kwargs
+                )
             else:
                 for i, chunk in enumerate(description_chunks):
                     embed_copy = discord.Embed(
@@ -1139,7 +1147,12 @@ class NotificationsMixin:
                         embed_copy.set_footer(text=embed.footer.text)
                     # View nur an die erste Nachricht anhängen
                     msg_view = view if i == 0 else None
-                    message = await customer_channel.send(embed=embed_copy, view=msg_view)
+                    # Rollen-Ping nur bei der ersten Nachricht
+                    content = mention_content if i == 0 else None
+                    kwargs = mention_kwargs if i == 0 else {}
+                    message = await customer_channel.send(
+                        content=content, embed=embed_copy, view=msg_view, **kwargs
+                    )
                     if i == 0:
                         sent_message = message
 
