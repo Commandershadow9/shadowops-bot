@@ -1642,14 +1642,18 @@ COMMIT-TYP-TAGS — STRIKT BEACHTEN:
 
 FELD-ANWEISUNGEN:
 - title: Kurzer, praegananter Titel (z.B. "Performance & Security Update")
-- tldr: EIN praegnanter Satz, der die wichtigste Aenderung zusammenfasst
-- summary: 2-3 Saetze Zusammenfassung fuer die Webseite
+- tldr: EIN praegnanter Satz, der die wichtigste Aenderung zusammenfasst — KEIN Fachjargon
+- summary: 2-3 Saetze Zusammenfassung — erklaere WAS sich fuer Nutzer aendert, nicht WIE es implementiert ist
 - discord_highlights: 3-5 kurze Bullet-Points fuer Discord (je max 120 Zeichen, mit Emojis)
   → Das sind die HIGHLIGHTS aus web_content, nicht andere Informationen!
-- web_content: Ausfuehrlicher Markdown-Text mit allen Details (1000-5000 Zeichen)
-  → Subheadings (##), Bullet-Points, technische Details, Nutzer-Impact
-  → Zielgruppe: Interessierte Community-Mitglieder die alles wissen wollen
-- changes: Strukturierte Liste aller Aenderungen mit type (feature/fix/improvement/breaking/docs), description und details-Array. Das optionale author-Feld kannst du weglassen — Credits werden separat generiert
+- web_content: Ausfuehrlicher Markdown-Text mit allen Details (2000-5000 Zeichen)
+  → Subheadings (##), Bullet-Points, konkrete Nutzer-Vorteile
+  → Fuer JEDES Feature erklaeren: Was ist es? Was bringt es dem Nutzer? Was aendert sich konkret?
+  → Zielgruppe: Interessierte Community-Mitglieder die verstehen wollen was sich verbessert hat
+  → NICHT: "Backend-Refactoring" oder "Code-Optimierung" — SONDERN: "Seiten laden jetzt 40% schneller"
+- changes: Strukturierte Liste aller Aenderungen mit type, description, details-Array und author (Leer-String wenn unklar)
+  → description: Verstaendlich und konkret, z.B. "Neue Gilden-Suche mit Filtern" statt "Add search endpoint"
+  → details: 1-3 konkrete Unterpunkte die den Nutzen erklaeren
 - breaking_changes: Liste von Breaking Changes (leeres Array wenn keine)
 - stats: Wird nachtraeglich mit echten Git-Stats befuellt, setze commits auf {num_commits}
 - version: Die erkannte Versionsnummer (oder "patch" wenn keine erkannt)
@@ -1694,14 +1698,18 @@ COMMIT TYPE TAGS — STRICTLY OBSERVE:
 
 FIELD INSTRUCTIONS:
 - title: Short, catchy title (e.g. "Performance & Security Update")
-- tldr: ONE concise sentence summarizing the most important change
-- summary: 2-3 sentence summary for the website
+- tldr: ONE concise sentence summarizing the most important change — NO jargon
+- summary: 2-3 sentences — explain WHAT changes for users, not HOW it was implemented
 - discord_highlights: 3-5 short bullet points for Discord (max 120 chars each, with emojis)
   → These are the HIGHLIGHTS from web_content, not different information!
-- web_content: Detailed markdown text with all details (1000-5000 chars)
-  → Subheadings (##), bullet points, technical details, user impact
-  → Audience: Interested community members who want to know everything
-- changes: Structured list of all changes with type (feature/fix/improvement/breaking/docs), description and details array. The optional author field can be omitted — credits are generated separately
+- web_content: Detailed markdown text with all details (2000-5000 chars)
+  → Subheadings (##), bullet points, concrete user benefits
+  → For EACH feature explain: What is it? What does the user gain? What changes concretely?
+  → Audience: Interested community members who want to understand what improved
+  → NOT: "Backend refactoring" or "code optimization" — BUT: "Pages now load 40% faster"
+- changes: Structured list of all changes with type, description, details array and author (empty string if unclear)
+  → description: Understandable and concrete, e.g. "New guild search with filters" instead of "Add search endpoint"
+  → details: 1-3 concrete sub-points explaining the benefit
 - breaking_changes: List of breaking changes (empty array if none)
 - stats: Will be filled with real git stats afterwards, set commits to {num_commits}
 - version: The detected version number (or "patch" if none detected)

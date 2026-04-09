@@ -292,6 +292,7 @@
 - **Projekt-Kontext:** `project_description` + `target_audience` in config.yaml pro Projekt
 - **Semantic Versionierung:** `_calculate_semver()` berechnet MINOR/PATCH/MAJOR aus Commit-Typen statt KI-Erfindung. Kollisionsschutz via `_ensure_unique_version()` — wird jetzt bei ALLEN 4 Quellen aufgerufen (git_tag, explicit, semver, ai), nicht nur bei semver
 - **Team-Credits:** `TEAM_MAPPING` in ai_patch_notes_mixin.py — Git-Autoren → Display-Name + Rolle. Credits erscheinen **inline pro Change** im Discord-Embed (z.B. `→ Score Engine · Shadow`). Author-Zuordnung via Post-Processing: `_enrich_changes_with_git_authors()` matcht AI-Changes gegen echte Git-Commits per Keyword-Overlap. `author`-Feld im Schema ist optional — die AI muss es NICHT füllen, die Zuordnung kommt aus Git-Daten
+- **Discord-Teaser entfernt:** Projekte mit `changelog_url` zeigen jetzt `_build_discord_summary` mit Inline-Credits statt eines nichtssagenden AI-Teasers. Alle Pfade (discord_only + summary) haben Credits
 - **Alle 4 Trigger-Pfade gesichert:** Webhook Push, Local Polling, Woechentlicher Cron, Manueller /release-notes
 - **PR-Label Integration:** GitHub PR-Labels (16 Mappings) via `gh pr view --json labels` als zuverlaessigere Klassifizierung. Labels ueberschreiben Commit-Prefix
 - **Smart Diff-Analyse:** Dateien nach 8 Kategorien gruppiert (Frontend, Backend, DB, Config, Tests, Docs, CI/CD, Dependencies). Strukturierte Uebersicht statt roher Diff-Output

@@ -333,7 +333,12 @@ class PatchNotesWebExporter:
             lines.append(f'- **+{added}** / **-{removed}** Zeilen')
 
             if contributors:
-                lines.append(f'- **{len(contributors)}** Contributor(s): {", ".join(contributors)}')
+                if len(contributors) == 1 and ' — ' not in contributors[0]:
+                    lines.append(f'- **{len(contributors)}** Contributor: {contributors[0]}')
+                else:
+                    lines.append(f'- **{len(contributors)}** Contributors:')
+                    for c in contributors:
+                        lines.append(f'  - {c}')
 
             tests_passed = stats.get('tests_passed')
             tests_total = stats.get('tests_total')
