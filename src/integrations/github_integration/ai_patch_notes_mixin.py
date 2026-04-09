@@ -1023,27 +1023,40 @@ class AIPatchNotesMixin:
             )
 
         # 2. Design-Doc-Leak-Check: Themen aus Design-Docs duerfen nicht als Features auftauchen
+        #    AUSNAHME: Wenn es auch feat:-Commits mit dem gleichen Keyword gibt,
+        #    dann ist das Feature echt implementiert (nicht nur geplant)
         design_doc_keywords = []
+        feature_commit_text = ''  # Alle feat:-Commit-Messages zusammen
         for c in commits:
             tag, _ = self._classify_commit(c)
             if tag == 'DESIGN-DOC':
                 title = c.get('message', '').split('\n')[0].lower()
-                # Extrahiere Schluesselwoerter aus dem Design-Doc-Titel
                 for word in re.findall(r'[a-zäöü]{4,}', title):
                     if word not in ('docs', 'design', 'system', 'creator', 'vollständige',
-                                    'spezifikation', 'empfehlung', 'dokument'):
+                                    'spezifikation', 'empfehlung', 'dokument', 'implementierungsplan',
+                                    'plan', 'konzept', 'entwurf'):
                         design_doc_keywords.append(word)
+            elif tag == 'FEATURE':
+                feature_commit_text += ' ' + c.get('message', '').split('\n')[0].lower()
 
         if design_doc_keywords and ai_features:
-            # Pruefe ob Design-Doc-Keywords in Feature-Beschreibungen auftauchen
+            # Keywords die AUCH in feat:-Commits vorkommen sind echt → nicht entfernen
+            real_keywords = {kw for kw in design_doc_keywords if kw in feature_commit_text}
+            hallucinated_keywords = [kw for kw in design_doc_keywords if kw not in real_keywords]
+
+            if real_keywords:
+                self.logger.info(
+                    f"✅ Design-Doc-Keywords '{', '.join(real_keywords)}' kommen auch in feat:-Commits vor — kein False Positive"
+                )
+
+            # Nur Features mit halluzinierten Keywords entfernen
             for feature in ai_features:
                 desc = (feature.get('description', '') + ' '.join(feature.get('details', []))).lower()
-                matched = [kw for kw in design_doc_keywords if kw in desc]
+                matched = [kw for kw in hallucinated_keywords if kw in desc]
                 if matched:
                     warnings.append(
                         f"Design-Doc-Thema '{matched[0]}' als Feature erkannt — wird entfernt"
                     )
-                    # Feature entfernen (halluziniert aus Design-Doc)
                     ai_result['changes'] = [
                         ch for ch in ai_result['changes']
                         if ch is not feature
