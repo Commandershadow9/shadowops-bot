@@ -115,3 +115,24 @@ class AideFixerAdapter(FixProvider):
         return FixResult.failed(
             result.get('error', result.get('message', 'AIDE fix failed')),
             phase_type=phase_type, duration_seconds=duration)
+
+
+class WalGFixerAdapter(FixProvider):
+    """Adapter fuer WalGFixer."""
+
+    def __init__(self, fixer):
+        self.fixer = fixer
+
+    async def execute(self, event, strategy, context=None):
+        phase_type = context.get('phase_type', PhaseType.FIX) if context else PhaseType.FIX
+        start = time.time()
+        event_dict = event.to_dict() if hasattr(event, 'to_dict') else event
+        result = await self.fixer.fix(event_dict, strategy)
+        duration = time.time() - start
+        if result.get('status') == 'success':
+            return FixResult.success(
+                result.get('message', 'WAL-G fix applied'),
+                phase_type=phase_type, duration_seconds=duration)
+        return FixResult.failed(
+            result.get('error', result.get('message', 'WAL-G fix failed')),
+            phase_type=phase_type, duration_seconds=duration)

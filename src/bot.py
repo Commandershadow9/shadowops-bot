@@ -59,6 +59,7 @@ from integrations.server_assistant import ServerAssistant
 
 # Security Engine v6 (Unified Security System, inkl. SecurityScanAgent)
 from integrations.security_engine import SecurityEngine
+from integrations.fixers.walg_fixer import WalGFixer
 
 # Queue Management
 from integrations.smart_queue import SmartQueue
@@ -663,6 +664,7 @@ class ShadowOpsBot(commands.Bot):
                             trivy_fixer=getattr(self.self_healing, 'trivy_fixer', None),
                             crowdsec_fixer=getattr(self.self_healing, 'crowdsec_fixer', None),
                             aide_fixer=getattr(self.self_healing, 'aide_fixer', None),
+                            walg_fixer=WalGFixer(executor=getattr(self.self_healing, 'command_executor', None)),
                         )
                     self.logger.info("✅ [4.5/5] Security Engine v6 bereit (Reactive + DeepScan + Proactive)")
                 except Exception as e:
