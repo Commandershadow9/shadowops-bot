@@ -339,8 +339,8 @@ git add -A && git commit -m "chore: Ollama-Dateien entfernt"
 
 **Step 1:** Registriere alle 7 MCP-Server:
 ```
-codex mcp add postgres-guildscout -- uvx postgres-mcp "postgresql://guildscout:devpassword123@127.0.0.1:5433/guildscout"
-codex mcp add postgres-zerodox -- uvx postgres-mcp "postgresql://zerodox:zerodox-db-secret-2025@127.0.0.1:5434/zerodox"
+codex mcp add postgres-guildscout -- uvx postgres-mcp "postgresql://guildscout:SICHERES_PASSWORT@127.0.0.1:5433/guildscout"
+codex mcp add postgres-zerodox -- uvx postgres-mcp "postgresql://zerodox:SICHERES_PASSWORT@127.0.0.1:5434/zerodox"
 codex mcp add redis -- uvx --from redis-mcp-server@latest redis-mcp-server --url "redis://127.0.0.1:6379/0"
 codex mcp add docker -- uvx docker-mcp
 codex mcp add github --url "https://api.githubcopilot.com/mcp/"

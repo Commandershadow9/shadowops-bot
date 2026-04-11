@@ -115,7 +115,7 @@ CREATE INDEX IF NOT EXISTS idx_sessions_started ON sessions(started_at DESC);
 
 Run:
 ```bash
-docker exec guildscout-postgres psql -U guildscout -c "CREATE USER security_analyst WITH PASSWORD 'sec_analyst_2026';"
+docker exec guildscout-postgres psql -U guildscout -c "CREATE USER security_analyst WITH PASSWORD 'SICHERES_PASSWORT';"
 docker exec guildscout-postgres psql -U guildscout -c "CREATE DATABASE security_analyst OWNER security_analyst;"
 ```
 
@@ -430,7 +430,7 @@ In `config/config.yaml`:
 ```yaml
 security_analyst:
   enabled: true
-  database_dsn: "postgresql://security_analyst:sec_analyst_2026@127.0.0.1:5433/security_analyst"
+  database_dsn: "postgresql://security_analyst:SICHERES_PASSWORT@127.0.0.1:5433/security_analyst"
   max_sessions_per_day: 1
   session_timeout: 1800
   session_max_turns: 25

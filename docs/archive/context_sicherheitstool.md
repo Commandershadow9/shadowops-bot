@@ -16,7 +16,7 @@ Customer-facing production application with real customers and active operations
 
 ### Database
 - **Type**: PostgreSQL
-- **Connection**: `postgresql://admin:admin123@localhost:5432/sicherheitsdienst_db?schema=public`
+- **Connection**: `postgresql://admin:SICHERES_PASSWORT@localhost:5432/sicherheitsdienst_db?schema=public`
 - **Status**: PRODUCTION - Contains live customer data
 - **Backup**: Daily backups configured
 - **Risk Level**: CRITICAL - Any downtime affects customers
