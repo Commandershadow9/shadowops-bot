@@ -116,6 +116,7 @@
 | `message_handler.py` | `MessageHandler` — Sicheres Senden (Split bei >2000 Zeichen) |
 | `changelog_parser.py` | `ChangelogParser` — CHANGELOG.md Parser fuer Patch Notes |
 | `process_lock.py` | `ProcessLock` — Cross-Process Advisory File Lock (fcntl) fuer Singleton-Services |
+| `circuit_breaker.py` | `CircuitBreaker` — Leichtgewichtiger CB (threshold + timeout), genutzt fuer AI Patch Notes |
 
 ### Schemas (`src/schemas/`)
 | Datei | Zweck |
@@ -357,6 +358,17 @@
 - **Varianten-Sync:** `_sync_default_variants()` in prompt_ab_testing.py traegt neue Varianten automatisch nach
 - **CORS:** `maydaysim.de` + `www.maydaysim.de` + `localhost:3200` in health_server.py
 - **Design-Doc:** `docs/plans/2026-03-30-mayday-changelog-design.md`
+
+### Enterprise Hardening — Patch Notes Pipeline (seit 2026-04-12)
+- **State Backup:** Alle JSON-State-Dateien (`state.json`, `pending_batch.json`, `last_releases.json`) erstellen vor jedem Schreiben eine `.backup`-Kopie. Bei korrupter Primaerdatei automatischer Backup-Fallback
+- **Schema-Validierung:** `_validate_batch_structure()` prueft Batch-Daten beim Laden (dict-Typ, commits ist list, Timestamps vorhanden). StateManager prueft `isinstance(dict)` nach Load
+- **Circuit Breaker:** `src/utils/circuit_breaker.py` — leichtgewichtiger CB adaptiert vom SmartQueue-Pattern. 5 konsekutive AI-Fehler → 1h Pause (kein sinnloses Retry). In `notifications_mixin.py` vor AI-Call eingebaut
+- **asyncio.Lock:** `_patch_notes_lock` in `core.py` — serialisiert AI-Generierung + Discord-Sending. Verhindert Race Condition zwischen Webhook und Polling (Vorfall-Ursache 18.03.2026)
+- **Persistente Inflight-Commits:** `_inflight_commits` wird jetzt in `state.json` persistiert (vorher nur RAM). Ueberlebt Bot-Restart, verhindert doppelte Patch Notes nach Crash
+- **AI Retry:** `_query_with_retry()` in `ai_engine.py` — max 2 Versuche pro Engine mit exponentiellem Backoff (1s, 2s). Bestehende Quota-Detection und Fallback-Chain bleiben unangetastet
+- **Pipeline-Metriken:** Strukturiertes JSON-Log (`METRICS|patch_notes_pipeline|{...}`) pro Pipeline-Durchlauf mit Timing (`ai_generation_time_s`, `pipeline_total_time_s`), CB-Status, Commit-Klassifizierung
+- **Message-ID Tracking + Rollback:** Jede gesendete Discord-Message wird mit Channel-ID + Message-ID in `state.json` unter `patch_notes_messages` gespeichert. `retract_patch_notes(repo, version)` loescht alle zugehoerigen Messages. Max 50 Releases im State (FIFO)
+- **WICHTIG:** Keine Aenderung an Prompts, `_classify_commit()`, `_validate_ai_output()`, `_CLASSIFICATION_RULES` oder A/B-Varianten — nur additive Schutzschichten drumherum
 
 ### Adaptiver Release-Mode (seit 2026-03-29, überarbeitet 2026-04-08)
 - **Alle 5 Projekte:** `release_mode: daily` mit adaptivem Threshold

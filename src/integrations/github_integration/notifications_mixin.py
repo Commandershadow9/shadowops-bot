@@ -4,10 +4,12 @@ Discord notification methods for GitHubIntegration.
 v5: Unified Pipeline — ein Embed-Builder, ein Web-Export, ein Version-Resolver
 """
 
+import json as _json
 import logging
 import re
+import time as _time
 from datetime import datetime, timezone
-from typing import Dict, Optional
+from typing import Dict, List, Optional
 
 import discord
 
@@ -119,20 +121,33 @@ class NotificationsMixin:
         else:
             internal_embed.description = "Keine neuen Commits in diesem Push."
 
-        # === AI-GENERATED PATCH NOTES ===
+        # === AI-GENERATED PATCH NOTES (mit Lock + Circuit Breaker) ===
         use_ai = patch_config.get('use_ai', False)
+        _pipeline_start = _time.monotonic()
 
         ai_result = None
         git_stats = {}
-        if use_ai and self.ai_service:
-            try:
-                self.logger.info(f"🤖 Generiere KI Patch Notes für {repo_name} (Sprache: {language})...")
-                ai_result, git_stats = await self._generate_ai_patch_notes(commits, language, repo_name, project_config)
-                if ai_result:
-                    result_type = "strukturiert" if isinstance(ai_result, dict) else "Raw-Text"
-                    self.logger.info(f"✅ KI Patch Notes erfolgreich generiert ({result_type})")
-            except Exception as e:
-                self.logger.warning(f"⚠️ KI Patch Notes Generierung fehlgeschlagen, verwende Fallback: {e}")
+        async with self._patch_notes_lock:
+            if use_ai and self.ai_service:
+                if not self._ai_circuit_breaker.allow_request():
+                    self.logger.warning(
+                        f"⚡ AI Circuit Breaker offen — ueberspringe AI-Generierung fuer {repo_name}"
+                    )
+                else:
+                    try:
+                        self.logger.info(f"🤖 Generiere KI Patch Notes für {repo_name} (Sprache: {language})...")
+                        ai_result, git_stats = await self._generate_ai_patch_notes(commits, language, repo_name, project_config)
+                        if ai_result:
+                            result_type = "strukturiert" if isinstance(ai_result, dict) else "Raw-Text"
+                            self.logger.info(f"✅ KI Patch Notes erfolgreich generiert ({result_type})")
+                            self._ai_circuit_breaker.record_success()
+                        else:
+                            self._ai_circuit_breaker.record_failure()
+                    except Exception as e:
+                        self._ai_circuit_breaker.record_failure()
+                        self.logger.warning(f"⚠️ KI Patch Notes Generierung fehlgeschlagen, verwende Fallback: {e}")
+
+        _ai_elapsed = _time.monotonic() - _pipeline_start
 
         # === CONTENT SANITIZER ===
         security_config = patch_config.get('security', {})
@@ -210,6 +225,17 @@ class NotificationsMixin:
             f"PR-Labels: {metrics['pr_labels_found']}, PR-Bodies: {metrics['pr_bodies_found']} | "
             f"Halluzinationen: {metrics['hallucinations_caught']} gefangen | "
             f"Version: {metrics['version_source']}"
+        )
+
+        # Strukturierte Pipeline-Metriken (JSON-parsebar fuer Monitoring)
+        metrics['ai_generation_time_s'] = round(_ai_elapsed, 2)
+        metrics['pipeline_total_time_s'] = round(_time.monotonic() - _pipeline_start, 2)
+        metrics['ai_used'] = ai_result is not None
+        metrics['ai_circuit_breaker_open'] = self._ai_circuit_breaker.is_open
+        metrics['timestamp'] = datetime.now(timezone.utc).isoformat()
+        self.logger.info(
+            "METRICS|patch_notes_pipeline|%s",
+            _json.dumps(metrics, default=str),
         )
 
         # === UNIFIED EMBED + WEB EXPORT ===
@@ -1165,6 +1191,10 @@ class NotificationsMixin:
 
             self.logger.info(f"📢 Patch Notes für {repo_name} im Kunden-Channel gesendet.")
 
+            # Message-ID fuer Rollback speichern
+            if sent_message and version:
+                self._record_sent_message(repo_name, version, customer_channel.id, sent_message.id, 'customer')
+
             # Tracking aktivieren (ohne Reactions/separate Nachricht)
             if sent_message and self.feedback_collector and version:
                 try:
@@ -1201,9 +1231,10 @@ class NotificationsMixin:
 
         try:
             description_chunks = self._split_embed_description(embed.description or "")
+            internal_sent = None
 
             if len(description_chunks) <= 1:
-                await internal_channel.send(
+                internal_sent = await internal_channel.send(
                     content=f"{role_mention} Neues Update verfügbar!" if role_mention else None,
                     embed=embed,
                     allowed_mentions=discord.AllowedMentions(roles=True),
@@ -1221,11 +1252,17 @@ class NotificationsMixin:
                         embed_copy.set_footer(text=embed.footer.text)
                     # Rollen-Ping nur bei der ersten Nachricht
                     content = f"{role_mention} Neues Update verfügbar!" if (i == 0 and role_mention) else None
-                    await internal_channel.send(
+                    msg = await internal_channel.send(
                         content=content,
                         embed=embed_copy,
                         allowed_mentions=discord.AllowedMentions(roles=True),
                     )
+                    if i == 0:
+                        internal_sent = msg
+
+            # Message-ID fuer Rollback speichern
+            if internal_sent and version:
+                self._record_sent_message(repo_name, version, internal_channel.id, internal_sent.id, 'internal')
 
             self.logger.info(f"📢 Patch Notes für {repo_name} im internen Kunden-Channel gesendet.")
 
@@ -1579,3 +1616,61 @@ class NotificationsMixin:
                     result[key] = value
             return result
         return data
+
+    # ── Message-ID Tracking + Rollback ──────────────────────────
+
+    def _record_sent_message(self, repo_name: str, version: str,
+                              channel_id: int, message_id: int,
+                              channel_type: str) -> None:
+        """Speichere gesendete Message-ID fuer spaeteres Retract/Edit."""
+        try:
+            guild_id = self._get_guild_id()
+            msgs = self.state_manager.get_value(guild_id, 'patch_notes_messages', {})
+            if not isinstance(msgs, dict):
+                msgs = {}
+            entry_key = f"{repo_name}:{version}"
+            if entry_key not in msgs:
+                msgs[entry_key] = []
+            msgs[entry_key].append({
+                'channel_id': channel_id,
+                'message_id': message_id,
+                'channel_type': channel_type,
+                'sent_at': datetime.now(timezone.utc).isoformat(),
+            })
+            # Nur die letzten 50 Releases behalten
+            if len(msgs) > 50:
+                keys = sorted(msgs.keys())
+                for old_key in keys[:len(keys) - 50]:
+                    del msgs[old_key]
+            self.state_manager.set_value(guild_id, 'patch_notes_messages', msgs)
+        except Exception as e:
+            self.logger.debug("Message-ID Tracking fehlgeschlagen: %s", e)
+
+    async def retract_patch_notes(self, repo_name: str, version: str) -> int:
+        """Loesche alle gesendeten Messages fuer einen Release. Gibt Anzahl zurueck."""
+        guild_id = self._get_guild_id()
+        msgs = self.state_manager.get_value(guild_id, 'patch_notes_messages', {})
+        entry_key = f"{repo_name}:{version}"
+        entries = msgs.get(entry_key, [])
+        if not entries:
+            self.logger.warning(f"Keine Messages fuer {entry_key} gefunden")
+            return 0
+
+        retracted = 0
+        for entry in entries:
+            try:
+                ch = self.bot.get_channel(entry['channel_id'])
+                if ch:
+                    msg = ch.get_partial_message(entry['message_id'])
+                    await msg.delete()
+                    retracted += 1
+            except Exception as e:
+                self.logger.warning(f"Retract fehlgeschlagen fuer {entry}: {e}")
+
+        # Eintraege nach Retract entfernen
+        if entry_key in msgs:
+            del msgs[entry_key]
+            self.state_manager.set_value(guild_id, 'patch_notes_messages', msgs)
+
+        self.logger.info(f"🗑️ {retracted}/{len(entries)} Messages fuer {entry_key} retracted")
+        return retracted

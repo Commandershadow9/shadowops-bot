@@ -87,6 +87,16 @@ Bei Aenderungen an Shared-Services (Redis, PostgreSQL, Traefik) MUESSEN alle Kon
 - **Fix-Phase nutzt Cross-Mode-Lock**: claim_event/release_event fuer jedes Finding
 - **Alter Analyst** (`analyst/security_analyst.py`): Wird NICHT mehr von Engine gestartet, bleibt vorerst als Referenz
 
+## Enterprise Hardening (seit 2026-04-12)
+- **CircuitBreaker** (`src/utils/circuit_breaker.py`): Threshold und Timeout NICHT ohne Grund aendern — 5 Failures / 1h Pause sind bewusst gewaehlt
+- **asyncio.Lock** (`_patch_notes_lock`): Umfasst NUR den AI-Call-Block, NICHT den ganzen Push-Handler. Lock-Scope bei Aenderungen beibehalten
+- **State Backups** (`.backup` Dateien): Werden automatisch erstellt — NIEMALS manuell loeschen, sie sind der Fallback bei Korruption
+- **Message-ID Tracking**: `patch_notes_messages` in state.json — max 50 Releases (FIFO). Bei Aenderungen an `_send_to_customer_channels` oder `_send_to_internal_customer_channel` IMMER `_record_sent_message()` Call beibehalten
+- **`retract_patch_notes(repo, version)`**: Loescht Messages via `get_partial_message().delete()` — funktioniert auch cross-guild solange der Bot Zugriff hat
+- **AI Retry** (`_query_with_retry`): max_retries=2 pro Engine. NICHT erhoehen — bei Primary-Fail geht es eh zum Fallback
+- **Persistente Inflight-Commits**: `_persist_inflight()` wird nach jedem mark/unmark aufgerufen. NICHT entfernen — sonst wieder doppelte Patch Notes nach Crash
+- **Pipeline-Metriken**: `METRICS|patch_notes_pipeline|{json}` Log-Zeile — wird fuer Monitoring geparst, Format NICHT aendern
+
 ## Jules SecOps Workflow (seit 2026-04-11)
 - **NIEMALS `issue_comment` Events für Auto-Reviews whitelisten** — das war die PR #123 Hauptursache
 - **Single-Comment-Edit Strategie ist Pflicht** — neuer Comment pro Iteration triggert Webhook-Loop

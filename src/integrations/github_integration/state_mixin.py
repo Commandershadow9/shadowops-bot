@@ -86,10 +86,37 @@ class StateMixin:
         self._cleanup_inflight()
         key = self._commit_key(repo_name, branch, commit_sha)
         self._inflight_commits[key] = datetime.now(timezone.utc).timestamp()
+        self._persist_inflight()
 
     def _unmark_commit_inflight(self, repo_name: str, branch: str, commit_sha: str) -> None:
         key = self._commit_key(repo_name, branch, commit_sha)
         self._inflight_commits.pop(key, None)
+        self._persist_inflight()
+
+    # ── Persistente Inflight-State ──────────────────────────
+
+    def _load_inflight_state(self) -> Dict[str, float]:
+        """Lade persistierte Inflight-Commits aus state.json."""
+        try:
+            guild_id = self._get_guild_id()
+            raw = self.state_manager.get_value(guild_id, 'inflight_commits', {})
+            if not isinstance(raw, dict):
+                return {}
+            now = datetime.now(timezone.utc).timestamp()
+            return {
+                k: v for k, v in raw.items()
+                if isinstance(v, (int, float)) and now - v < self.dedupe_ttl_seconds
+            }
+        except Exception:
+            return {}
+
+    def _persist_inflight(self) -> None:
+        """Speichere aktuelle Inflight-Commits in state.json."""
+        try:
+            guild_id = self._get_guild_id()
+            self.state_manager.set_value(guild_id, 'inflight_commits', self._inflight_commits)
+        except Exception as e:
+            logger.debug("Inflight-Persist fehlgeschlagen: %s", e)
 
     def _reserve_commit_processing(self, repo_name: str, branch: str, commit_sha: str) -> bool:
         normalized = self._normalize_repo_name(repo_name)

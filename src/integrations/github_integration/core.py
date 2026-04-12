@@ -160,8 +160,15 @@ class GitHubIntegration(JulesWorkflowMixin,
         self.pending_webhooks = []
         self.bot_ready = False
         self.local_polling_task = None
-        self._inflight_commits: Dict[str, float] = {}
+        self._inflight_commits: Dict[str, float] = self._load_inflight_state()
         self._ci_polling_tasks: Dict[str, asyncio.Task] = {}
+
+        # Enterprise Hardening: Concurrency Lock + AI Circuit Breaker
+        self._patch_notes_lock = asyncio.Lock()
+        from utils.circuit_breaker import CircuitBreaker
+        self._ai_circuit_breaker = CircuitBreaker(
+            name='patch_notes_ai', threshold=5, timeout_seconds=3600,
+        )
 
         self.logger.info(f"🔧 GitHub Integration initialized (enabled: {self.enabled}, jules: {self._jules_enabled})")
 

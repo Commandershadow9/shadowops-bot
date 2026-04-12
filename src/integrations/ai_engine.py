@@ -1803,12 +1803,11 @@ class AIEngine:
         if primary_name == 'codex' and _time.time() < self._codex_quota_exhausted_until:
             logger.info("Codex-Quota erschöpft — direkt %s", fallback_name.capitalize())
         else:
-            # Primary Versuch
+            # Primary Versuch (mit Retry)
             self.stats[f'{primary_name}_calls'] += 1
-            result = await primary.query(
-                prompt,
-                model=model_class,
-                schema_path=schema_path,
+            result = await self._query_with_retry(
+                primary, primary_name, prompt,
+                model=model_class, schema_path=schema_path,
                 timeout=route_timeout,
             )
 
@@ -1824,12 +1823,11 @@ class AIEngine:
             self.stats[f'{primary_name}_failures'] += 1
             logger.warning(f"{primary_name.capitalize()} fehlgeschlagen, Fallback auf {fallback_name.capitalize()}")
 
-        # Fallback
+        # Fallback (mit Retry)
         self.stats[f'{fallback_name}_calls'] += 1
-        result = await fallback.query(
-            prompt,
-            model=model_class,
-            schema_path=schema_path,
+        result = await self._query_with_retry(
+            fallback, fallback_name, prompt,
+            model=model_class, schema_path=schema_path,
             timeout=route_timeout,
         )
 
@@ -1842,6 +1840,32 @@ class AIEngine:
                                fallback_name.capitalize())
 
         self.stats[f'{fallback_name}_failures'] += 1
+        return None
+
+    async def _query_with_retry(
+        self, provider, provider_name: str, prompt: str, *,
+        model: str, schema_path, timeout, max_retries: int = 2,
+        backoff_base: float = 1.0,
+    ):
+        """Retry einen Provider-Call mit exponentiellem Backoff."""
+        for attempt in range(max_retries):
+            try:
+                result = await provider.query(
+                    prompt, model=model, schema_path=schema_path,
+                    timeout=timeout,
+                )
+                if result is not None:
+                    return result
+            except Exception as e:
+                logger.warning(
+                    "%s Versuch %d/%d fehlgeschlagen: %s",
+                    provider_name.capitalize(), attempt + 1, max_retries, e,
+                )
+            if attempt < max_retries - 1:
+                delay = backoff_base * (2 ** attempt)
+                logger.info("Retry %s in %.1fs...", provider_name.capitalize(), delay)
+                import asyncio
+                await asyncio.sleep(delay)
         return None
 
     def _build_analysis_prompt(

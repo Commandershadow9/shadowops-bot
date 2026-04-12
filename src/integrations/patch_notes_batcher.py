@@ -9,6 +9,7 @@ Max 1 automatischer Release pro Projekt pro Tag (24h Cooldown).
 import json
 import logging
 import os
+import shutil
 import tempfile
 from pathlib import Path
 from typing import Dict, List, Optional
@@ -56,15 +57,48 @@ class PatchNotesBatcher:
         )
 
     def _load_pending(self) -> Dict[str, Dict]:
-        """Lade ausstehende Batches von Disk."""
+        """Lade ausstehende Batches von Disk (mit Backup-Fallback + Validierung)."""
         if not self.batch_file.exists():
             return {}
         try:
             with open(self.batch_file, 'r', encoding='utf-8') as f:
-                return json.load(f)
+                raw = json.load(f)
+            return self._validate_batch_structure(raw)
         except Exception as e:
-            logger.error(f"Fehler beim Laden der Batch-Datei: {e}")
+            logger.error(f"Batch-Datei korrupt: {e} — versuche Backup")
+            backup = self.batch_file.with_suffix('.backup')
+            if backup.exists():
+                try:
+                    with open(backup, 'r', encoding='utf-8') as f:
+                        raw = json.load(f)
+                    result = self._validate_batch_structure(raw)
+                    logger.warning(f"🔄 Batch aus Backup wiederhergestellt: {backup}")
+                    return result
+                except Exception:
+                    pass
+            logger.error("Batch und Backup nicht ladbar — starte leer")
             return {}
+
+    def _validate_batch_structure(self, data) -> Dict[str, Dict]:
+        """Validiere und bereinige geladene Batch-Daten."""
+        if not isinstance(data, dict):
+            logger.warning("Batch-Datei ist kein dict, resette")
+            return {}
+        cleaned = {}
+        for project, batch in data.items():
+            if not isinstance(project, str) or not isinstance(batch, dict):
+                logger.warning("Ueberspringe ungueltige Batch-Entry: %s", project)
+                continue
+            commits = batch.get('commits', [])
+            if not isinstance(commits, list):
+                logger.warning("Ungueltige Commits fuer %s, resette zu []", project)
+                commits = []
+            cleaned[project] = {
+                'commits': commits,
+                'first_added': batch.get('first_added', datetime.now(timezone.utc).isoformat()),
+                'last_added': batch.get('last_added', datetime.now(timezone.utc).isoformat()),
+            }
+        return cleaned
 
     def _load_last_releases(self) -> Dict[str, str]:
         """Lade letzte Release-Zeitpunkte aus der Batch-Datei."""
@@ -81,6 +115,13 @@ class PatchNotesBatcher:
         """Speichere letzte Release-Zeitpunkte (atomic via temp-file + rename)."""
         release_file = self.data_dir / 'last_releases.json'
         try:
+            # Backup vor Ueberschreiben
+            try:
+                if release_file.exists():
+                    shutil.copy2(str(release_file),
+                                 str(release_file.with_suffix('.backup')))
+            except Exception as e:
+                logger.warning("Release-Backup fehlgeschlagen: %s", e)
             fd, tmp_path = tempfile.mkstemp(
                 dir=self.data_dir, suffix='.tmp', prefix='.releases_'
             )
@@ -116,6 +157,13 @@ class PatchNotesBatcher:
         """Speichere ausstehende Batches auf Disk (atomic via temp-file + rename)."""
         try:
             self.data_dir.mkdir(parents=True, exist_ok=True)
+            # Backup vor Ueberschreiben
+            try:
+                if self.batch_file.exists():
+                    shutil.copy2(str(self.batch_file),
+                                 str(self.batch_file.with_suffix('.backup')))
+            except Exception as e:
+                logger.warning("Batch-Backup fehlgeschlagen: %s", e)
             fd, tmp_path = tempfile.mkstemp(
                 dir=self.data_dir, suffix='.tmp', prefix='.batch_'
             )
