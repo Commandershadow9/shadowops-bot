@@ -177,6 +177,13 @@ class JulesState:
             )
 
     async def fetch_health_stats(self) -> dict:
+        if self._pool is None:
+            return {
+                "active_reviews": 0, "pending_prs": 0, "escalated_24h": 0,
+                "stats_24h": {"total_reviews": 0, "approved": 0, "revisions": 0,
+                              "merged": 0, "tokens_consumed": 0},
+                "last_review_at": None, "note": "Pool noch nicht verbunden (lazy init)",
+            }
         async with self._pool.acquire() as conn:
             active = await conn.fetchval("SELECT COUNT(*) FROM jules_pr_reviews WHERE status='reviewing'")
             pending = await conn.fetchval("SELECT COUNT(*) FROM jules_pr_reviews WHERE status='pending'")
