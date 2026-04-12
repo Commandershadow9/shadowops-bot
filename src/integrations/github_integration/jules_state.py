@@ -106,3 +106,19 @@ class JulesState:
                 "UPDATE jules_pr_reviews SET last_reviewed_sha=$1, last_review_at=now(), iteration_count=iteration_count+1, updated_at=now() WHERE id=$2",
                 sha, row_id,
             )
+
+    # ── Task 3.3: Stale-Lock-Recovery ─────────────────────────
+
+    async def recover_stale_locks(self, timeout_minutes: int = 10) -> int:
+        sql = """
+            UPDATE jules_pr_reviews
+            SET status = 'revision_requested', lock_owner = NULL, lock_acquired_at = NULL, updated_at = now()
+            WHERE status = 'reviewing' AND lock_acquired_at < now() - ($1 || ' minutes')::interval
+            RETURNING id
+        """
+        async with self._pool.acquire() as conn:
+            rows = await conn.fetch(sql, str(timeout_minutes))
+            count = len(rows)
+            if count:
+                logger.warning(f"🔓 Jules Stale-Lock-Recovery: {count} Lock(s) zurückgesetzt")
+            return count

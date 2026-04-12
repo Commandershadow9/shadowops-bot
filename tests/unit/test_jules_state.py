@@ -5,6 +5,7 @@ Benötigt eine echte PostgreSQL-Verbindung (security_analyst DB).
 Test-Rows verwenden repo='test_*' und werden nach jedem Test aufgeräumt.
 """
 import asyncio
+from datetime import datetime, timedelta, timezone
 import pytest
 import pytest_asyncio
 
@@ -134,3 +135,43 @@ class TestMarkReviewedSha:
         assert rec["last_reviewed_sha"] == "sha1"
         assert rec["iteration_count"] == 1
         assert rec["last_review_at"] is not None
+
+
+# ── Task 3.3: Stale-Lock-Recovery ─────────────────────────────
+
+class TestRecoverStaleLocks:
+    """Stale-Lock-Recovery Tests."""
+
+    async def test_stale_lock_gets_freed(self, state: JulesState):
+        """Lock älter als Timeout wird zurückgesetzt auf revision_requested."""
+        row_id = await _seed_pending(state)
+        row = await state.try_claim_review("test_repo/bot", 999, "sha1", "worker-1")
+        assert row is not None
+        # Lock-Zeitstempel 15 Minuten in die Vergangenheit setzen
+        async with state._pool.acquire() as conn:
+            await conn.execute(
+                "UPDATE jules_pr_reviews SET lock_acquired_at = now() - interval '15 minutes' WHERE id=$1",
+                row.id,
+            )
+        freed = await state.recover_stale_locks(timeout_minutes=10)
+        assert freed == 1
+        # Prüfen: Status ist revision_requested, Lock-Felder leer
+        async with state._pool.acquire() as conn:
+            rec = await conn.fetchrow("SELECT * FROM jules_pr_reviews WHERE id=$1", row.id)
+        assert rec["status"] == "revision_requested"
+        assert rec["lock_owner"] is None
+        assert rec["lock_acquired_at"] is None
+
+    async def test_fresh_lock_stays(self, state: JulesState):
+        """Frischer Lock (< Timeout) wird NICHT zurückgesetzt."""
+        await _seed_pending(state)
+        row = await state.try_claim_review("test_repo/bot", 999, "sha1", "worker-1")
+        assert row is not None
+        # Lock ist gerade eben gesetzt — sollte nicht betroffen sein
+        freed = await state.recover_stale_locks(timeout_minutes=10)
+        assert freed == 0
+        # Status bleibt reviewing
+        async with state._pool.acquire() as conn:
+            rec = await conn.fetchrow("SELECT * FROM jules_pr_reviews WHERE id=$1", row.id)
+        assert rec["status"] == "reviewing"
+        assert rec["lock_owner"] == "worker-1"
