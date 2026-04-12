@@ -1019,11 +1019,11 @@ class AIEngine:
         try:
             raw = await self.claude.query_raw(prompt, model="thinking", timeout=300)
         except Exception as e:
-            self.logger.error(f"[jules] Claude-Call failed: {e}")
+            logger.error(f"[jules] Claude-Call failed: {e}")
             return None
 
         if not raw:
-            self.logger.error("[jules] Claude returned empty response")
+            logger.error("[jules] Claude returned empty response")
             return None
 
         clean = raw.strip()
@@ -1034,7 +1034,7 @@ class AIEngine:
         try:
             review = json.loads(clean)
         except json.JSONDecodeError as e:
-            self.logger.error(f"[jules] JSON parse failed: {e}")
+            logger.error(f"[jules] JSON parse failed: {e}")
             return None
 
         schema_path = Path(__file__).parent.parent / "schemas" / "jules_review.json"
@@ -1042,15 +1042,15 @@ class AIEngine:
             schema = json.loads(schema_path.read_text())
             jsonschema.validate(review, schema)
         except jsonschema.ValidationError as e:
-            self.logger.error(f"[jules] Schema validation failed: {e.message}")
+            logger.error(f"[jules] Schema validation failed: {e.message}")
             return None
         except FileNotFoundError:
-            self.logger.error(f"[jules] Schema not found at {schema_path}")
+            logger.error(f"[jules] Schema not found at {schema_path}")
             return None
 
         review["verdict"] = compute_verdict(review)
 
-        self.logger.info(
+        logger.info(
             f"[jules] review ok: verdict={review['verdict']} "
             f"blockers={len(review['blockers'])} "
             f"suggestions={len(review['suggestions'])} "
