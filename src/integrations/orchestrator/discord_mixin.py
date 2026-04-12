@@ -241,7 +241,7 @@ class DiscordUIMixin:
             # Approval in DB persistieren (überlebt Bot-Restart)
             try:
                 import asyncpg
-                from src.utils.config import get_config
+                from utils.config import get_config
                 sa_dsn = get_config().security_analyst_dsn
                 if not sa_dsn:
                     raise RuntimeError("security_analyst DSN nicht konfiguriert")
@@ -285,7 +285,7 @@ class DiscordUIMixin:
             # DB-Status aktualisieren
             try:
                 import asyncpg
-                from src.utils.config import get_config
+                from utils.config import get_config
                 sa_dsn = get_config().security_analyst_dsn
                 if sa_dsn:
                     pool = await asyncpg.create_pool(sa_dsn, min_size=1, max_size=1)

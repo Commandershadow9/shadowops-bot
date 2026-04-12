@@ -1006,7 +1006,7 @@ class AIEngine:
         Returns:
             Validiertes Review-Dict oder None bei Fehler.
         """
-        from src.integrations.github_integration.jules_review_prompt import (
+        from integrations.github_integration.jules_review_prompt import (
             build_review_prompt, compute_verdict,
         )
 

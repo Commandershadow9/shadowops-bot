@@ -18,7 +18,7 @@ logger = logging.getLogger('shadowops.learning_bridge')
 
 def _get_agent_learning_dsn() -> str:
     """Agent-Learning DSN aus Config/Env laden."""
-    from src.utils.config import get_config
+    from utils.config import get_config
     dsn = get_config().agent_learning_dsn
     if not dsn:
         raise RuntimeError("agent_learning DSN nicht konfiguriert (AGENT_LEARNING_DB_URL oder config.yaml)")

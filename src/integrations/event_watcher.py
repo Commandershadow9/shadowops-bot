@@ -173,7 +173,7 @@ class SecurityEventWatcher:
         """Lazy DB-Pool für Security-Events."""
         if self._db_pool is None:
             import asyncpg
-            from src.utils.config import get_config
+            from utils.config import get_config
             sa_dsn = get_config().security_analyst_dsn
             if not sa_dsn:
                 raise RuntimeError("security_analyst DSN nicht konfiguriert")
