@@ -132,12 +132,20 @@ class JulesWorkflowMixin:
             logger.exception("[jules] handle_jules_pr_event crashed")
 
     async def _jules_is_jules_pr(self, pr: Dict, repo: str) -> bool:
-        """Prueft ob ein PR von Jules stammt (Label oder Author)."""
+        """Prueft ob ein PR von Jules stammt (Label, Author oder Body-Marker)."""
+        # 1. Label-Check (explizit)
         labels = [l.get("name", "").lower() for l in (pr.get("labels") or [])]
         if "jules" in labels:
             return True
+        # 2. Author-Check (Jules Bot-Account)
         author = ((pr.get("user") or {}).get("login") or "").lower()
-        return author.startswith("google-labs-jules")
+        if author.startswith("google-labs-jules"):
+            return True
+        # 3. Body-Marker (Jules erstellt PRs unter User-Account mit Signatur)
+        body = (pr.get("body") or "").lower()
+        if "pr created automatically by jules" in body:
+            return True
+        return False
 
     def _jules_extract_fixes_ref(self, body: str) -> Optional[int]:
         """Extrahiert Issue-Nummer aus 'Fixes #123' im PR-Body."""

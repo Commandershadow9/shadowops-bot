@@ -399,6 +399,7 @@
 
 ### Jules SecOps Workflow (seit 2026-04-11)
 - **Hybrid-Fix:** ScanAgent fixt Server-Hardening selbst, delegiert Code-Fixes an Jules via GitHub-Issue mit `jules` Label
+- **PR-Erkennung:** `_jules_is_jules_pr()` prueft 3 Kriterien: (1) `jules` Label am PR, (2) Author `google-labs-jules`, (3) Body-Marker `PR created automatically by Jules`. Jules erstellt PRs unter User-Account, daher ist Body-Marker primaer
 - **Claude-Review:** Strukturiert (BLOCKER/SUGGESTION/NIT), Schema-validiert, deterministischer Verdict
 - **Loop-Schutz:** 7 Schichten (Trigger-Whitelist, SHA-Dedupe, Cooldown, Iteration-Cap 5, Circuit-Breaker 20/h, Time-Cap 2h, Single-Comment-Edit)
 - **State:** `security_analyst.jules_pr_reviews` mit atomic Lock-Claim, Stale-Lock-Recovery nach 10min
