@@ -5,6 +5,8 @@ import logging
 import re
 import shlex
 import asyncio
+import os
+import hashlib
 from typing import Dict, List, Optional
 from ..command_executor import CommandExecutor
 
@@ -19,6 +21,14 @@ class WalGFixer:
         self.executor = executor or CommandExecutor()
         self.target_version = "v3.0.8"
         self.default_binary_path = "/usr/local/bin/wal-g"
+
+        # Hardcoded checksums for v3.0.8 PostgreSQL assets
+        self.checksums = {
+            "wal-g-pg-20.04-amd64": "9a09c2b1afad6a4e7d87444b34726dd098b60ec816032af921d2f887e6e285c5",
+            "wal-g-pg-22.04-amd64": "f30544c5ce93cf83b87578e3c4a2e9c0e0ffc3d160ef89ecddaf75f397d98deb",
+            "wal-g-pg-20.04-aarch64": "c3dc13b90fce8fe498742143f9ae07db19a603f7f26de00f161419e163e6175f",
+            "wal-g-pg-22.04-aarch64": "794d1a81f0c27825a1603bd39c0f2cf5dd8bed7cc36b598ca05d8d963c3d5fcf"
+        }
 
     async def fix(self, event: Dict, strategy: Dict) -> Dict:
         """
@@ -66,28 +76,47 @@ class WalGFixer:
 
         # 2. Prepare download
         arch_res = await self.executor.execute("uname -m")
-        arch = "amd64" if "x86_64" in arch_res.stdout else "arm64"
+        raw_arch = arch_res.stdout.strip()
+        arch = "amd64" if "x86_64" in raw_arch else "aarch64"
 
         # We assume PostgreSQL use case as per finding #195
-        asset_name = f"wal-g-pg-20.04-{arch}"
-        download_url = f"https://github.com/wal-g/wal-g/releases/download/{self.target_version}/{asset_name}"
+        # Try 20.04 then 22.04
+        success_dl = False
         tmp_path = f"/tmp/wal-g-new"
+        asset_used = ""
 
-        logger.info(f"   Downloading secure version from {download_url}...")
-        dl_res = await self.executor.execute(f"curl -L -o {tmp_path} {download_url}")
-
-        if not dl_res.success:
-            # Try 22.04 asset as fallback
-            asset_name = f"wal-g-pg-22.04-{arch}"
+        for ubuntu_ver in ["20.04", "22.04"]:
+            asset_name = f"wal-g-pg-{ubuntu_ver}-{arch}"
             download_url = f"https://github.com/wal-g/wal-g/releases/download/{self.target_version}/{asset_name}"
-            logger.info(f"   Retrying with {asset_name}...")
+
+            logger.info(f"   Attempting download of {asset_name}...")
             dl_res = await self.executor.execute(f"curl -L -o {tmp_path} {download_url}")
 
-            if not dl_res.success:
-                return {
-                    'status': 'failed',
-                    'error': f'Download failed for both 20.04 and 22.04 assets: {dl_res.error_message}'
-                }
+            if dl_res.success:
+                # Verify checksum
+                if asset_name in self.checksums:
+                    expected_sha = self.checksums[asset_name]
+                    actual_sha = await self._calculate_sha256(tmp_path)
+
+                    if actual_sha == expected_sha:
+                        logger.info(f"   ✅ Checksum verified for {asset_name}")
+                        success_dl = True
+                        asset_used = asset_name
+                        break
+                    else:
+                        logger.warning(f"   ❌ Checksum mismatch for {asset_name}! Expected: {expected_sha}, Got: {actual_sha}")
+                else:
+                    logger.warning(f"   ⚠️ No checksum found for {asset_name}, skipping verification (NOT RECOMMENDED)")
+                    # In a real scenario we might fail here if security is paramount
+                    success_dl = True
+                    asset_used = asset_name
+                    break
+
+        if not success_dl:
+            return {
+                'status': 'failed',
+                'error': f'Download or verification failed for WAL-G {self.target_version} assets'
+            }
 
         # 3. Replace binary safely
         backup_path = f"{current_path}.bak_security_update"
@@ -120,11 +149,12 @@ class WalGFixer:
             logger.info(f"✅ WAL-G successfully updated to {self.target_version}")
             return {
                 'status': 'success',
-                'message': f'WAL-G successfully updated from {current_version} to {self.target_version}',
+                'message': f'WAL-G successfully updated from {current_version} to {self.target_version} (Asset: {asset_used})',
                 'details': {
                     'path': current_path,
                     'old_version': current_version,
-                    'new_version': self.target_version
+                    'new_version': self.target_version,
+                    'asset': asset_used
                 }
             }
         else:
@@ -149,3 +179,16 @@ class WalGFixer:
             return c_parts >= t_parts
         except Exception:
             return False
+
+    async def _calculate_sha256(self, filepath: str) -> str:
+        """Calculates SHA256 checksum of a file"""
+        sha256_hash = hashlib.sha256()
+        try:
+            with open(filepath, "rb") as f:
+                # Read in chunks
+                for byte_block in iter(lambda: f.read(4096), b""):
+                    sha256_hash.update(byte_block)
+            return sha256_hash.hexdigest()
+        except Exception as e:
+            logger.error(f"Error calculating checksum: {e}")
+            return ""
