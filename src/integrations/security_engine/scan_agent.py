@@ -1860,12 +1860,39 @@ class SecurityScanAgent:
         except Exception:
             pass
 
-        ft = f"[Security] {title}"
-        bb = f"**Severity:** {severity.upper()} | **Projekt:** {ap or 'Server'}\n\n{body}"
+        # Jules SecOps Workflow: Fix-Mode-Routing
+        # classify_fix_mode/build_jules_issue_body erwarten Attribute (getattr),
+        # finding ist aber ein Dict → SimpleNamespace als Adapter
+        from types import SimpleNamespace
+        _f = SimpleNamespace(
+            id=finding.get('id', 0),
+            title=title,
+            severity=severity,
+            category=finding.get('category', finding.get('source', 'unknown')),
+            description=body,
+            cve=finding.get('cve'),
+            project=ap.lower() if ap else 'infrastructure',
+            affected_files=finding.get('affected_files', []),
+        )
+        fix_mode = classify_fix_mode(_f)
+        if fix_mode == 'jules':
+            ft = f"[Security] {title}"
+            bb = build_jules_issue_body(_f)
+            labels = f"security,jules,priority:{severity}"
+            logger.info(f"[jules] Erstelle Jules-Issue: {ft[:60]}... (Repo: {repo})")
+        elif fix_mode == 'self_fix':
+            # Self-Fix: kein Issue erstellen, wird vom ScanAgent direkt gefixt
+            logger.info(f"[jules] Finding '{title[:40]}' wird self-fix — kein Issue")
+            return None
+        else:
+            ft = f"[Security] {title}"
+            bb = f"**Severity:** {severity.upper()} | **Projekt:** {ap or 'Server'}\n\n{body}"
+            labels = f"security,priority:{severity}"
+
         try:
             proc = await asyncio.create_subprocess_exec(
                 'gh', 'issue', 'create', '--repo', repo,
-                '--title', ft, '--body', bb, '--label', f"security,priority:{severity}",
+                '--title', ft, '--body', bb, '--label', labels,
                 stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.PIPE)
             out, err = await asyncio.wait_for(proc.communicate(), timeout=30)
             if proc.returncode == 0:
