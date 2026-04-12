@@ -339,7 +339,7 @@ github:
   enabled: false                            # Enable GitHub webhooks
   webhook_secret: "your_webhook_secret_here"  # HMAC secret for verification
   webhook_port: 8080                        # Webhook server port
-  auto_deploy: true                         # Auto-deploy on push to deploy branches
+  auto_deploy: false                        # Auto-deploy on push (RECOMENDED: false for security)
   deploy_branches:                          # Branches that trigger deployments
     - main
     - master
@@ -396,7 +396,7 @@ ShadowOps can receive GitHub webhook events for auto-deployment.
      enabled: true
      webhook_secret: "your_secret_here"
      webhook_port: 8080
-     auto_deploy: true
+     auto_deploy: false
      deploy_branches: [main, master]
    ```
 
