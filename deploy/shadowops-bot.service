@@ -30,6 +30,7 @@ StartLimitBurst=3
 
 # Limits
 LimitNOFILE=65536
+MemoryMax=3G
 
 # Logs
 StandardOutput=journal
