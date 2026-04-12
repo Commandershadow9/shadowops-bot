@@ -182,10 +182,10 @@ class GitHubIntegration(JulesWorkflowMixin,
             await self.jules_state.connect()
             await self.jules_learning.connect()
 
-            # Redis fuer Circuit-Breaker
+            # Redis fuer Circuit-Breaker (URL aus Config mit Auth)
             import redis.asyncio as aioredis
             self.redis = aioredis.from_url(
-                "redis://127.0.0.1:6379/0", decode_responses=True
+                self.config.redis_url, decode_responses=True
             )
 
             cleaned = await self.jules_state.recover_stale_locks(timeout_minutes=10)
