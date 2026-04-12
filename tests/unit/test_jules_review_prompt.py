@@ -53,19 +53,22 @@ def test_build_review_prompt_contains_all_blocks():
         project="ZERODOX",
         diff="diff --git a/x b/x\n+new line\n",
         iteration=2,
-        project_knowledge=["ZERODOX nutzt Prisma"],
+        project_knowledge=["ZERODOX nutzt Prisma, Schema-Änderungen brauchen migrate"],
         few_shot_examples=[{
             "outcome": "good_catch",
             "diff_summary": "Dep bump mit Drive-by removal",
             "review_json": {"verdict": "revision_requested", "blockers": [{"x": 1}]},
         }],
     )
-    assert "ReDoS in picomatch" in prompt
-    assert "CVE-2024-45296" in prompt
-    assert "**Iteration:** 2 of 5" in prompt
-    assert "Prisma" in prompt
-    assert "good_catch" in prompt
-    assert "diff --git" in prompt
+    # Verify all 6 prompt blocks are present
+    assert "Senior Security-Reviewer" in prompt  # Role
+    assert "ReDoS in picomatch" in prompt         # Finding
+    assert "CVE-2024-45296" in prompt             # CVE
+    assert "**Iteration:** 2 of 5" in prompt      # Iteration
+    assert "Prisma" in prompt                     # Knowledge
+    assert "good_catch" in prompt                 # Examples
+    assert "diff --git" in prompt                 # Diff
+    assert "blockers" in prompt                   # Schema instruction
 
 
 def test_truncate_diff_cuts_and_marks():
@@ -77,3 +80,34 @@ def test_truncate_diff_cuts_and_marks():
 
 def test_truncate_diff_short_unchanged():
     assert truncate_diff("abc") == "abc"
+
+
+def test_build_review_prompt_empty_knowledge():
+    prompt = build_review_prompt(
+        finding={"title": "t"},
+        project="X",
+        diff="d",
+        iteration=1,
+        project_knowledge=[],
+        few_shot_examples=[],
+    )
+    assert "noch keine gelernten Konventionen" in prompt
+    assert "noch keine Beispiele" in prompt
+
+
+def test_build_review_prompt_string_review_json_in_example():
+    """few_shot_examples may have review_json as string (from DB)."""
+    prompt = build_review_prompt(
+        finding={"title": "t"},
+        project="X",
+        diff="d",
+        iteration=1,
+        project_knowledge=[],
+        few_shot_examples=[{
+            "outcome": "approved_clean",
+            "diff_summary": "simple fix",
+            "review_json": '{"verdict": "approved", "blockers": []}',  # string, not dict
+        }],
+    )
+    assert "approved_clean" in prompt
+    assert "verdict=approved" in prompt
