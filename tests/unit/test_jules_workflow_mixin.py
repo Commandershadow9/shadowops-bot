@@ -158,3 +158,22 @@ async def test_handle_pr_close_marks_merged(h):
     h.jules_state.get.return_value = _row(status="approved")
     await h.handle_jules_pr_event(_pr_payload(action="closed", merged=True))
     h.jules_state.mark_terminal.assert_called_once_with(1, "merged")
+
+
+@pytest.mark.asyncio
+async def test_dry_run_skips_ai_and_releases_lock(h):
+    """Dry-Run-Mode: kein AI-Call, Lock wird freigegeben."""
+    h.config.jules_workflow.dry_run = True
+    h.jules_state.try_claim_review.return_value = _row()
+    h.ai_service.review_pr = AsyncMock()
+    h.jules_state.ensure_pending = AsyncMock(return_value=_row())
+
+    # Mock _jules_is_jules_pr to return True
+    h._jules_is_jules_pr = AsyncMock(return_value=True)
+    h._jules_lookup_finding = AsyncMock(return_value=None)
+
+    payload = _pr_payload()
+    await h.handle_jules_pr_event(payload)
+
+    h.ai_service.review_pr.assert_not_called()
+    h.jules_state.release_lock.assert_called()
