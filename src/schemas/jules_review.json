@@ -1,0 +1,50 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "title": "JulesReview",
+  "type": "object",
+  "required": ["verdict", "summary", "blockers", "suggestions", "nits", "scope_check"],
+  "properties": {
+    "verdict": {
+      "type": "string",
+      "enum": ["approved", "revision_requested"]
+    },
+    "summary": {
+      "type": "string",
+      "maxLength": 800
+    },
+    "blockers": {
+      "type": "array",
+      "items": { "$ref": "#/$defs/issue" }
+    },
+    "suggestions": {
+      "type": "array",
+      "items": { "$ref": "#/$defs/issue" }
+    },
+    "nits": {
+      "type": "array",
+      "items": { "$ref": "#/$defs/issue" }
+    },
+    "scope_check": {
+      "type": "object",
+      "required": ["in_scope", "explanation"],
+      "properties": {
+        "in_scope": { "type": "boolean" },
+        "explanation": { "type": "string", "maxLength": 500 }
+      }
+    }
+  },
+  "$defs": {
+    "issue": {
+      "type": "object",
+      "required": ["title", "reason", "file", "severity"],
+      "properties": {
+        "title":         { "type": "string", "maxLength": 200 },
+        "reason":        { "type": "string", "maxLength": 1000 },
+        "file":          { "type": "string", "maxLength": 300 },
+        "line":          { "type": ["integer", "null"] },
+        "severity":      { "type": "string", "enum": ["critical", "high", "medium"] },
+        "suggested_fix": { "type": "string", "maxLength": 1000 }
+      }
+    }
+  }
+}
