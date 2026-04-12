@@ -191,6 +191,36 @@ ai_learning:
   enabled: true  # EMPFOHLEN: Aktiviert A/B-Testing, Learning-DB, Feedback-Loop
 
 # ╔═══════════════════════════════════════════════════════════════════════════╗
+# ║ JULES WORKFLOW (AI-gesteuerter Code-Review-Loop)                         ║
+# ║ Iterativer Review-Zyklus: PR öffnen → AI Review → Autor fixt → Repeat   ║
+# ║ Default: DEAKTIVIERT — erst nach Testing aktivieren                      ║
+# ╚═══════════════════════════════════════════════════════════════════════════╝
+jules_workflow:
+  enabled: false                   # Master-Switch (Default aus bis Rollout)
+  dry_run: false                   # Logge statt auszuführen (Testing-Phase)
+  max_iterations: 5                # Hard-Cap pro PR
+  cooldown_seconds: 300            # Min. Zeit zwischen Reviews (5 Min)
+  max_hours_per_pr: 2              # Timeout pro PR
+
+  circuit_breaker:
+    max_reviews_per_hour: 20       # Pro Repo
+    pause_duration_seconds: 3600
+
+  excluded_projects:
+    - sicherheitsdienst
+
+  # Prompt-Konfiguration
+  max_diff_chars: 8000
+  few_shot_examples: 3
+  project_knowledge_limit: 10
+  token_cap_per_pr: 50000
+
+  # Discord
+  notification_channel: "🛡️-security-ops"
+  escalation_channel: "🚨-alerts"
+  role_ping_on_escalation: "@Shadow"
+
+# ╔═══════════════════════════════════════════════════════════════════════════╗
 # ║ PROJECTS (Überwachte Projekte)                                           ║
 # ╚═══════════════════════════════════════════════════════════════════════════╝
 projects:
