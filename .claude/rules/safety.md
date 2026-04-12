@@ -86,3 +86,11 @@ Bei Aenderungen an Shared-Services (Redis, PostgreSQL, Traefik) MUESSEN alle Kon
 - **PROTECTED_PORT_BINDINGS**: In `scan_agent.py` — bei neuen Ports aktualisieren
 - **Fix-Phase nutzt Cross-Mode-Lock**: claim_event/release_event fuer jedes Finding
 - **Alter Analyst** (`analyst/security_analyst.py`): Wird NICHT mehr von Engine gestartet, bleibt vorerst als Referenz
+
+## Jules SecOps Workflow (seit 2026-04-11)
+- **NIEMALS `issue_comment` Events für Auto-Reviews whitelisten** — das war die PR #123 Hauptursache
+- **Single-Comment-Edit Strategie ist Pflicht** — neuer Comment pro Iteration triggert Webhook-Loop
+- **`compute_verdict` ist deterministisch, nicht AI-überschreibbar** — schützt vor Confidence-Oszillation
+- **max_iterations: 5 und max_hours_per_pr: 2 sind harte Limits** — bei Änderung Design-Doc Anhang A reviewen
+- **Circuit-Breaker 20/h pro Repo NIE erhöhen** ohne Incident-Analyse
+- **Bei Jules-Workflow-Änderungen IMMER `test_jules_pr123_regression.py` laufen lassen**
