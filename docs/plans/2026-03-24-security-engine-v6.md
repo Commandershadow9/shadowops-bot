@@ -1192,7 +1192,7 @@ import psycopg2
 import psycopg2.extras
 import sys
 
-DSN = "dbname=security_analyst user=security_analyst password=sec_analyst_2026 host=127.0.0.1 port=5433"
+DSN = "dbname=security_analyst user=security_analyst password=SICHERES_PASSWORT host=127.0.0.1 port=5433"
 
 
 def migrate():
