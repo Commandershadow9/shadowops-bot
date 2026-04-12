@@ -22,7 +22,7 @@ import re
 import tempfile
 import time
 from datetime import datetime, timedelta
-from typing import Dict, Optional, List
+from typing import Any, Dict, Optional, List
 from pathlib import Path
 
 import jsonschema
@@ -984,6 +984,80 @@ class AIEngine:
             logger.info(f"Fix-Verifikation: {result.get('confidence', 0):.0%} Confidence")
 
         return result
+
+    async def review_pr(
+        self,
+        *,
+        diff: str,
+        finding_context: Dict[str, Any],
+        project: str,
+        iteration: int,
+        project_knowledge: List[str],
+        few_shot_examples: List[Dict[str, Any]],
+        max_diff_chars: int = 8000,
+    ) -> Optional[Dict[str, Any]]:
+        """
+        Strukturiertes PR-Review via Claude (Thinking-Modell).
+
+        Baut den Review-Prompt ueber jules_review_prompt, ruft Claude auf,
+        validiert das Ergebnis gegen das jules_review-Schema und ueberschreibt
+        das Verdict deterministisch via compute_verdict().
+
+        Returns:
+            Validiertes Review-Dict oder None bei Fehler.
+        """
+        from src.integrations.github_integration.jules_review_prompt import (
+            build_review_prompt, compute_verdict,
+        )
+
+        prompt = build_review_prompt(
+            finding=finding_context, project=project, diff=diff,
+            iteration=iteration, project_knowledge=project_knowledge,
+            few_shot_examples=few_shot_examples, max_diff_chars=max_diff_chars,
+        )
+
+        try:
+            raw = await self.claude.query_raw(prompt, model="thinking", timeout=300)
+        except Exception as e:
+            self.logger.error(f"[jules] Claude-Call failed: {e}")
+            return None
+
+        if not raw:
+            self.logger.error("[jules] Claude returned empty response")
+            return None
+
+        clean = raw.strip()
+        if clean.startswith("```"):
+            lines = clean.split("\n")
+            clean = "\n".join(lines[1:-1] if lines[-1].startswith("```") else lines[1:])
+
+        try:
+            review = json.loads(clean)
+        except json.JSONDecodeError as e:
+            self.logger.error(f"[jules] JSON parse failed: {e}")
+            return None
+
+        schema_path = Path(__file__).parent.parent / "schemas" / "jules_review.json"
+        try:
+            schema = json.loads(schema_path.read_text())
+            jsonschema.validate(review, schema)
+        except jsonschema.ValidationError as e:
+            self.logger.error(f"[jules] Schema validation failed: {e.message}")
+            return None
+        except FileNotFoundError:
+            self.logger.error(f"[jules] Schema not found at {schema_path}")
+            return None
+
+        review["verdict"] = compute_verdict(review)
+
+        self.logger.info(
+            f"[jules] review ok: verdict={review['verdict']} "
+            f"blockers={len(review['blockers'])} "
+            f"suggestions={len(review['suggestions'])} "
+            f"nits={len(review['nits'])} "
+            f"in_scope={review['scope_check']['in_scope']}"
+        )
+        return review
 
     async def run_analyst_session(
         self,
