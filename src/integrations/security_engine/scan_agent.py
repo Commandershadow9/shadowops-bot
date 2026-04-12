@@ -99,6 +99,46 @@ PROJECT_REPO_MAP = {
 DEFAULT_REPO = 'Commandershadow9/shadowops-bot'
 SKIP_ISSUE_PROJECTS = {'openclaw', 'agents', 'blogger', 'content-pipeline'}
 
+# === Jules SecOps Workflow — Fix-Mode-Klassifizierung ===
+# Siehe docs/plans/2026-04-11-jules-secops-workflow-design.md §9.1
+
+FIX_MODE_DECISION: Dict[str, str] = {
+    # Code-Findings → Jules (PR via GitHub-Issue)
+    'npm_audit':          'jules',
+    'pip_audit':          'jules',
+    'dockerfile':         'jules',
+    'code_vulnerability': 'jules',
+
+    # Infrastruktur → Self-Fix durch den ScanAgent
+    'ufw':                'self_fix',
+    'fail2ban':           'self_fix',
+    'crowdsec':           'self_fix',
+    'aide':               'self_fix',
+    'docker_config':      'self_fix',
+
+    # Explizit NICHT automatisiert
+    'ssh_config':         'human_only',
+    'database_schema':    'human_only',
+}
+
+
+def classify_fix_mode(finding) -> str:
+    """
+    Gibt 'jules', 'self_fix' oder 'human_only' zurück.
+    """
+    project = getattr(finding, "project", None)
+    category = getattr(finding, "category", None)
+
+    if project in SKIP_ISSUE_PROJECTS:
+        return "human_only"
+
+    mode = FIX_MODE_DECISION.get(category, "human_only")
+    if mode == "jules":
+        if project not in PROJECT_REPO_MAP:
+            return "human_only"
+    return mode
+
+
 # Issue-Quality-Gates
 MIN_ISSUE_TITLE_LEN = 10
 MIN_ISSUE_BODY_LEN = 30
