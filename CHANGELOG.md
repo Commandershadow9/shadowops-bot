@@ -1,5 +1,15 @@
 # ShadowOps Bot - Changelog
 
+## [4.0.2] - 2026-04-12
+
+### Security
+
+**Host Security Patching:**
+- Priority remediation of security backlog for `google-chrome-stable` (Chromium) and `libgdk-pixbuf-2.0-0`.
+- Full system upgrade addressing 110+ pending packages after local repository refresh.
+- Added `scripts/apply-security-patches.sh` for reproducible priority maintenance.
+- Verified host-level library stability through regression testing; confirmed zero pending updates and no reboot required.
+
 ## [4.0.1] - 2026-03-11
 
 ### Features
