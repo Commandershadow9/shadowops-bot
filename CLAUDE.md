@@ -50,6 +50,13 @@
 |---------|--------|-------|
 | `orchestrator/` | `core`, `batch_mixin`, `planner_mixin`, `discord_mixin`, `executor_mixin`, `recovery_mixin`, `models` | Remediation-Orchestrator (Event-Batching, KI-Analyse, Fix-Ausfuehrung, Erfahrungslernen via KB) |
 | `github_integration/` | `core`, `webhook_mixin`, `polling_mixin`, `event_handlers_mixin`, `ci_mixin`, `state_mixin`, `git_ops_mixin`, `notifications_mixin`, `ai_patch_notes_mixin` | GitHub Webhook Server, Patch Notes, CI/CD |
+| `github_integration/jules_workflow_mixin.py` | Jules SecOps Workflow — PR-Handler, Gate-Pipeline (7 Schichten), Review-Orchestrierung |
+| `github_integration/jules_state.py` | asyncpg-Layer fuer security_analyst.jules_pr_reviews, atomic Lock-Claim |
+| `github_integration/jules_learning.py` | Few-Shot + Projekt-Knowledge Loader aus agent_learning DB |
+| `github_integration/jules_review_prompt.py` | Claude-Prompt-Builder fuer strukturierte PR-Reviews |
+| `github_integration/jules_gates.py` | Pure Loop-Schutz-Gates (Trigger-Whitelist, Cooldown, Cap, Circuit-Breaker) |
+| `github_integration/jules_comment.py` | PR-Comment-Body-Builder + Self-Filter-Marker |
+| `github_integration/jules_batch.py` | Nightly Outcome-Klassifizierung + jules_review_examples Update |
 
 #### Einzelne Module
 | Datei | Zweck |
@@ -377,3 +384,13 @@
 - **Channel-Naming:** Update-Channels mit Emoji-Prefix umbenannt (`📋-updates-*`, `🧪-ci-*`)
 - **Toter Channel:** `sicherheitsdiensttool_updates` aus state.json entfernt (Channel existiert nicht mehr)
 - **Ergebnis:** ~200 Nachrichten/Tag → ~20-30 (85% Reduktion)
+
+### Jules SecOps Workflow (seit 2026-04-11)
+- **Hybrid-Fix:** ScanAgent fixt Server-Hardening selbst, delegiert Code-Fixes an Jules via GitHub-Issue mit `jules` Label
+- **Claude-Review:** Strukturiert (BLOCKER/SUGGESTION/NIT), Schema-validiert, deterministischer Verdict
+- **Loop-Schutz:** 7 Schichten (Trigger-Whitelist, SHA-Dedupe, Cooldown, Iteration-Cap 5, Circuit-Breaker 20/h, Time-Cap 2h, Single-Comment-Edit)
+- **State:** `security_analyst.jules_pr_reviews` mit atomic Lock-Claim, Stale-Lock-Recovery nach 10min
+- **Learning:** `agent_learning.jules_review_examples` + `agent_knowledge` (Few-Shot + Projekt-Konventionen), Nightly-Batch
+- **Rollback:** Config-Flag `jules_workflow.enabled: false` → ~30s
+- **Design-Doc:** `docs/plans/2026-04-11-jules-secops-workflow-design.md`
+- **Vorfall-Referenz:** PR #123 (ZERODOX) — 31 Kommentare Loop; siehe Design-Doc Anhang A
