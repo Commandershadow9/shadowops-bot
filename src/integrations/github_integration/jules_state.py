@@ -68,3 +68,41 @@ class JulesState:
     @property
     def process_id(self) -> str:
         return f"shadowops-bot-pid-{os.getpid()}"
+
+    # ── Task 3.2: Atomic Lock-Claim + SHA-Dedupe ──────────────
+
+    async def try_claim_review(
+        self, repo: str, pr_number: int, head_sha: str, lock_owner: str
+    ) -> Optional[JulesReviewRow]:
+        sql = """
+            UPDATE jules_pr_reviews
+            SET status = 'reviewing',
+                lock_acquired_at = now(),
+                lock_owner = $1,
+                updated_at = now()
+            WHERE repo = $2
+              AND pr_number = $3
+              AND status IN ('pending', 'revision_requested', 'approved')
+              AND (last_reviewed_sha IS NULL OR last_reviewed_sha != $4)
+            RETURNING *
+        """
+        async with self._pool.acquire() as conn:
+            rec = await conn.fetchrow(sql, lock_owner, repo, pr_number, head_sha)
+            return JulesReviewRow.from_record(rec) if rec else None
+
+    async def release_lock(self, row_id: int, new_status: str) -> None:
+        valid = {"pending", "approved", "revision_requested", "escalated", "merged", "abandoned"}
+        if new_status not in valid:
+            raise ValueError(f"Ungültiger Status: {new_status}")
+        async with self._pool.acquire() as conn:
+            await conn.execute(
+                "UPDATE jules_pr_reviews SET status=$1, lock_owner=NULL, lock_acquired_at=NULL, updated_at=now() WHERE id=$2",
+                new_status, row_id,
+            )
+
+    async def mark_reviewed_sha(self, row_id: int, sha: str) -> None:
+        async with self._pool.acquire() as conn:
+            await conn.execute(
+                "UPDATE jules_pr_reviews SET last_reviewed_sha=$1, last_review_at=now(), iteration_count=iteration_count+1, updated_at=now() WHERE id=$2",
+                sha, row_id,
+            )
