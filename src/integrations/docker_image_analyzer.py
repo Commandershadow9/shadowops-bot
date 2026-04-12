@@ -50,8 +50,35 @@ class DockerImageAnalyzer:
             '/home/cmdshadow/GuildScout',
             '/home/cmdshadow/project'
         ]
+        self._safe_upgrades_cache = None
+        self._last_config_load = 0
 
         logger.info("🔍 Docker Image Analyzer initialized")
+
+    def _get_safe_upgrades(self) -> Dict:
+        """Load and cache safe upgrade paths from YAML config"""
+        config_path = os.path.join(os.getcwd(), 'config', 'safe_upgrades.yaml')
+
+        # Check if file exists and was modified
+        if not os.path.exists(config_path):
+            if self._safe_upgrades_cache is None:
+                logger.warning(f"⚠️  safe_upgrades.yaml not found at {config_path}")
+                self._safe_upgrades_cache = {}
+            return self._safe_upgrades_cache
+
+        try:
+            mtime = os.path.getmtime(config_path)
+            if self._safe_upgrades_cache is None or mtime > self._last_config_load:
+                with open(config_path, 'r') as f:
+                    self._safe_upgrades_cache = yaml.safe_load(f) or {}
+                self._last_config_load = mtime
+                logger.debug(f"   Loaded {len(self._safe_upgrades_cache)} safe upgrade paths from config")
+        except Exception as e:
+            logger.error(f"❌ Could not load safe_upgrades.yaml: {e}")
+            if self._safe_upgrades_cache is None:
+                self._safe_upgrades_cache = {}
+
+        return self._safe_upgrades_cache
 
     def analyze_image(self, image_name: str) -> ImageInfo:
         """
@@ -232,18 +259,7 @@ class DockerImageAnalyzer:
             Dict with upgrade info or None if not recommended
         """
         # Load safe upgrade paths from YAML config
-        config_path = os.path.join(os.getcwd(), 'config', 'safe_upgrades.yaml')
-        safe_upgrades = {}
-
-        if os.path.exists(config_path):
-            try:
-                with open(config_path, 'r') as f:
-                    safe_upgrades = yaml.safe_load(f) or {}
-                logger.debug(f"   Loaded {len(safe_upgrades)} safe upgrade paths from config")
-            except Exception as e:
-                logger.error(f"❌ Could not load safe_upgrades.yaml: {e}")
-        else:
-            logger.warning(f"⚠️  safe_upgrades.yaml not found at {config_path}")
+        safe_upgrades = self._get_safe_upgrades()
 
         # Extract major version from tag
         version_match = re.match(r'^v?(\d+)(?:\.(\d+))?', current_tag)
@@ -254,10 +270,11 @@ class DockerImageAnalyzer:
                 return {
                     'current_version': current_tag,
                     'recommended_version': upgrade_info['next'],
-                    'upgrade_type': 'major',
+            'upgrade_type': 'major' if upgrade_info['next'] != current_tag else 'patch',
                     'notes': upgrade_info['notes'],
                     'risk_level': upgrade_info['risk'],
                     'migration_url': upgrade_info.get('migration_url'),
+            'breaking_changes': upgrade_info.get('breaking_changes', []),
                     'requires_manual_migration': True
                 }
             return None
@@ -294,6 +311,7 @@ class DockerImageAnalyzer:
             'notes': upgrade_info['notes'],
             'risk_level': upgrade_info['risk'],
             'migration_url': upgrade_info.get('migration_url'),
+            'breaking_changes': upgrade_info.get('breaking_changes', []),
             'requires_manual_migration': True
         }
 
