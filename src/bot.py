@@ -1118,6 +1118,8 @@ class ShadowOpsBot(commands.Bot):
             self.daily_patch_notes_release.start()
         if not self.learning_maintenance.is_running():
             self.learning_maintenance.start()
+        if not self.jules_nightly_batch_task.is_running():
+            self.jules_nightly_batch_task.start()
 
         # Setze Status
         await self.change_presence(
@@ -1560,6 +1562,35 @@ class ShadowOpsBot(commands.Bot):
     async def before_learning_maintenance(self):
         await self.wait_until_ready()
         self.logger.info("🧠 Learning-Maintenance Loop gestartet (alle 12h)")
+
+    @tasks.loop(time=time(hour=23, minute=7))
+    async def jules_nightly_batch_task(self):
+        """Nightly: klassifiziert Jules-Review-Outcomes fuer Learning-Loop."""
+        await self._jules_nightly_batch()
+
+    async def _jules_nightly_batch(self):
+        """Nightly: klassifiziert Jules-Review-Outcomes fuer Learning-Loop."""
+        gh = getattr(self, "github_integration", None)
+        if not gh or not getattr(gh, "_jules_enabled", False):
+            return
+        try:
+            from integrations.github_integration.jules_batch import run_nightly_batch
+            counts = await run_nightly_batch(
+                jules_state_pool=gh.jules_state._pool,
+                learning_pool=gh.jules_learning._pool,
+            )
+            if hasattr(self, "discord_logger") and self.discord_logger:
+                await self.discord_logger.send_to_channel(
+                    "🧠-ai-learning",
+                    f"🛡️ Jules Nightly: classified={counts['classified']}, "
+                    f"examples={counts['examples_written']}")
+        except Exception:
+            self.logger.exception("[jules] nightly batch crashed")
+
+    @jules_nightly_batch_task.before_loop
+    async def before_jules_nightly_batch(self):
+        await self.wait_until_ready()
+        self.logger.info("🛡️ Jules Nightly-Batch Task gestartet (taeglich 23:07)")
 
     @tasks.loop(minutes=5)
     async def update_dashboard(self):
