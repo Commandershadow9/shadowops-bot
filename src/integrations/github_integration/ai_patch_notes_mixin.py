@@ -1017,7 +1017,12 @@ class AIPatchNotesMixin:
             ch for ch in ai_result.get('changes', [])
             if isinstance(ch, dict) and ch.get('type') == 'feature'
         ]
-        if len(ai_features) > max(feature_commits * 2, feature_commits + 2):
+        # Big Update: hoehere Toleranz fuer Feature-Count
+        if len(commits) >= 30:
+            max_features = max(int(feature_commits * 2.5), feature_commits + 3)
+        else:
+            max_features = max(feature_commits * 2, feature_commits + 2)
+        if len(ai_features) > max_features:
             warnings.append(
                 f"AI nennt {len(ai_features)} Features, aber nur {feature_commits} feat:-Commits vorhanden"
             )
@@ -1404,8 +1409,15 @@ Do NOT invent features that are not tagged [FEATURE]!"""
                 from collections import defaultdict
 
                 # Klassifizierte Commits fuer Trainer-Prompt (mit Typ-Tags)
+                # Big Update: mehr Commits an die KI uebergeben
+                if len(commits) > 50:
+                    commit_cap = 50
+                elif len(commits) > 25:
+                    commit_cap = 35
+                else:
+                    commit_cap = 25
                 classified_commits_text = self._build_classified_commits_text(
-                    commits[:25], compact=len(commits) > 15
+                    commits[:commit_cap], compact=len(commits) > 15
                 )
                 format_values = defaultdict(str, {
                     'project': repo_name,
@@ -1453,6 +1465,11 @@ Do NOT invent features that are not tagged [FEATURE]!"""
                 feature_teasers = self._collect_feature_branch_teasers(project_path, deploy_branch)
                 if feature_teasers:
                     prompt += f"\n\n{feature_teasers}"
+
+                # Big Update Override (dynamisch Zeichenlimit + Feature-Anzahl skalieren)
+                big_update_block = self._build_big_update_override(len(commits), language)
+                if big_update_block:
+                    prompt += f"\n\n{big_update_block}"
 
                 # Basis-Regelblock IMMER anhaengen (A/B-Varianten-sicher)
                 rules = self._CLASSIFICATION_RULES_DE if language == 'de' else self._CLASSIFICATION_RULES_EN
@@ -1625,6 +1642,94 @@ Do NOT invent features that are not tagged [FEATURE]!"""
             self.logger.error(f"AI Patch Notes Generierung fehlgeschlagen: {e}")
             return None, git_stats
 
+    def _build_big_update_override(self, num_commits: int, language: str) -> str:
+        """Dynamischer Prompt-Block der bei grossen Updates Limits skaliert.
+
+        Wird VOR dem Regelblock eingefuegt und ueberschreibt Template-Defaults.
+        """
+        if num_commits < 30:
+            return ""
+
+        if language == 'de':
+            if num_commits >= 60:
+                return """═══════════════════════════════════════
+⚡ MAJOR UPDATE MODUS (60+ Commits) ⚡
+═══════════════════════════════════════
+
+WICHTIG — Dies ist ein GROSSES UPDATE mit vielen Aenderungen!
+Passe dein Format entsprechend an:
+
+UEBERSCHREIBE die bisherigen Limits:
+- ZEICHENLIMIT: MINDESTENS 4500, MAXIMAL 7000 Zeichen — nutze den Platz voll aus!
+- HIGHLIGHT-FEATURES: 3-5 grosse Aenderungen mit je 4-6 Saetzen und konkreten Mini-Szenarien
+- NORMALE FEATURES: 4-8 weitere Aenderungen mit je 2-3 Saetzen
+- HOOK: Mach klar dass dies ein GROSSES Update ist — "Das bisher groesste Update", "Massiver Sprung", etc.
+- Nutze ALLE relevanten Kategorien (Neuer Content, Gameplay, Design, Stabilitaet)
+- Fasse verwandte Commits zu grossen thematischen Bloecken zusammen
+
+DISCORD-TEASER: Bis zu 8 Highlights statt 6, voller Hype-Modus!
+"""
+            else:
+                return """═══════════════════════════════════════
+📦 BIG UPDATE MODUS (30-60 Commits) 📦
+═══════════════════════════════════════
+
+Dies ist ein umfangreiches Update — passe dein Format an:
+
+UEBERSCHREIBE die bisherigen Limits:
+- ZEICHENLIMIT: MINDESTENS 3500, MAXIMAL 5500 Zeichen
+- HIGHLIGHT-FEATURES: 2-4 grosse Aenderungen mit je 3-5 Saetzen
+- NORMALE FEATURES: 3-6 weitere Aenderungen mit je 2-3 Saetzen
+- HOOK: Betone die Breite des Updates — viele Bereiche wurden verbessert
+- Fasse verwandte Commits thematisch zusammen statt jeden einzeln aufzulisten
+
+DISCORD-TEASER: Bis zu 7 Highlights!
+"""
+        else:
+            if num_commits >= 60:
+                return """═══════════════════════════════════════
+⚡ MAJOR UPDATE MODE (60+ Commits) ⚡
+═══════════════════════════════════════
+
+IMPORTANT — This is a MAJOR UPDATE with many changes!
+Adjust your format accordingly:
+
+OVERRIDE previous limits:
+- CHARACTER LIMIT: MINIMUM 4500, MAXIMUM 7000 characters — use the full space!
+- HIGHLIGHT FEATURES: 3-5 major changes with 4-6 sentences each and concrete mini-scenarios
+- NORMAL FEATURES: 4-8 additional changes with 2-3 sentences each
+- HOOK: Make it clear this is a MAJOR update — "The biggest update yet", "Massive leap", etc.
+- Use ALL relevant categories (New Content, Gameplay, Design, Stability)
+- Group related commits into big thematic blocks
+
+DISCORD TEASER: Up to 8 highlights instead of 6, full hype mode!
+"""
+            else:
+                return """═══════════════════════════════════════
+📦 BIG UPDATE MODE (30-60 Commits) 📦
+═══════════════════════════════════════
+
+This is a substantial update — adjust your format:
+
+OVERRIDE previous limits:
+- CHARACTER LIMIT: MINIMUM 3500, MAXIMUM 5500 characters
+- HIGHLIGHT FEATURES: 2-4 major changes with 3-5 sentences each
+- NORMAL FEATURES: 3-6 additional changes with 2-3 sentences each
+- HOOK: Emphasize the breadth of the update — many areas were improved
+- Group related commits thematically instead of listing each individually
+
+DISCORD TEASER: Up to 7 highlights!
+"""
+
+    @staticmethod
+    def _web_content_limit(num_commits: int) -> str:
+        """Dynamisches Zeichenlimit basierend auf Update-Groesse."""
+        if num_commits >= 60:
+            return "3000-7000 Zeichen"
+        elif num_commits >= 30:
+            return "2500-5500 Zeichen"
+        return "2000-5000 Zeichen"
+
     def _build_structured_prompt(self, base_prompt: str, language: str,
                                   project_name: str, num_commits: int) -> str:
         """Erweitere den Base-Prompt um strukturierte Feld-Anweisungen."""
@@ -1659,7 +1764,7 @@ FELD-ANWEISUNGEN:
 - summary: 2-3 Saetze Zusammenfassung — erklaere WAS sich fuer Nutzer aendert, nicht WIE es implementiert ist
 - discord_highlights: 3-5 kurze Bullet-Points fuer Discord (je max 120 Zeichen, mit Emojis)
   → Das sind die HIGHLIGHTS aus web_content, nicht andere Informationen!
-- web_content: Ausfuehrlicher Markdown-Text mit allen Details (2000-5000 Zeichen)
+- web_content: Ausfuehrlicher Markdown-Text mit allen Details ({self._web_content_limit(num_commits)})
   → Subheadings (##), Bullet-Points, konkrete Nutzer-Vorteile
   → Fuer JEDES Feature erklaeren: Was ist es? Was bringt es dem Nutzer? Was aendert sich konkret?
   → Zielgruppe: Interessierte Community-Mitglieder die verstehen wollen was sich verbessert hat
@@ -1715,7 +1820,7 @@ FIELD INSTRUCTIONS:
 - summary: 2-3 sentences — explain WHAT changes for users, not HOW it was implemented
 - discord_highlights: 3-5 short bullet points for Discord (max 120 chars each, with emojis)
   → These are the HIGHLIGHTS from web_content, not different information!
-- web_content: Detailed markdown text with all details (2000-5000 chars)
+- web_content: Detailed markdown text with all details ({self._web_content_limit(num_commits)})
   → Subheadings (##), bullet points, concrete user benefits
   → For EACH feature explain: What is it? What does the user gain? What changes concretely?
   → Audience: Interested community members who want to understand what improved

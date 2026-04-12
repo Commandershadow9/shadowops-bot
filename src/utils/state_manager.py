@@ -6,6 +6,8 @@ This separates state from static configuration.
 
 import json
 import logging
+import os
+import tempfile
 from pathlib import Path
 from typing import Any, Dict, Optional, Union
 
@@ -36,13 +38,23 @@ class StateManager:
             self._state = {}
     
     def _save(self) -> None:
-        """Saves the current state to the JSON file."""
+        """Saves the current state to the JSON file (atomic via temp-file + rename)."""
         try:
-            # Ensure the directory exists
             self.state_path.parent.mkdir(parents=True, exist_ok=True)
-            with open(self.state_path, 'w', encoding='utf-8') as f:
-                json.dump(self._state, f, indent=4)
-        except IOError as e:
+            # Atomic write: temp-file im selben Verzeichnis, dann rename
+            fd, tmp_path = tempfile.mkstemp(
+                dir=self.state_path.parent, suffix='.tmp', prefix='.state_'
+            )
+            try:
+                with os.fdopen(fd, 'w', encoding='utf-8') as f:
+                    json.dump(self._state, f, indent=4)
+                os.replace(tmp_path, self.state_path)
+            except Exception:
+                # Temp-Datei aufraeumen bei Fehler
+                if os.path.exists(tmp_path):
+                    os.unlink(tmp_path)
+                raise
+        except Exception as e:
             logger.error(f"❌ Could not save state file to {self.state_path}: {e}", exc_info=True)
 
     def get_guild_state(self, guild_id: int) -> Dict[str, Any]:

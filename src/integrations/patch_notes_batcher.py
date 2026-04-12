@@ -8,6 +8,8 @@ Max 1 automatischer Release pro Projekt pro Tag (24h Cooldown).
 
 import json
 import logging
+import os
+import tempfile
 from pathlib import Path
 from typing import Dict, List, Optional
 from datetime import datetime, timezone
@@ -41,6 +43,7 @@ class PatchNotesBatcher:
         self.cron_hour = cron_hour
         self.cron_min_commits = cron_min_commits
         self.release_cooldown_hours = release_cooldown_hours
+        self.max_wait_minutes = 120  # Zeitbasierter Release nach 2h
 
         self.pending: Dict[str, Dict] = self._load_pending()
         # Letzte Release-Zeitpunkte pro Projekt (persistiert in pending_batch.json)
@@ -75,11 +78,20 @@ class PatchNotesBatcher:
             return {}
 
     def _save_last_releases(self) -> None:
-        """Speichere letzte Release-Zeitpunkte."""
+        """Speichere letzte Release-Zeitpunkte (atomic via temp-file + rename)."""
         release_file = self.data_dir / 'last_releases.json'
         try:
-            with open(release_file, 'w', encoding='utf-8') as f:
-                json.dump(self._last_releases, f, indent=2, ensure_ascii=False)
+            fd, tmp_path = tempfile.mkstemp(
+                dir=self.data_dir, suffix='.tmp', prefix='.releases_'
+            )
+            try:
+                with os.fdopen(fd, 'w', encoding='utf-8') as f:
+                    json.dump(self._last_releases, f, indent=2, ensure_ascii=False)
+                os.replace(tmp_path, release_file)
+            except Exception:
+                if os.path.exists(tmp_path):
+                    os.unlink(tmp_path)
+                raise
         except Exception as e:
             logger.error(f"Fehler beim Speichern der Release-Zeitpunkte: {e}")
 
@@ -101,10 +113,20 @@ class PatchNotesBatcher:
             return False
 
     def _save_pending(self) -> None:
-        """Speichere ausstehende Batches auf Disk."""
+        """Speichere ausstehende Batches auf Disk (atomic via temp-file + rename)."""
         try:
-            with open(self.batch_file, 'w', encoding='utf-8') as f:
-                json.dump(self.pending, f, indent=2, ensure_ascii=False)
+            self.data_dir.mkdir(parents=True, exist_ok=True)
+            fd, tmp_path = tempfile.mkstemp(
+                dir=self.data_dir, suffix='.tmp', prefix='.batch_'
+            )
+            try:
+                with os.fdopen(fd, 'w', encoding='utf-8') as f:
+                    json.dump(self.pending, f, indent=2, ensure_ascii=False)
+                os.replace(tmp_path, self.batch_file)
+            except Exception:
+                if os.path.exists(tmp_path):
+                    os.unlink(tmp_path)
+                raise
         except Exception as e:
             logger.error(f"Fehler beim Speichern der Batch-Datei: {e}")
 
