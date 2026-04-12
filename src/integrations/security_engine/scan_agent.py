@@ -139,6 +139,64 @@ def classify_fix_mode(finding) -> str:
     return mode
 
 
+def build_jules_issue_body(finding) -> str:
+    """
+    Erzeugt den GitHub-Issue-Body für Jules-Delegation.
+    Enthält Acceptance-Criteria, Scope-Warnung und explizite Anweisung
+    KEIN "Acknowledged"-Comment zu posten (PR #123 Second Line of Defense).
+    """
+    cve = getattr(finding, "cve", None) or "N/A"
+    severity = getattr(finding, "severity", "medium")
+    category = getattr(finding, "category", "n/a")
+    title = getattr(finding, "title", "Security Finding")
+    description = getattr(finding, "description", "(keine Beschreibung)")
+    files = getattr(finding, "affected_files", None) or []
+    finding_id = getattr(finding, "id", 0)
+
+    files_block = "\n".join(f"- `{f}`" for f in files) if files else "(im Scan-Report)"
+
+    return f"""## 🛡️ Security Finding
+
+**Severity:** {severity.upper()}
+**Category:** `{category}`
+**CVE:** {cve}
+
+### Problem
+
+{description}
+
+### Betroffene Dateien
+
+{files_block}
+
+### Acceptance Criteria
+
+- [ ] Das spezifische Problem oben ist behoben
+- [ ] Keine unrelated Changes (Scope strikt halten!)
+- [ ] `npm audit` / `pip audit` zeigt kein Finding mehr für diese CVE
+- [ ] Existing Tests laufen noch (`npm run test` / `pytest`)
+- [ ] Keine neuen Dependencies ohne Begründung
+
+---
+
+### 🤖 Task for Jules
+
+@google-labs-jules please fix the security issue described above.
+
+**Wichtig — bitte lies das:**
+
+1. **Scope strikt halten** — nur die in "Betroffene Dateien" genannten Dateien anfassen
+2. **Kein Refactoring** — auch wenn du "besseren" Code siehst
+3. **PR-Body muss `Fixes #N` enthalten** (mit diesem Issue-Number)
+4. **Reagiere NICHT mit "Acknowledged" auf Review-Kommentare** — das hat in der Vergangenheit zu Review-Loops geführt
+5. Du wirst automatisch von Claude Opus reviewt (strukturiert: Blockers/Suggestions/Nits)
+6. Bei Approval → Shadow merged manuell. Max 5 Review-Iterationen, sonst Human-Eskalation.
+
+---
+*Auto-created by ShadowOps SecOps Workflow · Finding ID: {finding_id}*
+"""
+
+
 # Issue-Quality-Gates
 MIN_ISSUE_TITLE_LEN = 10
 MIN_ISSUE_BODY_LEN = 30
