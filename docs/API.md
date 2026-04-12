@@ -1,4 +1,4 @@
-# 🔧 ShadowOps API Documentation v3.1
+# 🔧 ShadowOps API Documentation v5.1
 
 Complete API reference for ShadowOps Security Guardian.
 
@@ -7,6 +7,7 @@ Complete API reference for ShadowOps Security Guardian.
 - [Discord Commands](#discord-commands)
 - [Configuration Reference](#configuration-reference)
 - [GitHub Webhook API](#github-webhook-api)
+- [Jules SecOps Workflow API](#jules-secops-workflow-api)
 - [Python API](#python-api)
 - [Event System](#event-system)
 - [Knowledge Base API](#knowledge-base-api)
@@ -462,6 +463,80 @@ Health check endpoint for webhook server.
 
 ---
 
+## Jules SecOps Workflow API
+
+### Health-Endpoint
+
+**GET** `/health/jules`
+
+Gibt den aktuellen Status des Jules-Workflows zurueck.
+
+**Response (enabled):**
+```json
+{
+  "enabled": true,
+  "status": "healthy",
+  "active_reviews": 0,
+  "pending_prs": 2,
+  "escalated_24h": 0,
+  "stats_24h": {
+    "total_reviews": 5,
+    "approved": 4,
+    "revisions": 1,
+    "merged": 3,
+    "tokens_consumed": 12500
+  },
+  "last_review_at": "2026-04-12T13:42:18Z"
+}
+```
+
+**Response (disabled):**
+```json
+{
+  "enabled": false,
+  "status": "disabled"
+}
+```
+
+### Webhook-Verhalten
+
+Der Jules-Workflow reagiert auf folgende GitHub-Webhook-Events:
+
+| Event | Action | Reaktion |
+|-------|--------|----------|
+| `pull_request` | `opened` | Jules-PR erkannt → Claude-Review starten |
+| `pull_request` | `synchronize` | Neuer Commit → Re-Review (wenn neuer SHA) |
+| `pull_request` | `ready_for_review` | Draft→Ready → Review starten |
+| `pull_request` | `closed` | Merged → Finding resolved / Abandoned → Terminal |
+| `issue_comment` | `created` | Nur `/review` Command vom Repo-Owner |
+
+**Blockierte Events (Loop-Schutz):**
+Alle `issue_comment`, `pull_request_review`, `pull_request_review_comment` Events werden fuer Auto-Reviews blockiert (PR #123 Vorfall).
+
+### Konfiguration
+
+Siehe `config/config.example.yaml` → `jules_workflow:` Block.
+
+| Parameter | Default | Beschreibung |
+|-----------|---------|-------------|
+| `enabled` | `false` | Master-Switch |
+| `dry_run` | `false` | Loggt statt auszufuehren |
+| `max_iterations` | `5` | Max Review-Runden pro PR |
+| `cooldown_seconds` | `300` | Mindestabstand zwischen Reviews |
+| `max_hours_per_pr` | `2` | Timeout pro PR |
+| `circuit_breaker.max_reviews_per_hour` | `20` | Globaler Breaker pro Repo |
+| `token_cap_per_pr` | `50000` | Max Token-Kosten pro PR |
+
+### Datenbank-Tabellen
+
+| Tabelle | DB | Zweck |
+|---------|-----|-------|
+| `jules_pr_reviews` | security_analyst | PR-State, Lock-Claim, Iteration-Counter |
+| `jules_review_examples` | agent_learning | Few-Shot Learning aus vergangenen Reviews |
+| `jules_daily_stats` (View) | security_analyst | Taegliche Metriken |
+
+---
+
 ## Python API
 
 ### Knowledge Base API
@@ -870,4 +945,4 @@ sudo ufw status
 
 ---
 
-**API Documentation v3.1** | Last Updated: 2025-11-21
+**API Documentation v5.1** | Last Updated: 2026-04-12
