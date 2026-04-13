@@ -103,44 +103,110 @@ def _build_summary_embed(ctx: PipelineContext, changelog_url: str) -> discord.Em
 
 
 def _build_full_embed(ctx: PipelineContext) -> discord.Embed:
-    """Vollformat für Projekte OHNE Web-Changelog (Discord-only)."""
+    """Vollformat für Projekte OHNE Web-Changelog (Discord-only).
+
+    Baut ein reiches Description-Format mit Kategorie-Headern, Inline-Credits
+    und Details — portiert von v5 _description_from_structured.
+    """
     color = ctx.project_config.get('color', 0x3498DB)
+    is_major = len(ctx.enriched_commits or ctx.raw_commits) >= 15
 
     embed = discord.Embed(
         title=f"v{ctx.version} — {ctx.title}",
         color=color,
     )
 
-    # TL;DR + Intro
+    parts: list[str] = []
+
+    # TL;DR als Blockquote
     if ctx.tldr:
-        embed.description = f"> {ctx.tldr}"
+        parts.append(f"> {ctx.tldr}")
+        parts.append("")
 
-    # Changes als Fields (max 8, Discord Limit 25)
+    # Summary als Einleitung (Discord-only Storytelling)
+    if isinstance(ctx.ai_result, dict):
+        summary = ctx.ai_result.get('summary', '')
+        if summary and summary != ctx.tldr:
+            parts.append(summary)
+            parts.append("")
+
     if ctx.changes:
-        for change in ctx.changes[:8]:
-            if not isinstance(change, dict):
-                continue
-            ctype = change.get('type', 'other')
-            desc = change.get('description', '')
-            badge = _type_to_emoji(ctype)
-            author = change.get('author', '')
-            credit = f" · {author}" if author else ""
+        # Changes nach Typ gruppieren
+        features = [c for c in ctx.changes if isinstance(c, dict) and c.get('type') == 'feature']
+        fixes = [c for c in ctx.changes if isinstance(c, dict) and c.get('type') == 'fix']
+        improvements = [c for c in ctx.changes if isinstance(c, dict) and c.get('type') == 'improvement']
+        breaking = []
+        if isinstance(ctx.ai_result, dict):
+            breaking = ctx.ai_result.get('breaking_changes', [])
+        other = [c for c in ctx.changes if isinstance(c, dict) and c.get('type') not in ('feature', 'fix', 'improvement')]
 
-            details = change.get('details', [])
-            value = '\n'.join(f"→ {d}" for d in details[:3]) if details else '\u200b'
+        # Inline-Credits zeigen wenn mindestens 1 Author
+        unique_authors = {c.get('author', '') for c in ctx.changes if isinstance(c, dict) and c.get('author')}
+        show_author = len(unique_authors) >= 1
 
-            embed.add_field(
-                name=f"{badge} {desc[:200]}{credit}",
-                value=value[:1024],
-                inline=False,
-            )
+        # Dynamische Limits je nach Update-Größe
+        max_features = 8 if is_major else 6
+        max_fixes = 6
+        max_improvements = 5
+
+        if features:
+            parts.append("**🆕 Neue Features**")
+            for f in features[:max_features]:
+                parts.append(_format_change_line(f, show_author))
+                details = f.get('details', [])
+                for d in details[:2]:
+                    parts.append(f"  • {d}")
+            if len(features) > max_features:
+                parts.append(f"  *+{len(features) - max_features} weitere*")
+            parts.append("")
+
+        if breaking:
+            parts.append("**⚠️ Breaking Changes**")
+            for b in breaking[:3]:
+                parts.append(f"⚠️ {b}")
+            parts.append("")
+
+        if fixes:
+            parts.append("**🐛 Bugfixes**")
+            for f in fixes[:max_fixes]:
+                parts.append(_format_change_line(f, show_author))
+            if len(fixes) > max_fixes:
+                parts.append(f"  *+{len(fixes) - max_fixes} weitere*")
+            parts.append("")
+
+        if improvements:
+            parts.append("**⚡ Verbesserungen**")
+            for i in improvements[:max_improvements]:
+                parts.append(_format_change_line(i, show_author))
+            if len(improvements) > max_improvements:
+                parts.append(f"  *+{len(improvements) - max_improvements} weitere*")
+            parts.append("")
+
+        if other:
+            parts.append("**📝 Weitere Änderungen**")
+            for o in other[:3]:
+                parts.append(_format_change_line(o, show_author))
+            parts.append("")
+
     elif ctx.web_content:
-        embed.description = _truncate_description(ctx.web_content)
+        parts.append(ctx.web_content)
+
+    description = '\n'.join(parts)
+    embed.description = _truncate_description(description)
 
     embed.set_footer(text=_build_footer_text(ctx))
     embed.timestamp = datetime.now(timezone.utc)
 
     return embed
+
+
+def _format_change_line(change: dict, show_author: bool) -> str:
+    """Formatiere eine Change-Zeile mit optionaler Inline-Attribution."""
+    desc = change.get('description', '')
+    author = change.get('author', '')
+    if show_author and author:
+        return f"→ {desc} · *{author}*"
+    return f"→ {desc}"
 
 
 def _build_footer_text(ctx: PipelineContext) -> str:

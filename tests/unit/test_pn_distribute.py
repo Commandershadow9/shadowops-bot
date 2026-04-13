@@ -4,7 +4,8 @@ from unittest.mock import MagicMock, AsyncMock
 from patch_notes.stages.distribute import (
     _build_full_embed, _build_summary_embed, _build_footer_text,
     _type_to_emoji, _log_metrics, _truncate_description,
-    _split_embed_for_sending, distribute, retract_patch_notes,
+    _split_embed_for_sending, _format_change_line,
+    distribute, retract_patch_notes,
 )
 from patch_notes.context import PipelineContext
 
@@ -54,10 +55,27 @@ def test_build_full_embed_tldr():
     assert "Tolles Update" in embed.description
 
 
-def test_build_full_embed_changes_as_fields():
+def test_build_full_embed_has_category_headers():
     ctx = _make_ctx()
     embed = _build_full_embed(ctx)
-    assert len(embed.fields) == 2
+    assert "🆕 Neue Features" in embed.description
+    assert "🐛 Bugfixes" in embed.description
+
+
+def test_build_full_embed_inline_credits():
+    ctx = _make_ctx(changes=[
+        {"type": "feature", "description": "Neues Feature", "author": "Shadow"},
+        {"type": "fix", "description": "Bug gefixt"},
+    ])
+    embed = _build_full_embed(ctx)
+    assert "Shadow" in embed.description
+    assert "→" in embed.description
+
+
+def test_build_full_embed_details_shown():
+    ctx = _make_ctx()
+    embed = _build_full_embed(ctx)
+    assert "Detail 1" in embed.description
 
 
 def test_build_full_embed_fallback_web_content():
@@ -158,6 +176,40 @@ def test_type_to_emoji():
     assert _type_to_emoji("feature") == "🆕"
     assert _type_to_emoji("fix") == "🐛"
     assert _type_to_emoji("unknown") == "📝"
+
+
+# ── Format Change Line ──
+
+
+def test_format_change_line_with_author():
+    change = {"description": "Neues Feature", "author": "Shadow"}
+    assert _format_change_line(change, True) == "→ Neues Feature · *Shadow*"
+
+
+def test_format_change_line_without_author():
+    change = {"description": "Neues Feature"}
+    assert _format_change_line(change, True) == "→ Neues Feature"
+
+
+def test_format_change_line_author_hidden():
+    change = {"description": "Fix", "author": "Shadow"}
+    assert _format_change_line(change, False) == "→ Fix"
+
+
+# ── Breaking Changes in Full Embed ──
+
+
+def test_build_full_embed_breaking_changes():
+    ctx = _make_ctx(
+        ai_result={
+            "title": "Update", "tldr": "TL;DR",
+            "changes": [{"type": "feature", "description": "Feature"}],
+            "breaking_changes": ["API v1 entfernt"],
+        }
+    )
+    embed = _build_full_embed(ctx)
+    assert "Breaking Changes" in embed.description
+    assert "API v1 entfernt" in embed.description
 
 
 # ── Distribution ──
