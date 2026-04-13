@@ -274,20 +274,26 @@ class PatchNotesBatcher:
         return summary
 
     def get_cron_releasable_projects(self) -> List[str]:
-        """Projekte die beim wöchentlichen Cron released werden sollen (≥ min Commits)."""
+        """Projekte die beim wöchentlichen Cron released werden sollen (≥ min Commits, kein Cooldown)."""
         releasable = []
         for project, batch in self.pending.items():
             count = len(batch.get('commits', []))
             if count >= self.cron_min_commits:
+                if self._is_in_cooldown(project):
+                    logger.info(f"⏸️ {project} im Cooldown — Weekly Release übersprungen ({count} Commits)")
+                    continue
                 releasable.append(project)
         return releasable
 
     def get_daily_releasable_projects(self, daily_min_commits: int = 3) -> List[str]:
-        """Projekte die beim täglichen Release freigegeben werden sollen."""
+        """Projekte die beim täglichen Release freigegeben werden sollen (kein Cooldown)."""
         releasable = []
         for project, batch in self.pending.items():
             count = len(batch.get('commits', []))
             if count >= daily_min_commits:
+                if self._is_in_cooldown(project):
+                    logger.info(f"⏸️ {project} im Cooldown — Daily Release übersprungen ({count} Commits)")
+                    continue
                 releasable.append(project)
         return releasable
 

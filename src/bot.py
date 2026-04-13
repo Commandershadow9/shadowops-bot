@@ -390,6 +390,7 @@ class ShadowOpsBot(commands.Bot):
     async def setup_hook(self):
         """Setup Hook - wird VOR Discord-Verbindung aufgerufen"""
         self.logger.info("🗡️ ShadowOps Bot startet...")
+        self._startup_time = datetime.now()
         await self.load_cogs()
 
         # SIGTERM-Handler im Event-Loop registrieren für graceful shutdown.
@@ -1358,6 +1359,16 @@ class ShadowOpsBot(commands.Bot):
                 return
 
             now = datetime.now()
+
+            # Startup-Grace-Period: Ersten Loop-Durchlauf nach Restart überspringen
+            # verhindert sofortiges Feuern wenn der Bot während der Cron-Stunde restarted
+            startup_elapsed = (now - self._startup_time).total_seconds()
+            if startup_elapsed < 300:  # 5 Minuten Grace Period
+                self.logger.debug(
+                    f"📅 Weekly Cron: Startup-Grace ({startup_elapsed:.0f}s < 300s) — übersprungen"
+                )
+                return
+
             day_names = {
                 'monday': 0, 'tuesday': 1, 'wednesday': 2, 'thursday': 3,
                 'friday': 4, 'saturday': 5, 'sunday': 6,
@@ -1437,6 +1448,14 @@ class ShadowOpsBot(commands.Bot):
 
             # Lokalzeit (nicht UTC) — daily_release_hour ist in Serverzeit konfiguriert
             now = datetime.now()
+
+            # Startup-Grace-Period: verhindert sofortiges Feuern nach Restart
+            startup_elapsed = (now - self._startup_time).total_seconds()
+            if startup_elapsed < 300:  # 5 Minuten Grace Period
+                self.logger.debug(
+                    f"📅 Daily Cron: Startup-Grace ({startup_elapsed:.0f}s < 300s) — übersprungen"
+                )
+                return
 
             # Nur Projekte mit release_mode: daily und passender Stunde
             for project_name, project_config in self.config.projects.items():
