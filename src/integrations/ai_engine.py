@@ -1043,15 +1043,36 @@ class AIEngine:
             return None
 
         clean = raw.strip()
+        # Markdown-Fences entfernen
         if clean.startswith("```"):
             lines = clean.split("\n")
             clean = "\n".join(lines[1:-1] if lines[-1].startswith("```") else lines[1:])
 
+        # JSON extrahieren — Claude fügt manchmal Text vor/nach dem JSON ein
+        review = None
         try:
             review = json.loads(clean)
-        except json.JSONDecodeError as e:
-            logger.error(f"[jules] JSON parse failed: {e}")
-            return None
+        except json.JSONDecodeError:
+            # Versuche nur den JSON-Block zu finden ({...})
+            start = clean.find("{")
+            if start >= 0:
+                # Finde die passende schließende Klammer
+                depth = 0
+                for i, c in enumerate(clean[start:], start):
+                    if c == "{":
+                        depth += 1
+                    elif c == "}":
+                        depth -= 1
+                        if depth == 0:
+                            try:
+                                review = json.loads(clean[start:i + 1])
+                                logger.info(f"[jules] JSON extrahiert aus Position {start}-{i+1}")
+                            except json.JSONDecodeError:
+                                pass
+                            break
+            if review is None:
+                logger.error(f"[jules] JSON parse failed, raw[:300]={clean[:300]!r}")
+                return None
 
         schema_path = Path(__file__).parent.parent / "schemas" / "jules_review.json"
         try:
