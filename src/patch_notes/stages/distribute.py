@@ -14,6 +14,10 @@ if TYPE_CHECKING:
 
 logger = logging.getLogger('shadowops')
 
+# Discord Limits
+_EMBED_DESC_LIMIT = 4096
+_EMBED_TOTAL_LIMIT = 6000
+
 
 async def distribute(ctx: PipelineContext, bot=None) -> None:
     """Stufe 5: Alles verteilen — Discord, DB, Web, Learning."""
@@ -21,81 +25,181 @@ async def distribute(ctx: PipelineContext, bot=None) -> None:
         logger.warning(f"[v6] {ctx.project}: Kein Bot — Distribution übersprungen")
         return
 
-    # 1. Discord Embed bauen
-    embed = _build_embed(ctx)
+    changelog_url = ctx.project_config.get('patch_notes', {}).get('changelog_url', '')
 
-    # 2. Internal Channel
+    # 1. Discord Embed bauen (Summary-Mode wenn changelog_url gesetzt)
+    if changelog_url:
+        embed = _build_summary_embed(ctx, changelog_url)
+    else:
+        embed = _build_full_embed(ctx)
+
+    # 2. Internal Channel (Preview)
     await _send_internal(bot, embed, ctx)
 
     # 3. Customer Channels (mit Feedback-Buttons)
     await _send_customer(bot, embed, ctx)
 
-    # 4. Changelog-DB + Web-Export
+    # 4. External Notifications (Kunden-Guilds)
+    await _send_external(bot, embed, ctx)
+
+    # 5. Changelog-DB + Web-Export
     await _store_changelog(ctx, bot)
 
-    # 5. Metriken loggen
+    # 6. Message-IDs in StateManager persistieren (für Rollback)
+    _persist_message_ids(ctx, bot)
+
+    # 7. Metriken loggen
     _log_metrics(ctx)
 
 
-def _build_embed(ctx: PipelineContext) -> discord.Embed:
-    """Baue Discord Embed aus PipelineContext."""
-    project_config = ctx.project_config
-    color = project_config.get('color', 0x3498DB)
-    changelog_url = project_config.get('patch_notes', {}).get('changelog_url', '')
+# ── Embed Builder ──────────────────────────────────────────────
+
+
+def _build_summary_embed(ctx: PipelineContext, changelog_url: str) -> discord.Embed:
+    """Kurzformat für Projekte MIT Web-Changelog — TL;DR + Highlights + Link."""
+    color = ctx.project_config.get('color', 0x3498DB)
+    slug = ctx.version.replace('.', '-')
+
+    embed = discord.Embed(
+        title=f"v{ctx.version} — {ctx.title}",
+        url=f"{changelog_url}/{slug}",
+        color=color,
+    )
+
+    # TL;DR als Blockquote
+    parts = []
+    if ctx.tldr:
+        parts.append(f"> {ctx.tldr}")
+        parts.append("")
+
+    # Max 6 Highlights aus Changes
+    if ctx.changes:
+        for change in ctx.changes[:6]:
+            if not isinstance(change, dict):
+                continue
+            badge = _type_to_emoji(change.get('type', 'other'))
+            desc = change.get('description', '')
+            # Inline-Credit wenn vorhanden
+            author = change.get('author', '')
+            credit = f" · {author}" if author else ""
+            parts.append(f"{badge} {desc[:200]}{credit}")
+        if len(ctx.changes) > 6:
+            parts.append(f"*+{len(ctx.changes) - 6} weitere Änderungen*")
+
+    # "Alle Details" Link
+    parts.append("")
+    parts.append(f"**[Alle Details auf der Website →]({changelog_url}/{slug})**")
+
+    description = '\n'.join(parts)
+    embed.description = description[:_EMBED_DESC_LIMIT]
+
+    embed.set_footer(text=_build_footer_text(ctx))
+    embed.timestamp = datetime.now(timezone.utc)
+
+    return embed
+
+
+def _build_full_embed(ctx: PipelineContext) -> discord.Embed:
+    """Vollformat für Projekte OHNE Web-Changelog (Discord-only)."""
+    color = ctx.project_config.get('color', 0x3498DB)
 
     embed = discord.Embed(
         title=f"v{ctx.version} — {ctx.title}",
         color=color,
     )
 
-    if changelog_url:
-        slug = ctx.version.replace('.', '-')
-        embed.url = f"{changelog_url}/{slug}"
-
-    # TL;DR
+    # TL;DR + Intro
     if ctx.tldr:
         embed.description = f"> {ctx.tldr}"
 
-    # Changes als Felder
+    # Changes als Fields (max 8, Discord Limit 25)
     if ctx.changes:
-        # Player-facing Changes zuerst
         for change in ctx.changes[:8]:
             if not isinstance(change, dict):
                 continue
             ctype = change.get('type', 'other')
             desc = change.get('description', '')
             badge = _type_to_emoji(ctype)
+            author = change.get('author', '')
+            credit = f" · {author}" if author else ""
 
-            # Details als Unterpunkte
             details = change.get('details', [])
-            if details:
-                detail_text = '\n'.join(f"  → {d}" for d in details[:3])
-                desc = f"{desc}\n{detail_text}"
+            value = '\n'.join(f"→ {d}" for d in details[:3]) if details else '\u200b'
 
-            if desc:
-                embed.add_field(
-                    name=f"{badge} {desc[:256]}",
-                    value='',
-                    inline=False,
-                )
+            embed.add_field(
+                name=f"{badge} {desc[:200]}{credit}",
+                value=value[:1024],
+                inline=False,
+            )
     elif ctx.web_content:
-        # Fallback: Web-Content als Description (gekürzt)
-        embed.description = ctx.web_content[:2000]
+        embed.description = _truncate_description(ctx.web_content)
 
-    # Footer mit Stats
-    footer_parts = [f"v{ctx.version}"]
-    stats = ctx.git_stats
-    if stats.get('commits'):
-        footer_parts.append(f"{stats['commits']} Commits")
-    if stats.get('files_changed'):
-        footer_parts.append(f"{stats['files_changed']} Dateien")
-    if ctx.team_credits:
-        names = ', '.join(c['name'] for c in ctx.team_credits[:3])
-        footer_parts.append(names)
-    embed.set_footer(text=' · '.join(footer_parts))
+    embed.set_footer(text=_build_footer_text(ctx))
     embed.timestamp = datetime.now(timezone.utc)
 
     return embed
+
+
+def _build_footer_text(ctx: PipelineContext) -> str:
+    """Footer-Zeile: Version · Commits · Dateien · Credits."""
+    parts = [f"v{ctx.version}"]
+    stats = ctx.git_stats
+    if stats.get('commits'):
+        parts.append(f"{stats['commits']} Commits")
+    if stats.get('files_changed'):
+        parts.append(f"{stats['files_changed']} Dateien")
+    if stats.get('lines_added'):
+        parts.append(f"+{stats['lines_added']}/-{stats.get('lines_removed', 0)}")
+    if ctx.team_credits:
+        names = ', '.join(c['name'] for c in ctx.team_credits[:3])
+        parts.append(names)
+    return ' · '.join(parts)
+
+
+def _truncate_description(text: str) -> str:
+    """Kürze Text auf Discord Embed-Limit."""
+    if len(text) <= _EMBED_DESC_LIMIT:
+        return text
+    return text[:_EMBED_DESC_LIMIT - 20] + "\n\n*[gekürzt...]*"
+
+
+def _split_embed_for_sending(embed: discord.Embed) -> list[discord.Embed]:
+    """Splitte Embed wenn Description > 4096 Zeichen (Discord Limit).
+
+    Returns:
+        Liste mit 1-3 Embeds. Nur der erste hat Titel/URL/Footer.
+    """
+    desc = embed.description or ""
+    if len(desc) <= _EMBED_DESC_LIMIT:
+        return [embed]
+
+    chunks = []
+    while desc:
+        if len(desc) <= _EMBED_DESC_LIMIT:
+            chunks.append(desc)
+            break
+        # An Zeilenumbruch splitten
+        cut = desc[:_EMBED_DESC_LIMIT].rfind('\n')
+        if cut < _EMBED_DESC_LIMIT // 2:
+            cut = _EMBED_DESC_LIMIT
+        chunks.append(desc[:cut])
+        desc = desc[cut:].lstrip('\n')
+
+    embeds = []
+    for i, chunk in enumerate(chunks):
+        if i == 0:
+            e = discord.Embed(
+                title=embed.title, url=embed.url, color=embed.color,
+                description=chunk, timestamp=embed.timestamp,
+            )
+            e.set_footer(text=embed.footer.text if embed.footer else "")
+        else:
+            e = discord.Embed(
+                color=embed.color, description=chunk,
+            )
+        embeds.append(e)
+
+    return embeds
 
 
 def _type_to_emoji(ctype: str) -> str:
@@ -106,6 +210,9 @@ def _type_to_emoji(ctype: str) -> str:
         'fix': '🐛', 'breaking': '💥', 'infrastructure': '🛡️',
         'improvement': '✨', 'docs': '📖', 'security': '🔒',
     }.get(ctype, '📝')
+
+
+# ── Sending ────────────────────────────────────────────────────
 
 
 async def _send_internal(bot, embed: discord.Embed, ctx: PipelineContext) -> None:
@@ -119,53 +226,92 @@ async def _send_internal(bot, embed: discord.Embed, ctx: PipelineContext) -> Non
 
         channel = bot.get_channel(channel_id)
         if channel:
-            await channel.send(embed=embed)
+            for e in _split_embed_for_sending(embed):
+                await channel.send(embed=e)
     except Exception as e:
         logger.debug(f"[v6] Internal send fehlgeschlagen: {e}")
 
 
 async def _send_customer(bot, embed: discord.Embed, ctx: PipelineContext) -> None:
     """Sende an Kunden-Channels mit Feedback-Buttons."""
-    project_config = ctx.project_config
-    pn_config = project_config.get('patch_notes', {})
+    pn_config = ctx.project_config.get('patch_notes', {})
 
-    # Update Channel
+    # Update Channel (öffentlich)
     channel_id = pn_config.get('update_channel_id')
     if channel_id:
-        try:
-            channel = bot.get_channel(int(channel_id))
-            if channel:
-                # Feedback-Buttons anhängen (bestehende View wiederverwenden)
-                view = _get_feedback_view(ctx)
-                role_mention = pn_config.get('update_channel_role_mention', '')
-                content = f"<@&{role_mention}> Neues Update verfügbar!" if role_mention else None
+        await _send_to_channel(
+            bot, int(channel_id), embed, ctx,
+            role_mention=pn_config.get('update_channel_role_mention', ''),
+            with_feedback=True,
+        )
 
-                msg = await channel.send(
-                    content=content,
-                    embed=embed,
-                    view=view,
-                    allowed_mentions=discord.AllowedMentions(roles=True) if content else None,
-                )
-                ctx.sent_message_ids.append([channel.id, msg.id])
-        except Exception as e:
-            logger.warning(f"[v6] Customer channel {channel_id} fehlgeschlagen: {e}")
-
-    # Internal Channel
+    # Internal Customer Channel
     internal_id = pn_config.get('internal_channel_id')
     if internal_id:
-        try:
-            channel = bot.get_channel(int(internal_id))
-            if channel:
-                role_mention = pn_config.get('internal_channel_role_mention', '')
-                content = f"<@&{role_mention}> Neues Update verfügbar!" if role_mention else None
-                msg = await channel.send(
-                    content=content,
-                    embed=embed,
-                    allowed_mentions=discord.AllowedMentions(roles=True) if content else None,
-                )
-                ctx.sent_message_ids.append([channel.id, msg.id])
-        except Exception as e:
-            logger.warning(f"[v6] Internal customer channel {internal_id} fehlgeschlagen: {e}")
+        await _send_to_channel(
+            bot, int(internal_id), embed, ctx,
+            role_mention=pn_config.get('internal_channel_role_mention', ''),
+            with_feedback=False,
+        )
+
+
+async def _send_external(bot, embed: discord.Embed, ctx: PipelineContext) -> None:
+    """Sende an externe Kunden-Guilds (external_notifications Config)."""
+    external_notifs = ctx.project_config.get('external_notifications', [])
+    if not external_notifs:
+        return
+
+    for notif_config in external_notifs:
+        if not notif_config.get('enabled', False):
+            continue
+        if not notif_config.get('notify_on', {}).get('git_push', True):
+            continue
+
+        channel_id = notif_config.get('channel_id')
+        if not channel_id:
+            continue
+
+        await _send_to_channel(
+            bot, int(channel_id), embed, ctx,
+            with_feedback=True,
+        )
+
+
+async def _send_to_channel(
+    bot, channel_id: int, embed: discord.Embed, ctx: PipelineContext,
+    role_mention: str = '', with_feedback: bool = False,
+) -> None:
+    """Generische Send-Funktion mit Splitting, Feedback und Message-ID-Tracking."""
+    try:
+        channel = bot.get_channel(channel_id)
+        if not channel:
+            logger.warning(f"[v6] Channel {channel_id} nicht gefunden")
+            return
+
+        embeds = _split_embed_for_sending(embed)
+        view = _get_feedback_view(ctx) if with_feedback else None
+
+        for i, e in enumerate(embeds):
+            is_first = (i == 0)
+            is_last = (i == len(embeds) - 1)
+
+            content = None
+            if is_first and role_mention:
+                content = f"<@&{role_mention}> Neues Update verfügbar!"
+
+            msg = await channel.send(
+                content=content,
+                embed=e,
+                view=view if is_last else None,
+                allowed_mentions=discord.AllowedMentions(roles=True) if content else None,
+            )
+
+            # Nur erste Message tracken (für Rollback)
+            if is_first:
+                ctx.sent_message_ids.append([channel_id, msg.id])
+
+    except Exception as e:
+        logger.warning(f"[v6] Channel {channel_id} fehlgeschlagen: {e}")
 
 
 def _get_feedback_view(ctx: PipelineContext):
@@ -178,6 +324,86 @@ def _get_feedback_view(ctx: PipelineContext):
         )
     except ImportError:
         return None
+
+
+# ── Persistenz & Changelog ─────────────────────────────────────
+
+
+def _persist_message_ids(ctx: PipelineContext, bot) -> None:
+    """Speichere sent_message_ids in StateManager (für retract_patch_notes)."""
+    if not ctx.sent_message_ids:
+        return
+    try:
+        from utils.state_manager import get_state_manager
+        state = get_state_manager()
+        guild_id = None
+        for guild in bot.guilds:
+            guild_id = guild.id
+            break
+        if not guild_id:
+            return
+
+        msgs = state.get_value(guild_id, 'patch_notes_messages', {})
+        entry_key = f"{ctx.project}:{ctx.version}"
+        msgs[entry_key] = [
+            {'channel_id': cid, 'message_id': mid}
+            for cid, mid in ctx.sent_message_ids
+        ]
+
+        # FIFO: Max 50 Releases behalten
+        if len(msgs) > 50:
+            keys = list(msgs.keys())
+            for old_key in keys[:len(keys) - 50]:
+                del msgs[old_key]
+
+        state.set_value(guild_id, 'patch_notes_messages', msgs)
+    except Exception as e:
+        logger.debug(f"[v6] Message-ID Persistenz fehlgeschlagen: {e}")
+
+
+async def retract_patch_notes(bot, project: str, version: str) -> int:
+    """Lösche alle Discord-Messages einer Patch Note (Rollback).
+
+    Returns:
+        Anzahl erfolgreich gelöschter Messages.
+    """
+    try:
+        from utils.state_manager import get_state_manager
+        state = get_state_manager()
+        guild_id = None
+        for guild in bot.guilds:
+            guild_id = guild.id
+            break
+        if not guild_id:
+            return 0
+
+        msgs = state.get_value(guild_id, 'patch_notes_messages', {})
+        entry_key = f"{project}:{version}"
+        entries = msgs.get(entry_key, [])
+        if not entries:
+            logger.warning(f"[v6] Keine Messages für {entry_key} gefunden")
+            return 0
+
+        retracted = 0
+        for entry in entries:
+            try:
+                ch = bot.get_channel(entry['channel_id'])
+                if ch:
+                    msg = ch.get_partial_message(entry['message_id'])
+                    await msg.delete()
+                    retracted += 1
+            except Exception as e:
+                logger.warning(f"[v6] Retract fehlgeschlagen: {e}")
+
+        if entry_key in msgs:
+            del msgs[entry_key]
+            state.set_value(guild_id, 'patch_notes_messages', msgs)
+
+        logger.info(f"[v6] 🗑️ {retracted}/{len(entries)} Messages für {entry_key} retracted")
+        return retracted
+    except Exception as e:
+        logger.error(f"[v6] Retract Fehler: {e}")
+        return 0
 
 
 async def _store_changelog(ctx: PipelineContext, bot) -> None:
@@ -205,6 +431,9 @@ async def _store_changelog(ctx: PipelineContext, bot) -> None:
         logger.info(f"[v6] {ctx.project} v{ctx.version}: Changelog gespeichert")
     except Exception as e:
         logger.warning(f"[v6] Changelog-Export fehlgeschlagen: {e}")
+
+
+# ── Metriken ───────────────────────────────────────────────────
 
 
 def _log_metrics(ctx: PipelineContext) -> None:
