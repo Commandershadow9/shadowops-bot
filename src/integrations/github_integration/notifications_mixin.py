@@ -39,8 +39,31 @@ class NotificationsMixin:
         if not project_config:
             project_config = self.config.projects.get(repo_name, {})
 
-        project_color = project_config.get('color', 0x3498DB)  # Default blue
+        # ── v6 Pipeline Dispatch ──────────────────────────────────
         patch_config = project_config.get('patch_notes', {})
+        if patch_config.get('engine') == 'v6':
+            try:
+                from pathlib import Path
+                from patch_notes.pipeline import PatchNotePipeline
+                from patch_notes.context import PipelineContext
+
+                ctx = PipelineContext(
+                    project=repo_name,
+                    project_config=project_config,
+                    raw_commits=commits,
+                    trigger='manual' if skip_batcher else 'webhook',
+                )
+                data_dir = Path(__file__).resolve().parent.parent.parent.parent / 'data'
+                pipeline = PatchNotePipeline(data_dir=data_dir, bot=self.bot)
+                await pipeline.run(ctx)
+                self.logger.info(f"[v6] {repo_name} v{ctx.version} — Pipeline erfolgreich")
+                return
+            except Exception as e:
+                self.logger.error(f"[v6] Pipeline-Fehler für {repo_name}, Fallback auf v5: {e}")
+                # Fallback auf v5 bei Fehler
+        # ── Ende v6 Dispatch ──────────────────────────────────────
+
+        project_color = project_config.get('color', 0x3498DB)  # Default blue
         language = patch_config.get('language', 'de')
 
         # === GLOBALER SAFETY-CHECK: Mindestens N Commits für Patch Notes ===
