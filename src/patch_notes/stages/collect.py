@@ -19,9 +19,24 @@ _BODY_NOISE_RE = re.compile(
 
 
 async def collect(ctx: 'PipelineContext', bot=None) -> None:
-    """Stufe 1: Enriche Commits mit PR-Daten und Git-Stats."""
+    """Stufe 1: Commits sammeln, anreichern, Git-Stats.
+
+    Wenn raw_commits leer sind (z.B. nach Restart), holt diese Stufe
+    ALLE Commits seit dem letzten Release direkt aus Git.
+    So gehen nie Commits verloren — egal ob Webhook, Polling oder Restart.
+    """
     project_config = ctx.project_config
     project_path = project_config.get('path', '')
+
+    # Selbst-Heilung: Wenn keine Commits übergeben wurden,
+    # alle seit dem letzten Release aus Git holen
+    if not ctx.raw_commits and project_path:
+        ctx.raw_commits = _gather_commits_since_last_release(ctx.project, project_path, project_config)
+        if ctx.raw_commits:
+            logger.info(
+                f"[v6] {ctx.project}: {len(ctx.raw_commits)} Commits aus Git geholt "
+                f"(seit letztem Release)"
+            )
 
     enriched = []
     for commit in ctx.raw_commits:
@@ -42,6 +57,89 @@ async def collect(ctx: 'PipelineContext', bot=None) -> None:
         ctx.git_stats = _collect_git_stats(enriched, project_path)
 
     ctx.enriched_commits = enriched
+
+
+def _gather_commits_since_last_release(project: str, project_path: str, config: dict) -> list[dict]:
+    """Hole ALLE Commits seit dem letzten Release aus Git.
+
+    Nutzt die Changelog-DB als Referenz: Letzter Release → SHA finden → git log.
+    Fallback: Letzten bekannten Tag oder letzte 30 Tage.
+    """
+    import json as _json
+
+    deploy_branch = config.get('deploy', {}).get('branch', 'main')
+
+    # 1. Letzten Release-Zeitpunkt aus Changelog-DB
+    last_release_date = _get_last_release_date(project)
+
+    # 2. Git fetch (damit origin/main aktuell ist)
+    try:
+        subprocess.run(
+            ['git', 'fetch', 'origin', deploy_branch],
+            capture_output=True, text=True, timeout=30, cwd=project_path,
+        )
+    except Exception:
+        pass
+
+    # 3. Commits seit letztem Release
+    git_args = [
+        'git', 'log', f'origin/{deploy_branch}',
+        '--format=%H|%s|%an|%b',
+        '--no-merges',
+    ]
+    if last_release_date:
+        git_args.append(f'--since={last_release_date}')
+    else:
+        # Fallback: Letzte 30 Tage
+        git_args.append('--since=30 days ago')
+
+    try:
+        result = subprocess.run(
+            git_args, capture_output=True, text=True,
+            timeout=15, cwd=project_path,
+        )
+        if result.returncode != 0 or not result.stdout.strip():
+            return []
+
+        commits = []
+        for line in result.stdout.strip().split('\n'):
+            if not line.strip():
+                continue
+            parts = line.split('|', 3)
+            if len(parts) < 3:
+                continue
+            body = parts[3].strip() if len(parts) > 3 else ''
+            message = parts[1].strip()
+            if body:
+                message = f"{message}\n\n{body}"
+            commits.append({
+                'sha': parts[0].strip(),
+                'message': message,
+                'author': {'name': parts[2].strip()},
+            })
+
+        return commits
+    except Exception as e:
+        logger.warning(f"[v6] Git-Commits-Sammlung fehlgeschlagen für {project}: {e}")
+        return []
+
+
+def _get_last_release_date(project: str) -> str | None:
+    """Hole Datum des letzten Releases aus Changelog-DB."""
+    try:
+        import sqlite3
+        db_path = Path(__file__).resolve().parent.parent.parent.parent / 'data' / 'changelogs.db'
+        if not db_path.exists():
+            return None
+        with sqlite3.connect(str(db_path)) as conn:
+            row = conn.execute(
+                "SELECT created_at FROM changelogs "
+                "WHERE project = ? ORDER BY created_at DESC LIMIT 1",
+                (project,),
+            ).fetchone()
+        return row[0] if row else None
+    except Exception:
+        return None
 
 
 async def _enrich_with_pr_data(commits: list[dict], project_path: str,
