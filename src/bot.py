@@ -1669,10 +1669,10 @@ class ShadowOpsBot(commands.Bot):
                 learning_pool=gh.jules_learning._pool,
             )
             if hasattr(self, "discord_logger") and self.discord_logger:
-                await self.discord_logger.send_to_channel(
+                await self.discord_logger._send_to_channel(
                     "🧠-ai-learning",
-                    f"🛡️ Jules Nightly: classified={counts['classified']}, "
-                    f"examples={counts['examples_written']}")
+                    message=(f"🛡️ Jules Nightly: classified={counts['classified']}, "
+                             f"examples={counts['examples_written']}"))
         except Exception:
             self.logger.exception("[jules] nightly batch crashed")
 
