@@ -29,30 +29,28 @@ Bei Aenderungen an Shared-Services (Redis, PostgreSQL, Traefik) MUESSEN alle Kon
 - **Vorfaelle:** 2026-03-17 Bind-Address (11h Ausfall), 2026-03-18 Redis-Auth (SEO-Audit ausgefallen)
 - **Checkliste vor Auth-Aenderungen:** `grep -r "redis-cli\|redis://\|5433\|6379" ~/agents/ ~/shadowops-bot/scripts/`
 
-## Patch Notes Safety (5 Schichten, seit 26.03.2026)
-- **Vorfall 2026-03-18:** Batcher-Referenz verloren → Einzelcommit-Patchnotes (KI-Halluzination)
-- **Vorfall 2026-03-25:** Design-Doc Commit als Feature halluziniert → v3.0.8 mit erfundenen Features
-- **Schicht 1 — Commit-Klassifizierung:** `_classify_commit()` in `ai_patch_notes_mixin.py`. Design-Doc-Bodies werden abgeschnitten, Auto-Commits gruppiert, Merge gefiltert
-- **Schicht 2 — Prompt-Regeln:** Typ-Tags in allen 4 Prompt-Pfaden (DE+EN). "[DESIGN-DOC] = NICHT implementiert"
-- **Schicht 3 — Post-Validierung:** `_validate_ai_output()` erkennt Design-Doc-Leaks und entfernt sie automatisch
-- **Schicht 4 — Batcher + min_commits:** Globaler Check (Default 2), Self-Healing, /release-notes min 3
-- **Schicht 5 — Content Sanitizer:** Pfade, IPs, Secrets + changes[].details
-- **Semantic Versionierung:** `_calculate_semver()` berechnet Version aus Commit-Typen — NICHT die KI
-- **Kollisionsschutz:** `_ensure_unique_version()` verhindert doppelte Versionen
-- **Projekt-Kontext:** `project_description` + `target_audience` pro Projekt in config.yaml
-- **PR-Label Integration:** `_enrich_commits_with_pr_data()` holt Labels + Body via `gh pr view`. Labels ueberschreiben Commit-Prefix (zuverlaessiger)
-- **Smart Diff:** `_build_code_changes_context()` gruppiert Dateien nach 8 Kategorien statt rohem Diff
-- **A/B-Regelblock:** `_CLASSIFICATION_RULES_DE/EN` wird IMMER angehaengt — alte Varianten profitieren automatisch
-- **Conventional Commit Hook:** Auf allen 5 Projekten deployed. Re-Deploy: `scripts/deploy-commit-hook.sh --all`
-- **Auto-Label Action:** `.github/workflows/auto-label-pr.yml` — Labels muessen im Repo existieren
-- **Pipeline-Metriken:** Jede Generierung loggt Commit-Typen, PR-Labels, Halluzinationen, Version-Source
-- **Varianten-Sync:** `_sync_default_variants()` in prompt_ab_testing.py traegt neue Code-Varianten automatisch in die persistierte JSON-Datei nach — NIEMALS manuell prompt_variants.json editieren
-- **Gaming-Badges:** Schema hat 12 Change-Types (feature, content, gameplay, design, performance, multiplayer, fix, breaking, infrastructure, improvement, docs, security) — bei Schema-Aenderungen ALLE in required und enum aufnehmen
-- **Version-Uniqueness:** `_ensure_unique_version()` wird bei ALLEN 4 Version-Quellen aufgerufen (git_tag, explicit, semver, ai). NIEMALS eine Quelle ohne Uniqueness-Check durchlassen — Vorfall 2026-04-04: v0.17.0 nach v0.17.2 erstellt weil explicit keine Pruefung hatte
-- **Team-Credits:** TEAM_MAPPING pflegen bei neuen Teammitgliedern. Rollen: Shadow="Founder & Lead Dev", Mapu="Co-Founder & Dev". Credits inline pro Change via `_enrich_changes_with_git_authors()` (Post-Processing aus Git-Daten, nicht AI). `author`-Feld im Schema optional
-- NIEMALS den globalen min_commits Check entfernen — er ist die letzte Verteidigungslinie
-- NIEMALS `_validate_ai_output()` deaktivieren — er faengt halluzinierte Features ab
-- NIEMALS `_CLASSIFICATION_RULES` entfernen — sie schuetzen A/B-Varianten vor Regression
+## Patch Notes Pipeline v6 (seit 2026-04-13, ersetzt v5 Mixins)
+- **Code:** `src/patch_notes/` — 5-Stufen State Machine (~2100 Zeilen, 101 Tests)
+- **Vorfall-Historie:** v5 hatte Commit-Cap (50), 5 Version-Quellen, halluzinierte Features (v2.9.2, v3.0.8)
+- **Safety-Checks (Stufe 4 — validate.py):**
+  - `check_feature_count()` — AI-Features ≤ echte Feature-Gruppen × 2
+  - `check_design_doc_leaks()` — mit Smart False-Positive-Schutz
+  - `strip_ai_version()` — generisches SemVer-Regex (faengt AI-erfundene Versionen)
+  - `sanitize_content()` — nutzt bestehenden ContentSanitizer (Pfade, IPs, Secrets)
+  - `normalize_umlauts()` — ae→ä, oe→ö (nur bei language=de)
+  - `enrich_changes_with_authors()` — Inline-Credits aus Git-Daten (nicht AI)
+- **Versionierung (versioning.py):** NUR Changelog-DB + SemVer. EINE Quelle, KEIN Git-Tag, KEINE AI-Version
+- **Commit-Gruppierung (grouping.py):** ALLE Commits, KEIN Cap. PR-Labels ueberschreiben Commit-Prefix
+- **Templates (templates/):** `gaming` (MayDay), `saas` (GuildScout, ZERODOX), `devops` (ShadowOps, AI-Agent). Classification-Rules DE+EN werden IMMER angehaengt
+- **Team-Credits:** `TEAM_MAPPING` in `stages/classify.py`. Bei neuen Teammitgliedern pflegen
+- **Concurrency:** asyncio Lock in `pipeline.py` + Circuit Breaker (5 Fehler → 1h Pause)
+- **Crash-Resilience:** Pipeline-State nach jeder Stufe persistiert. Resume nach Restart
+- **Self-Healing:** Leere Commits → aus Git seit letztem Release. Kein Commit verloren nach Restart
+- **Release-Modi:** Daily (22:00, ≥15) + Weekly (Sonntag 20:00, ≥3). Commits akkumulieren
+- NIEMALS `check_feature_count()` oder `check_design_doc_leaks()` deaktivieren
+- NIEMALS die Classification-Rules (`_CLASSIFICATION_RULES_DE/EN`) aus templates/base.py entfernen
+- NIEMALS die Commit-Gruppierung durch ein Cap ersetzen — das war die Ursache der v5-Probleme
+- Conventional Commit Hook auf allen 5 Projekten. Re-Deploy: `scripts/deploy-commit-hook.sh --all`
 
 ## Learning-System (agent_learning DB)
 - **KEINE hardcoded DB-Passwörter im Source Code!** Alle DSNs kommen aus `config.yaml` oder Env-Vars:
@@ -87,15 +85,13 @@ Bei Aenderungen an Shared-Services (Redis, PostgreSQL, Traefik) MUESSEN alle Kon
 - **Fix-Phase nutzt Cross-Mode-Lock**: claim_event/release_event fuer jedes Finding
 - **Alter Analyst** (`analyst/security_analyst.py`): Wird NICHT mehr von Engine gestartet, bleibt vorerst als Referenz
 
-## Enterprise Hardening (seit 2026-04-12)
-- **CircuitBreaker** (`src/utils/circuit_breaker.py`): Threshold und Timeout NICHT ohne Grund aendern — 5 Failures / 1h Pause sind bewusst gewaehlt
-- **asyncio.Lock** (`_patch_notes_lock`): Umfasst NUR den AI-Call-Block, NICHT den ganzen Push-Handler. Lock-Scope bei Aenderungen beibehalten
-- **State Backups** (`.backup` Dateien): Werden automatisch erstellt — NIEMALS manuell loeschen, sie sind der Fallback bei Korruption
-- **Message-ID Tracking**: `patch_notes_messages` in state.json — max 50 Releases (FIFO). Bei Aenderungen an `_send_to_customer_channels` oder `_send_to_internal_customer_channel` IMMER `_record_sent_message()` Call beibehalten
-- **`retract_patch_notes(repo, version)`**: Loescht Messages via `get_partial_message().delete()` — funktioniert auch cross-guild solange der Bot Zugriff hat
-- **AI Retry** (`_query_with_retry`): max_retries=2 pro Engine. NICHT erhoehen — bei Primary-Fail geht es eh zum Fallback
-- **Persistente Inflight-Commits**: `_persist_inflight()` wird nach jedem mark/unmark aufgerufen. NICHT entfernen — sonst wieder doppelte Patch Notes nach Crash
-- **Pipeline-Metriken**: `METRICS|patch_notes_pipeline|{json}` Log-Zeile — wird fuer Monitoring geparst, Format NICHT aendern
+## Pipeline v6 Hardening
+- **Circuit Breaker** in `pipeline.py`: 5 AI-Failures → 1h Pause. Threshold NICHT aendern
+- **asyncio Lock** in `pipeline.py`: Serialisiert ALLE Pipeline-Runs. Verhindert Race Conditions
+- **State-Persistenz**: `data/pipeline_runs/{project}.json` nach jeder Stufe. NICHT manuell loeschen
+- **Message-ID Tracking**: `_persist_message_ids()` in distribute.py → state.json (FIFO, max 50)
+- **`retract_patch_notes(project, version)`**: Loescht Messages cross-guild. Import: `from patch_notes import retract_patch_notes`
+- **Pipeline-Metriken**: `METRICS|patch_notes_pipeline|{json}` — Format NICHT aendern (Monitoring parst es)
 
 ## Jules SecOps Workflow (seit 2026-04-11)
 - **NIEMALS `issue_comment` Events für Auto-Reviews whitelisten** — das war die PR #123 Hauptursache

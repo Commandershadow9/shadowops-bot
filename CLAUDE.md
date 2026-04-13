@@ -6,7 +6,8 @@
 - **Monitoring:** Trivy, CrowdSec, Fail2ban, AIDE
 - **Data:** PostgreSQL (Knowledge + Findings, konsolidiert), SQLite (Changelog DB), JSON State Files
 - **Deploy:** systemd (system-level), logrotate
-- **Version:** v5.0.0
+- **Patch Notes:** Pipeline v6 (State Machine, seit 2026-04-13)
+- **Version:** v5.1.0
 
 ## Services & Ports
 | Service | Port | Bind | Zweck |
@@ -42,6 +43,37 @@
 | `admin.py` | AdminCog | `/scan`, `/stop-all-fixes`, `/remediation-stats`, `/set-approval-mode`, `/reload-context`, `/release-notes`, `/pending-notes` |
 | `inspector.py` | InspectorCog | `/get-ai-stats`, `/agent-stats`, `/projekt-status`, `/alle-projekte` |
 | `customer_setup_commands.py` | CustomerSetupCommands | `/setup-customer-server` |
+
+### Patch Notes Pipeline v6 (`src/patch_notes/`)
+
+Eigenstaendiges Package mit 5-Stufen State Machine. Ersetzt die alten Mixins (`ai_patch_notes_mixin.py`, Teile von `notifications_mixin.py`).
+
+| Datei | Zweck |
+|-------|-------|
+| `__init__.py` | Public API: `generate_release()`, `retract_patch_notes()` |
+| `pipeline.py` | `PatchNotePipeline` — State Machine Orchestrator (asyncio Lock, Circuit Breaker, Crash-Resume) |
+| `context.py` | `PipelineContext` Dataclass — traegt alle Daten durch die 5 Stufen |
+| `state.py` | `PipelineStateStore` — JSON-Persistenz fuer Crash-Resilience (`data/pipeline_runs/`) |
+| `versioning.py` | DB-basierte SemVer (EINE Quelle: Changelog-DB, kein Git-Tag) |
+| `grouping.py` | Deterministische Commit-Gruppierung (ALLE Commits, kein Cap, PR-Label Override) |
+| `stages/collect.py` | Stufe 1: PR-Daten anreichern, Git-Stats, Self-Healing (Commits aus Git wenn leer) |
+| `stages/classify.py` | Stufe 2: Gruppierung + Version + Team-Credits + Update-Groesse |
+| `stages/generate.py` | Stufe 3: Template-Auswahl + AI-Call (Codex/Claude) + Structured Output Parsing |
+| `stages/validate.py` | Stufe 4: 5 Safety-Checks (Feature-Count, Design-Doc-Leak, Version-Strip, Sanitizer, Umlaute) + Inline-Credits |
+| `stages/distribute.py` | Stufe 5: Discord (Summary/Full Embed), Changelog-DB, Web-Export, Feedback-Buttons, Rollback, Metriken |
+| `templates/base.py` | BaseTemplate mit `build_prompt()`, Classification-Rules (DE+EN), Release-Guide, Context-Files |
+| `templates/gaming.py` | Gaming-Template: MayDay Sim (Storytelling, BOS-Sprache, Hype, 12 Badges) |
+| `templates/saas.py` | SaaS-Template: GuildScout, ZERODOX (sachlich, Business-Value, 6 Badges) |
+| `templates/devops.py` | DevOps-Template: ShadowOps, AI-Agent-Framework (kompakt, technisch, 4 Badges) |
+
+**Trigger-Pfade (alle fuehren zu v6):**
+- Webhook Push (Port 9090) → `_send_push_notification` → engine=v6 → `PatchNotePipeline.run()`
+- Local Polling (60s) → gleicher Pfad
+- Daily Cron (22:00, ≥15 Commits) → `generate_release()` direkt aus Git
+- Weekly Cron (Sonntag 20:00, ≥3 Commits) → `generate_release()` direkt aus Git
+- `/release-notes <projekt>` → `generate_release()` direkt aus Git, kein Minimum
+
+**Self-Healing:** Wenn Pipeline ohne Commits aufgerufen wird (Restart, Webhook-Ausfall), holt Stufe 1 automatisch ALLE Commits seit dem letzten Release aus Git via `_gather_commits_since_last_release()`.
 
 ### Integrationen (`src/integrations/`)
 
@@ -290,27 +322,26 @@
 - **Interner Channel:** `_send_to_internal_customer_channel()` in `notifications_mixin.py` — postet Embed + `<@&role_id> Neues Update verfuegbar!` mit `AllowedMentions(roles=True)`
 - **Setup-Script:** `scripts/setup_zerodox_channels.py` (einmalig, nutzt ShadowOps Bot-Token via Discord REST API)
 
-### Patch Notes Safety — 5-Schichten-Schutz (26.03.2026)
-- **Vorfall 18.03.2026:** Batcher-Referenz ging verloren → 1-Commit Patch Notes fuer ZERODOX v2.9.2 (KI halluzinierte Features aus Doku-Commit)
-- **Vorfall 25.03.2026:** Design-Doc Commit (733 Zeilen Referral-Spec) wurde als implementiertes Feature halluziniert → v3.0.8 enthielt "Referral-System" + "Enterprise Backup" die nicht auf main waren
-- **Schicht 1 — Commit-Klassifizierung (Pre-Generation):** `_classify_commit()` taggt jeden Commit ([FEATURE], [BUGFIX], [DESIGN-DOC], [SEO-AUTO], [DEPS-AUTO], [REVERT], [MERGE], etc.). Design-Doc-Bodies werden abgeschnitten. Merge/Auto-Commits gefiltert/gruppiert. Body-Noise (Co-Authored-By, Signed-off-by) entfernt. PR-Beschreibungen via `gh pr view` angereichert
-- **Schicht 2 — Prompt-Regeln (During Generation):** Explizite Typ-Interpretations-Regeln in allen 4 Prompt-Pfaden (DE+EN Structured, DE+EN Fallback). "[DESIGN-DOC] = GEPLANT, NICHT IMPLEMENTIERT → NIEMALS als Feature listen"
-- **Schicht 3 — Post-Generierungs-Validierung:** `_validate_ai_output()` prueft Feature-Count gegen tatsaechliche feat:-Commits, erkennt Design-Doc-Keywords in Feature-Beschreibungen und entfernt halluzinierte Features automatisch. **Smart False-Positive-Schutz:** Keywords die AUCH in feat:-Commits vorkommen werden NICHT als Halluzination behandelt (Vorfall v0.19.0: Rollen-System wurde fälschlich entfernt weil docs:+feat: das gleiche Keyword hatten)
-- **Schicht 4 — Batcher + min_commits + Cooldown:** min_commits Check NUR bei skip_batcher. Batcher Self-Healing, /release-notes Minimum. **24h Release-Cooldown:** Nach einem Release wird die Notbremse für 24h pro Projekt blockiert → max 1 automatischer Release/Tag. Cooldown persistiert in `last_releases.json`. Manuelle Releases (/release-notes) und Cron-Releases setzen den Cooldown ebenfalls
-- **Schicht 5 — Content Sanitizer:** Pfade, IPs, Ports, Secrets + `changes[].details` Array
-- **Duplikat-Guard:** Vorherige Version aus Changelog-DB als "BEREITS ABGEDECKT" Kontext
-- **Dev-Branch Teaser:** Aktive feat/* Branches mit Fortschrittsindikator + Hype-Prompt ("🔮 Demnächst")
-- **Projekt-Kontext:** `project_description` + `target_audience` in config.yaml pro Projekt
-- **Semantic Versionierung:** `_calculate_semver()` berechnet MINOR/PATCH/MAJOR aus Commit-Typen statt KI-Erfindung — **Priorität 1** in `_resolve_version`. Konsistent mit DB-History (letzte Version aus Changelog-DB). Git-Tags sind nur Fallback wenn keine DB-History vorhanden. Kollisionsschutz via `_ensure_unique_version()` bei ALLEN Quellen
-- **Team-Credits:** `TEAM_MAPPING` in ai_patch_notes_mixin.py — Git-Autoren → Display-Name + Rolle. Credits erscheinen **inline pro Change** im Discord-Embed (z.B. `→ Score Engine · Shadow`). Author-Zuordnung via Post-Processing: `_enrich_changes_with_git_authors()` matcht AI-Changes gegen echte Git-Commits per Keyword-Overlap. `author`-Feld im Schema ist optional — die AI muss es NICHT füllen, die Zuordnung kommt aus Git-Daten
-- **Discord-Teaser entfernt:** Projekte mit `changelog_url` zeigen jetzt `_build_discord_summary` mit Inline-Credits statt eines nichtssagenden AI-Teasers. Alle Pfade (discord_only + summary) haben Credits
-- **Alle 4 Trigger-Pfade gesichert:** Webhook Push, Local Polling, Woechentlicher Cron, Manueller /release-notes
-- **PR-Label Integration:** GitHub PR-Labels (16 Mappings) via `gh pr view --json labels` als zuverlaessigere Klassifizierung. Labels ueberschreiben Commit-Prefix
-- **Smart Diff-Analyse:** Dateien nach 8 Kategorien gruppiert (Frontend, Backend, DB, Config, Tests, Docs, CI/CD, Dependencies). Strukturierte Uebersicht statt roher Diff-Output
-- **Conventional Commit Hook:** `scripts/commit-msg-hook.sh` validiert Prefix + Beschreibungslaenge. Deployed auf alle 5 Projekte via `scripts/deploy-commit-hook.sh --all`
-- **Auto-Label GitHub Action:** `.github/workflows/auto-label-pr.yml` setzt Labels aus Commit-Prefixen automatisch auf PRs
-- **A/B-Varianten-Regelblock:** `_CLASSIFICATION_RULES_DE/EN` wird IMMER an den Prompt angehaengt, egal welche A/B-Variante gewaehlt wird
-- **Pipeline-Metriken:** Kompakte Log-Zeile bei jeder Generierung (Commits nach Typ, PR-Labels, Halluzinationen, Version-Source)
+### Patch Notes Pipeline v6 (seit 2026-04-13, ersetzt v5 Mixins)
+- **Redesign-Grund:** v5 hatte 5839 Zeilen, 92 Methoden, Commit-Cap bei 50 (Features gingen verloren), 5 konkurrierende Version-Quellen
+- **Architektur:** 5-Stufen State Machine in `src/patch_notes/` (~2100 Zeilen, 101 Tests)
+- **Stufen:** Collect → Classify → Generate → Validate → Distribute
+- **Config-driven Templates:** `gaming` (MayDay), `saas` (GuildScout, ZERODOX), `devops` (ShadowOps, AI-Agent)
+- **Commit-Gruppierung:** Deterministisch, ALLE Commits (kein Cap), nach Scope gruppiert, `is_player_facing` Flag
+- **Versionierung:** NUR Changelog-DB + SemVer (1 Quelle). Keine Git-Tags, keine AI-Version
+- **Self-Healing:** Leere Commits → automatisch aus Git seit letztem Release. Kein Commit geht verloren nach Restart
+- **Crash-Resilience:** Pipeline-State persistiert nach jeder Stufe (`data/pipeline_runs/`). Resume nach Restart
+- **Safety (5 Checks):** Feature-Count, Design-Doc-Leak (Smart False-Positive), Version-Strip, Content-Sanitizer, Umlaute
+- **Inline-Credits:** Keyword-Overlap Git-Commits → `→ Feature · Shadow`
+- **Discord:** Summary-Embed (mit `changelog_url`) + Full-Embed mit Kategorie-Headern (Discord-only)
+- **Concurrency:** asyncio Lock + Circuit Breaker (5 Fehler → 1h Pause)
+- **Release-Modi:** Daily (22:00, ≥15 Commits) + Weekly Fallback (Sonntag 20:00, ≥3 Commits). Commits akkumulieren
+- **Rollback:** `retract_patch_notes(project, version)`
+- **Metriken:** `METRICS|patch_notes_pipeline|{json}`
+- **Conventional Commit Hook:** `scripts/commit-msg-hook.sh` auf allen 5 Projekten deployed
+- **Auto-Label Action:** `.github/workflows/auto-label-pr.yml`
+- **Design-Doc:** `docs/plans/2026-04-13-patch-notes-v6-design.md`
+- **v5-Code:** Bleibt als Fallback (wenn v6 crasht), wird nach 3 erfolgreichen v6-Releases archiviert
 
 ### Security Engine v6 (seit 2026-03-24)
 - **Vorher:** 4 isolierte Systeme (EventWatcher, Orchestrator, Self-Healing, Analyst) mit 2 DB-Layern (psycopg2 + asyncpg)
@@ -344,44 +375,14 @@
 - **Design-Doc:** `docs/plans/2026-03-24-security-engine-v6.md`, `docs/plans/2026-03-24-security-scan-agent-design.md`
 - **Architektur-Doc:** `docs/security-engine-v6-overview.md`
 
-### Discord-only Patch Notes (seit 2026-03-27)
-- **Erkennung:** Projekte ohne `changelog_url` bekommen automatisch das Community-Format
-- **Unterschied:** Summary als Einleitung, mehr Features (6-8), Details pro Feature (2 Unterpunkte), mehr Fixes/Improvements
-- **Projekte mit `changelog_url`:** Kurzformat + "Alle Details" Web-Link (unveraendert)
-- **Betrifft:** Alle zukuenftigen Projekte ohne Web-Changelog
-
 ### MayDay Sim Changelog — Einsatzprotokoll (seit 2026-03-30)
 - **Web-Changelog:** `https://maydaysim.de/changelog` mit Detail-Seiten `/changelog/[version]`
 - **Design:** "Einsatzprotokoll"-Stil mit BOS-Farben, Notrufzentrale-HG-Bild, Timeline
-- **Architektur:** Einheitliches Pattern — ShadowOps Bot API (8766) → MayDay Next.js API-Proxy → SSR Frontend
-- **9 Gaming-Badges:** feature, content, gameplay, design, performance, multiplayer, fix, breaking, infrastructure (Schema + Template)
-- **Discord-Teaser:** `discord_teaser` Feld im gaming_community_v2 Template — Hype-Text + Cliffhanger + Link zur Website
-- **OG-Images:** Dynamisch generiert via `next/og` pro Version (BOS-Design, Version, Titel, Stats)
-- **SEO:** JSON-LD TechArticle + Breadcrumbs, dynamische Sitemap, Keywords-Tags
-- **Varianten-Sync:** `_sync_default_variants()` in prompt_ab_testing.py traegt neue Varianten automatisch nach
+- **Architektur:** ShadowOps Bot API (8766) → MayDay Next.js API-Proxy → SSR Frontend
+- **12 Gaming-Badges:** feature, content, gameplay, design, performance, multiplayer, fix, breaking, infrastructure, improvement, docs, security
+- **OG-Images:** Dynamisch generiert via `next/og` pro Version
+- **SEO:** JSON-LD TechArticle + Breadcrumbs, dynamische Sitemap
 - **CORS:** `maydaysim.de` + `www.maydaysim.de` + `localhost:3200` in health_server.py
-- **Design-Doc:** `docs/plans/2026-03-30-mayday-changelog-design.md`
-
-### Enterprise Hardening — Patch Notes Pipeline (seit 2026-04-12)
-- **State Backup:** Alle JSON-State-Dateien (`state.json`, `pending_batch.json`, `last_releases.json`) erstellen vor jedem Schreiben eine `.backup`-Kopie. Bei korrupter Primaerdatei automatischer Backup-Fallback
-- **Schema-Validierung:** `_validate_batch_structure()` prueft Batch-Daten beim Laden (dict-Typ, commits ist list, Timestamps vorhanden). StateManager prueft `isinstance(dict)` nach Load
-- **Circuit Breaker:** `src/utils/circuit_breaker.py` — leichtgewichtiger CB adaptiert vom SmartQueue-Pattern. 5 konsekutive AI-Fehler → 1h Pause (kein sinnloses Retry). In `notifications_mixin.py` vor AI-Call eingebaut
-- **asyncio.Lock:** `_patch_notes_lock` in `core.py` — serialisiert AI-Generierung + Discord-Sending. Verhindert Race Condition zwischen Webhook und Polling (Vorfall-Ursache 18.03.2026)
-- **Persistente Inflight-Commits:** `_inflight_commits` wird jetzt in `state.json` persistiert (vorher nur RAM). Ueberlebt Bot-Restart, verhindert doppelte Patch Notes nach Crash
-- **AI Retry:** `_query_with_retry()` in `ai_engine.py` — max 2 Versuche pro Engine mit exponentiellem Backoff (1s, 2s). Bestehende Quota-Detection und Fallback-Chain bleiben unangetastet
-- **Pipeline-Metriken:** Strukturiertes JSON-Log (`METRICS|patch_notes_pipeline|{...}`) pro Pipeline-Durchlauf mit Timing (`ai_generation_time_s`, `pipeline_total_time_s`), CB-Status, Commit-Klassifizierung
-- **Message-ID Tracking + Rollback:** Jede gesendete Discord-Message wird mit Channel-ID + Message-ID in `state.json` unter `patch_notes_messages` gespeichert. `retract_patch_notes(repo, version)` loescht alle zugehoerigen Messages. Max 50 Releases im State (FIFO)
-- **WICHTIG:** Keine Aenderung an Prompts, `_classify_commit()`, `_validate_ai_output()`, `_CLASSIFICATION_RULES` oder A/B-Varianten — nur additive Schutzschichten drumherum
-
-### Adaptiver Release-Mode (seit 2026-03-29, überarbeitet 2026-04-08)
-- **Alle 5 Projekte:** `release_mode: daily` mit adaptivem Threshold
-- **Aktive Projekte (≥15 Commits):** Täglicher Release um 22:00 — alle Commits gebündelt in einer Note
-- **Ruhige Projekte (<15 Commits):** Weekly Fallback Sonntag 20:00 (≥3 Commits)
-- **Weekly fängt ALLE Projekte auf** — auch daily-Projekte die unter dem Daily-Threshold geblieben sind
-- **Emergency Threshold: 100** — praktisch deaktiviert, 24h Cooldown verhindert Mehrfach-Releases
-- **Max 1 automatischer Release pro Projekt pro Tag** — Cooldown persistiert in `last_releases.json`
-- **Git-Tag-Aware:** Version wird aus Git-Tags erkannt — aber nur als Fallback wenn keine DB-basierte SemVer verfügbar
-- **gaming_community_v2:** Story-Telling Template mit konkretem Spielgefühl, → Pfeil-Format, ausführlichen Feature-Beschreibungen
 
 ### Externes Mini-Dashboard (seit 2026-03-27)
 - **Feature:** Projekte mit `external_notifications` bekommen ein eigenes Status-Embed auf ihrem Discord-Server
