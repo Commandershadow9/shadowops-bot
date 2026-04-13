@@ -1016,15 +1016,25 @@ class AIEngine:
             few_shot_examples=few_shot_examples, max_diff_chars=max_diff_chars,
         )
 
-        # Versuche zuerst Opus (thinking), Fallback auf Sonnet (standard)
+        # Modell-Wahl: Opus für Security+komplexe PRs, Sonnet für Tests+Code-Health
+        # Immer Fallback auf das jeweils andere Modell
+        diff_len = len(diff)
+        is_security = any(k in (finding_context.get("category", "") + finding_context.get("title", "")).lower()
+                         for k in ("xss", "cve", "injection", "dos", "security", "auth", "csrf"))
+        is_complex = diff_len > 3000 or is_security
+
+        primary = "thinking" if is_complex else "standard"
+        fallback = "standard" if is_complex else "thinking"
+        timeout_s = 180 if primary == "thinking" else 120
+
         raw = None
-        for model_class in ("thinking", "standard"):
+        for model_class, t in ((primary, timeout_s), (fallback, 120)):
             try:
-                raw = await self.claude.query_raw(prompt, model=model_class, timeout=300)
+                raw = await self.claude.query_raw(prompt, model=model_class, timeout=t)
                 if raw:
-                    logger.info(f"[jules] Claude-Response erhalten (model={model_class})")
+                    logger.info(f"[jules] Claude-Response erhalten (model={model_class}, {len(raw)} chars)")
                     break
-                logger.warning(f"[jules] Claude empty response (model={model_class}), versuche Fallback")
+                logger.warning(f"[jules] Claude empty response (model={model_class}), Fallback")
             except Exception as e:
                 logger.warning(f"[jules] Claude-Call failed (model={model_class}): {e}")
 

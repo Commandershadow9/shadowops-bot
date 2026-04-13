@@ -52,7 +52,17 @@ def build_review_comment_body(
         parts.append("_Keine Anmerkungen._")
         parts.append("")
 
-    parts.extend(["", scope_line, "", "---",
+    parts.extend(["", scope_line])
+
+    # Bei Revision: Jules explizit ansprechen damit er iteriert
+    if verdict != "approved" and blockers:
+        parts.append("")
+        parts.append("---")
+        parts.append("")
+        parts.append("@google-labs-jules Bitte arbeite die oben genannten **Blocker** ein. "
+                      "Suggestions und Nits sind optional.")
+
+    parts.extend(["", "---",
         f"*ShadowOps SecOps Workflow · PR #{pr_number} · Finding #{finding_id}*"])
     return "\n".join(parts)
 

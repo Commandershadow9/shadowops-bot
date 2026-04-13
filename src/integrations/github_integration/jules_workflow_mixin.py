@@ -226,6 +226,12 @@ class JulesWorkflowMixin:
             await self.jules_state.store_review_result(
                 row.id, review, review.get("blockers", []), tokens=0)
 
+            # Discord-Embed senden (egal ob approved oder revision)
+            await self._jules_discord_review_embed(
+                repo=repo, pr_number=pr_number, review=review,
+                iteration=iteration, owner=owner,
+            )
+
             if review["verdict"] == "approved":
                 await self._jules_apply_approval(owner, repo, pr_number, row)
                 await self.jules_state.release_lock(row.id, "approved")
@@ -294,11 +300,34 @@ class JulesWorkflowMixin:
         """Setzt claude-approved Label und sendet Discord-Nachricht."""
         repo_slug = f"{owner}/{repo}"
         try:
+            # Label per REST API setzen (gh pr edit hat GraphQL-Bug bei manchen Repos)
             proc = await asyncio.create_subprocess_exec(
-                "gh", "pr", "edit", str(pr_number), "--repo", repo_slug,
-                "--add-label", "claude-approved",
+                "gh", "api", f"repos/{repo_slug}/issues/{pr_number}/labels",
+                "--method", "POST", "-f", "labels[]=claude-approved",
                 stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.PIPE)
-            await asyncio.wait_for(proc.communicate(), timeout=30)
+            stdout, stderr = await asyncio.wait_for(proc.communicate(), timeout=15)
+            if proc.returncode != 0:
+                err = stderr.decode()[:200]
+                if "not found" in err.lower() or "404" in err:
+                    # Label existiert nicht — erstellen
+                    await asyncio.create_subprocess_exec(
+                        "gh", "api", f"repos/{repo_slug}/labels",
+                        "--method", "POST",
+                        "-f", "name=claude-approved",
+                        "-f", "color=0e8a16",
+                        "-f", "description=Approved by Claude Security Review",
+                        stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.PIPE)
+                    # Retry
+                    proc2 = await asyncio.create_subprocess_exec(
+                        "gh", "api", f"repos/{repo_slug}/issues/{pr_number}/labels",
+                        "--method", "POST", "-f", "labels[]=claude-approved",
+                        stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.PIPE)
+                    await asyncio.wait_for(proc2.communicate(), timeout=15)
+                    logger.info(f"[jules] Label claude-approved erstellt und gesetzt auf PR #{pr_number}")
+                else:
+                    logger.warning(f"[jules] Label-Fehler: {err}")
+            else:
+                logger.info(f"[jules] Label claude-approved gesetzt auf PR #{pr_number}")
         except Exception:
             logger.exception("[jules] label add failed")
         cfg = self.config.jules_workflow
@@ -334,3 +363,46 @@ class JulesWorkflowMixin:
                 await self.bot.discord_logger._send_to_channel(cfg.notification_channel, msg)
         except Exception:
             logger.exception("[jules] discord notify failed")
+
+    async def _jules_discord_review_embed(
+        self, *, repo: str, pr_number: int, review: Dict, iteration: int, owner: str
+    ) -> None:
+        """Sendet ein sauberes Discord-Embed für ein Review-Ergebnis."""
+        try:
+            import discord
+            cfg = self.config.jules_workflow
+            dl = getattr(self.bot, "discord_logger", None)
+            if not dl:
+                return
+
+            verdict = review.get("verdict", "unknown")
+            blockers = len(review.get("blockers", []))
+            suggestions = len(review.get("suggestions", []))
+            nits = len(review.get("nits", []))
+            summary = review.get("summary", "")[:200]
+            pr_url = f"https://github.com/{owner}/{repo}/pull/{pr_number}"
+
+            if verdict == "approved":
+                color = 0x0E8A16  # grün
+                title = f"✅ Jules PR #{pr_number} — APPROVED"
+            else:
+                color = 0xE74C3C  # rot
+                title = f"🔴 Jules PR #{pr_number} — REVISION ({blockers} Blocker)"
+
+            embed = discord.Embed(title=title, url=pr_url, color=color)
+            embed.add_field(name="Repo", value=f"`{repo}`", inline=True)
+            embed.add_field(name="Iteration", value=f"{iteration}/{cfg.max_iterations}", inline=True)
+            embed.add_field(name="Findings", value=f"🔴 {blockers} · 🟡 {suggestions} · ⚪ {nits}", inline=True)
+            if summary:
+                embed.add_field(name="Summary", value=summary, inline=False)
+            embed.set_footer(text="ShadowOps SecOps · Jules Workflow")
+
+            channel_name = cfg.notification_channel
+            await dl._send_to_channel(channel_name, embed=embed)
+        except Exception:
+            logger.exception("[jules] discord review embed failed")
+            # Fallback auf Text
+            await self._jules_discord_notify(
+                f"{'✅' if review.get('verdict')=='approved' else '🔴'} Jules PR #{pr_number} "
+                f"({repo}): {review.get('verdict','?')} — {blockers} Blocker"
+            )
