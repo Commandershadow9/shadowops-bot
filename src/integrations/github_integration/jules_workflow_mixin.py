@@ -398,7 +398,8 @@ class JulesWorkflowMixin:
             embed.set_footer(text="ShadowOps SecOps · Jules Workflow")
 
             channel_name = cfg.notification_channel
-            await dl._send_to_channel(channel_name, embed=embed)
+            # _send_to_channel braucht message als Positional-Arg
+            await dl._send_to_channel(channel_name, message="", embed=embed)
         except Exception:
             logger.exception("[jules] discord review embed failed")
             # Fallback auf Text
