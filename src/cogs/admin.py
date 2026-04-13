@@ -198,7 +198,39 @@ class AdminCog(commands.Cog):
                 )
                 return
 
-            # Pending Commits prüfen
+            # ── v6: Direkt aus Git, kein Batcher nötig ──
+            pn_config = project_config.get('patch_notes', {})
+            if pn_config.get('engine') == 'v6':
+                status_msg = await interaction.followup.send(
+                    f"⏳ **v6 Pipeline** für **{project_key}** gestartet...\n"
+                    f"Sammle Commits seit letztem Release aus Git..."
+                )
+
+                try:
+                    from patch_notes import generate_release
+                    ctx = await generate_release(
+                        project=project_key,
+                        project_config=project_config,
+                        bot=self.bot,
+                        trigger='manual',
+                    )
+                    commit_count = len(ctx.enriched_commits or ctx.raw_commits)
+                    await status_msg.edit(
+                        content=(
+                            f"✅ **v{ctx.version}** für **{project_key}** veröffentlicht!\n"
+                            f"{commit_count} Commits · {len(ctx.groups)} Gruppen · "
+                            f"{ctx.update_size.upper()}\n"
+                            f"Patch Notes im Update-Channel gepostet."
+                        )
+                    )
+                except Exception as e:
+                    self.logger.error(f"❌ v6 Pipeline fehlgeschlagen: {e}", exc_info=True)
+                    await status_msg.edit(
+                        content=f"❌ v6 Pipeline fehlgeschlagen:\n```{str(e)[:500]}```"
+                    )
+                return
+
+            # ── v5 Fallback: Batcher-basiert ──
             if not batcher.has_pending(project_key):
                 await interaction.followup.send(
                     f"📭 Keine gesammelten Commits für **{project_key}**.",
@@ -211,7 +243,6 @@ class AdminCog(commands.Cog):
             count = info.get('count', 0)
             first = info.get('first_added', '')[:10]
 
-            # Minimum-Check: Mindestens 2 Commits für sinnvolle Patch Notes
             min_commits = max(2, getattr(batcher, 'cron_min_commits', 3))
             if count < min_commits:
                 await interaction.followup.send(
@@ -222,7 +253,6 @@ class AdminCog(commands.Cog):
                 )
                 return
 
-            # Release durchführen
             commits = batcher.release_batch(project_key)
             if not commits:
                 await interaction.followup.send("❌ Release fehlgeschlagen", ephemeral=True)
@@ -233,14 +263,12 @@ class AdminCog(commands.Cog):
                 f"von {interaction.user}"
             )
 
-            # Status-Nachricht senden
             status_msg = await interaction.followup.send(
                 f"⏳ **{len(commits)} Commits** für **{project_key}** released\n"
                 f"Gesammelt seit: {first}\n"
                 f"KI generiert Patch Notes..."
             )
 
-            # Patch Notes generieren
             if gh:
                 repo_url = (
                     project_config.get('repo_url')
@@ -258,7 +286,6 @@ class AdminCog(commands.Cog):
                         commits=commits,
                         skip_batcher=True,
                     )
-                    # Erfolg — Status-Nachricht aktualisieren
                     await status_msg.edit(
                         content=(
                             f"✅ **{len(commits)} Commits** für **{project_key}** veröffentlicht!\n"
