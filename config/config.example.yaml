@@ -324,8 +324,12 @@ projects:
     update_channel_id: 0  # Discord Channel-ID fuer Patch Notes + Feedback-Buttons
 
     patch_notes:
+      engine: "v6"                    # "v6" (State Machine) oder "v5" (Legacy Mixins)
+      type: "devops"                  # "gaming" | "saas" | "devops" — bestimmt Template
       language: "de"
       use_ai: true
+      target_audience: "Entwickler und Admins"
+      project_description: "Security Monitoring & Patch Notes Bot"
 
 # ╔═══════════════════════════════════════════════════════════════════════════╗
 # ║ ALERTS & NOTIFICATIONS                                                    ║
