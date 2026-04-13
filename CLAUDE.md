@@ -418,3 +418,12 @@ Eigenstaendiges Package mit 5-Stufen State Machine. Ersetzt die alten Mixins (`a
   - `bd2038f` — PR-Erkennung via Body-Marker statt nur Label/Author (Jules postet unter User-Account)
 - **Jules CLI:** `@google/jules` (v0.1.42) auf Server installiert. Login via `jules login` (Google OAuth). Status: `jules remote list --session`
 - **17 Jules-PRs auf ZERODOX gemerged (2026-04-13):** Security (#134, #135, #148), Code Health (#138-#147), Testing (#137, #139, #140), Performance (#151), SEO (#152, #153) — alle via Claude-Review approved
+- **Jules API Integration (2026-04-13):** API-Key in config.yaml (`jules_workflow.api_key`). Endpoint: `https://jules.googleapis.com/v1alpha`. Tools: `POST /sessions` (create), `GET /sessions/{id}` (status). Sessions via API gestartet (3 Tests) → Jules öffnet PRs automatisch → Bot reviewt mit Claude → Label-Set → Jules iteriert bei Revision
+- **Post-Go-Live Fixes (2026-04-14):** 5 weitere Fixes nach erstem echten Workflow-Test:
+  - Discord-Logger `send_to_channel` → `_send_to_channel` (privat mit Underscore)
+  - Claude Opus hing bei 3 parallelen Calls — Fallback auf Sonnet implementiert (`review_pr` versucht Primary + Fallback)
+  - Intelligente Modell-Wahl: Opus bei Security-Keywords (xss/cve/injection/dos/auth/csrf) oder Diff > 3000 chars, sonst Sonnet
+  - Robuster JSON-Parser: Extrahiert JSON-Block auch bei Extra-Text vor/nach dem Objekt
+  - Label via REST API `POST /repos/{}/issues/{}/labels` (gh pr edit hat GraphQL-Bug bei ZERODOX wegen Projects-Classic-Deprecation) + Auto-Create Label wenn fehlt
+  - `@google-labs-jules` Mention im Revision-Comment damit Jules automatisch iteriert
+  - Discord-Review-Embed statt Text-Nachrichten (Farbe grün/rot, Findings-Counter, PR-Link, Iteration)

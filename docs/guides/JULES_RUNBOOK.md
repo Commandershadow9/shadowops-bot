@@ -171,3 +171,101 @@ Bot-Restart noetig fuer Config-Reload.
 | `max_hours_per_pr` | Wenn Jules komplexe PRs braucht die laenger dauern |
 | `circuit_breaker.max_reviews_per_hour` | NIE erhoehen ohne Incident-Analyse! |
 | `excluded_projects` | Wenn ein Projekt keine Jules-Fixes bekommen soll |
+| `api_key` | Jules API-Key (fuer programmatischen Zugriff via REST API) |
+
+---
+
+## Jules API Integration
+
+### API-Key konfigurieren
+
+```yaml
+# config/config.yaml (NICHT in Git!)
+jules_workflow:
+  api_key: "AQ.xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx"
+```
+
+### Session programmatisch starten
+
+```bash
+curl -X POST -H "X-Goog-Api-Key: $KEY" \
+  -H "Content-Type: application/json" \
+  https://jules.googleapis.com/v1alpha/sessions \
+  -d '{
+    "title": "Task Title",
+    "prompt": "Detaillierte Task-Beschreibung...",
+    "sourceContext": {
+      "source": "sources/github/Commandershadow9/REPO",
+      "githubRepoContext": {"startingBranch": "main"}
+    },
+    "automationMode": "AUTO_CREATE_PR"
+  }'
+```
+
+### Session-Status abfragen
+
+```bash
+curl -H "X-Goog-Api-Key: $KEY" \
+  https://jules.googleapis.com/v1alpha/sessions/{SESSION_ID}
+```
+
+### Jules CLI Alternative
+
+```bash
+jules login --no-launch-browser   # Einmalig auf Server
+jules remote list --session       # Alle Sessions anzeigen
+jules remote new --repo OWNER/REPO --session "Task-Beschreibung"
+```
+
+---
+
+## Intelligente Modell-Wahl
+
+Der Bot wählt automatisch Opus oder Sonnet basierend auf PR-Charakteristik:
+
+| Kriterium | Modell | Timeout |
+|-----------|--------|---------|
+| Security-Keywords (xss/cve/injection/dos/auth/csrf) | **Opus (thinking)** | 180s |
+| Diff > 3000 chars | **Opus (thinking)** | 180s |
+| Alles andere (Tests, Code-Health, SEO) | **Sonnet (standard)** | 120s |
+
+**Fallback:** Wenn Primary-Modell fehlschlägt (Timeout oder leere Response), wird automatisch das andere Modell versucht. Erst wenn beide versagen: Escalation.
+
+---
+
+## Bekannte Probleme + Workarounds
+
+### Claude Opus hängt (>10min Laufzeit)
+
+**Symptom:** Opus-Prozess läuft, aber produziert keinen Output.
+
+**Ursache:** Claude CLI puffert Output und wird bei schwachen VPS-Ressourcen nicht fertig.
+
+**Workaround:** Fallback auf Sonnet (automatisch). Bei Bedarf manuell killen:
+```bash
+ps aux | grep claude | awk '{print $2}' | xargs kill -9
+```
+
+### JSON-Parse-Fehler "Extra data"
+
+**Symptom:** `[jules] JSON parse failed: Extra data: line X column 1`
+
+**Ursache:** Claude fügt Text nach dem JSON-Object ein.
+
+**Fix:** Robuster Parser in `ai_engine.review_pr()` extrahiert `{...}`-Block per Klammer-Matching. Falls weiterhin Fehler: Prompt-Template anpassen, strikter "NUR JSON ausgeben".
+
+### Label `claude-approved` wird nicht gesetzt
+
+**Symptom:** Review approved aber kein Label auf PR.
+
+**Ursache:** `gh pr edit --add-label` scheitert an GraphQL-Bug bei Repos mit deprecated Projects-Classic.
+
+**Fix:** Mixin nutzt REST API `POST /repos/{}/issues/{}/labels` statt GraphQL. Auto-Create wenn Label im Repo fehlt.
+
+### Jules reagiert nicht auf Revision-Comment
+
+**Symptom:** Bot postet Revision mit Blockers, Jules macht nichts.
+
+**Ursache:** Jules arbeitet nur auf explizite `@google-labs-jules` Mention.
+
+**Fix:** Bot fügt automatisch `@google-labs-jules Bitte arbeite die Blocker ein` am Ende jedes Revision-Comments an.

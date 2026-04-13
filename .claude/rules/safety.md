@@ -100,3 +100,11 @@ Bei Aenderungen an Shared-Services (Redis, PostgreSQL, Traefik) MUESSEN alle Kon
 - **max_iterations: 5 und max_hours_per_pr: 2 sind harte Limits** — bei Änderung Design-Doc Anhang A reviewen
 - **Circuit-Breaker 20/h pro Repo NIE erhöhen** ohne Incident-Analyse
 - **Bei Jules-Workflow-Änderungen IMMER `test_jules_pr123_regression.py` laufen lassen**
+- **Claude-Opus Timeout-Verhalten:** Opus CLI hängt manchmal (Prozesse leben >10min, asyncio.wait_for greift NICHT auf subprocess stdin). Fallback auf Sonnet ist Pflicht — `review_pr` muss immer beide Modelle durchprobieren
+- **Intelligente Modell-Wahl (`ai_engine.review_pr`):** Opus bei Security-Keywords ODER Diff > 3000. NICHT blind Opus für alles — Sonnet reicht für Logger-Swaps/Tests und ist schneller
+- **JSON-Parser-Fix:** Claude fügt manchmal Text vor/nach dem JSON ein. `review_pr` muss `{...}`-Block per Klammer-Matching extrahieren, nicht nur `json.loads(raw)`
+- **Label-Setzung via REST API** — `gh pr edit --add-label` hat GraphQL-Bug bei Repos mit deprecated Projects-Classic (z.B. ZERODOX). Stattdessen: `gh api repos/{}/issues/{}/labels POST`
+- **Label Auto-Create:** Wenn `claude-approved` im Ziel-Repo fehlt, muss der Bot es via `gh api repos/{}/labels POST` anlegen
+- **Jules-Iteration:** Revision-Comments brauchen `@google-labs-jules` Mention damit Jules den Blocker fixt — ohne Mention arbeitet Jules nicht automatisch weiter
+- **Discord-Logger-API:** `_send_to_channel(channel_key, message, embed=None)` — `message` ist Positional-Arg, bei Embed-only als `message=""` übergeben
+- **Jules API Integration:** API-Key aus `config.yaml` (`jules_workflow.api_key`). NIEMALS in Git committen. Format: `sourceContext.source = "sources/github/{owner}/{repo}"` + `sourceContext.githubRepoContext.startingBranch = "main"`

@@ -526,6 +526,37 @@ Siehe `config/config.example.yaml` → `jules_workflow:` Block.
 | `max_hours_per_pr` | `2` | Timeout pro PR |
 | `circuit_breaker.max_reviews_per_hour` | `20` | Globaler Breaker pro Repo |
 | `token_cap_per_pr` | `50000` | Max Token-Kosten pro PR |
+| `api_key` | `""` | Jules API-Key fuer programmatischen Zugriff (optional) |
+
+### Jules REST API Integration
+
+**Base-URL:** `https://jules.googleapis.com/v1alpha`
+**Auth:** Header `X-Goog-Api-Key: <key>`
+**API-Key erstellen:** https://jules.google.com/settings
+
+**Endpoints:**
+| Methode | Pfad | Zweck |
+|---------|------|-------|
+| `GET`  | `/sources` | Liste verbundener GitHub-Repos |
+| `POST` | `/sessions` | Neue Task-Session erstellen |
+| `GET`  | `/sessions?pageSize=N` | Sessions auflisten |
+| `GET`  | `/sessions/{id}` | Session-Details + State |
+| `POST` | `/sessions/{id}:approvePlan` | Plan genehmigen (wenn requirePlanApproval=true) |
+| `POST` | `/sessions/{id}:sendMessage` | Nachricht an laufende Session |
+
+**States:** `IN_PROGRESS`, `COMPLETED`, `FAILED`
+
+### Intelligente Modell-Wahl
+
+Der Bot waehlt automatisch Opus oder Sonnet basierend auf PR-Charakteristik:
+
+| Kriterium | Modell | Timeout |
+|-----------|--------|---------|
+| Security-Keywords (xss/cve/injection/dos/auth/csrf) | **Opus (thinking)** | 180s |
+| Diff > 3000 Zeichen | **Opus (thinking)** | 180s |
+| Alles andere | **Sonnet (standard)** | 120s |
+
+Fallback auf das jeweils andere Modell bei Timeout oder leerer Response.
 
 ### Datenbank-Tabellen
 
