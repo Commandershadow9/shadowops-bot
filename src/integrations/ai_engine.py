@@ -1016,14 +1016,20 @@ class AIEngine:
             few_shot_examples=few_shot_examples, max_diff_chars=max_diff_chars,
         )
 
-        try:
-            raw = await self.claude.query_raw(prompt, model="thinking", timeout=300)
-        except Exception as e:
-            logger.error(f"[jules] Claude-Call failed: {e}")
-            return None
+        # Versuche zuerst Opus (thinking), Fallback auf Sonnet (standard)
+        raw = None
+        for model_class in ("thinking", "standard"):
+            try:
+                raw = await self.claude.query_raw(prompt, model=model_class, timeout=300)
+                if raw:
+                    logger.info(f"[jules] Claude-Response erhalten (model={model_class})")
+                    break
+                logger.warning(f"[jules] Claude empty response (model={model_class}), versuche Fallback")
+            except Exception as e:
+                logger.warning(f"[jules] Claude-Call failed (model={model_class}): {e}")
 
         if not raw:
-            logger.error("[jules] Claude returned empty response")
+            logger.error("[jules] Claude-Call komplett fehlgeschlagen (beide Modelle)")
             return None
 
         clean = raw.strip()

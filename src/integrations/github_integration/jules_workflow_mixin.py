@@ -322,7 +322,7 @@ class JulesWorkflowMixin:
         try:
             cfg = self.config.jules_workflow
             if hasattr(self.bot, "discord_logger") and self.bot.discord_logger:
-                await self.bot.discord_logger.send_to_channel(cfg.escalation_channel, msg)
+                await self.bot.discord_logger._send_to_channel(cfg.escalation_channel, msg)
         except Exception:
             logger.exception("[jules] discord alarm failed")
 
@@ -331,6 +331,6 @@ class JulesWorkflowMixin:
         try:
             cfg = self.config.jules_workflow
             if hasattr(self.bot, "discord_logger") and self.bot.discord_logger:
-                await self.bot.discord_logger.send_to_channel(cfg.notification_channel, msg)
+                await self.bot.discord_logger._send_to_channel(cfg.notification_channel, msg)
         except Exception:
             logger.exception("[jules] discord notify failed")
