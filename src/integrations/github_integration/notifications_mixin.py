@@ -512,6 +512,21 @@ class NotificationsMixin:
             self.logger.debug(f"Git-Tag-Suche fehlgeschlagen: {e}")
             return None
 
+    def _strip_version_from_title(self, title: str) -> str:
+        """Entferne JEDE SemVer-Version aus einem Titel (generisch).
+
+        Fängt AI-erfundene Versionen ab, egal ob sie mit der berechneten
+        Version übereinstimmen oder nicht. Beispiele:
+          "v0.21.0 - Content Update"  → "Content Update"
+          "v1.2.3: Neues Feature"     → "Neues Feature"
+          "Content Update"            → "Content Update" (unverändert)
+        """
+        title = re.sub(
+            r'(?:GuildScout|ZERODOX|ShadowOps|mayday_sim)?\s*v?\d+\.\d+\.\d+[:\s\u2014-]*',
+            '', title, flags=re.IGNORECASE
+        ).strip(' :\u2014-')
+        return title if title else 'Update'
+
     def _resolve_title(self, ai_result, version: str) -> str:
         """Titel aus AI oder Fallback. Doppelte Version entfernen."""
         title = 'Update'
@@ -523,14 +538,8 @@ class NotificationsMixin:
             if first and len(first) < 100 and not first.startswith('**'):
                 title = first
 
-        # Version aus Titel entfernen (Dopplung vermeiden)
-        if version:
-            title = re.sub(
-                rf'(?:GuildScout|ZERODOX|ShadowOps)?\s*v?{re.escape(version)}[:\s\u2014-]*',
-                '', title, flags=re.IGNORECASE
-            ).strip(' :\u2014-')
-        if not title:
-            title = 'Update'
+        # Version aus Titel entfernen (generisch — fängt auch AI-erfundene Versionen)
+        title = self._strip_version_from_title(title)
         return title
 
     def _build_discord_summary(self, ai_result, commits: list, language: str,
@@ -930,6 +939,9 @@ class NotificationsMixin:
         """Extrahiere Titel, TL;DR, Content, Changes, SEO aus jedem AI-Ergebnis."""
         if isinstance(ai_result, dict):
             title = ai_result.get('title', f'{repo_name} Update')
+            # AI-erfundene Version aus Titel entfernen — die korrekte Version
+            # wird separat gespeichert und vom Template eingefügt
+            title = self._strip_version_from_title(title)
             tldr = ai_result.get('tldr', '')
             content = ai_result.get('web_content', ai_result.get('summary', ''))
             changes = ai_result.get('changes', [])
