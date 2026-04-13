@@ -1378,14 +1378,53 @@ class ShadowOpsBot(commands.Bot):
             if now.weekday() != target_day or now.hour != batcher.cron_hour:
                 return
 
+            # ── v6 Projekte: Direkt aus Git ──
+            released_v6 = set()
+            for project_name, project_config in self.config.projects.items():
+                if not isinstance(project_config, dict):
+                    continue
+                pn_config = project_config.get('patch_notes', {})
+                if pn_config.get('engine') != 'v6':
+                    continue
+                cron_min = pn_config.get('cron_min_commits', 3)
+                project_path = project_config.get('path', '')
+                try:
+                    from patch_notes.stages.collect import _gather_commits_since_last_release
+
+                    # Commit-Count prüfen BEVOR AI-Call
+                    preview_commits = _gather_commits_since_last_release(
+                        project_name, project_path, project_config
+                    )
+                    if len(preview_commits) < cron_min:
+                        self.logger.debug(f"📅 Weekly {project_name}: {len(preview_commits)} < {cron_min} — skip")
+                        continue
+
+                    from patch_notes import generate_release
+                    ctx = await generate_release(
+                        project=project_name,
+                        project_config=project_config,
+                        bot=self,
+                        trigger='cron',
+                        commits=preview_commits,
+                    )
+                    self.logger.info(
+                        f"📅 [v6] Wöchentlicher Release: {project_name} v{ctx.version} ({len(preview_commits)} Commits)"
+                    )
+                    released_v6.add(project_name)
+                except Exception as e:
+                    self.logger.error(f"❌ [v6] Weekly Release {project_name}: {e}", exc_info=True)
+
+            # ── v5 Projekte: Batcher-basiert ──
             releasable = batcher.get_cron_releasable_projects()
-            # Weekly fängt ALLE Projekte mit genug Commits auf — auch daily-Projekte
-            # die unter dem daily_min_commits Threshold geblieben sind
-            if not releasable:
+            # v6-Projekte rausfiltern (schon oben behandelt)
+            releasable = [p for p in releasable if p not in released_v6]
+
+            if not releasable and not released_v6:
                 self.logger.info("📅 Wöchentlicher Patch-Notes-Check: Keine Projekte mit genug Commits")
                 return
 
-            self.logger.info(f"📅 Wöchentlicher Patch-Notes-Release: {len(releasable)} Projekt(e)")
+            if releasable:
+                self.logger.info(f"📅 Wöchentlicher Patch-Notes-Release (v5): {len(releasable)} Projekt(e)")
 
             for project_name in releasable:
                 try:
@@ -1397,7 +1436,6 @@ class ShadowOpsBot(commands.Bot):
                         f"🚀 Wöchentlicher Release: {project_name} ({len(commits)} Commits)"
                     )
 
-                    # Projekt-Config holen
                     project_config = {}
                     for key, cfg in self.config.projects.items():
                         if key.lower() == project_name.lower():
@@ -1469,7 +1507,39 @@ class ShadowOpsBot(commands.Bot):
                 if now.hour != daily_hour:
                     continue
 
-                # Batcher-Methode nutzen fuer Min-Commits-Check
+                # ── v6: Direkt aus Git, kein Batcher ──
+                if pn_config.get('engine') == 'v6':
+                    try:
+                        from patch_notes.stages.collect import _gather_commits_since_last_release
+                        daily_min = pn_config.get('daily_min_commits', 15)
+                        project_path = project_config.get('path', '')
+
+                        # Erst Commit-Count prüfen BEVOR AI-Call (spart Kosten)
+                        preview_commits = _gather_commits_since_last_release(
+                            project_name, project_path, project_config
+                        )
+                        if len(preview_commits) < daily_min:
+                            self.logger.info(
+                                f"📅 Daily {project_name}: {len(preview_commits)} Commits < {daily_min} Minimum — übersprungen (Weekly fängt auf)"
+                            )
+                            continue
+
+                        from patch_notes import generate_release
+                        ctx = await generate_release(
+                            project=project_name,
+                            project_config=project_config,
+                            bot=self,
+                            trigger='cron',
+                            commits=preview_commits,
+                        )
+                        self.logger.info(
+                            f"📅 [v6] Täglicher Release: {project_name} v{ctx.version} ({len(preview_commits)} Commits)"
+                        )
+                    except Exception as e:
+                        self.logger.error(f"❌ [v6] Daily Release {project_name}: {e}", exc_info=True)
+                    continue
+
+                # ── v5: Batcher-basiert ──
                 daily_min = pn_config.get('daily_min_commits', 3)
                 releasable = batcher.get_daily_releasable_projects(daily_min_commits=daily_min)
                 if project_name not in releasable:
