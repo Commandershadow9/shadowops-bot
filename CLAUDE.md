@@ -57,6 +57,8 @@
 | `github_integration/jules_gates.py` | Pure Loop-Schutz-Gates (Trigger-Whitelist, Cooldown, Cap, Circuit-Breaker) |
 | `github_integration/jules_comment.py` | PR-Comment-Body-Builder + Self-Filter-Marker |
 | `github_integration/jules_batch.py` | Nightly Outcome-Klassifizierung + jules_review_examples Update |
+| `github_integration/jules_state_schema.sql` | DDL fuer security_analyst.jules_pr_reviews + jules_daily_stats View |
+| `github_integration/jules_learning_schema.sql` | DDL fuer agent_learning.jules_review_examples |
 
 #### Einzelne Module
 | Datei | Zweck |
@@ -126,6 +128,7 @@
 | `incident_analysis.json` | Incident-Analyse (Self-Healing) |
 | `patch_notes.json` | AI-generierte Patch Notes (v3: + seo_keywords, seo_category) |
 | `analyst_session.json` | Security Analyst Session Output (+ areas_checked, finding_assessments) |
+| `jules_review.json` | Claude PR-Review Output (verdict, blockers, suggestions, nits, scope_check) |
 
 ### Konfiguration
 | Datei | Zweck |
@@ -407,3 +410,10 @@
 - **Rollback:** Config-Flag `jules_workflow.enabled: false` → ~30s
 - **Design-Doc:** `docs/plans/2026-04-11-jules-secops-workflow-design.md`
 - **Vorfall-Referenz:** PR #123 (ZERODOX) — 31 Kommentare Loop; siehe Design-Doc Anhang A
+- **Post-Deploy-Fixes (2026-04-12):** 4 kritische Fixes nach Go-Live:
+  - `e5d3e5c` — `self.logger` → `logger` in `AIEngine.review_pr()` (falscher Logger-Scope)
+  - `c121ee5` — `from src.` Import-Fehler in 6 Dateien (ModuleNotFoundError im systemd-Kontext)
+  - `3171d88` — Redis-Auth URL mit Passwort aus Config laden (Circuit-Breaker brauchte Auth)
+  - `bd2038f` — PR-Erkennung via Body-Marker statt nur Label/Author (Jules postet unter User-Account)
+- **Jules CLI:** `@google/jules` (v0.1.42) auf Server installiert. Login via `jules login` (Google OAuth). Status: `jules remote list --session`
+- **17 Jules-PRs auf ZERODOX gemerged (2026-04-13):** Security (#134, #135, #148), Code Health (#138-#147), Testing (#137, #139, #140), Performance (#151), SEO (#152, #153) — alle via Claude-Review approved
