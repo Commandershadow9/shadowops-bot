@@ -23,6 +23,9 @@ async def generate(ctx: PipelineContext, bot=None) -> None:
     template_type = ctx.project_config.get('patch_notes', {}).get('type', 'devops')
     template = get_template(template_type)
 
+    # 0. A/B-Variante auswählen (wenn verfügbar)
+    ctx.variant_id = await _select_variant(ctx, bot)
+
     # 1. Prompt bauen
     prompt = template.build_prompt(ctx)
 
@@ -32,7 +35,10 @@ async def generate(ctx: PipelineContext, bot=None) -> None:
         prompt += f"\n\n{teasers}"
 
     ctx.prompt = prompt
-    logger.info(f"[v6] {ctx.project}: Prompt gebaut ({len(prompt)} Zeichen, Template: {template_type})")
+    logger.info(
+        f"[v6] {ctx.project}: Prompt gebaut ({len(prompt)} Zeichen, "
+        f"Template: {template_type}, Variante: {ctx.variant_id or 'default'})"
+    )
 
     # 2. AI-Call
     start = time.monotonic()
@@ -53,6 +59,47 @@ async def generate(ctx: PipelineContext, bot=None) -> None:
         f"[v6] {ctx.project}: AI-Generierung in {ctx.generation_time_s}s "
         f"(Engine: {ctx.ai_engine_used or 'none'})"
     )
+
+
+async def _select_variant(ctx: PipelineContext, bot) -> str:
+    """Wähle A/B-Variante: Config-Pin → Learning-DB → Random."""
+    if bot is None:
+        return ""
+    github = getattr(bot, 'github_integration', None)
+    if not github:
+        return ""
+
+    ab = getattr(github, 'prompt_ab_testing', None)
+    if not ab:
+        return ""
+
+    pc = ctx.project_config.get('patch_notes', {})
+
+    # 1. Config-Pin hat Vorrang
+    pinned = pc.get('preferred_variant', '')
+    if pinned and pinned in ab.variants:
+        logger.info(f"📌 Config: Gepinnte Variante '{pinned}'")
+        return pinned
+
+    # 2. Learning-DB (beste Variante nach Feedback)
+    learning = getattr(github, 'patch_notes_learning', None)
+    if learning:
+        try:
+            best = await learning.get_best_variant(ctx.project)
+            if best and best in ab.variants:
+                logger.info(f"🧪 Learning-DB: Beste Variante '{best}' für {ctx.project}")
+                return best
+        except Exception as e:
+            logger.debug(f"Learning-DB Varianten-Abfrage fehlgeschlagen: {e}")
+
+    # 3. Weighted Random
+    try:
+        variant = ab.select_variant(ctx.project, strategy='weighted_random')
+        logger.info(f"🧪 A/B Test: Variante '{variant.name}' (ID: {variant.id})")
+        return variant.id
+    except Exception as e:
+        logger.debug(f"A/B-Varianten-Auswahl fehlgeschlagen: {e}")
+        return ""
 
 
 def _get_ai_service(bot):
@@ -156,30 +203,84 @@ def _try_parse_json(text: str) -> dict | None:
 
 
 def _collect_feature_teasers(ctx: PipelineContext) -> str:
-    """Sammle aktive Feature-Branches für 'Demnächst'-Sektion."""
+    """Sammle aktive Feature-Branches mit Fortschritt für 'Demnächst'-Sektion."""
     project_path = ctx.project_config.get('path', '')
     if not project_path:
         return ""
 
     deploy_branch = ctx.project_config.get('deploy', {}).get('branch', 'main')
+    min_commits = 5  # Nur Branches mit genug Substanz
 
     try:
         result = subprocess.run(
-            ['git', 'branch', '-r', '--list', 'origin/feat/*'],
+            ['git', 'branch', '-r', '--list', 'origin/feat/*', 'origin/fix/*'],
             capture_output=True, text=True, timeout=5, cwd=project_path,
         )
         if result.returncode != 0 or not result.stdout.strip():
             return ""
 
-        branches = [b.strip() for b in result.stdout.strip().split('\n') if b.strip()]
+        branches = [b.strip() for b in result.stdout.strip().split('\n')
+                     if b.strip() and '->' not in b]
         if not branches:
             return ""
 
-        lines = ["# Aktive Feature-Branches (für 'Demnächst'-Sektion)"]
-        for branch in branches[:5]:
-            name = branch.replace('origin/feat/', '').replace('-', ' ').title()
-            lines.append(f"- {name} (in Entwicklung)")
+        teasers = []
+        for branch in branches[:8]:
+            # Commits ahead of deploy branch zählen
+            count_r = subprocess.run(
+                ['git', 'rev-list', '--count', f'origin/{deploy_branch}..{branch}'],
+                capture_output=True, text=True, timeout=5, cwd=project_path,
+            )
+            if count_r.returncode != 0:
+                continue
+            try:
+                ahead = int(count_r.stdout.strip())
+            except (ValueError, AttributeError):
+                continue
+            if ahead < min_commits:
+                continue
 
-        return "\n".join(lines)
+            # Feature-Highlights: feat:-Commits
+            feat_r = subprocess.run(
+                ['git', 'log', '--oneline', '--grep=^feat',
+                 f'origin/{deploy_branch}..{branch}', '-3', '--format=%s'],
+                capture_output=True, text=True, timeout=5, cwd=project_path,
+            )
+            highlights = []
+            if feat_r.returncode == 0 and feat_r.stdout.strip():
+                for line in feat_r.stdout.strip().splitlines()[:3]:
+                    cleaned = re.sub(r'^feat(?:\([^)]*\))?:\s*', '', line.strip())
+                    if cleaned:
+                        highlights.append(cleaned)
+
+            # Branch-Name + Fortschritt
+            short = branch.replace('origin/', '')
+            display = short.split('/')[-1].replace('-', ' ').replace('_', ' ').title()
+            branch_type = 'Feature' if '/feat/' in branch else 'Fix'
+
+            if ahead >= 20:
+                progress = "weit fortgeschritten"
+            elif ahead >= 10:
+                progress = "in aktiver Entwicklung"
+            else:
+                progress = "in frühen Phasen"
+
+            teaser = f"- [{branch_type}] **{display}** ({ahead} Commits, {progress})"
+            if highlights:
+                teaser += "\n  Highlights: " + ", ".join(highlights)
+            teasers.append(teaser)
+
+        if not teasers:
+            return ""
+
+        return (
+            "FEATURES IN ENTWICKLUNG (aktive Branches, NICHT auf main):\n"
+            + "\n".join(teasers) + "\n\n"
+            "TEASER-ANWEISUNGEN:\n"
+            "→ Füge am Ende eine '🔮 Demnächst'-Sektion ein.\n"
+            "→ Formuliere spannend aber EHRLICH — Features sind NOCH NICHT LIVE.\n"
+            "→ 'Wir arbeiten an...', 'Demnächst erwartet euch...', 'Stay tuned für...'\n"
+            "→ Max 2-3 Sätze pro Feature. Mache Lust auf das nächste Update!"
+        )
     except Exception:
         return ""

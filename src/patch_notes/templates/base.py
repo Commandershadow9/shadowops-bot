@@ -1,8 +1,14 @@
 """BaseTemplate — Shared Prompt-Builder für alle Projekt-Typen."""
 from __future__ import annotations
+
+import logging
+from pathlib import Path
 from typing import TYPE_CHECKING
+
 if TYPE_CHECKING:
     from patch_notes.context import PipelineContext
+
+logger = logging.getLogger('shadowops')
 
 
 class BaseTemplate:
@@ -31,6 +37,7 @@ class BaseTemplate:
             self._system_instruction(ctx),
             self._groups_section(ctx),
             self._context_section(ctx),
+            self._extra_context_section(ctx),
             self._previous_version_guard(ctx),
             self._update_size_override(ctx),
             self._rules_section(ctx),
@@ -84,6 +91,20 @@ WICHTIG: Erfinde KEINE Version im Titel. Der Titel enthält NUR den Namen des Up
                 lines.append(f"  Zusammenfassung: {g['summary']}")
                 lines.append("")
 
+        # Smart Diff: Kategorisierte Dateiübersicht
+        categories = ctx.git_stats.get('categories')
+        if categories:
+            lines.append("## Code-Änderungen (strukturierte Übersicht)")
+            for cat, count in categories.items():
+                lines.append(f"  {cat}: {count} Dateien geändert")
+            new_f = ctx.git_stats.get('new_files', 0)
+            del_f = ctx.git_stats.get('deleted_files', 0)
+            if new_f:
+                lines.append(f"  Neue Dateien: {new_f}")
+            if del_f:
+                lines.append(f"  Gelöschte Dateien: {del_f}")
+            lines.append("")
+
         return "\n".join(lines)
 
     def _context_section(self, ctx: PipelineContext) -> str:
@@ -118,10 +139,101 @@ Fasse verwandte Commits zu thematischen Blöcken zusammen."""
 Dies ist ein umfangreiches Update. Hebe 4-7 Highlights hervor."""
         return ""
 
+    def _extra_context_section(self, ctx: PipelineContext) -> str:
+        """Lade Release-Guide + Context-Files aus Projekt-Verzeichnis."""
+        project_path = ctx.project_config.get('path', '')
+        if not project_path:
+            return ""
+        base = Path(project_path)
+        if not base.exists():
+            return ""
+
+        sections: list[str] = []
+        pc = ctx.project_config.get('patch_notes', {})
+
+        # 1. Release-Guide (release_guide.md)
+        for name in ('release_guide.md', 'docs/release_guide.md', 'RELEASE_GUIDE.md'):
+            guide_path = base / name
+            if guide_path.exists():
+                try:
+                    content = guide_path.read_text(encoding='utf-8').strip()
+                    if content and len(content) >= 20:
+                        sections.append(
+                            "FEATURE-ANLEITUNGEN (vom Entwickler geschrieben — WÖRTLICH übernehmen!):\n"
+                            "Füge diese als '📖 So funktioniert's'-Absatz ein. NICHT umschreiben!\n\n"
+                            + content[:2000]
+                        )
+                        logger.info(f"📋 Release-Guide geladen: {guide_path}")
+                        break
+                except Exception:
+                    continue
+
+        # 2. Context-Files aus Config
+        context_files = pc.get('context_files') or pc.get('context_file')
+        if context_files:
+            if isinstance(context_files, str):
+                context_files = [context_files]
+            per_file_limit = int(pc.get('context_max_chars', 1500))
+            total_limit = int(pc.get('context_total_max_chars', 4000))
+            total = 0
+            for entry in context_files:
+                if not entry:
+                    continue
+                p = Path(entry)
+                if not p.is_absolute():
+                    p = base / p
+                if not p.exists():
+                    continue
+                try:
+                    text = p.read_text(encoding='utf-8', errors='ignore').strip()
+                except Exception:
+                    continue
+                if not text:
+                    continue
+                if per_file_limit and len(text) > per_file_limit:
+                    half = per_file_limit // 2
+                    text = text[:half] + "\n... (snip) ...\n" + text[-half:]
+                section = f"PROJECT CONTEXT FILE: {p.name}\n{text}"
+                total += len(section)
+                if total_limit and total > total_limit:
+                    break
+                sections.append(section)
+
+        if not sections:
+            return ""
+        return "PROJECT CONTEXT (REFERENCE):\n\n" + "\n\n".join(sections)
+
     def _rules_section(self, ctx: PipelineContext) -> str:
-        return """# REGELN (IMMER befolgen)
-- [DESIGN-DOC] Commits = GEPLANT, NICHT IMPLEMENTIERT → NIEMALS als Feature listen
-- [DOCS] Commits = Dokumentation, nicht als Feature listen
-- [MERGE] und [AUTO] Commits IGNORIEREN
-- Erfinde KEINE Features die nicht in den Commits stehen
+        lang = ctx.project_config.get('patch_notes', {}).get('language', 'de')
+        if lang == 'de':
+            return self._CLASSIFICATION_RULES_DE
+        return self._CLASSIFICATION_RULES_EN
+
+    # Basis-Regelblock der IMMER an jeden Prompt angehängt wird (A/B-Varianten-sicher)
+    _CLASSIFICATION_RULES_DE = """
+COMMIT-TYP-REGELN (IMMER BEACHTEN):
+- [FEATURE] = Implementiertes Feature → als "Neues Feature" listen
+- [BUGFIX] = Behobener Bug → als "Bugfix" listen
+- [SECURITY] = Sicherheitsfix → vage beschreiben (kein WIE)
+- [DESIGN_DOC] = NUR ein Planungsdokument → NIEMALS als Feature listen!
+- [DEPS] / [OTHER] mit Auto-Gruppe = Automatisiert → kurz zusammenfassen
+- [DOCS] / [IMPROVEMENT] / [TEST] = Intern → nur erwähnen wenn nutzerrelevant
+- [REVERT] = Rückgängig gemacht → erwähnen wenn nutzerrelevant
+- [BREAKING] = Breaking Change → IMMER prominent erwähnen
+- PR-Labels haben Vorrang vor Commit-Prefix-Tags
+- Erfinde KEINE Features die nicht als [FEATURE] getaggt sind!
 - Erfinde KEINE Version — der Titel hat NUR den Update-Namen"""
+
+    _CLASSIFICATION_RULES_EN = """
+COMMIT TYPE RULES (ALWAYS OBSERVE):
+- [FEATURE] = Implemented feature → list as "New Feature"
+- [BUGFIX] = Fixed bug → list as "Bug Fix"
+- [SECURITY] = Security fix → describe vaguely (not HOW)
+- [DESIGN_DOC] = Planning doc only → NEVER list as feature!
+- [DEPS] / [OTHER] with auto-group = Automated → summarize briefly
+- [DOCS] / [IMPROVEMENT] / [TEST] = Internal → mention only if user-relevant
+- [REVERT] = Reverted → mention if user-relevant
+- [BREAKING] = Breaking change → ALWAYS mention prominently
+- PR labels take precedence over commit prefix tags
+- Do NOT invent features that are not tagged [FEATURE]!
+- Do NOT invent a version — the title must contain ONLY the update name"""

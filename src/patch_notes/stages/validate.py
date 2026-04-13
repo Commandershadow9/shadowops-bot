@@ -36,6 +36,7 @@ async def validate(ctx: 'PipelineContext', bot=None) -> None:
     sanitize_content(ctx)
     normalize_umlauts(ctx)
     extract_display_content(ctx)
+    enrich_changes_with_authors(ctx)
 
 
 def check_feature_count(ctx: 'PipelineContext') -> None:
@@ -167,3 +168,52 @@ def extract_display_content(ctx: 'PipelineContext') -> None:
         ctx.tldr = ctx.ai_result[:200]
     else:
         ctx.title = f'{ctx.project} Update'
+
+
+def enrich_changes_with_authors(ctx: 'PipelineContext') -> None:
+    """Post-Processing: Matche AI-Changes gegen Git-Commits per Keyword-Overlap → author-Feld."""
+    if not ctx.changes or not ctx.enriched_commits:
+        return
+
+    from patch_notes.stages.classify import TEAM_MAPPING, _AI_AUTHORS
+
+    # Commit-Index: Keywords → Autor
+    commit_authors: list[tuple[set[str], str]] = []
+    for c in ctx.enriched_commits:
+        author = c.get('author', {})
+        if isinstance(author, dict):
+            name = author.get('name', author.get('username', ''))
+        elif isinstance(author, str):
+            name = author
+        else:
+            continue
+        if not name or name.lower().strip() in _AI_AUTHORS:
+            continue
+        msg = c.get('message', '').split('\n')[0].lower()
+        keywords = {w for w in re.findall(r'[a-zäöü]{4,}', msg) if w not in (
+            'feat', 'fix', 'chore', 'docs', 'refactor', 'perf', 'test', 'build',
+            'style', 'update', 'implement', 'added', 'removed', 'fixed',
+        )}
+        if keywords:
+            commit_authors.append((keywords, name))
+
+    # Changes matchen
+    for change in ctx.changes:
+        if not isinstance(change, dict) or change.get('author'):
+            continue
+        desc = change.get('description', '').lower()
+        details_text = ' '.join(change.get('details', [])).lower()
+        change_text = desc + ' ' + details_text
+        change_words = set(re.findall(r'[a-zäöü]{4,}', change_text))
+
+        best_match = ''
+        best_overlap = 0
+        for keywords, author_name in commit_authors:
+            overlap = len(keywords & change_words)
+            if overlap > best_overlap:
+                best_overlap = overlap
+                best_match = author_name
+
+        if best_match and best_overlap >= 2:
+            team = TEAM_MAPPING.get(best_match.lower().strip())
+            change['author'] = team[0] if team else best_match

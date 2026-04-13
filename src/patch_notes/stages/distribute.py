@@ -48,7 +48,10 @@ async def distribute(ctx: PipelineContext, bot=None) -> None:
     # 6. Message-IDs in StateManager persistieren (für Rollback)
     _persist_message_ids(ctx, bot)
 
-    # 7. Metriken loggen
+    # 7. Learning-DB: Generation aufzeichnen
+    await _record_learning(ctx, bot)
+
+    # 8. Metriken loggen
     _log_metrics(ctx)
 
 
@@ -434,6 +437,35 @@ async def _store_changelog(ctx: PipelineContext, bot) -> None:
 
 
 # ── Metriken ───────────────────────────────────────────────────
+
+
+async def _record_learning(ctx: PipelineContext, bot) -> None:
+    """Zeichne Generation in Learning-DB auf (für Feedback-Loop)."""
+    github = getattr(bot, 'github_integration', None)
+    if not github:
+        return
+    learning = getattr(github, 'patch_notes_learning', None)
+    if not learning:
+        return
+
+    # Erste gesendete Message-ID als Discord-Referenz
+    discord_msg_id = None
+    if ctx.sent_message_ids:
+        discord_msg_id = str(ctx.sent_message_ids[0][1])
+
+    try:
+        await learning.record_generation(
+            project=ctx.project,
+            version=ctx.version,
+            variant_id=ctx.variant_id or None,
+            title=ctx.title,
+            tldr=ctx.tldr or '',
+            ai_engine=ctx.ai_engine_used or 'unknown',
+            discord_message_id=discord_msg_id,
+        )
+        logger.debug(f"[v6] {ctx.project} v{ctx.version}: Learning-DB aufgezeichnet")
+    except Exception as e:
+        logger.debug(f"[v6] Learning-DB recording fehlgeschlagen: {e}")
 
 
 def _log_metrics(ctx: PipelineContext) -> None:
