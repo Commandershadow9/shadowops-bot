@@ -122,16 +122,31 @@ class JulesSuggestionsPoller:
         return queued
 
     async def _fetch_suggestions(self, full_repo: str) -> List[JulesSuggestion]:
-        """STUB — echter Endpoint noch nicht stabil.
+        """STUB — Jules API v1alpha hat KEINEN Suggestions-Endpoint.
 
-        Sobald verfuegbar (vermutlich `GET /suggestions?repo=...`), hier
-        implementieren und JulesSuggestion-Objekte zurueckgeben.
+        Verifiziert 2026-04-14 via Discovery-Doc:
+        https://jules.googleapis.com/$discovery/rest?version=v1alpha
+        Nur 2 Resources: 'sessions' + 'sources'. Dashboard-Suggestions sind
+        ein reines UI-Feature, nicht via oeffentliche API zugaenglich.
 
-        Aktuell: leere Liste + DEBUG-Log, damit poll_and_queue() sauber
-        durchlaeuft ohne Error.
+        Auch nicht via:
+        - Jules CLI (`jules` hat keinen suggestions/recommend-Command)
+        - MCP-Server (kein offizieller Jules-MCP verfuegbar; MCP waere nur
+          Transport-Layer, kann keine Daten hervorholen die API nicht exposed)
+
+        Wenn Google die API erweitert, nur diese Methode implementieren:
+        - Vermutlich GET /v1alpha/sources/{source}/suggestions
+        - Mapping: suggestion.title → JulesSuggestion.title, .prompt, .repo
+        - Rest (Queue-Enqueue, Dedupe, Priority) bleibt unveraendert.
+
+        Alternative Task-Quellen die HEUTE funktionieren:
+        - SecurityScanAgent (seit 2026-04-14, queued Code-Fixes direkt)
+        - Dependabot-PRs mit jules-Label (werden automatisch reviewt)
+        - Manuelle Sessions via `jules new "..."` CLI
+        - GitHub-Issues mit jules-Label (Jules iteriert darauf)
         """
         logger.debug(
-            "[suggestions-poller] %s: suggestions-API noch nicht verfuegbar, skipping",
+            "[suggestions-poller] %s: Jules API hat keinen suggestions-Endpoint, skipping",
             full_repo,
         )
         return []
