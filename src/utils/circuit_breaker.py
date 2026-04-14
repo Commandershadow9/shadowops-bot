@@ -1,5 +1,8 @@
 """Leichtgewichtiger Circuit Breaker (adaptiert vom SmartQueue-Pattern).
 
+Nach N Failures oeffnet sich der Breaker fuer timeout_seconds und blockiert
+weitere Aufrufe — schuetzt Downstream-Services vor Ueberlastung.
+
 Oeffnet nach N konsekutiven Fehlern und schliesst automatisch
 nach einem Timeout-Intervall.
 """
