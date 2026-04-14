@@ -143,6 +143,11 @@ class SecurityEngine:
                 executor=self.executor,
                 learning_bridge=None,  # wird nach LearningBridge-Init gesetzt
             )
+            # Multi-Agent Review Integration: ScanAgent kann Code-Fix-Findings
+            # an die agent_task_queue delegieren (Jules erstellt PR, Bot reviewt).
+            # Bot-Referenz reicht — ScanAgent liest Queue + Flag lazy bei Bedarf
+            # (via Properties in scan_agent.py), damit _agent_review_startup
+            # nicht zum Zeitpunkt der Engine-Initialisierung durch sein muss.
 
         # LearningBridge
         try:

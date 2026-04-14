@@ -1089,6 +1089,7 @@ class SecurityScanAgent:
         auto_fixes = 0
         issues_created = 0
         duplicates_skipped = 0
+        jules_delegated = 0  # Multi-Agent-Queue: Code-Fixes an Jules delegiert
 
         for finding in findings:
             try:
@@ -1110,9 +1111,20 @@ class SecurityScanAgent:
                 should_issue = (fix_type == 'issue_needed' or
                     (fix_type == 'needs_decision' and finding.get('severity') in ('critical', 'high', 'medium')))
                 if should_issue:
-                    github_issue_url = await self._create_github_issue(finding)
-                    if github_issue_url:
-                        issues_created += 1
+                    # Code-Security-Findings → Multi-Agent-Queue (Jules fixt autonom)
+                    # Alles andere (docker, config, permissions, ...) → GitHub-Issue
+                    if self._should_delegate_to_jules(finding):
+                        queued = await self._enqueue_jules_fix(finding)
+                        if queued:
+                            jules_delegated += 1
+                            logger.info(
+                                "[scan-agent] Finding '%s' → Jules-Queue (task_id=%d)",
+                                title[:60], queued,
+                            )
+                    else:
+                        github_issue_url = await self._create_github_issue(finding)
+                        if github_issue_url:
+                            issues_created += 1
 
                 await self.db.pool.execute("""
                     INSERT INTO findings (severity, category, title, description, session_id,
@@ -1826,6 +1838,127 @@ class SecurityScanAgent:
             if k in pl:
                 return r
         return DEFAULT_REPO
+
+    # ── Multi-Agent Review Integration (Jules-Delegation) ──────────
+
+    @property
+    def agent_task_queue(self):
+        """Lazy accessor: Queue aus github_integration (kann None sein)."""
+        gh = getattr(self.bot, 'github_integration', None)
+        return getattr(gh, 'agent_task_queue', None) if gh else None
+
+    @property
+    def agent_review_enabled(self) -> bool:
+        """Lazy accessor: Feature-Flag aus github_integration."""
+        gh = getattr(self.bot, 'github_integration', None)
+        return bool(getattr(gh, '_agent_review_enabled', False)) if gh else False
+
+    # Categories die als Code-Security gelten und an Jules delegiert werden.
+    # Case-insensitive Match (ScanAgent nutzt beide Varianten).
+    _JULES_DELEGATABLE_CATEGORIES = frozenset({
+        'code_security', 'code security',
+        'xss', 'sql_injection', 'command_injection',
+        'auth', 'authentication', 'authorization',
+        'input_validation', 'csrf',
+    })
+
+    # Projekte die Jules kennt (haben GitHub-Integration + Code-Repo)
+    _JULES_KNOWN_PROJECTS = frozenset({
+        'zerodox', 'guildscout', 'shadowops-bot',
+        'ai-agent-framework', 'mayday-sim', 'mayday_sim',
+    })
+
+    def _should_delegate_to_jules(self, finding: Dict) -> bool:
+        """Entscheidet ob ein Finding an Jules delegiert werden soll.
+
+        Kriterien (alle muessen erfuellt sein):
+        1. Category ist Code-Security (nicht Infrastructure/Config/Docker)
+        2. affected_project ist ein Jules-bekanntes Repo
+        3. affected_files ist nicht leer (Jules braucht einen Fix-Context)
+        4. Feature ist aktiviert (agent_review.enabled + agent_review.adapters.jules)
+        """
+        if not getattr(self, 'agent_review_enabled', False):
+            return False
+        category = (finding.get('category', '') or '').lower().strip()
+        if category not in self._JULES_DELEGATABLE_CATEGORIES:
+            return False
+        project = (finding.get('affected_project', '') or '').lower().strip()
+        if project not in self._JULES_KNOWN_PROJECTS:
+            return False
+        affected_files = finding.get('affected_files') or []
+        if isinstance(affected_files, str):
+            affected_files = [affected_files]
+        if not affected_files:
+            return False
+        return True
+
+    async def _enqueue_jules_fix(self, finding: Dict) -> Optional[int]:
+        """Baut Jules-Prompt aus Finding und queued in agent_task_queue.
+
+        Returns:
+            task_id bei Erfolg, None bei Fehler.
+        """
+        queue = getattr(self, 'agent_task_queue', None)
+        if queue is None:
+            logger.warning("[scan-agent] agent_task_queue nicht verfuegbar")
+            return None
+
+        project = (finding.get('affected_project', '') or '').lower().strip()
+        # Projekt → Repo-Mapping (via existierender _repo_for_finding Logik)
+        repo_slug = self._repo_for_finding(finding)
+        try:
+            owner, repo_name = repo_slug.split('/', 1)
+        except ValueError:
+            logger.warning("[scan-agent] ungueltige repo_slug: %s", repo_slug)
+            return None
+
+        title = finding.get('title', 'Security-Fix')
+        severity = finding.get('severity', 'medium')
+        description = finding.get('description', '')
+        affected_files = finding.get('affected_files') or []
+        if isinstance(affected_files, str):
+            affected_files = [affected_files]
+        files_list = "\n".join(f"- {f}" for f in affected_files[:10])
+
+        prompt = f"""Security-Fix fuer {project} ({severity} severity).
+
+**Finding:** {title}
+
+**Beschreibung:**
+{description}
+
+**Betroffene Dateien:**
+{files_list}
+
+**Aufgabe:**
+Analysiere das Finding und behebe das Problem. Halte dich strikt an:
+1. NUR die betroffenen Dateien aendern — kein unrelated Refactoring
+2. Vorhandene Tests muessen gruen bleiben
+3. Commit-Message-Format: "fix: {title[:60]}"
+4. Bei Unsicherheit: Issue-Kommentar statt Fix
+
+Das ist ein von SecurityScanAgent delegierter Task. Der PR wird automatisch
+von der ShadowOps Review-Pipeline reviewt — halte den Scope eng."""
+
+        try:
+            task_id = await queue.enqueue(
+                source='scan_agent',
+                priority=1,  # hoch, nach manual (0)
+                payload={
+                    'owner': owner,
+                    'repo': repo_name,
+                    'prompt': prompt,
+                    'title': f"Security: {title[:60]}",
+                    'branch': 'main',
+                    'finding_category': finding.get('category', ''),
+                    'finding_severity': severity,
+                },
+                project=project,
+            )
+            return int(task_id)
+        except Exception as e:
+            logger.exception("[scan-agent] queue.enqueue fehlgeschlagen: %s", e)
+            return None
 
     async def _create_github_issue(self, finding: Dict) -> Optional[str]:
         ap = finding.get('affected_project', '').strip()
