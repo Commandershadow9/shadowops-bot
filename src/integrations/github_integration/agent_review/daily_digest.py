@@ -69,17 +69,24 @@ async def _safe(coro_fn, *, default):
 
 
 async def _query_reviews_24h(pool) -> List[Dict[str, Any]]:
-    """Gruppiert jules_pr_reviews der letzten 24h nach agent_type + verdict."""
+    """Gruppiert jules_pr_reviews der letzten 24h nach agent_type + verdict.
+
+    Verdict wird aus last_review_json extrahiert — es gibt keine separate
+    verdict-Spalte (Migration hat nur agent_type hinzugefuegt).
+    """
     if pool is None:
         return []
     try:
         async with pool.acquire() as conn:
             rows = await conn.fetch(
-                """SELECT agent_type, verdict, COUNT(*)::int AS cnt
+                """SELECT agent_type,
+                          last_review_json->>'verdict' AS verdict,
+                          COUNT(*)::int AS cnt
                    FROM jules_pr_reviews
                    WHERE updated_at > now() - interval '24 hours'
-                     AND verdict IS NOT NULL
-                   GROUP BY agent_type, verdict
+                     AND last_review_json IS NOT NULL
+                     AND last_review_json->>'verdict' IS NOT NULL
+                   GROUP BY agent_type, last_review_json->>'verdict'
                    ORDER BY agent_type, verdict"""
             )
         return [
@@ -92,14 +99,15 @@ async def _query_reviews_24h(pool) -> List[Dict[str, Any]]:
 
 
 async def _query_pending_manual_merges(pool) -> int:
-    """Zaehlt PRs mit verdict=approved aber status != merged."""
+    """Zaehlt PRs mit verdict=approved (aus JSON) aber status != merged."""
     if pool is None:
         return 0
     try:
         async with pool.acquire() as conn:
             row = await conn.fetchrow(
                 """SELECT COUNT(*)::int AS cnt FROM jules_pr_reviews
-                   WHERE verdict='approved' AND status NOT IN ('merged','abandoned')
+                   WHERE last_review_json->>'verdict' = 'approved'
+                     AND status NOT IN ('merged','abandoned')
                      AND updated_at > now() - interval '7 days'"""
             )
         return int(row["cnt"] or 0)

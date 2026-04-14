@@ -213,10 +213,14 @@ journalctl -u shadowops-bot --since "today" | grep -oE "Detector aktiv mit [0-9]
 ### Reviews letzte 24h nach Agent
 
 ```sql
-SELECT agent_type, verdict, COUNT(*) 
+-- verdict kommt aus last_review_json (kein eigener Column)
+SELECT agent_type,
+       last_review_json->>'verdict' AS verdict,
+       COUNT(*)
 FROM jules_pr_reviews
-WHERE updated_at > now() - interval '24 hours' AND verdict IS NOT NULL
-GROUP BY agent_type, verdict
+WHERE updated_at > now() - interval '24 hours'
+  AND last_review_json IS NOT NULL
+GROUP BY agent_type, last_review_json->>'verdict'
 ORDER BY agent_type, verdict;
 ```
 
