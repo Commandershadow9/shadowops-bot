@@ -1129,6 +1129,8 @@ class ShadowOpsBot(commands.Bot):
                 self.agent_task_queue_scheduler.start()
             if not self.agent_suggestions_poller_task.is_running():
                 self.agent_suggestions_poller_task.start()
+            if not self.agent_outcome_check_task.is_running():
+                self.agent_outcome_check_task.start()
 
         # Setze Status
         await self.change_presence(
@@ -1766,6 +1768,74 @@ class ShadowOpsBot(commands.Bot):
     async def before_agent_suggestions_poller(self):
         await self.wait_until_ready()
         self.logger.info("🛡️ Agent-Review Suggestions-Poller gestartet (alle 8h)")
+
+    @tasks.loop(minutes=60)
+    async def agent_outcome_check_task(self):
+        """Stuendlicher Check: Auto-Merges > 24h auf Revert/CI/Follow-up pruefen.
+
+        Aktuell minimale Implementierung: markiert alle pending Outcomes als
+        checked_at=now() ohne Revert-Detection (die volle Git-Revert-Analyse
+        kommt in einer Folge-Iteration, Design-Doc sieht sie als Phase 4.2
+        plus spaetere Extensions vor).
+        """
+        try:
+            gh = getattr(self, "github_integration", None)
+            if not gh or not getattr(gh, "_agent_review_enabled", False):
+                return
+            tracker = getattr(gh, "outcome_tracker", None)
+            if not tracker:
+                return
+            pending = await tracker.get_pending_outcomes(min_age_hours=24)
+            if not pending:
+                return
+            self.logger.info(
+                "[agent-outcome] %d pending auto-merges to check", len(pending),
+            )
+            for o in pending:
+                try:
+                    reverted = await self._check_pr_reverted(
+                        o.repo, o.pr_number,
+                    )
+                    await tracker.mark_checked(o.id, reverted=reverted)
+                except Exception:
+                    self.logger.exception(
+                        "[agent-outcome] check failed for outcome=%d", o.id,
+                    )
+        except Exception:
+            self.logger.exception("[agent-outcome] task crashed (continuing)")
+
+    async def _check_pr_reverted(self, repo: str, pr_number: int) -> bool:
+        """Prueft via gh api ob der Merge-Commit des PRs revertet wurde.
+
+        Minimal: sucht nach Commits mit Message 'Revert "...PR #{pr_number}"'
+        auf main. Gibt False bei Fehler (konservativ — lieber Healthy
+        annehmen als False-Positives).
+        """
+        import asyncio as _asyncio
+        try:
+            proc = await _asyncio.create_subprocess_exec(
+                "gh", "api", f"repos/{repo}/commits",
+                "-X", "GET", "-f", "per_page=50",
+                stdout=_asyncio.subprocess.PIPE, stderr=_asyncio.subprocess.PIPE,
+            )
+            stdout, _ = await _asyncio.wait_for(proc.communicate(), timeout=20)
+            if proc.returncode != 0:
+                return False
+            import json as _json
+            commits = _json.loads(stdout.decode() or "[]")
+            marker = f"#{pr_number}"
+            for c in commits:
+                msg = (c.get("commit", {}).get("message") or "")
+                if msg.startswith("Revert") and marker in msg:
+                    return True
+            return False
+        except Exception:
+            return False
+
+    @agent_outcome_check_task.before_loop
+    async def before_agent_outcome_check(self):
+        await self.wait_until_ready()
+        self.logger.info("🛡️ Agent-Review Outcome-Check gestartet (stuendlich)")
 
     @tasks.loop(minutes=5)
     async def update_dashboard(self):
