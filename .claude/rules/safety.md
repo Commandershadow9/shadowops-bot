@@ -111,3 +111,25 @@ Bei Aenderungen an Shared-Services (Redis, PostgreSQL, Traefik) MUESSEN alle Kon
 - **Jules-Iteration:** Revision-Comments brauchen `@google-labs-jules` Mention damit Jules den Blocker fixt — ohne Mention arbeitet Jules nicht automatisch weiter
 - **Discord-Logger-API:** `_send_to_channel(channel_key, message, embed=None)` — `message` ist Positional-Arg, bei Embed-only als `message=""` übergeben
 - **Jules API Integration:** API-Key aus `config.yaml` (`jules_workflow.api_key`). NIEMALS in Git committen. Format: `sourceContext.source = "sources/github/{owner}/{repo}"` + `sourceContext.githubRepoContext.startingBranch = "main"`
+
+## Multi-Agent Review Pipeline (seit 2026-04-14)
+- **Code:** `src/integrations/github_integration/agent_review/` — 10 Module, 244 Tests
+- **Rollout-Philosophie:** Adapter-Pattern ist ADDITIV. Legacy-Jules-Pfad (`_jules_is_jules_pr` → `_jules_run_review`) bleibt primaerer Pfad. Detector laeuft parallel als Diagnostik + fuer `_handle_approval_with_adapter`.
+- **Feature-Toggle:** `agent_review.enabled: false` default. NIE ohne Live-Monitoring auf true setzen.
+- **Auto-Merge:** `agent_review.auto_merge.enabled: false` default. SEPARATER Toggle von `agent_review.enabled`. Per-Project-Override via `auto_merge.projects.{name}.allowed`. Rollback < 30s.
+- **JulesAdapter.merge_policy:** Security-Labels/Keywords -> IMMER MANUAL. Tests-only + <200 Additions -> AUTO. `sicherheitsdienst` -> IMMER MANUAL.
+- **SeoAdapter.merge_policy:** Content-Only-Pfade (.md/.mdx/sitemap/robots/blog-data) + <50 Files + in_scope=true -> AUTO. Irgendein Pfad in DANGEROUS_PATHS (package.json, next.config, layout.tsx, prisma/schema.prisma, Dockerfile) -> MANUAL.
+- **CodexAdapter.merge_policy:** IMMER MANUAL — Code-Fixes brauchen menschliche Verifikation, auch bei approved Verdict.
+- NIEMALS `adapter.merge_policy` umgehen — sie ist die einzige Quelle der Wahrheit fuer Auto-Merge-Entscheidungen. Der Scan-Agent darf niemals direkt `gh pr merge` aufrufen ohne Adapter-Check.
+- NIEMALS `_gh_auto_merge_squash` ausserhalb von `_handle_approval_with_adapter` aufrufen — der Flow garantiert dass OutcomeTracker mitschreibt.
+- NIEMALS `CONFIDENCE_THRESHOLD = 0.8` im Detector senken ohne Review-Plan — der Wert schuetzt vor Adapter-Kollisionen (SEO erkennt zufaellig einen Jules-PR).
+- NIEMALS `discord_highlights`-analoge Pflicht-Felder aus Adapter-Schemas entfernen ohne die jules_review.json Schema-Validierung zu checken.
+- **AgentAdapter als Schnittstelle:** Neue Agenten brauchen NUR eine neue Klasse in `adapters/` + Test-Suite + `_get_adapter_toggles()` Update + Config-Flag. KEINE Mixin-Aenderung.
+- **Scheduled Tasks-Cascade:** Alle 4 neuen Tasks (`agent_task_queue_scheduler`, `agent_suggestions_poller_task`, `agent_outcome_check_task`, `agent_daily_digest_task`) starten NUR wenn `gh._agent_review_enabled=True`. NICHT manuell starten.
+- **OutcomeTracker Revert-Detection ist KONSERVATIV:** `_check_pr_reverted` returnt False bei `gh api` Fehler (lieber False-Positive "healthy" als False-Positive "reverted"). Diese Default-Entscheidung NICHT umkehren.
+- **Queue-Scheduler Budget-Check:** `min(15 - concurrent, 100 - released_24h)` — BEIDE Limits pruefen, nie nur eines. Das Concurrent-Limit kommt von Jules API, das 24h-Limit aus der Queue-DB.
+- **Bei Multi-Agent-Workflow-Aenderungen IMMER `test_jules_pr123_regression.py` + `tests/unit/agent_review/` komplett laufen lassen.**
+- **Rollback-Sequenz bei Incident:**
+  1. `agent_review.auto_merge.enabled: false` (stoppt Auto-Merge sofort)
+  2. Wenn weiter problematisch: `agent_review.enabled: false` (deaktiviert komplette Pipeline)
+  3. Bot-Restart via `scripts/restart.sh` — < 30s bis Legacy-Verhalten wiederhergestellt
