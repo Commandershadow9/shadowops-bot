@@ -310,7 +310,10 @@ class JulesWorkflowMixin:
             )
 
             if review["verdict"] == "approved":
-                await self._jules_apply_approval(owner, repo, pr_number, row)
+                await self._handle_approval_with_adapter(
+                    owner=owner, repo=repo, pr_number=pr_number,
+                    pr_payload=pr_payload, review=review, row=row,
+                )
                 await self.jules_state.release_lock(row.id, "approved")
             else:
                 await self.jules_state.release_lock(row.id, "revision_requested")
@@ -372,6 +375,115 @@ class JulesWorkflowMixin:
                 m = re.search(r"#issuecomment-(\d+)", url)
                 if m:
                     await self.jules_state.update_comment_id(row.id, int(m.group(1)))
+
+    # ── Adapter-basiertes Approval-Handling (Phase 4) ────────────
+
+    async def _handle_approval_with_adapter(
+        self, *, owner, repo, pr_number, pr_payload, review, row,
+    ):
+        """Entscheidet zwischen Auto-Merge und Label-Only via adapter.merge_policy().
+
+        Fallback-Verhalten: Wenn der Detector keinen Adapter findet oder
+        agent_review disabled ist, wird der alte Label-Pfad genutzt (Jules).
+        """
+        # Adapter via Detector bestimmen
+        adapter = None
+        try:
+            adapter = self._get_agent_detector().detect(pr_payload)
+        except Exception:
+            logger.exception("[merge-policy] detector crashed — fallback to label-only")
+
+        if adapter is None:
+            # Legacy-Pfad: reines Label-Setzen (aktuelles Jules-Verhalten)
+            await self._jules_apply_approval(owner, repo, pr_number, row)
+            return
+
+        try:
+            decision = adapter.merge_policy(review, pr_payload, project=repo)
+        except Exception:
+            logger.exception(
+                "[merge-policy] adapter.merge_policy crashed — fallback to label-only",
+            )
+            await self._jules_apply_approval(owner, repo, pr_number, row)
+            return
+
+        from .agent_review.adapters.base import MergeDecision
+
+        if decision == MergeDecision.AUTO and self._auto_merge_enabled(repo):
+            merged = await self._gh_auto_merge_squash(owner, repo, pr_number)
+            if merged:
+                logger.info(
+                    "[merge-policy] %s/%s#%d auto-merged (agent=%s)",
+                    owner, repo, pr_number, adapter.agent_name,
+                )
+                await self._record_auto_merge_outcome(
+                    agent=adapter.agent_name, repo=repo, pr_number=pr_number,
+                    rule_matched=_summarize_rule(review, adapter),
+                )
+                return
+            logger.warning(
+                "[merge-policy] %s/%s#%d auto-merge failed — fallback to label",
+                owner, repo, pr_number,
+            )
+
+        # MANUAL, BLOCKED, oder Auto-Merge-Fehler -> Label-Pfad
+        await self._jules_apply_approval(owner, repo, pr_number, row)
+
+    def _auto_merge_enabled(self, project: str) -> bool:
+        """Prueft config.agent_review.auto_merge.enabled + per-project allowed."""
+        cfg_ar = getattr(self.config, "agent_review", None)
+        if cfg_ar is None:
+            return False
+        am = getattr(cfg_ar, "auto_merge", None)
+        if am is None or not getattr(am, "enabled", False):
+            return False
+        projects = getattr(am, "projects", None)
+        if projects is None:
+            return False
+        # projects kann dict oder Namespace sein — projekt-spezifisches allowed Flag
+        if isinstance(projects, dict):
+            p = projects.get(project) or {}
+            return bool(p.get("allowed", False)) if isinstance(p, dict) else bool(getattr(p, "allowed", False))
+        p = getattr(projects, project, None)
+        if p is None:
+            return False
+        return bool(getattr(p, "allowed", False))
+
+    async def _gh_auto_merge_squash(self, owner, repo, pr_number) -> bool:
+        """Squash-merged einen PR via gh CLI. Returns True bei Erfolg."""
+        repo_slug = f"{owner}/{repo}"
+        try:
+            proc = await asyncio.create_subprocess_exec(
+                "gh", "pr", "merge", str(pr_number),
+                "--repo", repo_slug, "--squash", "--auto",
+                stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.PIPE,
+            )
+            stdout, stderr = await asyncio.wait_for(proc.communicate(), timeout=30)
+            if proc.returncode == 0:
+                return True
+            logger.warning(
+                "[auto-merge] gh pr merge failed for %s#%d: %s",
+                repo_slug, pr_number, stderr.decode()[:200],
+            )
+            return False
+        except Exception:
+            logger.exception("[auto-merge] subprocess crashed")
+            return False
+
+    async def _record_auto_merge_outcome(
+        self, *, agent: str, repo: str, pr_number: int, rule_matched: str,
+    ) -> None:
+        """Schreibt Auto-Merge in outcome_tracker (24h-Check spaeter)."""
+        tracker = getattr(self, "outcome_tracker", None)
+        if tracker is None:
+            return
+        try:
+            await tracker.record_auto_merge(
+                agent_type=agent, project=repo,
+                repo=repo, pr_number=pr_number, rule_matched=rule_matched,
+            )
+        except Exception:
+            logger.exception("[auto-merge] outcome tracker insert failed")
 
     async def _jules_apply_approval(self, owner, repo, pr_number, row):
         """Setzt claude-approved Label und sendet Discord-Nachricht."""
@@ -484,3 +596,22 @@ class JulesWorkflowMixin:
                 f"{'✅' if review.get('verdict')=='approved' else '🔴'} Jules PR #{pr_number} "
                 f"({repo}): {review.get('verdict','?')} — {blockers} Blocker"
             )
+
+
+# ── Module-Level Helpers ─────────────────────────────────────
+
+def _summarize_rule(review: Dict, adapter) -> str:
+    """Erzeugt ein kurzes Label fuer die rule_matched Spalte im Outcome-Log.
+
+    Beispiele:
+    - "jules_approved_0blockers"
+    - "seo_content_only_10files"
+    - "codex_manual_required"
+
+    Wird spaeter fuer revert_rate_by_rule gruppiert — gleiches Label =
+    gleiche Merge-Entscheidungs-Logik.
+    """
+    agent = getattr(adapter, "agent_name", "unknown")
+    blockers = len(review.get("blockers") or [])
+    verdict = review.get("verdict", "unknown")
+    return f"{agent}_{verdict}_{blockers}b"

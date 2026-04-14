@@ -137,6 +137,7 @@ class GitHubIntegration(JulesWorkflowMixin,
         self.agent_task_queue = None   # TaskQueue, wird in _agent_review_startup gesetzt
         self.jules_api_client = None   # JulesAPIClient
         self.suggestions_poller = None # JulesSuggestionsPoller
+        self.outcome_tracker = None    # OutcomeTracker
         if self._agent_review_enabled and not isinstance(config, dict):
             self.config.agent_review = _dict_to_namespace(ar_raw)
         elif not isinstance(config, dict):
@@ -218,10 +219,14 @@ class GitHubIntegration(JulesWorkflowMixin,
             from .agent_review.queue import TaskQueue
             from .agent_review.jules_api import JulesAPIClient
             from .agent_review.suggestions_poller import JulesSuggestionsPoller
+            from .agent_review.outcome_tracker import OutcomeTracker
 
             # Queue teilt die security_analyst DB mit jules_state
             self.agent_task_queue = TaskQueue(self.config.security_analyst_dsn)
             await self.agent_task_queue.connect()
+
+            self.outcome_tracker = OutcomeTracker(self.config.security_analyst_dsn)
+            await self.outcome_tracker.connect()
 
             # Jules API — Key aus jules_workflow.api_key
             api_key = getattr(self.config.jules_workflow, "api_key", None)
