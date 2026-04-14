@@ -170,8 +170,8 @@ class TestMergePolicy:
 
 class TestDiscordAndMention:
     def test_discord_channel(self, adapter):
-        assert adapter.discord_channel("approved") == "security-fixes"
-        assert adapter.discord_channel("revision_requested") == "security-fixes"
+        assert adapter.discord_channel("approved") == "🤖-agent-reviews"
+        assert adapter.discord_channel("revision_requested") == "🤖-agent-reviews"
 
     def test_no_iteration_mention(self, adapter):
         assert adapter.iteration_mention() is None

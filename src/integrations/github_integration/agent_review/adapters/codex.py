@@ -132,7 +132,10 @@ class CodexAdapter(AgentAdapter):
         return MergeDecision.MANUAL
 
     def discord_channel(self, verdict: str) -> str:
-        return "security-fixes"
+        # Plan-konform: "🤖-agent-reviews" (ADR-008, Task 0.2 Config).
+        # Codex-PRs sind ueberwiegend Security-Fixes, aber der Channel-Name
+        # folgt dem einheitlichen Agent-Review-Schema statt Security-Semantik.
+        return "🤖-agent-reviews"
 
     def iteration_mention(self) -> Optional[str]:
         """Codex-CLI laeuft als Subprocess vom SecurityScanAgent — kein Bot-Account.

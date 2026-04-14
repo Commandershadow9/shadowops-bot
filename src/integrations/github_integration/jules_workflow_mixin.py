@@ -171,39 +171,63 @@ class JulesWorkflowMixin:
             event_type = f"pull_request:{action}"
             if event_type not in ALLOWED_TRIGGERS:
                 return
-            if not await self._jules_is_jules_pr(pr, repo):
-                return
 
-            # Phase 2 Diagnostik: Detector parallel laufen lassen (Verhalten unveraendert)
+            # Agent-Detection: Jules (Legacy) + SEO + Codex via Detector
+            is_jules_legacy = await self._jules_is_jules_pr(pr, repo)
+            detected_adapter = None
             try:
-                detector = self._get_agent_detector()
-                detected_adapter = detector.detect(pr)
-                if detected_adapter:
-                    logger.info(
-                        f"[agent-detector] {repo}#{pr_number} → {detected_adapter.agent_name}"
-                    )
-                else:
-                    logger.debug(
-                        f"[agent-detector] {repo}#{pr_number} → no adapter matched (legacy path)"
-                    )
+                detected_adapter = self._get_agent_detector().detect(pr)
             except Exception:
-                logger.exception("[agent-detector] crashed (Legacy-Pfad laeuft trotzdem)")
+                logger.exception("[agent-detector] crashed (continuing with Legacy-Pfad)")
 
-            logger.info(f"[jules] Jules PR erkannt: {repo}#{pr_number} sha={head_sha[:7]} action={action}")
+            # Routing-Entscheidung: Legacy-Pfad + Adapter-Extension
+            if is_jules_legacy:
+                # Klassischer Jules-Pfad, Detector-Adapter wird weitergegeben
+                # (kann JulesAdapter oder None sein — beides ok)
+                agent_tag = "jules"
+            elif detected_adapter is not None:
+                # SEO/Codex-PR: neuer Adapter-Pfad, erst wenn agent_review enabled
+                if not getattr(self, "_agent_review_enabled", False):
+                    logger.debug(
+                        "[agent-detector] %s#%d: %s detected, aber agent_review disabled — skip",
+                        repo, pr_number, detected_adapter.agent_name,
+                    )
+                    return
+                agent_tag = detected_adapter.agent_name
+                logger.info(
+                    "[agent-detector] %s#%d → %s (non-jules adapter path)",
+                    repo, pr_number, agent_tag,
+                )
+            else:
+                # Weder Jules noch anderer Adapter → ignorieren
+                return
 
             # ensure_pending Row
             issue_number = self._jules_extract_fixes_ref(pr.get("body") or "")
             finding_id = await self._jules_lookup_finding(repo, issue_number)
-            await self.jules_state.ensure_pending(repo, pr_number, issue_number, finding_id)
+            await self.jules_state.ensure_pending(
+                repo, pr_number, issue_number, finding_id,
+            )
+            # agent_type-Spalte setzen (Multi-Agent Statistik)
+            try:
+                await self._update_review_agent_type(repo, pr_number, agent_tag)
+            except Exception:
+                logger.debug("[agent-detector] agent_type update failed (non-fatal)")
 
             decision = await self.should_review(repo, pr_number, head_sha, event_type)
             if not decision.proceed:
                 logger.info(f"[jules] {repo}#{pr_number} skip={decision.reason}")
                 return
 
+            logger.info(
+                "[review] %s PR #%d (%s) sha=%s action=%s",
+                agent_tag, pr_number, repo, head_sha[:7], action,
+            )
+
             await self._jules_run_review(
                 repo=repo, pr_number=pr_number, head_sha=head_sha,
                 pr_payload=pr, row=decision.row,
+                adapter=detected_adapter,
             )
         except Exception:
             logger.exception("[jules] handle_jules_pr_event crashed")
@@ -255,8 +279,17 @@ class JulesWorkflowMixin:
 
     # ── Task 8.3: Review-Pipeline + Discord/Escalation ──────────────
 
-    async def _jules_run_review(self, *, repo, pr_number, head_sha, pr_payload, row):
-        """Fuehrt AI-Review durch, postet Comment, setzt State."""
+    async def _jules_run_review(
+        self, *, repo, pr_number, head_sha, pr_payload, row, adapter=None,
+    ):
+        """Fuehrt AI-Review durch, postet Comment, setzt State.
+
+        Args:
+            adapter: Optional AgentAdapter (JulesAdapter/SeoAdapter/CodexAdapter)
+                aus der Detection. Wenn gesetzt, wird adapter.build_prompt()
+                statt der hardcoded Jules-Prompt-Builder genutzt und
+                adapter.model_preference() uebersteuert die Modell-Wahl.
+        """
         cfg = self.config.jules_workflow
         owner = "Commandershadow9"
         iteration = row.iteration_count + 1
@@ -288,10 +321,37 @@ class JulesWorkflowMixin:
             except Exception as e:
                 logger.warning(f"[jules] learning context failed: {e}")
 
+            # Adapter-basierte Prompt-/Modell-Wahl (Phase 2.4 Step 2 + Phase 6)
+            prompt_override = None
+            model_pref = None
+            if adapter is not None and adapter.agent_name != "jules":
+                try:
+                    prompt_override = adapter.build_prompt(
+                        diff=diff, pr_payload=pr_payload,
+                        finding_context=finding_ctx,
+                        iteration=iteration,
+                        few_shot=examples, knowledge=knowledge,
+                        project=repo,
+                    )
+                    model_pref = adapter.model_preference(pr_payload, len(diff))
+                    logger.info(
+                        "[review] %s: adapter prompt (%d chars), model=%s",
+                        adapter.agent_name, len(prompt_override), model_pref[0],
+                    )
+                except Exception:
+                    logger.exception(
+                        "[review] adapter.build_prompt crashed for %s — falling back to Jules prompt",
+                        adapter.agent_name,
+                    )
+                    prompt_override = None
+                    model_pref = None
+
             review = await self.ai_service.review_pr(
                 diff=diff, finding_context=finding_ctx, project=repo,
                 iteration=iteration, project_knowledge=knowledge,
-                few_shot_examples=examples, max_diff_chars=cfg.max_diff_chars)
+                few_shot_examples=examples, max_diff_chars=cfg.max_diff_chars,
+                prompt_override=prompt_override, model_preference=model_pref,
+            )
             if not review:
                 await self._jules_escalate(row, "ai_review_failed")
                 return
@@ -375,6 +435,28 @@ class JulesWorkflowMixin:
                 m = re.search(r"#issuecomment-(\d+)", url)
                 if m:
                     await self.jules_state.update_comment_id(row.id, int(m.group(1)))
+
+    async def _update_review_agent_type(
+        self, repo: str, pr_number: int, agent_type: str,
+    ) -> None:
+        """Setzt jules_pr_reviews.agent_type fuer Multi-Agent-Statistik.
+
+        Schreibt additiv — failt non-fatal wenn DB-Pool nicht verfuegbar.
+        """
+        if agent_type == "jules":
+            return  # default, nichts zu tun
+        state = getattr(self, "jules_state", None)
+        if state is None or state._pool is None:
+            return
+        try:
+            async with state._pool.acquire() as conn:
+                await conn.execute(
+                    """UPDATE jules_pr_reviews SET agent_type=$1
+                       WHERE repo=$2 AND pr_number=$3 AND agent_type='jules'""",
+                    agent_type, repo, pr_number,
+                )
+        except Exception:
+            logger.debug("[review] agent_type update raced (non-fatal)")
 
     # ── Adapter-basiertes Approval-Handling (Phase 4) ────────────
 
