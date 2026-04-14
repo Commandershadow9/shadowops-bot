@@ -254,6 +254,37 @@ WHERE created_at > now() - interval '24 hours'
 GROUP BY source, status;
 ```
 
+### ScanAgent-Delegation-Rate (letzte 7 Tage)
+
+```sql
+-- Wie viele Findings wurden an Jules delegiert vs. als GitHub-Issue gepostet?
+SELECT
+  DATE(created_at) AS day,
+  COUNT(*) FILTER (WHERE source='scan_agent') AS jules_delegated,
+  COUNT(*) FILTER (WHERE source='manual') AS manual_tasks,
+  COUNT(*) FILTER (WHERE source='jules_suggestion') AS jules_suggestions
+FROM agent_task_queue
+WHERE created_at > now() - interval '7 days'
+GROUP BY DATE(created_at)
+ORDER BY day DESC;
+```
+
+### ScanAgent-delegierte Tasks: Status-Verteilung
+
+```sql
+SELECT
+  status,
+  COUNT(*) AS cnt,
+  MIN(created_at) AS oldest,
+  MAX(updated_at) AS newest
+FROM agent_task_queue
+WHERE source = 'scan_agent'
+GROUP BY status
+ORDER BY cnt DESC;
+```
+
+**Alarmzone:** `queued > 10` und `oldest > 2h` → Scheduler haengt oder Jules-API down.
+
 ---
 
 ## 5. Konfigurations-Referenz

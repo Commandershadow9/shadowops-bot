@@ -133,3 +133,34 @@ Bei Aenderungen an Shared-Services (Redis, PostgreSQL, Traefik) MUESSEN alle Kon
   1. `agent_review.auto_merge.enabled: false` (stoppt Auto-Merge sofort)
   2. Wenn weiter problematisch: `agent_review.enabled: false` (deaktiviert komplette Pipeline)
   3. Bot-Restart via `scripts/restart.sh` — < 30s bis Legacy-Verhalten wiederhergestellt
+
+## SecurityScanAgent → Queue-Delegation (seit 2026-04-14)
+- **Code:** `src/integrations/security_engine/scan_agent.py` — `_should_delegate_to_jules()` + `_enqueue_jules_fix()`
+- **Autonomie-Schleife:** Wenn `agent_review.enabled=true`, delegiert der ScanAgent Code-Security-Findings direkt an Jules statt GitHub-Issues zu oeffnen.
+- **_JULES_DELEGATABLE_CATEGORIES:** Whitelist von Code-Security-Categories. Nur diese werden delegiert. Infrastruktur-Categories (docker, config, permissions, network_exposure, backup) NIEMALS dazu nehmen — diese brauchen OS-Zugriff, kein Code-Fix.
+- **_JULES_KNOWN_PROJECTS:** Whitelist von Projekten mit Jules-Integration. Neue Projekte nur hinzufuegen wenn sie ein Code-Repo + Jules-Zugriff haben.
+- **4-stufige Safety in `_should_delegate_to_jules()`:**
+  1. `agent_review.enabled` (Feature-Flag) — bei False immer GitHub-Issue-Pfad
+  2. Category muss in `_JULES_DELEGATABLE_CATEGORIES` sein
+  3. Projekt muss in `_JULES_KNOWN_PROJECTS` sein
+  4. `affected_files` muss nicht-leer sein (Jules braucht Code-Context)
+- NIEMALS eine dieser 4 Stufen umgehen — jede einzelne schuetzt gegen fehlerhafte Auto-Delegation
+- NIEMALS `agent_review_enabled`/`agent_task_queue` als Instanz-Attribute setzen — sie sind `@property` mit Lazy-Read aus `self.bot.github_integration`. Injection-Zeitpunkt-Issues vermeiden.
+- **Jules-Prompt in `_enqueue_jules_fix()` ist STRIKT begrenzt:** "NUR affected Files aendern, kein Refactoring, Tests gruen halten". Nicht lockern — Jules ohne Scope-Constraints macht zu viel.
+- **priority=1 fuer scan_agent-Tasks** (nach manual=0, vor jules_suggestion=2). Nicht aendern — Security-Fixes sind zeitkritischer als Suggestions aber nicht so kritisch wie manuelle Eingriffe.
+- **Bei Aenderungen an _JULES_DELEGATABLE_CATEGORIES oder _JULES_KNOWN_PROJECTS:** `tests/unit/test_scan_agent_jules_delegation.py` komplett laufen lassen.
+- **Fallback:** Wenn Queue/Feature disabled, laeuft `_create_github_issue` wie bisher — kein Code-Doppelpfad, nur if/else auf oberster Ebene.
+
+## Jules-Dashboard-Suggestions (2026-04-14 API-Verifikation)
+- **Jules API v1alpha hat KEINEN `suggestions`-Endpoint** (Discovery-Doc verifiziert, nur `sessions` + `sources`)
+- **Jules CLI hat KEINEN suggestions-Command** (`jules` ⊂ `new, remote, teleport, login, logout, version, help`)
+- **Kein offizieller Jules-MCP-Server** — MCP waere nur Transport, kann keine Daten erzeugen die API nicht exposed
+- **Suggestions-Poller (`_fetch_suggestions`) bleibt Stub** bis Google die API erweitert
+- **NIEMALS Playwright/Browser-Scraping zum Dashboard implementieren** ohne explizite Sicherheits-Diskussion:
+  - Braucht Google-OAuth-Credentials im Bot-Prozess → zu grosser Angriffsvektor
+  - ToS-Bruch moeglich, UI-Changes brechen das jederzeit
+- **Alternative Task-Quellen die heute funktionieren:**
+  1. SecurityScanAgent (autonome Delegation, oben dokumentiert)
+  2. Dependabot-PRs mit jules-Label (werden automatisch reviewt)
+  3. Manuelle `jules new "..."` CLI-Sessions
+  4. GitHub-Issues mit jules-Label (Jules iteriert darauf)

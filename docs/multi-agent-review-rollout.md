@@ -106,6 +106,40 @@ GROUP BY agent_type, rule_matched
 ORDER BY reverted DESC, count DESC;
 ```
 
+## Stufe 4 — SecurityScanAgent → Queue-Delegation
+
+**Nach 48h erfolgreichem Stufe-3-Betrieb** (Auto-Merge ohne Reverts):
+
+Die Autonomie-Schleife schliessen — ScanAgent delegiert Code-Security-Findings
+direkt an Jules statt GitHub-Issues zu oeffnen.
+
+**Voraussetzung:** Keine Code-Aenderung notwendig, nur Feature-Flag. Die Logik
+ist bereits deployed seit Commit `1e1ed8c`. Delegation greift automatisch wenn
+`agent_review.enabled=true` — das wurde in Stufe 1 schon gesetzt.
+
+**Beobachten erste 7 Tage:**
+
+```sql
+-- Jules-delegierte Findings
+SELECT agent_type, category, COUNT(*)
+FROM agent_task_queue
+WHERE source = 'scan_agent' AND created_at > now() - interval '7 days'
+GROUP BY agent_type, category;
+```
+
+**Success-Kriterium:**
+- ScanAgent-Sessions loggen `jules_delegated > 0` im Session-Summary
+- Queue-Scheduler released die Tasks → Jules-PRs entstehen
+- Bot reviewt diese PRs (→ claude-approved oder revision_requested)
+- KEIN Revert von Auto-Merges die aus scan_agent-Source kamen
+
+**Abbruch-Kriterium:**
+- Revert-Rate fuer `agent_type='scan_agent_delegated'` > 10% → Delegation-Categories
+  einschraenken (z.B. `xss` rausnehmen wenn zu viele false-positives) via Code-Change
+
+**Rollback:** Der ScanAgent respektiert `agent_review.enabled` — bei `false` laeuft
+automatisch wieder der GitHub-Issue-Pfad. Kein eigener Feature-Flag noetig.
+
 ## Rollback-Sequenz
 
 **Level 1 — Auto-Merge stoppen:**

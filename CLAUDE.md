@@ -489,9 +489,26 @@ Live-Test deckte 7 Probleme auf — alle gefixt + Dokumentation/Tests verbessert
   - `_jules_run_review(adapter=...)` reicht den Adapter durch; fuer non-Jules nutzt der Review-Pfad `adapter.build_prompt()` + `adapter.model_preference()`
   - `handle_jules_pr_event`: Routing-Matrix `is_jules_legacy vs. detected_adapter vs. agent_review_enabled`
   - `_update_review_agent_type()`: setzt `jules_pr_reviews.agent_type` fuer Multi-Agent-Statistik
+- **SecurityScanAgent → Queue-Delegation (seit 2026-04-14):** Autonomie-Schleife geschlossen
+  - `_should_delegate_to_jules(finding)`: 4-stufige Safety (enabled, category, project, affected_files)
+  - `_enqueue_jules_fix(finding)`: baut Jules-Prompt + Queue-Insert
+  - Flow: ScanAgent findet Code-Issue → Queue → Scheduler → Jules-API → PR → Bot-Review → Label
+  - Categories: `code_security, xss, sql_injection, auth, input_validation, csrf` → Jules
+  - Categories: `docker, config, permissions, network_exposure, backup` → GitHub-Issue (wie bisher)
+  - Projekte: `zerodox, guildscout, shadowops-bot, ai-agent-framework, mayday-sim`
+- **Jules-Dashboard-Suggestions (API-Befund 2026-04-14):** Nicht via API zugaenglich
+  - Jules API v1alpha hat nur `sessions` + `sources` Resources
+  - Jules CLI hat keinen `suggestions`-Command
+  - Kein offizieller Jules-MCP-Server
+  - Suggestions-Poller bleibt Stub bis Google die API erweitert (~30min Job zum Nachziehen)
+  - Ersatz heute: SecurityScanAgent + Dependabot + manuelle `jules new` Sessions
+- **End-to-End Live-Test (2026-04-14):** PR #141, komplette Pipeline in 20s durchlaufen
+  - Webhook → Detector → Claude-Review → claude-approved Label
+  - Review hat sogar projekt-spezifische Regel-Verletzung (Umlaut-Style) als Nit gefunden
 - **Design-Doc:** `docs/plans/2026-04-14-multi-agent-review-design.md`
 - **Implementierungsplan:** `docs/plans/2026-04-14-multi-agent-review.md`
 - **ADR:** `docs/adr/008-multi-agent-review-pipeline.md`
 - **Rollout-Guide:** `docs/multi-agent-review-rollout.md`
 - **Operator-Runbook:** `docs/multi-agent-review-runbook.md` (Incident-Playbooks, Health-Checks, SQL-Diagnose-Queries)
-- **Test-Coverage:** 253 Unit-Tests (Adapter 91, Detector 14, Queue 18, API 18, Poller 10, Tracker 8, Auto-Merge-Flow 14, Embed 18, Digest 17, Adapter-Prompt-Integration 9, Jules 19, PR #123 Regression 17)
+- **Smoke-Test-Script:** `scripts/smoke_test_multi_agent_review.py` (7 Stages, reproduzierbar, kein Config-Change)
+- **Test-Coverage:** 296 Unit-Tests (Adapter 91, Detector 14, Queue 18, API 18, Poller 10, Tracker 8, Auto-Merge-Flow 14, Embed 18, Digest 17, Adapter-Prompt-Integration 9, ScanAgent-Delegation 23, Jules 19, PR #123 Regression 17)
