@@ -60,11 +60,13 @@ _handle_approval_with_adapter
 - Neue Agent-Typen brauchen nur eine neue Klasse + Test-Suite — kein Mixin-Touch
 - Confidence-Ranking erlaubt Ambiguitätsauflösung (SEO-Body + Jules-Label → SEO gewinnt bei 0.95 > 0.9)
 - Safe-Default-Rollout: Config-Toggles pro Adapter (`jules: true`, `seo: false`, `codex: false`)
+- **adapter.build_prompt() wird jetzt im Review-Pfad genutzt** (Phase 6 Final): `ai_engine.review_pr()` akzeptiert `prompt_override` + `model_preference` Parameter, das Mixin reicht den Adapter durch
+- **Vollständiges Multi-Agent-Routing:** Jules-Legacy-Pfad bleibt primär; SEO/Codex-PRs nehmen den Adapter-Pfad wenn `agent_review.enabled=true`
+- **agent_type-Spalte** in `jules_pr_reviews` wird bei non-Jules-PRs automatisch gesetzt (Multi-Agent-Statistik)
 
 **Schlecht:**
-- Mehr Files (~10 neue Module) statt einem dicken Mixin
-- Detector läuft in Phase 1-4 parallel zur Legacy-Jules-Detection als Diagnostik — noch nicht der primäre Pfad
-- `adapter.build_prompt()` wird aktuell nicht genutzt (nur `merge_policy()`) — der Review-Pfad ist weiter hard-coded Jules. Phase 7 (späterer Refactor) löst das
+- Mehr Files (~13 neue Module) statt einem dicken Mixin
+- Legacy-Jules-Detection-Check (`_jules_is_jules_pr`) bleibt parallel zum Detector erhalten — Doppel-Pfad als Safety-Net, sollte in V2 auf Detector-Only reduziert werden
 
 **Blast Radius Rollout:**
 - Phase-1-Detection: Nur Logging, kein Verhaltensänderung → risikofrei
@@ -73,11 +75,12 @@ _handle_approval_with_adapter
 
 ## Quantitativ
 
-- **244 Unit-Tests** grün (Phase 1-5 + Jules-Regression PR #123)
-- **~2400 neue Zeilen** Code + ~1200 Zeilen Tests
+- **253 Unit-Tests** grün (Phase 1-6 + Jules-Regression PR #123 + vertiefte Adapter-Integration)
+- **~2800 neue Zeilen** Code + ~1500 Zeilen Tests
 - **Zwei neue DB-Tabellen:** `agent_task_queue`, `auto_merge_outcomes`
-- **Eine additive Spalte:** `jules_pr_reviews.agent_type` (default 'jules')
+- **Eine additive Spalte:** `jules_pr_reviews.agent_type` (default 'jules', wird für non-Jules PRs gesetzt)
 - **4 neue Scheduled-Tasks in `bot.py`:** Queue-Scheduler (60s), Suggestions-Poller (8h), Outcome-Check (60min), Daily-Digest (08:15)
+- **2 erweiterte API-Signaturen:** `ai_engine.review_pr(prompt_override=..., model_preference=...)`, `_jules_run_review(adapter=...)`
 
 ## Rollout-Schritte
 

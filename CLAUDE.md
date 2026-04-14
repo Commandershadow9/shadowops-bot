@@ -484,7 +484,14 @@ Live-Test deckte 7 Probleme auf — alle gefixt + Dokumentation/Tests verbessert
 - **Config-driven Rollout:** `agent_review.enabled` + per-Adapter-Toggle (`adapters.jules/seo/codex`)
 - **Auto-Merge:** Separat aktivierbar (`agent_review.auto_merge.enabled: false` default), per-project `allowed` Flag, Rollback < 30s via Config
 - **Outcome-Learning:** `revert_rate_by_rule` gruppiert nach `rule_matched` = `{agent}_{verdict}_{Nb}` — zeigt welche Merge-Entscheidungen zu haeufig reverted werden
+- **Vertiefte Adapter-Integration (Phase 6 Final):**
+  - `ai_engine.review_pr(prompt_override, model_preference)` akzeptiert adapter-gebauten Prompt und Modell-Wahl
+  - `_jules_run_review(adapter=...)` reicht den Adapter durch; fuer non-Jules nutzt der Review-Pfad `adapter.build_prompt()` + `adapter.model_preference()`
+  - `handle_jules_pr_event`: Routing-Matrix `is_jules_legacy vs. detected_adapter vs. agent_review_enabled`
+  - `_update_review_agent_type()`: setzt `jules_pr_reviews.agent_type` fuer Multi-Agent-Statistik
 - **Design-Doc:** `docs/plans/2026-04-14-multi-agent-review-design.md`
 - **Implementierungsplan:** `docs/plans/2026-04-14-multi-agent-review.md`
 - **ADR:** `docs/adr/008-multi-agent-review-pipeline.md`
-- **Test-Coverage:** 244 Unit-Tests (Adapter 91, Detector 14, Queue 18, API 18, Poller 10, Tracker 8, Auto-Merge-Flow 14, Embed 18, Digest 17, Jules 19, PR #123 Regression 17)
+- **Rollout-Guide:** `docs/multi-agent-review-rollout.md`
+- **Operator-Runbook:** `docs/multi-agent-review-runbook.md` (Incident-Playbooks, Health-Checks, SQL-Diagnose-Queries)
+- **Test-Coverage:** 253 Unit-Tests (Adapter 91, Detector 14, Queue 18, API 18, Poller 10, Tracker 8, Auto-Merge-Flow 14, Embed 18, Digest 17, Adapter-Prompt-Integration 9, Jules 19, PR #123 Regression 17)
