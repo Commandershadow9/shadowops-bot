@@ -22,7 +22,7 @@ class CircuitBreaker:
         self.reset_at = None
 
     def record_success(self) -> None:
-        """Setzt den Fehlerzaehler zurueck und schliesst den Circuit Breaker,
+        """Setzt den Fehlerzähler zurück und schließt den Circuit Breaker,
         falls er offen war.
         """
         self.consecutive_failures = 0
@@ -32,7 +32,7 @@ class CircuitBreaker:
             logger.info("CircuitBreaker[%s] geschlossen nach Erfolg", self.name)
 
     def record_failure(self) -> None:
-        """Erhoeht den Fehlerzaehler und oeffnet den Circuit Breaker,
+        """Erhöht den Fehlerzähler und öffnet den Circuit Breaker,
         wenn der Schwellenwert erreicht ist.
         """
         self.consecutive_failures += 1
@@ -49,8 +49,11 @@ class CircuitBreaker:
             )
 
     def allow_request(self) -> bool:
-        """Prueft, ob eine Anfrage durchgelassen werden darf (Circuit geschlossen
+        """Prüft, ob eine Anfrage durchgelassen werden darf (Circuit geschlossen
         oder Timeout abgelaufen).
+
+        Returns:
+            bool: True wenn der Circuit Breaker geschlossen oder der Reset-Timeout abgelaufen ist, False wenn Anfragen aktiv blockiert werden.
         """
         if not self.is_open:
             return True
