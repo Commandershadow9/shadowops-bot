@@ -1122,6 +1122,14 @@ class ShadowOpsBot(commands.Bot):
         if not self.jules_nightly_batch_task.is_running():
             self.jules_nightly_batch_task.start()
 
+        # Multi-Agent Review (Phase 3) — nur wenn enabled
+        gh = getattr(self, "github_integration", None)
+        if gh and getattr(gh, "_agent_review_enabled", False):
+            if not self.agent_task_queue_scheduler.is_running():
+                self.agent_task_queue_scheduler.start()
+            if not self.agent_suggestions_poller_task.is_running():
+                self.agent_suggestions_poller_task.start()
+
         # Setze Status
         await self.change_presence(
             activity=discord.Activity(
@@ -1680,6 +1688,84 @@ class ShadowOpsBot(commands.Bot):
     async def before_jules_nightly_batch(self):
         await self.wait_until_ready()
         self.logger.info("🛡️ Jules Nightly-Batch Task gestartet (taeglich 23:07)")
+
+    # ── Multi-Agent Review (Phase 3) ────────────────────────────────
+
+    @tasks.loop(seconds=60)
+    async def agent_task_queue_scheduler(self):
+        """Released Jules-Sessions aus Queue unter Respektierung 100/24h + 15 concurrent."""
+        try:
+            gh = getattr(self, "github_integration", None)
+            if not gh or not getattr(gh, "_agent_review_enabled", False):
+                return
+            if not gh._agent_review_started:
+                await gh._agent_review_startup()
+            queue = gh.agent_task_queue
+            jules_api = gh.jules_api_client
+            if not queue or not jules_api:
+                return
+
+            concurrent = await jules_api.count_concurrent_sessions()
+            if concurrent >= 15:
+                self.logger.debug(
+                    "[agent-queue] %d concurrent sessions, pausing scheduler",
+                    concurrent,
+                )
+                return
+
+            released_24h = await queue.count_released_last_24h()
+            budget = min(15 - concurrent, 100 - released_24h)
+            if budget <= 0:
+                self.logger.info(
+                    "[agent-queue] 24h-budget erschoepft (released_24h=%d)",
+                    released_24h,
+                )
+                return
+
+            batch = await queue.get_next_batch(limit=budget)
+            for task in batch:
+                try:
+                    sid = await jules_api.create_session(
+                        prompt=task.payload.get("prompt", ""),
+                        owner=task.payload.get("owner", ""),
+                        repo=task.payload.get("repo", ""),
+                        title=task.payload.get("title", ""),
+                        branch=task.payload.get("branch", "main"),
+                    )
+                    await queue.mark_released(task.id, sid)
+                    self.logger.info(
+                        "[agent-queue] task=%d -> Jules-Session %s", task.id, sid,
+                    )
+                except Exception as e:
+                    retryable = "network" in str(e) or "rate_limited" in str(e)
+                    await queue.mark_failed(task.id, str(e)[:200], retry=retryable)
+        except Exception:
+            self.logger.exception("[agent-queue] scheduler crashed (continuing)")
+
+    @agent_task_queue_scheduler.before_loop
+    async def before_agent_task_queue_scheduler(self):
+        await self.wait_until_ready()
+        self.logger.info("🛡️ Agent-Review Queue-Scheduler gestartet (60s Loop)")
+
+    @tasks.loop(hours=8)
+    async def agent_suggestions_poller_task(self):
+        """Pollt Jules Top-Suggestions 3x taeglich (alle 8h)."""
+        try:
+            gh = getattr(self, "github_integration", None)
+            if not gh or not getattr(gh, "_agent_review_enabled", False):
+                return
+            poller = getattr(gh, "suggestions_poller", None)
+            if not poller:
+                return
+            queued = await poller.poll_and_queue()
+            self.logger.info("[agent-suggestions] %d tasks queued", queued)
+        except Exception:
+            self.logger.exception("[agent-suggestions] poll crashed (continuing)")
+
+    @agent_suggestions_poller_task.before_loop
+    async def before_agent_suggestions_poller(self):
+        await self.wait_until_ready()
+        self.logger.info("🛡️ Agent-Review Suggestions-Poller gestartet (alle 8h)")
 
     @tasks.loop(minutes=5)
     async def update_dashboard(self):
