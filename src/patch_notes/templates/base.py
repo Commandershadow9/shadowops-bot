@@ -60,7 +60,7 @@ Verwende diese Kategorien: {', '.join(self.categories())}
 Zeichenlimit: {limits['min']}-{limits['max']} Zeichen
 Features: {limits['features']} Highlights
 
-Antworte als JSON mit den Feldern: title, tldr, web_content, changes (Array mit type/description/details), seo_keywords.
+Antworte als JSON mit den Feldern: title, tldr, discord_highlights (3-6 kurze Bullet-Points), summary (1-3 Sätze Intro), web_content, changes (Array mit type/description/details), seo_keywords.
 WICHTIG: Erfinde KEINE Version im Titel. Der Titel enthält NUR den Namen des Updates."""
 
     def _groups_section(self, ctx: PipelineContext) -> str:

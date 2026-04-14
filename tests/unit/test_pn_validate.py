@@ -120,7 +120,24 @@ async def test_validate_full_pipeline():
 
 
 @pytest.mark.asyncio
-async def test_validate_none_result():
+async def test_validate_none_result_raises():
+    """Bei ai_result=None MUSS Pipeline abbrechen — keine leeren DB-Einträge."""
     ctx = _make_ctx(ai_result=None)
-    await validate(ctx)
-    assert "Kein AI-Result" in ctx.warnings[0]
+    with pytest.raises(RuntimeError, match="None"):
+        await validate(ctx)
+
+
+@pytest.mark.asyncio
+async def test_validate_empty_dict_raises():
+    """Bei leerem dict (kein title/tldr/content) — Pipeline bricht ab."""
+    ctx = _make_ctx(ai_result={"changes": []})
+    with pytest.raises(RuntimeError, match="leer"):
+        await validate(ctx)
+
+
+@pytest.mark.asyncio
+async def test_validate_empty_string_raises():
+    """Bei leerem String-Result — Pipeline bricht ab."""
+    ctx = _make_ctx(ai_result="   ")
+    with pytest.raises(RuntimeError, match="leer"):
+        await validate(ctx)

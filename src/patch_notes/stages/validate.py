@@ -25,10 +25,28 @@ _UMLAUT_RE = re.compile(r'\b(\w*?)(ae|oe|ue|Ae|Oe|Ue)(\w*)\b')
 
 
 async def validate(ctx: 'PipelineContext', bot=None) -> None:
-    """Stufe 4: Alle Safety-Checks + Content-Extraction."""
+    """Stufe 4: Alle Safety-Checks + Content-Extraction.
+
+    ABORT bei leerem AI-Result — wir publizieren KEINE leeren Notes.
+    Das verhindert den Endlos-Loop (leere Note → Version-Bump → Self-Heal
+    findet neue Commits → gleiches Problem → nächste leere Note).
+    """
     if ctx.ai_result is None:
-        ctx.warnings.append("Kein AI-Result vorhanden")
-        return
+        raise RuntimeError(
+            f"AI-Result ist None für {ctx.project} — Release wird abgebrochen. "
+            "Kein DB-Eintrag, keine Discord-Nachricht, kein Version-Bump."
+        )
+
+    # Zusätzlicher Check: ai_result dict muss mindestens title ODER web_content haben
+    if isinstance(ctx.ai_result, dict):
+        if not ctx.ai_result.get('title') and not ctx.ai_result.get('web_content') and not ctx.ai_result.get('tldr'):
+            raise RuntimeError(
+                f"AI-Result für {ctx.project} ist leer (kein title/tldr/web_content) — Release abgebrochen."
+            )
+    elif isinstance(ctx.ai_result, str) and not ctx.ai_result.strip():
+        raise RuntimeError(
+            f"AI-Result für {ctx.project} ist leerer String — Release abgebrochen."
+        )
 
     check_feature_count(ctx)
     check_design_doc_leaks(ctx)

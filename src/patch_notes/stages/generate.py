@@ -135,9 +135,9 @@ async def _call_ai(ai_service, prompt: str, ctx: PipelineContext) -> dict | str 
     except Exception as e:
         logger.warning(f"[v6] Structured Output fehlgeschlagen: {e}")
 
-    # Versuch 2: Raw Text Fallback
+    # Versuch 2: Raw Text Fallback via get_raw_ai_response (AIEngine API)
     try:
-        raw = await ai_service.query(prompt)
+        raw = await ai_service.get_raw_ai_response(prompt, use_critical_model=use_critical)
         if raw and isinstance(raw, str):
             ctx.ai_engine_used = getattr(ai_service, '_last_engine', 'unknown')
             # Versuche JSON aus Raw-Text zu extrahieren
@@ -153,23 +153,43 @@ async def _call_ai(ai_service, prompt: str, ctx: PipelineContext) -> dict | str 
 
 
 def _build_structured_wrapper(prompt: str, ctx: PipelineContext) -> str:
-    """Wrapper der JSON-Output erzwingt."""
+    """Wrapper der JSON-Output erzwingt.
+
+    WICHTIG: discord_highlights ist PFLICHT — AIEngine.generate_structured_patch_notes()
+    returned None ohne dieses Feld (Schema-Validierung in patch_notes.json).
+    """
     lang = ctx.project_config.get('patch_notes', {}).get('language', 'de')
     if lang == 'de':
         instruction = (
             "Antworte AUSSCHLIESSLICH mit einem JSON-Objekt. Kein Markdown, kein Text davor/danach.\n"
-            "Schema: {\"title\": str, \"tldr\": str, \"web_content\": str, "
-            "\"changes\": [{\"type\": str, \"description\": str, \"details\": [str]}], "
-            "\"seo_keywords\": [str]}\n"
-            "WICHTIG: 'title' enthält NUR den Update-Namen, KEINE Version.\n\n"
+            "Schema (ALLE Felder PFLICHT):\n"
+            "{\n"
+            '  "title": str,                     # Update-Name OHNE Version\n'
+            '  "tldr": str,                      # 1-2 Sätze Zusammenfassung\n'
+            '  "discord_highlights": [str],      # 3-6 kurze Stichpunkte für Discord\n'
+            '  "web_content": str,               # Vollständiger Markdown-Text für Website\n'
+            '  "summary": str,                   # Kurzer Intro-Absatz (1-3 Sätze)\n'
+            '  "changes": [{"type": str, "description": str, "details": [str]}],\n'
+            '  "seo_keywords": [str]             # 3-8 SEO-Keywords\n'
+            "}\n"
+            "WICHTIG: 'title' enthält NUR den Update-Namen, KEINE Version.\n"
+            "WICHTIG: 'discord_highlights' sind 3-6 knackige Bullet-Points (max 100 Zeichen).\n\n"
         )
     else:
         instruction = (
             "Respond ONLY with a JSON object. No markdown, no text before/after.\n"
-            "Schema: {\"title\": str, \"tldr\": str, \"web_content\": str, "
-            "\"changes\": [{\"type\": str, \"description\": str, \"details\": [str]}], "
-            "\"seo_keywords\": [str]}\n"
-            "IMPORTANT: 'title' must contain ONLY the update name, NO version.\n\n"
+            "Schema (ALL fields REQUIRED):\n"
+            "{\n"
+            '  "title": str,                     # Update name WITHOUT version\n'
+            '  "tldr": str,                      # 1-2 sentence summary\n'
+            '  "discord_highlights": [str],      # 3-6 short bullet points for Discord\n'
+            '  "web_content": str,               # Full markdown content for website\n'
+            '  "summary": str,                   # Short intro paragraph\n'
+            '  "changes": [{"type": str, "description": str, "details": [str]}],\n'
+            '  "seo_keywords": [str]\n'
+            "}\n"
+            "IMPORTANT: 'title' must contain ONLY the update name, NO version.\n"
+            "IMPORTANT: 'discord_highlights' are 3-6 punchy bullet points (max 100 chars).\n\n"
         )
     return instruction + prompt
 

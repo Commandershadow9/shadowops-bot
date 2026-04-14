@@ -110,7 +110,7 @@ async def test_generate_structured_fails_raw_fallback():
     """Structured Output fails → Raw Fallback mit JSON-Parsing."""
     mock_ai = AsyncMock()
     mock_ai.generate_structured_patch_notes.side_effect = Exception("structured failed")
-    mock_ai.query.return_value = '{"title": "Fallback", "tldr": "test"}'
+    mock_ai.get_raw_ai_response.return_value = '{"title": "Fallback", "tldr": "test"}'
     mock_ai._last_engine = "claude"
 
     bot = MagicMock()
