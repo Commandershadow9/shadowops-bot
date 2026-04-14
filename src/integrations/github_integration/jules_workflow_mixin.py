@@ -31,22 +31,62 @@ class JulesWorkflowMixin:
     SEO/Codex-Adapter werden in Phase 2.4 hinzugefuegt.
     """
 
-    # ── Multi-Agent Detector (Phase 1: nur Jules, additive) ──────
+    # ── Multi-Agent Detector (Phase 2.4: Jules + SEO + Codex) ──────
 
     def _get_agent_detector(self):
-        """Lazy-Init des AgentDetector — Adapter-Liste aus Config."""
+        """Lazy-Init des AgentDetector — Adapter-Liste aus Config.
+
+        Adapter-Toggles kommen aus `cfg.agent_review.adapters.{jules,seo,codex}`.
+        Default: nur Jules aktiv (abwaertskompatibel zum Phase-1-Verhalten).
+        """
         if getattr(self, "_agent_detector", None) is not None:
             return self._agent_detector
 
         from .agent_review.detector import AgentDetector
         from .agent_review.adapters.jules import JulesAdapter
 
-        adapters = [JulesAdapter()]
-        # Phase 2.4 wird hier SeoAdapter + CodexAdapter ergaenzen
-        # basierend auf cfg.agent_review.adapters.{seo,codex}
+        toggles = self._get_adapter_toggles()
+        adapters = []
 
+        if toggles.get("jules", True):
+            adapters.append(JulesAdapter())
+        if toggles.get("seo", False):
+            from .agent_review.adapters.seo import SeoAdapter
+            adapters.append(SeoAdapter())
+        if toggles.get("codex", False):
+            from .agent_review.adapters.codex import CodexAdapter
+            adapters.append(CodexAdapter())
+
+        logger.info(
+            "[agent-review] Detector aktiv mit %d Adapter(n): %s",
+            len(adapters), [a.agent_name for a in adapters],
+        )
         self._agent_detector = AgentDetector(adapters)
         return self._agent_detector
+
+    def _get_adapter_toggles(self) -> Dict[str, bool]:
+        """Liest Adapter-Toggles aus config.agent_review.adapters.
+
+        Fehlende Config → nur Jules aktiv (Safe-Default fuer Rollout).
+        """
+        cfg = getattr(self.config, "agent_review", None)
+        if cfg is None:
+            return {"jules": True, "seo": False, "codex": False}
+        adapters_cfg = getattr(cfg, "adapters", None)
+        if adapters_cfg is None:
+            return {"jules": True, "seo": False, "codex": False}
+        # Config kann dict oder Namespace sein
+        if isinstance(adapters_cfg, dict):
+            return {
+                "jules": adapters_cfg.get("jules", True),
+                "seo": adapters_cfg.get("seo", False),
+                "codex": adapters_cfg.get("codex", False),
+            }
+        return {
+            "jules": getattr(adapters_cfg, "jules", True),
+            "seo": getattr(adapters_cfg, "seo", False),
+            "codex": getattr(adapters_cfg, "codex", False),
+        }
 
     # ── Task 8.1: Gate-Pipeline ──────────────────────────────────
 
