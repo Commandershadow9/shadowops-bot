@@ -36,19 +36,19 @@ class TestResolveTeamMember:
 
     def test_commandershadow9_wird_zu_shadow(self, mixin):
         result = mixin._resolve_team_member('Commandershadow9')
-        assert result == ('Shadow', 'Backend & Infrastruktur')
+        assert result == ('Shadow', 'Founder & Lead Dev')
 
     def test_cmdshadow_wird_zu_shadow(self, mixin):
         result = mixin._resolve_team_member('cmdshadow')
-        assert result == ('Shadow', 'Backend & Infrastruktur')
+        assert result == ('Shadow', 'Founder & Lead Dev')
 
     def test_renjihoshida_wird_zu_mapu(self, mixin):
         result = mixin._resolve_team_member('RenjiHoshida')
-        assert result == ('Mapu', 'Frontend & Design')
+        assert result == ('Mapu', 'Co-Founder & Dev')
 
     def test_mapu_wird_zu_mapu(self, mixin):
         result = mixin._resolve_team_member('mapu')
-        assert result == ('Mapu', 'Frontend & Design')
+        assert result == ('Mapu', 'Co-Founder & Dev')
 
     def test_claude_wird_gefiltert(self, mixin):
         result = mixin._resolve_team_member('Claude')
@@ -72,7 +72,7 @@ class TestResolveTeamMember:
 
     def test_case_insensitive(self, mixin):
         result = mixin._resolve_team_member('COMMANDERSHADOW9')
-        assert result == ('Shadow', 'Backend & Infrastruktur')
+        assert result == ('Shadow', 'Founder & Lead Dev')
 
 
 # ============================================================================
@@ -90,7 +90,7 @@ class TestBuildTeamCredits:
         credits = mixin._build_team_credits(commits)
         assert 'Shadow' in credits
         assert credits['Shadow']['commits'] == 2
-        assert credits['Shadow']['rolle'] == 'Backend & Infrastruktur'
+        assert credits['Shadow']['rolle'] == 'Founder & Lead Dev'
 
     def test_multiple_authors(self, mixin):
         commits = [
@@ -158,18 +158,24 @@ class TestFormatCreditsSection:
         assert result == ""
 
     def test_single_member(self, mixin):
+        """Seit 2026-04: Credits-Format ist kompakter Team-Header fuer AI-Prompt,
+        NICHT User-facing Text. Der 'Dieses Update'-Text wird von der AI
+        generiert, nicht vom Helper."""
         credits = {
             'Shadow': {'rolle': 'Backend', 'commits': 5, 'features': []},
         }
         result = mixin._format_credits_section(credits, 'de')
+        assert result.startswith('# Team:')
         assert 'Shadow (Backend)' in result
-        assert 'Dieses Update' in result
 
     def test_mit_autonomous(self, mixin):
+        """__autonomous__-Entry wird in der kompakten Form NICHT im Team-Header
+        aufgefuehrt (wird spaeter in der AI-Prompt-Komposition separat behandelt)."""
         credits = {
             'Shadow': {'rolle': 'Backend', 'commits': 3, 'features': []},
             '__autonomous__': {'commits': 2, 'types': ['SEO-AUTO']},
         }
         result = mixin._format_credits_section(credits, 'de')
-        assert 'Automatisiert' in result
-        assert 'SEO-Optimierungen' in result
+        assert 'Shadow (Backend)' in result
+        # __autonomous__ wird NICHT als Team-Member angezeigt
+        assert '__autonomous__' not in result

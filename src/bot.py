@@ -1200,6 +1200,57 @@ class ShadowOpsBot(commands.Bot):
         except Exception as e:
             self.logger.warning(f"   ⚠️ {name} Shutdown-Fehler: {e}")
 
+    async def _kill_orphan_subprocesses(self, grace_period: float = 2.0):
+        """Beendet alle noch laufenden Child-Prozesse (Codex-CLI, gh-api etc.).
+
+        Hintergrund: AI-Scan-Sessions (Codex/Claude CLI) laufen als Subprocesses
+        ueber `asyncio.create_subprocess_exec`. Bei Bot-Shutdown werden sie
+        teilweise nicht sauber beendet, was `bot.run()` nach `close()` bis zu
+        120s warten laesst (systemd TimeoutStopSec) — das verursachte bisher
+        2min Discord-Ausfall pro Deploy.
+
+        Fix: Nach dem komponenten-weisen Shutdown alle noch lebenden Children
+        per SIGTERM/SIGKILL killen. Grace-Period 2s fuer SIGTERM.
+        """
+        import os
+        import signal as _sig
+        try:
+            # /proc/<pid>/task/<tid>/children enthaelt direkte Kind-PIDs
+            own_pid = os.getpid()
+            children_path = f"/proc/{own_pid}/task/{own_pid}/children"
+            if not os.path.exists(children_path):
+                return
+            with open(children_path) as f:
+                raw = f.read().strip()
+            pids = [int(p) for p in raw.split() if p.strip().isdigit()]
+            if not pids:
+                return
+            self.logger.info(
+                f"🧹 {len(pids)} Child-Prozess(e) gefunden — sende SIGTERM"
+            )
+            for pid in pids:
+                try:
+                    os.kill(pid, _sig.SIGTERM)
+                except ProcessLookupError:
+                    pass
+            # Grace-Period abwarten
+            await asyncio.sleep(grace_period)
+            # Nachhilfe: SIGKILL fuer hartnaeckige
+            remaining = []
+            for pid in pids:
+                try:
+                    os.kill(pid, 0)  # Existenz-Check
+                    os.kill(pid, _sig.SIGKILL)
+                    remaining.append(pid)
+                except ProcessLookupError:
+                    pass
+            if remaining:
+                self.logger.info(
+                    f"🔨 SIGKILL fuer {len(remaining)} hartnaeckige Child-Prozess(e)"
+                )
+        except Exception as e:
+            self.logger.warning(f"⚠️ Child-Cleanup fehlgeschlagen: {e}")
+
     async def close(self):
         """Clean shutdown of the bot mit Timeouts pro Komponente"""
         import traceback
@@ -1235,6 +1286,10 @@ class ShadowOpsBot(commands.Bot):
 
         # Close parent bot (Discord Connection)
         await self._shutdown_component("Discord Connection", super().close(), timeout=15.0)
+
+        # Orphan-Child-Prozesse terminieren (Codex/Claude CLI, gh-api etc.)
+        # Verhindert 2min SIGTERM-Timeout durch verwaiste asyncio-Subprocesses
+        await self._kill_orphan_subprocesses(grace_period=2.0)
 
         self.logger.info("✅ ShadowOps Bot shutdown complete")
 
@@ -2215,6 +2270,14 @@ def main():
         # damit bot.close() die HTTP-Server-Sockets sauber freigibt.
         bot = ShadowOpsBot()
         bot.run(config.discord_token, log_handler=None)
+        # Hard-Exit Safety-Net: falls verwaiste Threads/Subprocesses den
+        # Event-Loop hindern sauber zu terminieren, erzwingt os._exit die
+        # sofortige Beendigung. close() hat bereits alle Komponenten und
+        # Child-Prozesse beendet — os._exit ist nur der finale Fallback.
+        # NICHT in Tests ausfuehren — pytest wuerde sonst abgewuergt.
+        import os as _os
+        if _os.getenv("PYTEST_CURRENT_TEST") is None:
+            _os._exit(0)
         return 0
 
     except FileNotFoundError as e:
