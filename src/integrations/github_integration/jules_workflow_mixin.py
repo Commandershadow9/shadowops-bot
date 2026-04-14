@@ -24,7 +24,29 @@ logger = logging.getLogger(__name__)
 
 
 class JulesWorkflowMixin:
-    """Mixin fuer GitHubIntegration — Jules SecOps Review-Loop."""
+    """Mixin fuer GitHubIntegration — Jules SecOps Review-Loop.
+
+    Phase 2 Erweiterung (2026-04-14): AgentDetector-Integration.
+    Der Detector wird lazy initialisiert und liefert in Phase 1 nur JulesAdapter.
+    SEO/Codex-Adapter werden in Phase 2.4 hinzugefuegt.
+    """
+
+    # ── Multi-Agent Detector (Phase 1: nur Jules, additive) ──────
+
+    def _get_agent_detector(self):
+        """Lazy-Init des AgentDetector — Adapter-Liste aus Config."""
+        if getattr(self, "_agent_detector", None) is not None:
+            return self._agent_detector
+
+        from .agent_review.detector import AgentDetector
+        from .agent_review.adapters.jules import JulesAdapter
+
+        adapters = [JulesAdapter()]
+        # Phase 2.4 wird hier SeoAdapter + CodexAdapter ergaenzen
+        # basierend auf cfg.agent_review.adapters.{seo,codex}
+
+        self._agent_detector = AgentDetector(adapters)
+        return self._agent_detector
 
     # ── Task 8.1: Gate-Pipeline ──────────────────────────────────
 
@@ -111,6 +133,21 @@ class JulesWorkflowMixin:
                 return
             if not await self._jules_is_jules_pr(pr, repo):
                 return
+
+            # Phase 2 Diagnostik: Detector parallel laufen lassen (Verhalten unveraendert)
+            try:
+                detector = self._get_agent_detector()
+                detected_adapter = detector.detect(pr)
+                if detected_adapter:
+                    logger.info(
+                        f"[agent-detector] {repo}#{pr_number} → {detected_adapter.agent_name}"
+                    )
+                else:
+                    logger.debug(
+                        f"[agent-detector] {repo}#{pr_number} → no adapter matched (legacy path)"
+                    )
+            except Exception:
+                logger.exception("[agent-detector] crashed (Legacy-Pfad laeuft trotzdem)")
 
             logger.info(f"[jules] Jules PR erkannt: {repo}#{pr_number} sha={head_sha[:7]} action={action}")
 
