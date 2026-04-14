@@ -130,6 +130,19 @@ class GitHubIntegration(JulesWorkflowMixin,
         self.redis = None  # Wird in _jules_startup gesetzt
         self._jules_started = False
 
+        # Multi-Agent Review (Phase 3) — additive, default off
+        ar_raw = _get_section('agent_review', {})
+        self._agent_review_enabled = bool(ar_raw.get('enabled', False))
+        self._agent_review_started = False
+        self.agent_task_queue = None   # TaskQueue, wird in _agent_review_startup gesetzt
+        self.jules_api_client = None   # JulesAPIClient
+        self.suggestions_poller = None # JulesSuggestionsPoller
+        self.outcome_tracker = None    # OutcomeTracker
+        if self._agent_review_enabled and not isinstance(config, dict):
+            self.config.agent_review = _dict_to_namespace(ar_raw)
+        elif not isinstance(config, dict):
+            self.config.agent_review = SimpleNamespace(enabled=False)
+
         # Event handlers registry
         self.event_handlers: Dict[str, Callable] = {
             'push': self.handle_push_event,
@@ -197,6 +210,54 @@ class GitHubIntegration(JulesWorkflowMixin,
         except Exception:
             self.logger.exception("[jules] startup failed — disabling Jules workflow")
             self._jules_enabled = False
+
+    async def _agent_review_startup(self) -> None:
+        """Async Init fuer Agent-Review Infrastruktur (Queue + Jules API)."""
+        if not self._agent_review_enabled or self._agent_review_started:
+            return
+        try:
+            from .agent_review.queue import TaskQueue
+            from .agent_review.jules_api import JulesAPIClient
+            from .agent_review.suggestions_poller import JulesSuggestionsPoller
+            from .agent_review.outcome_tracker import OutcomeTracker
+
+            # Queue teilt die security_analyst DB mit jules_state
+            self.agent_task_queue = TaskQueue(self.config.security_analyst_dsn)
+            await self.agent_task_queue.connect()
+
+            self.outcome_tracker = OutcomeTracker(self.config.security_analyst_dsn)
+            await self.outcome_tracker.connect()
+
+            # Jules API — Key aus jules_workflow.api_key
+            api_key = getattr(self.config.jules_workflow, "api_key", None)
+            if api_key:
+                self.jules_api_client = JulesAPIClient(api_key=api_key)
+            else:
+                self.logger.warning(
+                    "[agent-review] kein jules_workflow.api_key, "
+                    "Scheduler kann keine Sessions starten",
+                )
+
+            # Suggestions-Poller (wenn aktiviert)
+            sp_cfg = getattr(self.config.agent_review, "suggestions_poller", None)
+            if sp_cfg and getattr(sp_cfg, "enabled", False) and self.jules_api_client:
+                repos = getattr(sp_cfg, "repos", []) or []
+                self.suggestions_poller = JulesSuggestionsPoller(
+                    queue=self.agent_task_queue,
+                    jules_api=self.jules_api_client,
+                    repos=list(repos),
+                    max_per_run=getattr(sp_cfg, "max_per_run", 20),
+                )
+
+            self._agent_review_started = True
+            self.logger.info(
+                "[agent-review] startup ok (queue, api_client=%s, poller=%s)",
+                bool(self.jules_api_client),
+                bool(self.suggestions_poller),
+            )
+        except Exception:
+            self.logger.exception("[agent-review] startup failed — disabling")
+            self._agent_review_enabled = False
 
     async def _pr_dispatch(self, payload: dict) -> None:
         """Dispatches PR events. Jules-Workflow laeuft zuerst, dann normaler Handler."""

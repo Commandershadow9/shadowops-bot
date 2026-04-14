@@ -1122,6 +1122,18 @@ class ShadowOpsBot(commands.Bot):
         if not self.jules_nightly_batch_task.is_running():
             self.jules_nightly_batch_task.start()
 
+        # Multi-Agent Review (Phase 3) — nur wenn enabled
+        gh = getattr(self, "github_integration", None)
+        if gh and getattr(gh, "_agent_review_enabled", False):
+            if not self.agent_task_queue_scheduler.is_running():
+                self.agent_task_queue_scheduler.start()
+            if not self.agent_suggestions_poller_task.is_running():
+                self.agent_suggestions_poller_task.start()
+            if not self.agent_outcome_check_task.is_running():
+                self.agent_outcome_check_task.start()
+            if not self.agent_daily_digest_task.is_running():
+                self.agent_daily_digest_task.start()
+
         # Setze Status
         await self.change_presence(
             activity=discord.Activity(
@@ -1680,6 +1692,186 @@ class ShadowOpsBot(commands.Bot):
     async def before_jules_nightly_batch(self):
         await self.wait_until_ready()
         self.logger.info("🛡️ Jules Nightly-Batch Task gestartet (taeglich 23:07)")
+
+    # ── Multi-Agent Review (Phase 3) ────────────────────────────────
+
+    @tasks.loop(seconds=60)
+    async def agent_task_queue_scheduler(self):
+        """Released Jules-Sessions aus Queue unter Respektierung 100/24h + 15 concurrent."""
+        try:
+            gh = getattr(self, "github_integration", None)
+            if not gh or not getattr(gh, "_agent_review_enabled", False):
+                return
+            if not gh._agent_review_started:
+                await gh._agent_review_startup()
+            queue = gh.agent_task_queue
+            jules_api = gh.jules_api_client
+            if not queue or not jules_api:
+                return
+
+            concurrent = await jules_api.count_concurrent_sessions()
+            if concurrent >= 15:
+                self.logger.debug(
+                    "[agent-queue] %d concurrent sessions, pausing scheduler",
+                    concurrent,
+                )
+                return
+
+            released_24h = await queue.count_released_last_24h()
+            budget = min(15 - concurrent, 100 - released_24h)
+            if budget <= 0:
+                self.logger.info(
+                    "[agent-queue] 24h-budget erschoepft (released_24h=%d)",
+                    released_24h,
+                )
+                return
+
+            batch = await queue.get_next_batch(limit=budget)
+            for task in batch:
+                try:
+                    sid = await jules_api.create_session(
+                        prompt=task.payload.get("prompt", ""),
+                        owner=task.payload.get("owner", ""),
+                        repo=task.payload.get("repo", ""),
+                        title=task.payload.get("title", ""),
+                        branch=task.payload.get("branch", "main"),
+                    )
+                    await queue.mark_released(task.id, sid)
+                    self.logger.info(
+                        "[agent-queue] task=%d -> Jules-Session %s", task.id, sid,
+                    )
+                except Exception as e:
+                    retryable = "network" in str(e) or "rate_limited" in str(e)
+                    await queue.mark_failed(task.id, str(e)[:200], retry=retryable)
+        except Exception:
+            self.logger.exception("[agent-queue] scheduler crashed (continuing)")
+
+    @agent_task_queue_scheduler.before_loop
+    async def before_agent_task_queue_scheduler(self):
+        await self.wait_until_ready()
+        self.logger.info("🛡️ Agent-Review Queue-Scheduler gestartet (60s Loop)")
+
+    @tasks.loop(hours=8)
+    async def agent_suggestions_poller_task(self):
+        """Pollt Jules Top-Suggestions 3x taeglich (alle 8h)."""
+        try:
+            gh = getattr(self, "github_integration", None)
+            if not gh or not getattr(gh, "_agent_review_enabled", False):
+                return
+            poller = getattr(gh, "suggestions_poller", None)
+            if not poller:
+                return
+            queued = await poller.poll_and_queue()
+            self.logger.info("[agent-suggestions] %d tasks queued", queued)
+        except Exception:
+            self.logger.exception("[agent-suggestions] poll crashed (continuing)")
+
+    @agent_suggestions_poller_task.before_loop
+    async def before_agent_suggestions_poller(self):
+        await self.wait_until_ready()
+        self.logger.info("🛡️ Agent-Review Suggestions-Poller gestartet (alle 8h)")
+
+    @tasks.loop(minutes=60)
+    async def agent_outcome_check_task(self):
+        """Stuendlicher Check: Auto-Merges > 24h auf Revert/CI/Follow-up pruefen.
+
+        Aktuell minimale Implementierung: markiert alle pending Outcomes als
+        checked_at=now() ohne Revert-Detection (die volle Git-Revert-Analyse
+        kommt in einer Folge-Iteration, Design-Doc sieht sie als Phase 4.2
+        plus spaetere Extensions vor).
+        """
+        try:
+            gh = getattr(self, "github_integration", None)
+            if not gh or not getattr(gh, "_agent_review_enabled", False):
+                return
+            tracker = getattr(gh, "outcome_tracker", None)
+            if not tracker:
+                return
+            pending = await tracker.get_pending_outcomes(min_age_hours=24)
+            if not pending:
+                return
+            self.logger.info(
+                "[agent-outcome] %d pending auto-merges to check", len(pending),
+            )
+            for o in pending:
+                try:
+                    reverted = await self._check_pr_reverted(
+                        o.repo, o.pr_number,
+                    )
+                    await tracker.mark_checked(o.id, reverted=reverted)
+                except Exception:
+                    self.logger.exception(
+                        "[agent-outcome] check failed for outcome=%d", o.id,
+                    )
+        except Exception:
+            self.logger.exception("[agent-outcome] task crashed (continuing)")
+
+    async def _check_pr_reverted(self, repo: str, pr_number: int) -> bool:
+        """Prueft via gh api ob der Merge-Commit des PRs revertet wurde.
+
+        Minimal: sucht nach Commits mit Message 'Revert "...PR #{pr_number}"'
+        auf main. Gibt False bei Fehler (konservativ — lieber Healthy
+        annehmen als False-Positives).
+        """
+        import asyncio as _asyncio
+        try:
+            proc = await _asyncio.create_subprocess_exec(
+                "gh", "api", f"repos/{repo}/commits",
+                "-X", "GET", "-f", "per_page=50",
+                stdout=_asyncio.subprocess.PIPE, stderr=_asyncio.subprocess.PIPE,
+            )
+            stdout, _ = await _asyncio.wait_for(proc.communicate(), timeout=20)
+            if proc.returncode != 0:
+                return False
+            import json as _json
+            commits = _json.loads(stdout.decode() or "[]")
+            marker = f"#{pr_number}"
+            for c in commits:
+                msg = (c.get("commit", {}).get("message") or "")
+                if msg.startswith("Revert") and marker in msg:
+                    return True
+            return False
+        except Exception:
+            return False
+
+    @agent_outcome_check_task.before_loop
+    async def before_agent_outcome_check(self):
+        await self.wait_until_ready()
+        self.logger.info("🛡️ Agent-Review Outcome-Check gestartet (stuendlich)")
+
+    @tasks.loop(time=time(hour=8, minute=15))
+    async def agent_daily_digest_task(self):
+        """Taeglicher Digest-Post in 🧠-ai-learning um 08:15."""
+        try:
+            gh = getattr(self, "github_integration", None)
+            if not gh or not getattr(gh, "_agent_review_enabled", False):
+                return
+            queue = getattr(gh, "agent_task_queue", None)
+            tracker = getattr(gh, "outcome_tracker", None)
+            if not queue or not tracker:
+                return
+            pool = gh.jules_state._pool if getattr(gh, "jules_state", None) else None
+
+            from integrations.github_integration.agent_review.daily_digest import (
+                collect_digest_data, render_digest,
+            )
+            data = await collect_digest_data(
+                jules_state_pool=pool, task_queue=queue, outcome_tracker=tracker,
+            )
+            body = render_digest(data)
+
+            if hasattr(self, "discord_logger") and self.discord_logger:
+                await self.discord_logger._send_to_channel(
+                    "🧠-ai-learning", message=body,
+                )
+                self.logger.info("[agent-digest] posted")
+        except Exception:
+            self.logger.exception("[agent-digest] task crashed (continuing)")
+
+    @agent_daily_digest_task.before_loop
+    async def before_agent_daily_digest(self):
+        await self.wait_until_ready()
+        self.logger.info("🛡️ Agent-Review Daily-Digest gestartet (taeglich 08:15)")
 
     @tasks.loop(minutes=5)
     async def update_dashboard(self):

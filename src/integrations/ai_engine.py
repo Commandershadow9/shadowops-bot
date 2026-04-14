@@ -22,7 +22,7 @@ import re
 import tempfile
 import time
 from datetime import datetime, timedelta
-from typing import Any, Dict, Optional, List
+from typing import Any, Dict, Optional, List, Tuple
 from pathlib import Path
 
 import jsonschema
@@ -995,6 +995,8 @@ class AIEngine:
         project_knowledge: List[str],
         few_shot_examples: List[Dict[str, Any]],
         max_diff_chars: int = 8000,
+        prompt_override: Optional[str] = None,
+        model_preference: Optional[Tuple[str, str]] = None,
     ) -> Optional[Dict[str, Any]]:
         """
         Strukturiertes PR-Review via Claude (Thinking-Modell).
@@ -1003,6 +1005,13 @@ class AIEngine:
         validiert das Ergebnis gegen das jules_review-Schema und ueberschreibt
         das Verdict deterministisch via compute_verdict().
 
+        Args:
+            prompt_override: Optional vorgefertigter Prompt vom Adapter
+                (SEO/Codex build_prompt()). Wenn None, wird der Jules-Prompt
+                aus finding_context + few_shot gebaut (Legacy-Pfad).
+            model_preference: Optional (primary, fallback) vom Adapter.
+                Wenn None, wird die interne Security-Keyword-Heuristik genutzt.
+
         Returns:
             Validiertes Review-Dict oder None bei Fehler.
         """
@@ -1010,21 +1019,28 @@ class AIEngine:
             build_review_prompt, compute_verdict,
         )
 
-        prompt = build_review_prompt(
-            finding=finding_context, project=project, diff=diff,
-            iteration=iteration, project_knowledge=project_knowledge,
-            few_shot_examples=few_shot_examples, max_diff_chars=max_diff_chars,
-        )
+        if prompt_override is not None:
+            prompt = prompt_override
+        else:
+            prompt = build_review_prompt(
+                finding=finding_context, project=project, diff=diff,
+                iteration=iteration, project_knowledge=project_knowledge,
+                few_shot_examples=few_shot_examples, max_diff_chars=max_diff_chars,
+            )
 
-        # Modell-Wahl: Opus für Security+komplexe PRs, Sonnet für Tests+Code-Health
-        # Immer Fallback auf das jeweils andere Modell
+        # Modell-Wahl: explizite Praeferenz vom Adapter hat Vorrang
         diff_len = len(diff)
-        is_security = any(k in (finding_context.get("category", "") + finding_context.get("title", "")).lower()
-                         for k in ("xss", "cve", "injection", "dos", "security", "auth", "csrf"))
-        is_complex = diff_len > 3000 or is_security
-
-        primary = "thinking" if is_complex else "standard"
-        fallback = "standard" if is_complex else "thinking"
+        if model_preference is not None:
+            primary, fallback = model_preference
+        else:
+            # Legacy-Heuristik: Opus fuer Security+komplexe PRs, Sonnet sonst
+            is_security = any(
+                k in (finding_context.get("category", "") + finding_context.get("title", "")).lower()
+                for k in ("xss", "cve", "injection", "dos", "security", "auth", "csrf")
+            )
+            is_complex = diff_len > 3000 or is_security
+            primary = "thinking" if is_complex else "standard"
+            fallback = "standard" if is_complex else "thinking"
         timeout_s = 180 if primary == "thinking" else 120
 
         raw = None

@@ -82,7 +82,8 @@ Eigenstaendiges Package mit 5-Stufen State Machine. Ersetzt die alten Mixins (`a
 |---------|--------|-------|
 | `orchestrator/` | `core`, `batch_mixin`, `planner_mixin`, `discord_mixin`, `executor_mixin`, `recovery_mixin`, `models` | Remediation-Orchestrator (Event-Batching, KI-Analyse, Fix-Ausfuehrung, Erfahrungslernen via KB) |
 | `github_integration/` | `core`, `webhook_mixin`, `polling_mixin`, `event_handlers_mixin`, `ci_mixin`, `state_mixin`, `git_ops_mixin`, `notifications_mixin`, `ai_patch_notes_mixin` | GitHub Webhook Server, Patch Notes, CI/CD |
-| `github_integration/jules_workflow_mixin.py` | Jules SecOps Workflow — PR-Handler, Gate-Pipeline (7 Schichten), Review-Orchestrierung |
+| `github_integration/jules_workflow_mixin.py` | Jules SecOps Workflow — PR-Handler, Gate-Pipeline (7 Schichten), Review-Orchestrierung, Multi-Agent Auto-Merge-Flow |
+| `github_integration/agent_review/` | Multi-Agent Review Pipeline (seit 2026-04-14) — Adapter, Detector, Queue, API-Client, Outcome-Tracker, Daily-Digest |
 | `github_integration/jules_state.py` | asyncpg-Layer fuer security_analyst.jules_pr_reviews, atomic Lock-Claim |
 | `github_integration/jules_learning.py` | Few-Shot + Projekt-Knowledge Loader aus agent_learning DB |
 | `github_integration/jules_review_prompt.py` | Claude-Prompt-Builder fuer strukturierte PR-Reviews |
@@ -453,3 +454,44 @@ Live-Test deckte 7 Probleme auf — alle gefixt + Dokumentation/Tests verbessert
   - Label via REST API `POST /repos/{}/issues/{}/labels` (gh pr edit hat GraphQL-Bug bei ZERODOX wegen Projects-Classic-Deprecation) + Auto-Create Label wenn fehlt
   - `@google-labs-jules` Mention im Revision-Comment damit Jules automatisch iteriert
   - Discord-Review-Embed statt Text-Nachrichten (Farbe grün/rot, Findings-Counter, PR-Link, Iteration)
+
+### Multi-Agent Review Pipeline (seit 2026-04-14)
+- **Architektur:** Adapter-Pattern — jeder Agent-Typ (Jules, SEO, Codex) hat einen `AgentAdapter` mit detect/build_prompt/model_preference/merge_policy/discord_channel
+- **Location:** `src/integrations/github_integration/agent_review/`
+- **Module:**
+  - `adapters/base.py` — AgentAdapter ABC, AgentDetection, MergeDecision Enum
+  - `adapters/jules.py` — Wrapt bestehende Jules-Review-Logik
+  - `adapters/seo.py` — SEO-Agent PRs (SEO/GSC/GEO/AEO), Content-Only-Auto-Merge
+  - `adapters/codex.py` — SecurityScanAgent-Code-Fixes, IMMER manual
+  - `detector.py` — AgentDetector mit Confidence-Threshold 0.8, Highest-Wins
+  - `queue.py` — TaskQueue (asyncpg) fuer Jules-Session-Starts
+  - `jules_api.py` — JulesAPIClient (REST v1alpha, POST/GET /sessions)
+  - `suggestions_poller.py` — Holt Jules Top-Suggestions (Skeleton, API noch Stub)
+  - `outcome_tracker.py` — 24h Post-Merge Revert-Detection (auto_merge_outcomes)
+  - `discord_embed.py` — Farbkodierte Review-Embeds (gruen/blau/gelb/orange/rot)
+  - `daily_digest.py` — Taeglicher Markdown-Report (Reviews, Auto-Merges, Reverts, Trend)
+  - `prompts/seo_prompt.py` — Multi-Domain SEO-Review-Prompt
+  - `prompts/codex_prompt.py` — Code-Security-Review-Prompt
+- **DB-Schema:** `src/integrations/github_integration/agent_review_schema.sql`
+  - `agent_task_queue` — Queue mit Priority, Retry-Delay, status
+  - `auto_merge_outcomes` — Auto-Merge-Tracking mit 24h-Check
+  - `jules_pr_reviews.agent_type` — additive Spalte, default 'jules'
+- **Scheduled Tasks in `bot.py`:**
+  - `agent_task_queue_scheduler` (60s) — Queue → Jules-Session, respektiert 100/24h + 15 concurrent
+  - `agent_suggestions_poller_task` (8h) — Pollt Jules-Suggestions in Queue
+  - `agent_outcome_check_task` (60min) — Prueft Auto-Merges > 24h auf Reverts
+  - `agent_daily_digest_task` (08:15) — Postet Markdown-Report in 🧠-ai-learning
+- **Config-driven Rollout:** `agent_review.enabled` + per-Adapter-Toggle (`adapters.jules/seo/codex`)
+- **Auto-Merge:** Separat aktivierbar (`agent_review.auto_merge.enabled: false` default), per-project `allowed` Flag, Rollback < 30s via Config
+- **Outcome-Learning:** `revert_rate_by_rule` gruppiert nach `rule_matched` = `{agent}_{verdict}_{Nb}` — zeigt welche Merge-Entscheidungen zu haeufig reverted werden
+- **Vertiefte Adapter-Integration (Phase 6 Final):**
+  - `ai_engine.review_pr(prompt_override, model_preference)` akzeptiert adapter-gebauten Prompt und Modell-Wahl
+  - `_jules_run_review(adapter=...)` reicht den Adapter durch; fuer non-Jules nutzt der Review-Pfad `adapter.build_prompt()` + `adapter.model_preference()`
+  - `handle_jules_pr_event`: Routing-Matrix `is_jules_legacy vs. detected_adapter vs. agent_review_enabled`
+  - `_update_review_agent_type()`: setzt `jules_pr_reviews.agent_type` fuer Multi-Agent-Statistik
+- **Design-Doc:** `docs/plans/2026-04-14-multi-agent-review-design.md`
+- **Implementierungsplan:** `docs/plans/2026-04-14-multi-agent-review.md`
+- **ADR:** `docs/adr/008-multi-agent-review-pipeline.md`
+- **Rollout-Guide:** `docs/multi-agent-review-rollout.md`
+- **Operator-Runbook:** `docs/multi-agent-review-runbook.md` (Incident-Playbooks, Health-Checks, SQL-Diagnose-Queries)
+- **Test-Coverage:** 253 Unit-Tests (Adapter 91, Detector 14, Queue 18, API 18, Poller 10, Tracker 8, Auto-Merge-Flow 14, Embed 18, Digest 17, Adapter-Prompt-Integration 9, Jules 19, PR #123 Regression 17)
