@@ -50,6 +50,9 @@ Bei Aenderungen an Shared-Services (Redis, PostgreSQL, Traefik) MUESSEN alle Kon
 - NIEMALS `check_feature_count()` oder `check_design_doc_leaks()` deaktivieren
 - NIEMALS die Classification-Rules (`_CLASSIFICATION_RULES_DE/EN`) aus templates/base.py entfernen
 - NIEMALS die Commit-Gruppierung durch ein Cap ersetzen — das war die Ursache der v5-Probleme
+- NIEMALS den `RuntimeError` Abort in `validate.py` bei `ai_result=None` entfernen — sonst Endlosschleife mit leeren DB-Einträgen (Vorfall 2026-04-14: 33 leere Einträge in 4h)
+- NIEMALS `discord_highlights` aus dem Schema in `_build_structured_wrapper` entfernen — `AIEngine.generate_structured_patch_notes()` returnt None ohne dieses Feld
+- Bei AIEngine-Calls: NICHT raten. Methoden sind: `generate_structured_patch_notes()`, `get_raw_ai_response()`, `query()` (existiert nur in Provider-Klassen, nicht in AIEngine)
 - Conventional Commit Hook auf allen 5 Projekten. Re-Deploy: `scripts/deploy-commit-hook.sh --all`
 
 ## Learning-System (agent_learning DB)

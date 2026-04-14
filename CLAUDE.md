@@ -343,6 +343,32 @@ Eigenstaendiges Package mit 5-Stufen State Machine. Ersetzt die alten Mixins (`a
 - **Design-Doc:** `docs/plans/2026-04-13-patch-notes-v6-design.md`
 - **v5-Code:** Bleibt als Fallback (wenn v6 crasht), wird nach 3 erfolgreichen v6-Releases archiviert
 
+### Patch Notes v6 — Post-Deploy-Fixes (2026-04-14)
+Live-Test deckte 7 Probleme auf — alle gefixt + Dokumentation/Tests verbessert.
+
+**Loop-Bug (kritisch — verursachte 33 leere DB-Einträge in 4h):**
+- `generate.py` rief `ai_service.query()` auf — `AIEngine` hat aber `get_raw_ai_response()`. Raw-Fallback crashte mit AttributeError.
+- `generate_structured_patch_notes()` returnte None weil `discord_highlights` im Schema fehlte (PFLICHT-Feld in `patch_notes.json`).
+- `validate.py` gab nur Warning bei `ai_result=None`, kein Abort → Distribute speicherte LEERE Notes in DB → Version-Bump → Self-Healing fand wieder Commits → Endlosschleife.
+- **Fix:** `validate.py` raised RuntimeError bei `ai_result=None` oder leerem dict/string. Pipeline geht in FAILED State, kein DB-Eintrag, kein Discord-Post, kein Version-Bump.
+- **Fix:** `_build_structured_wrapper` Schema enthält jetzt `discord_highlights` + `summary` als PFLICHT-Felder.
+- **Fix:** `_call_ai` nutzt `get_raw_ai_response(prompt, use_critical_model=...)` als korrekte AIEngine-API.
+
+**Cron-Integration (v6 Crons griffen nicht):**
+- Daily/Weekly Crons in `bot.py` nutzten `batcher.release_batch()` — Batcher ist bei v6 oft leer (Self-Healing umgeht Batcher).
+- **Fix:** Bei `engine=v6` direkt `_gather_commits_since_last_release()` aufrufen, Min-Commits-Check VOR AI-Call (spart Kosten bei wenigen Commits).
+- `/release-notes` Command ebenfalls auf v6-Pfad umgestellt.
+
+**Doku/Tooling:**
+- `tests/unit/test_pn_validate.py` — Tests für RuntimeError bei leerem Result.
+- 5 aktive Projekte alle auf `engine: v6`: shadowops-bot (devops), guildscout (saas), zerodox (saas), ai-agent-framework (devops), mayday_sim (gaming).
+
+**DB-Cleanup nach Vorfall:**
+- 33 leere Einträge gelöscht (Backup: `data/changelogs.db.backup.20260414_090336`).
+- 33 leere `~/.shadowops/changelogs/*/v*.json` Files + 4 Index-Files bereinigt.
+
+**Lektion:** Stage 4 (Validate) muss bei leerem AI-Result HARD ABORTEN, nicht silent weitermachen. Eine Pipeline die fail-silent ist, multipliziert Bugs statt sie zu stoppen.
+
 ### Security Engine v6 (seit 2026-03-24)
 - **Vorher:** 4 isolierte Systeme (EventWatcher, Orchestrator, Self-Healing, Analyst) mit 2 DB-Layern (psycopg2 + asyncpg)
 - **Nachher:** 1 SecurityEngine mit 3 Modi (Reactive, Proactive, DeepScan), 1 unified asyncpg DB, Phase-Type-System
