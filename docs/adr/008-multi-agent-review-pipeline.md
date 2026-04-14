@@ -73,14 +73,40 @@ _handle_approval_with_adapter
 - Auto-Merge: Config-gated (`auto_merge.enabled: false` default, per-project `allowed` Flag). Rollback via Config-Flag < 30s
 - Outcome-Tracking: Additive Tabelle, ändert nichts am Merge-Pfad
 
+## Erweiterung 2026-04-14 — SecurityScanAgent-Delegation
+
+Nach erfolgreichem E2E-Test (PR #141, 20s Review-Zeit) wurde die
+Autonomie-Schleife geschlossen: **SecurityScanAgent delegiert
+Code-Security-Findings direkt in die agent_task_queue** statt GitHub-Issues
+zu öffnen.
+
+**Flow:** ScanAgent findet XSS in ZERODOX → `queue.enqueue(source='scan_agent')`
+→ Queue-Scheduler (60s) startet Jules-Session → Jules öffnet PR → Webhook
+→ Multi-Agent-Review-Pipeline → Claude-Review → Label.
+
+**Delegation-Kriterien (4-stufige Safety):**
+1. `agent_review.enabled=true` (Feature-Flag)
+2. `finding.category` ∈ `{code_security, xss, sql_injection, auth, ...}`
+3. `finding.affected_project` ∈ Jules-bekannten Projekten
+4. `finding.affected_files` nicht leer
+
+**Infrastruktur-Findings** (docker, config, permissions, network_exposure,
+backup) bleiben bewusst im GitHub-Issue-Pfad — diese brauchen OS-Zugriff,
+keine Code-Änderung.
+
+**Safety-Default:** Wenn `agent_review.enabled=false` (aktueller Default),
+läuft der GitHub-Issue-Pfad wie bisher. Keine Behavior-Change ohne
+explizite Config-Aktivierung.
+
 ## Quantitativ
 
-- **253 Unit-Tests** grün (Phase 1-6 + Jules-Regression PR #123 + vertiefte Adapter-Integration)
-- **~2800 neue Zeilen** Code + ~1500 Zeilen Tests
+- **296 Unit-Tests** grün (Phase 1-6 + Jules-Regression PR #123 + vertiefte Adapter-Integration + ScanAgent-Delegation)
+- **~3000 neue Zeilen** Code + ~1700 Zeilen Tests
 - **Zwei neue DB-Tabellen:** `agent_task_queue`, `auto_merge_outcomes`
 - **Eine additive Spalte:** `jules_pr_reviews.agent_type` (default 'jules', wird für non-Jules PRs gesetzt)
 - **4 neue Scheduled-Tasks in `bot.py`:** Queue-Scheduler (60s), Suggestions-Poller (8h), Outcome-Check (60min), Daily-Digest (08:15)
 - **2 erweiterte API-Signaturen:** `ai_engine.review_pr(prompt_override=..., model_preference=...)`, `_jules_run_review(adapter=...)`
+- **2 neue ScanAgent-Helpers:** `_should_delegate_to_jules()`, `_enqueue_jules_fix()` mit Lazy-Property-Accessoren
 
 ## Rollout-Schritte
 
