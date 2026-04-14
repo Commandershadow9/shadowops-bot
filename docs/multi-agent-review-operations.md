@@ -69,14 +69,20 @@ Post erscheint automatisch in **🧠-ai-learning**. Du siehst auf einen Blick:
 - Reverts > 0 → betroffener Projekt/Rule ins Auge nehmen
 - Pending Manual-Merges > 10 → Team-Kapazität prüfen
 
-### Wöchentlich: Weekly-Check (5 min, Fr oder Mo)
+### Wöchentlich: Automatischer Recap (Freitags 18:00, 0min)
 
+**Bot postet automatisch** in 🧠-ai-learning. Du musst gar nichts tun ausser Discord lesen.
+
+Format: Discord-Embed mit Ampel-Farbe (gruen/gelb/rot) basierend auf Warnings.
+6 Sektionen identisch zum manuellen Script — gleiche Datenquelle, gleiche
+Schwellen.
+
+**Manueller Bedarf-Trigger** (wenn du Status zwischendurch willst):
 ```bash
 cd /home/cmdshadow/shadowops-bot
 scripts/weekly_review_check.sh
 ```
-
-**Ampel-System:** Script zeigt warnings mit gelb/rot wenn was schief läuft. Exit-Code 0 = alles gut, 1 = prüfen.
+Gleicher Output wie Bot-Embed, nur Terminal-formatiert.
 
 **6 Sektionen** werden gezeigt:
 1. **Pipeline-Throughput** — wie viel lief durch
@@ -96,7 +102,7 @@ scripts/weekly_review_check.sh
 | **seo-fixes** | SEO-Agent-PR-Reviews | Wöchentlich |
 | **🤖-agent-reviews** | Codex/ScanAgent-Code-Fix-Reviews | Bei Security-Findings |
 | **🚨-alerts** | Escalations (nach 5 Iterationen kein Fix) | Sofort wenn Ping |
-| **🧠-ai-learning** | Daily-Digest (08:15), Nightly-Batch (23:07) | Täglich morgens |
+| **🧠-ai-learning** | Daily-Digest (08:15), Nightly-Batch (23:07), Weekly-Recap (Fr 18:00) | Täglich morgens |
 | **✋-approvals** | Pending human approvals | Wenn Ping |
 
 ---
@@ -229,4 +235,4 @@ Wenn du freigibst:
 
 ---
 
-**TL;DR:** Täglich 1 min Daily-Digest lesen, freitags 5 min Weekly-Check laufen lassen. Der Rest ist autonom.
+**TL;DR:** Daily-Digest morgens lesen (1min), Weekly-Recap Freitags abends lesen (1min). Beides automatisch in Discord, kein manueller Aufruf nötig. Der Rest ist autonom.

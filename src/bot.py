@@ -1133,6 +1133,8 @@ class ShadowOpsBot(commands.Bot):
                 self.agent_outcome_check_task.start()
             if not self.agent_daily_digest_task.is_running():
                 self.agent_daily_digest_task.start()
+            if not self.agent_weekly_recap_task.is_running():
+                self.agent_weekly_recap_task.start()
 
         # Setze Status
         await self.change_presence(
@@ -1927,6 +1929,44 @@ class ShadowOpsBot(commands.Bot):
     async def before_agent_daily_digest(self):
         await self.wait_until_ready()
         self.logger.info("🛡️ Agent-Review Daily-Digest gestartet (taeglich 08:15)")
+
+    @tasks.loop(time=time(hour=18, minute=0))
+    async def agent_weekly_recap_task(self):
+        """Weekly-Recap Freitags 18:00. Fires an allen Wochentagen, skippt
+        intern wenn nicht Freitag (discord.py @tasks.loop(time=...) hat kein
+        Weekday-Filter)."""
+        if datetime.now().weekday() != 4:  # 4 = Freitag
+            return
+        try:
+            gh = getattr(self, "github_integration", None)
+            if not gh or not getattr(gh, "_agent_review_enabled", False):
+                return
+            pool = gh.jules_state._pool if getattr(gh, "jules_state", None) else None
+            if pool is None:
+                self.logger.debug("[agent-weekly] jules_state pool not ready — skip")
+                return
+
+            from integrations.github_integration.agent_review.weekly_recap import (
+                collect_weekly_recap_data, render_weekly_embed,
+            )
+            data = await collect_weekly_recap_data(pool)
+            embed = render_weekly_embed(data)
+
+            if hasattr(self, "discord_logger") and self.discord_logger:
+                await self.discord_logger._send_to_channel(
+                    "🧠-ai-learning", message="", embed=embed,
+                )
+                self.logger.info(
+                    "[agent-weekly] posted (warnings=%d, sessions_24h=%d)",
+                    data.warnings, data.jules_sessions_24h,
+                )
+        except Exception:
+            self.logger.exception("[agent-weekly] task crashed (continuing)")
+
+    @agent_weekly_recap_task.before_loop
+    async def before_agent_weekly_recap(self):
+        await self.wait_until_ready()
+        self.logger.info("🛡️ Agent-Review Weekly-Recap gestartet (Freitags 18:00)")
 
     @tasks.loop(minutes=5)
     async def update_dashboard(self):

@@ -481,6 +481,7 @@ Live-Test deckte 7 Probleme auf — alle gefixt + Dokumentation/Tests verbessert
   - `agent_suggestions_poller_task` (8h) — Pollt Jules-Suggestions in Queue
   - `agent_outcome_check_task` (60min) — Prueft Auto-Merges > 24h auf Reverts
   - `agent_daily_digest_task` (08:15) — Postet Markdown-Report in 🧠-ai-learning
+  - `agent_weekly_recap_task` (Freitags 18:00) — Postet Discord-Embed mit Ampel-Status in 🧠-ai-learning
 - **Config-driven Rollout:** `agent_review.enabled` + per-Adapter-Toggle (`adapters.jules/seo/codex`)
 - **Auto-Merge:** Separat aktivierbar (`agent_review.auto_merge.enabled: false` default), per-project `allowed` Flag, Rollback < 30s via Config
 - **Outcome-Learning:** `revert_rate_by_rule` gruppiert nach `rule_matched` = `{agent}_{verdict}_{Nb}` — zeigt welche Merge-Entscheidungen zu haeufig reverted werden
