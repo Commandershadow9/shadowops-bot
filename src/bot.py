@@ -1131,6 +1131,8 @@ class ShadowOpsBot(commands.Bot):
                 self.agent_suggestions_poller_task.start()
             if not self.agent_outcome_check_task.is_running():
                 self.agent_outcome_check_task.start()
+            if not self.agent_daily_digest_task.is_running():
+                self.agent_daily_digest_task.start()
 
         # Setze Status
         await self.change_presence(
@@ -1836,6 +1838,40 @@ class ShadowOpsBot(commands.Bot):
     async def before_agent_outcome_check(self):
         await self.wait_until_ready()
         self.logger.info("🛡️ Agent-Review Outcome-Check gestartet (stuendlich)")
+
+    @tasks.loop(time=time(hour=8, minute=15))
+    async def agent_daily_digest_task(self):
+        """Taeglicher Digest-Post in 🧠-ai-learning um 08:15."""
+        try:
+            gh = getattr(self, "github_integration", None)
+            if not gh or not getattr(gh, "_agent_review_enabled", False):
+                return
+            queue = getattr(gh, "agent_task_queue", None)
+            tracker = getattr(gh, "outcome_tracker", None)
+            if not queue or not tracker:
+                return
+            pool = gh.jules_state._pool if getattr(gh, "jules_state", None) else None
+
+            from integrations.github_integration.agent_review.daily_digest import (
+                collect_digest_data, render_digest,
+            )
+            data = await collect_digest_data(
+                jules_state_pool=pool, task_queue=queue, outcome_tracker=tracker,
+            )
+            body = render_digest(data)
+
+            if hasattr(self, "discord_logger") and self.discord_logger:
+                await self.discord_logger._send_to_channel(
+                    "🧠-ai-learning", message=body,
+                )
+                self.logger.info("[agent-digest] posted")
+        except Exception:
+            self.logger.exception("[agent-digest] task crashed (continuing)")
+
+    @agent_daily_digest_task.before_loop
+    async def before_agent_daily_digest(self):
+        await self.wait_until_ready()
+        self.logger.info("🛡️ Agent-Review Daily-Digest gestartet (taeglich 08:15)")
 
     @tasks.loop(minutes=5)
     async def update_dashboard(self):
