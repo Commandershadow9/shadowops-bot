@@ -226,8 +226,8 @@ Wenn du freigibst:
 
 ## Referenz-Dokumentation
 
-- **Rollout-Guide (Stufen):** `docs/multi-agent-review-rollout.md`
-- **Incident-Runbook (Playbooks):** `docs/multi-agent-review-runbook.md`
+- **Rollout-Guide (Stufen):** `docs/operations/multi-agent-review-rollout.md`
+- **Incident-Runbook (Playbooks):** `docs/runbooks/multi-agent-review.md`
 - **ADR-008 (Architektur):** `docs/adr/008-multi-agent-review-pipeline.md`
 - **Safety-Rules:** `.claude/rules/safety.md` (Section "Multi-Agent Review Pipeline")
 - **Smoke-Test:** `scripts/smoke_test_multi_agent_review.py`

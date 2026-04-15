@@ -217,7 +217,7 @@ Stuendliches Monitoring der ersten 48 Stunden.
 
 - Modify: `CLAUDE.md` (neuer Module-Block)
 - Modify: `.claude/rules/safety.md` (Multi-Agent-Regeln)
-- Modify: `docs/API.md` (neue Endpoints)
+- Modify: `docs/reference/api.md` (neue Endpoints)
 - Create: `docs/adr/008-multi-agent-review-pipeline.md`
 
 ---

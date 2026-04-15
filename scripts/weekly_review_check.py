@@ -234,7 +234,7 @@ async def main() -> int:
         print(f"{G}{B}✅ Alle Metriken im grünen Bereich — Pipeline läuft sauber{N}\n")
         return 0
     print(f"{Y}{B}⚠ {warnings} Warnung(en) gefunden — siehe Markierungen oben{N}")
-    print(f"   Runbook: docs/multi-agent-review-runbook.md\n")
+    print(f"   Runbook: docs/runbooks/multi-agent-review.md\n")
     return 1
 
 

@@ -299,9 +299,9 @@ Live-Test deckte 7 Probleme auf — alle gefixt + Dokumentation/Tests verbessert
 - **Design-Doc:** `docs/design/multi-agent-review.md`
 - **Implementierungsplan:** `docs/plans/2026-04-14-multi-agent-review.md`
 - **ADR:** `docs/adr/008-multi-agent-review-pipeline.md`
-- **Rollout-Guide:** `docs/multi-agent-review-rollout.md`
-- **Operator-Runbook:** `docs/multi-agent-review-runbook.md` (Incident-Playbooks, Health-Checks, SQL-Diagnose-Queries)
-- **Operations-Guide:** `docs/multi-agent-review-operations.md` (taeglicher Betrieb, Routinen, Discord-Channels, Projekt-Status)
+- **Rollout-Guide:** `docs/operations/multi-agent-review-rollout.md`
+- **Operator-Runbook:** `docs/runbooks/multi-agent-review.md` (Incident-Playbooks, Health-Checks, SQL-Diagnose-Queries)
+- **Operations-Guide:** `docs/operations/multi-agent-review-daily.md` (taeglicher Betrieb, Routinen, Discord-Channels, Projekt-Status)
 - **Smoke-Test-Script:** `scripts/smoke_test_multi_agent_review.py` (7 Stages, reproduzierbar, kein Config-Change)
 - **Weekly-Check-Script:** `scripts/weekly_review_check.sh` (farbige Ampel, 6 Sektionen, Exit-Code 0/1)
 - **Test-Coverage:** 296 Unit-Tests (Adapter 91, Detector 14, Queue 18, API 18, Poller 10, Tracker 8, Auto-Merge-Flow 14, Embed 18, Digest 17, Adapter-Prompt-Integration 9, ScanAgent-Delegation 23, Jules 19, PR #123 Regression 17)

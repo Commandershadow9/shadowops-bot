@@ -1293,7 +1293,7 @@ channels:
 ---
 
 ### ☐ 6.2 API-Dokumentation
-**Neue Datei:** `docs/API.md`
+**Neue Datei:** `docs/reference/api.md`
 
 **Content:**
 - Alle Commands
