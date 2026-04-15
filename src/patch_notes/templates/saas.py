@@ -22,4 +22,5 @@ class SaaSTemplate(BaseTemplate):
             "normal": {"min": 1500, "max": 3000, "features": "2-5"},
             "big":    {"min": 2500, "max": 4000, "features": "3-6"},
             "major":  {"min": 3500, "max": 5500, "features": "4-8"},
+            "mega":   {"min": 4500, "max": 7500, "features": "6-10"},
         }[update_size]

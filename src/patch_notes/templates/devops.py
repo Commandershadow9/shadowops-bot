@@ -20,4 +20,5 @@ class DevOpsTemplate(BaseTemplate):
             "normal": {"min": 1000, "max": 2000, "features": "2-4"},
             "big":    {"min": 1500, "max": 3000, "features": "3-5"},
             "major":  {"min": 2500, "max": 4000, "features": "4-6"},
+            "mega":   {"min": 3500, "max": 5500, "features": "6-9"},
         }[update_size]

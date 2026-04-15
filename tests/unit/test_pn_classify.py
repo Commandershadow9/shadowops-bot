@@ -76,6 +76,53 @@ async def test_classify_update_size_normal():
     assert ctx.update_size == "normal"
 
 
+@pytest.mark.asyncio
+async def test_classify_update_size_big():
+    """15-39 Commits → big."""
+    ctx = PipelineContext(
+        project="test", project_config={},
+        raw_commits=_make_commits(20, "fix"),
+        trigger="cron",
+    )
+    await classify(ctx)
+    assert ctx.update_size == "big"
+
+
+@pytest.mark.asyncio
+async def test_classify_update_size_mega_by_volume():
+    """≥80 Commits → mega."""
+    ctx = PipelineContext(
+        project="test", project_config={},
+        raw_commits=_make_commits(85, "fix"),
+        trigger="cron",
+    )
+    await classify(ctx)
+    assert ctx.update_size == "mega"
+
+
+@pytest.mark.asyncio
+async def test_classify_update_size_mega_by_feature_groups():
+    """≥5 FEATURE-Gruppen → mega auch bei wenig Commits."""
+    commits = (
+        _make_commits(3, "feat", "lagebild") +
+        _make_commits(3, "feat", "einsatz") +
+        _make_commits(3, "feat", "fahrzeug") +
+        _make_commits(3, "feat", "krankenhaus") +
+        _make_commits(3, "feat", "verkettung") +
+        _make_commits(2, "fix")
+    )
+    ctx = PipelineContext(
+        project="mayday_sim",
+        project_config={"patch_notes": {"type": "gaming"}},
+        raw_commits=commits,
+        trigger="cron",
+    )
+    await classify(ctx)
+    feature_groups = [g for g in ctx.groups if g.get('tag') == 'FEATURE']
+    assert len(feature_groups) >= 5
+    assert ctx.update_size == "mega"
+
+
 def test_extract_credits_known_author():
     commits = [
         {"author": {"name": "cmdshadow"}},

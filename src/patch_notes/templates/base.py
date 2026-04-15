@@ -25,10 +25,11 @@ class BaseTemplate:
 
     def length_limits(self, update_size: str) -> dict:
         return {
-            "small":  {"min": 800, "max": 1500, "features": "1-3"},
+            "small":  {"min": 800,  "max": 1500, "features": "1-3"},
             "normal": {"min": 1500, "max": 3000, "features": "2-5"},
             "big":    {"min": 2500, "max": 4000, "features": "3-6"},
             "major":  {"min": 3500, "max": 5500, "features": "4-8"},
+            "mega":   {"min": 4500, "max": 7500, "features": "6-10"},
         }[update_size]
 
     def build_prompt(self, ctx: PipelineContext) -> str:
@@ -125,18 +126,43 @@ Erwähne sie NICHT erneut:
 {ctx.previous_version_content[:500]}"""
 
     def _update_size_override(self, ctx: PipelineContext) -> str:
-        if ctx.update_size == "major":
-            return """═══════════════════════════════════════
-⚡ MAJOR UPDATE MODUS (60+ Commits) ⚡
+        size = ctx.update_size
+        n = len(ctx.enriched_commits or ctx.raw_commits)
+
+        if size == "mega":
+            return f"""═══════════════════════════════════════
+🚀💥 MEGA UPDATE MODUS ({n} Commits / ≥5 Feature-Gruppen) 💥🚀
 ═══════════════════════════════════════
-Dies ist ein GROSSES UPDATE. Nutze den vollen Platz aus.
-Hebe die wichtigsten 5-8 Änderungen hervor.
-Fasse verwandte Commits zu thematischen Blöcken zusammen."""
-        if ctx.update_size == "big":
-            return """═══════════════════════════════════════
-📦 BIG UPDATE MODUS (30-60 Commits) 📦
+Das ist der Moment für ein MASSIVES Update — kein Ritual, ein Fest.
+- Öffne mit 1-2 Zeilen Hype-TL;DR, die das Gefühl "jetzt passiert echt was" trägt.
+- Baue 6-10 starke Highlights, thematisch gebündelt (z.B. "Lagebild", "Einsatz-Lifecycle").
+- Nutze ein Highlights-Reel im summary (3-5 Einzeiler als kleiner Trailer).
+- Zeige die Breite: Features, Systemumbau, Qualität. Aber nie Marketing-Bla.
+- Ton: selbstbewusst, mit etwas Show, ohne Übertreibung. Zahlen wenn sie beeindrucken (z.B. "+255 Tests")."""
+        if size == "major":
+            return f"""═══════════════════════════════════════
+⚡ MAJOR UPDATE MODUS ({n} Commits) ⚡
 ═══════════════════════════════════════
-Dies ist ein umfangreiches Update. Hebe 4-7 Highlights hervor."""
+Großes Update. Voller Platz, aber strukturiert.
+- 4-8 Highlights, thematisch gruppiert.
+- TL;DR darf Energie haben, aber bleibt sachlich-präzise.
+- Breaking Changes zuerst, dann Features, dann Stabilität."""
+        if size == "big":
+            return f"""═══════════════════════════════════════
+📦 BIG UPDATE MODUS ({n} Commits) 📦
+═══════════════════════════════════════
+Umfangreich, aber nicht Mega. 3-6 Highlights mit klarer Story-Logik.
+TL;DR: Ein Satz, der den roten Faden trägt."""
+        if size == "normal":
+            return """═══════════════════════════════════════
+📝 NORMAL UPDATE MODUS
+═══════════════════════════════════════
+Kompakt, freundlich, strukturiert. 2-5 Highlights."""
+        if size == "small":
+            return """═══════════════════════════════════════
+🔹 KLEINES UPDATE
+═══════════════════════════════════════
+Kein Hype. 1-3 Highlights, Notiz-Ton. TL;DR in einem Satz."""
         return ""
 
     def _extra_context_section(self, ctx: PipelineContext) -> str:

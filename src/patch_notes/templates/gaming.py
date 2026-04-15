@@ -25,4 +25,5 @@ class GamingTemplate(BaseTemplate):
             "normal": {"min": 2500, "max": 4000, "features": "3-5"},
             "big":    {"min": 3500, "max": 5500, "features": "4-7"},
             "major":  {"min": 4500, "max": 7000, "features": "5-8"},
+            "mega":   {"min": 5500, "max": 9000, "features": "7-12"},
         }[update_size]

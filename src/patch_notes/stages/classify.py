@@ -46,12 +46,18 @@ async def classify(ctx: PipelineContext, bot=None) -> None:
     ctx.version, ctx.version_source = calculate_version(ctx.project, ctx.groups)
     logger.info(f"[v6] {ctx.project}: Version {ctx.version} (source: {ctx.version_source})")
 
-    # 3. Update-Größe bestimmen
+    # 3. Update-Größe bestimmen — 5 Stufen
+    # small / normal / big / major / mega
+    # Tonalität + Länge + Highlight-Dichte hängen in base._update_size_override
+    # an diesem Label. mega = ≥80 Commits ODER ≥5 FEATURE-Gruppen (das ist
+    # der Moment wo wir richtig hypen, z.B. MayDay Iter 1-4 zusammen).
     total = len(commits)
     feature_groups = [g for g in ctx.groups if g.get('tag') == 'FEATURE']
-    if total >= 60 or len(feature_groups) >= 5:
+    if total >= 80 or len(feature_groups) >= 5:
+        ctx.update_size = "mega"
+    elif total >= 40:
         ctx.update_size = "major"
-    elif total >= 30:
+    elif total >= 15:
         ctx.update_size = "big"
     elif total < 5:
         ctx.update_size = "small"
