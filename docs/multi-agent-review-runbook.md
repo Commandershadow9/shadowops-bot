@@ -336,7 +336,7 @@ agent_review:
 ## 7. Referenzen
 
 - **ADR:** [`docs/adr/008-multi-agent-review-pipeline.md`](adr/008-multi-agent-review-pipeline.md)
-- **Design-Doc:** [`docs/plans/2026-04-14-multi-agent-review-design.md`](plans/2026-04-14-multi-agent-review-design.md)
+- **Design-Doc:** [`docs/design/multi-agent-review.md`](../design/multi-agent-review.md)
 - **Implementierungsplan:** [`docs/plans/2026-04-14-multi-agent-review.md`](plans/2026-04-14-multi-agent-review.md)
 - **Rollout-Guide:** [`docs/multi-agent-review-rollout.md`](multi-agent-review-rollout.md)
 - **Safety-Rules:** [`.claude/rules/safety.md`](../.claude/rules/safety.md#multi-agent-review-pipeline-seit-2026-04-14)

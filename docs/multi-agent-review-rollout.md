@@ -200,5 +200,5 @@ pytest tests/unit/agent_review/ tests/unit/test_jules_pr123_regression.py -x
 - Config-Aenderungen: `config/config.yaml` (NICHT in Git, Backup-Key im Passwort-Manager)
 - DB-Zugriff: `postgres-guildscout` MCP auf Port 5433, DB `security_analyst`
 - Logs: `journalctl -u shadowops-bot -f`
-- Design-Doc: `docs/plans/2026-04-14-multi-agent-review-design.md`
+- Design-Doc: `docs/design/multi-agent-review.md`
 - ADR: `docs/adr/008-multi-agent-review-pipeline.md`

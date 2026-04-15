@@ -6,7 +6,7 @@ last_reviewed: 2026-04-15
 owner: CommanderShadow9
 related:
   - ../../adr/007-jules-secops-workflow.md
-  - ../../plans/2026-04-11-jules-secops-workflow-design.md
+  - ../../design/jules-workflow.md
 ---
 
 # Jules Workflow — PR Detection

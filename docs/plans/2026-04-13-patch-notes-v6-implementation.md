@@ -8,7 +8,7 @@
 
 **Tech Stack:** Python 3.12, discord.py 2.7, asyncio, aiosqlite (changelog_db), psycopg2/asyncpg (agent_learning), jsonschema, pytest
 
-**Design-Doc:** `docs/plans/2026-04-13-patch-notes-v6-design.md`
+**Design-Doc:** `docs/design/patch-notes-v6.md`
 
 **Konventionen:**
 - `pythonpath = src` in pytest.ini — Imports relativ zu `src/`

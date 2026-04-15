@@ -6,7 +6,7 @@ last_reviewed: 2026-04-15
 owner: CommanderShadow9
 related:
   - ../../adr/007-jules-secops-workflow.md
-  - ../../plans/2026-04-11-jules-secops-workflow-design.md
+  - ../../design/jules-workflow.md
 ---
 
 # Jules Workflow — Review Pipeline
@@ -233,7 +233,7 @@ Jules Review Prompt Builder.
 Baut den Claude-Prompt für strukturierte PR-Reviews mit Learning-Kontext
 aus agent_learning DB (few-shot examples + project knowledge).
 
-Siehe docs/plans/2026-04-11-jules-secops-workflow-design.md §8.
+Siehe docs/design/jules-workflow.md §8.
 """
 from __future__ import annotations
 

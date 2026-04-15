@@ -6,7 +6,7 @@ last_reviewed: 2026-04-15
 owner: CommanderShadow9
 related:
   - ../../adr/008-multi-agent-review-pipeline.md
-  - ../../plans/2026-04-14-multi-agent-review-design.md
+  - ../../design/multi-agent-review.md
   - ../jules-workflow/README.md
 ---
 

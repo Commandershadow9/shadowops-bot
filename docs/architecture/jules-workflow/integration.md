@@ -6,7 +6,7 @@ last_reviewed: 2026-04-15
 owner: CommanderShadow9
 related:
   - ../../adr/007-jules-secops-workflow.md
-  - ../../plans/2026-04-11-jules-secops-workflow-design.md
+  - ../../design/jules-workflow.md
   - ./README.md
   - ./detection.md
   - ./review-pipeline.md
@@ -36,7 +36,7 @@ Jules SecOps Workflow Mixin.
 Handler-Eintritt für GitHub pull_request und issue_comment Events.
 Koordiniert die Gate-Pipeline, den AI-Call und das Comment-Management.
 
-Siehe docs/plans/2026-04-11-jules-secops-workflow-design.md §4-§6.
+Siehe docs/design/jules-workflow.md §4-§6.
 """
 from __future__ import annotations
 
@@ -997,7 +997,7 @@ Suche in `src/integrations/security_engine/scan_agent.py` die Stelle wo `SKIP_IS
 
 ```python
 # === Jules SecOps Workflow — Fix-Mode-Klassifizierung ===
-# Siehe docs/plans/2026-04-11-jules-secops-workflow-design.md §9.1
+# Siehe docs/design/jules-workflow.md §9.1
 
 FIX_MODE_DECISION: Dict[str, str] = {
     # Code-Findings → Jules (PR via GitHub-Issue)

@@ -4,7 +4,7 @@
 
 **Goal:** Erweitere den bestehenden Jules-Workflow um Adapter-Pattern für SEO/Codex-PR-Reviews, Jules-Suggestions-Auto-Start, Queue für Jules-Limits, projekt-spezifisches Auto-Merge und Daily-Digest — ohne bestehende Server-Agents oder die 7 Jules-Module anzufassen.
 
-**Design Reference:** [`docs/plans/2026-04-14-multi-agent-review-design.md`](./2026-04-14-multi-agent-review-design.md)
+**Design Reference:** [`docs/design/multi-agent-review.md`](../design/multi-agent-review.md)
 
 **Architecture:** Adapter-Pattern als additive Erweiterung. `JulesAdapter` wrapt existierenden Jules-Code 1:1 (keine Regression). Neue `SeoAdapter` + `CodexAdapter`. Detector-Dispatcher ersetzt hardcoded Jules-Detection im Mixin. Queue nur für Jules-Session-Start (100/24h, 15 concurrent). Auto-Merge via Rule-Engine, Outcome-Tracker lernt aus Ergebnissen.
 
@@ -16,7 +16,7 @@
 - Nach jeder Task: `git add <files> && git commit`. Commit-Hook validiert Conventional Commits.
 - Config-Kill-Switch: `agent_review.enabled: false` → Rollback in 30s.
 - Referenzen beim Implementieren:
-  - Design-Doc `docs/plans/2026-04-14-multi-agent-review-design.md`
+  - Design-Doc `docs/design/multi-agent-review.md`
   - Bestehend: `src/integrations/github_integration/jules_*.py`
   - Tests-Muster: `tests/unit/test_jules_*.py`
 
@@ -33,7 +33,7 @@
 
 ```sql
 -- Multi-Agent Review Pipeline — Queue + Outcome Tracking
--- Siehe docs/plans/2026-04-14-multi-agent-review-design.md §7, §9
+-- Siehe docs/design/multi-agent-review.md §7, §9
 
 -- Queue für Jules-Session-Starts (nur POST /sessions)
 CREATE TABLE IF NOT EXISTS agent_task_queue (

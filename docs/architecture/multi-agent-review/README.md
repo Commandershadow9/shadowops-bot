@@ -6,7 +6,7 @@ last_reviewed: 2026-04-15
 owner: CommanderShadow9
 related:
   - ../../adr/008-multi-agent-review-pipeline.md
-  - ../../plans/2026-04-14-multi-agent-review-design.md
+  - ../../design/multi-agent-review.md
   - ../jules-workflow/README.md
 ---
 
@@ -28,7 +28,7 @@ PostgreSQL, Redis, pytest.
 **Feature-Flag & Rollback:** `agent_review.enabled: false` ist Default. Rollback unter 30 Sekunden
 via Config-Flag. Auto-Merge hat einen separaten Toggle (`agent_review.auto_merge.enabled`).
 
-Design Reference: `docs/plans/2026-04-14-multi-agent-review-design.md`
+Design Reference: `docs/design/multi-agent-review.md`
 
 ---
 
@@ -51,7 +51,7 @@ Design Reference: `docs/plans/2026-04-14-multi-agent-review-design.md`
 
 ```sql
 -- Multi-Agent Review Pipeline — Queue + Outcome Tracking
--- Siehe docs/plans/2026-04-14-multi-agent-review-design.md §7, §9
+-- Siehe docs/design/multi-agent-review.md §7, §9
 
 -- Queue fuer Jules-Session-Starts (nur POST /sessions)
 CREATE TABLE IF NOT EXISTS agent_task_queue (

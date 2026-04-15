@@ -131,7 +131,7 @@ Historie der grossen Architektur-Aenderungen seit 15.03.2026. Diese Datei wurde 
 - **Metriken:** `METRICS|patch_notes_pipeline|{json}`
 - **Conventional Commit Hook:** `scripts/commit-msg-hook.sh` auf allen 5 Projekten deployed
 - **Auto-Label Action:** `.github/workflows/auto-label-pr.yml`
-- **Design-Doc:** `docs/plans/2026-04-13-patch-notes-v6-design.md`
+- **Design-Doc:** `docs/design/patch-notes-v6.md`
 - **v5-Code:** Bleibt als Fallback (wenn v6 crasht), wird nach 3 erfolgreichen v6-Releases archiviert
 
 ### Patch Notes v6 — Post-Deploy-Fixes (2026-04-14)
@@ -226,7 +226,7 @@ Live-Test deckte 7 Probleme auf — alle gefixt + Dokumentation/Tests verbessert
 - **State:** `security_analyst.jules_pr_reviews` mit atomic Lock-Claim, Stale-Lock-Recovery nach 10min
 - **Learning:** `agent_learning.jules_review_examples` + `agent_knowledge` (Few-Shot + Projekt-Konventionen), Nightly-Batch
 - **Rollback:** Config-Flag `jules_workflow.enabled: false` → ~30s
-- **Design-Doc:** `docs/plans/2026-04-11-jules-secops-workflow-design.md`
+- **Design-Doc:** `docs/design/jules-workflow.md`
 - **Vorfall-Referenz:** PR #123 (ZERODOX) — 31 Kommentare Loop; siehe Design-Doc Anhang A
 - **Post-Deploy-Fixes (2026-04-12):** 4 kritische Fixes nach Go-Live:
   - `e5d3e5c` — `self.logger` → `logger` in `AIEngine.review_pr()` (falscher Logger-Scope)
@@ -296,7 +296,7 @@ Live-Test deckte 7 Probleme auf — alle gefixt + Dokumentation/Tests verbessert
 - **End-to-End Live-Test (2026-04-14):** PR #141, komplette Pipeline in 20s durchlaufen
   - Webhook → Detector → Claude-Review → claude-approved Label
   - Review hat sogar projekt-spezifische Regel-Verletzung (Umlaut-Style) als Nit gefunden
-- **Design-Doc:** `docs/plans/2026-04-14-multi-agent-review-design.md`
+- **Design-Doc:** `docs/design/multi-agent-review.md`
 - **Implementierungsplan:** `docs/plans/2026-04-14-multi-agent-review.md`
 - **ADR:** `docs/adr/008-multi-agent-review-pipeline.md`
 - **Rollout-Guide:** `docs/multi-agent-review-rollout.md`

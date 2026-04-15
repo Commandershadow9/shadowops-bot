@@ -6,7 +6,7 @@ last_reviewed: 2026-04-15
 owner: CommanderShadow9
 related:
   - ../../adr/007-jules-secops-workflow.md
-  - ../../plans/2026-04-11-jules-secops-workflow-design.md
+  - ../../design/jules-workflow.md
 ---
 
 # Jules Workflow — State & Learning
@@ -25,7 +25,7 @@ Erstelle die Datei mit folgendem Inhalt:
 ```sql
 -- Jules SecOps Workflow — PR-Review State
 -- Lebt in der security_analyst Datenbank
--- Siehe docs/plans/2026-04-11-jules-secops-workflow-design.md Abschnitt 7.1
+-- Siehe docs/design/jules-workflow.md Abschnitt 7.1
 
 CREATE TABLE IF NOT EXISTS jules_pr_reviews (
     id              BIGSERIAL PRIMARY KEY,
@@ -129,7 +129,7 @@ git commit -m "feat: jules_pr_reviews Schema — State-Tabelle für Jules Review
 ```sql
 -- Jules Review Learning — Few-Shot Examples
 -- Lebt in der agent_learning Datenbank (Port 5433, GuildScout Postgres)
--- Siehe docs/plans/2026-04-11-jules-secops-workflow-design.md Abschnitt 7.2
+-- Siehe docs/design/jules-workflow.md Abschnitt 7.2
 
 CREATE TABLE IF NOT EXISTS jules_review_examples (
     id              BIGSERIAL PRIMARY KEY,
@@ -269,7 +269,7 @@ Jules Workflow — State Management.
 Asyncpg-Layer für security_analyst.jules_pr_reviews.
 Atomic Lock-Claim, Stale-Lock-Recovery, CRUD.
 
-Siehe docs/plans/2026-04-11-jules-secops-workflow-design.md §7.1.
+Siehe docs/design/jules-workflow.md §7.1.
 """
 from __future__ import annotations
 

@@ -84,6 +84,6 @@ Jede Schicht faengt einen spezifischen Fehlervektor ab:
 
 ## Referenzen
 
-- Design-Doc: `docs/plans/2026-04-11-jules-secops-workflow-design.md`
+- Design-Doc: `docs/design/jules-workflow.md`
 - Implementation-Plan: `docs/plans/2026-04-11-jules-secops-workflow.md`
 - PR #123 Post-Mortem: Design-Doc Anhang A

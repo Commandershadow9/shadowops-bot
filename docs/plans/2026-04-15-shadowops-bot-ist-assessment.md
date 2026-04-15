@@ -4,14 +4,14 @@ status: active
 last_reviewed: 2026-04-15
 owner: Claude
 related:
-  - ./2026-04-15-doku-refactor-design.md
+  - ../design/doku-refactor.md
   - ./2026-04-15-shadowops-bot-doku-refactor.md
 ---
 
 # IST-Bewertung shadowops-bot Doku
 
 Erhoben am 2026-04-15 als Phase-0-Input fuer den Doku-Refactor.
-Grundlage: Design-Doc `2026-04-15-doku-refactor-design.md`, Abschnitt D5 (IST-Bewertung).
+Grundlage: Design-Doc `../design/doku-refactor.md`, Abschnitt D5 (IST-Bewertung).
 
 ## 1. Metriken (rohe Zahlen)
 

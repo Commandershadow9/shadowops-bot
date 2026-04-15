@@ -47,7 +47,7 @@ Diese Liste wird nach Abschluss des Doku-Refactors (geplant Task 12) finalisiert
 
 ## Referenzen
 
-- [Design-Doc 2026-04-15](plans/2026-04-15-doku-refactor-design.md) — warum diese Struktur
+- [Design-Doc 2026-04-15](design/doku-refactor.md) — warum diese Struktur
 - [Implementierungsplan](plans/2026-04-15-shadowops-bot-doku-refactor.md) — 12 Tasks
 - [IST-Bewertung](plans/2026-04-15-shadowops-bot-ist-assessment.md) — Score 5.67
 - [CLAUDE.md](../CLAUDE.md) — AI-Entwicklungsrichtlinien und Projekt-Index

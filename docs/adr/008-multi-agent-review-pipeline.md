@@ -123,7 +123,7 @@ explizite Config-Aktivierung.
 
 ## Referenzen
 
-- Design-Doc: `docs/plans/2026-04-14-multi-agent-review-design.md`
+- Design-Doc: `docs/design/multi-agent-review.md`
 - Implementierungsplan: `docs/plans/2026-04-14-multi-agent-review.md`
 - Jules-Vorgänger: ADR 007
 - Vorfall-Referenz: PR #123 (ZERODOX) — Loop-Schutz-Regression getestet

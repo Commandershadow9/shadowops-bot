@@ -4,7 +4,7 @@
 
 **Goal:** Ersetze die gescheiterte Gemini-Jules-Integration durch einen robusten, selbstlernenden SecOps-Workflow mit 7 Defense-in-Depth-Schichten gegen Review-Loops.
 
-**Design Reference:** [`docs/plans/2026-04-11-jules-secops-workflow-design.md`](./2026-04-11-jules-secops-workflow-design.md) — Jede Design-Entscheidung hier ist dort begründet. Bei Unklarheit: Design-Doc lesen.
+**Design Reference:** [`docs/design/jules-workflow.md`](../design/jules-workflow.md) — Jede Design-Entscheidung hier ist dort begründet. Bei Unklarheit: Design-Doc lesen.
 
 **Architecture:** Modular Monolith im bestehenden `github_integration/` Mixin-Pattern. Neuer `JulesWorkflowMixin` koordiniert PR-Reviews via `ai_engine.review_pr()` mit strukturiertem Prompt. State in PostgreSQL (`security_analyst.jules_pr_reviews`), Learning-Kontext aus `agent_learning` DB.
 
@@ -30,7 +30,7 @@
 ## Phase 0: Vorbereitung (kein Code, nur Verständnis)
 
 **Lies vor dem ersten Task:**
-1. Design-Doc komplett: `docs/plans/2026-04-11-jules-secops-workflow-design.md`
+1. Design-Doc komplett: `docs/design/jules-workflow.md`
 2. Bestehender Handler-Flow: `src/integrations/github_integration/core.py` + `event_handlers_mixin.py`
 3. Bestehende DB-Abstraktion: `src/integrations/security_engine/db.py`
 4. Config-Ladelogik: `src/utils/config.py` (wie `self.config.foo.bar` aufgelöst wird)
@@ -52,7 +52,7 @@ Erstelle die Datei mit folgendem Inhalt:
 ```sql
 -- Jules SecOps Workflow — PR-Review State
 -- Lebt in der security_analyst Datenbank
--- Siehe docs/plans/2026-04-11-jules-secops-workflow-design.md Abschnitt 7.1
+-- Siehe docs/design/jules-workflow.md Abschnitt 7.1
 
 CREATE TABLE IF NOT EXISTS jules_pr_reviews (
     id              BIGSERIAL PRIMARY KEY,
@@ -156,7 +156,7 @@ git commit -m "feat: jules_pr_reviews Schema — State-Tabelle für Jules Review
 ```sql
 -- Jules Review Learning — Few-Shot Examples
 -- Lebt in der agent_learning Datenbank (Port 5433, GuildScout Postgres)
--- Siehe docs/plans/2026-04-11-jules-secops-workflow-design.md Abschnitt 7.2
+-- Siehe docs/design/jules-workflow.md Abschnitt 7.2
 
 CREATE TABLE IF NOT EXISTS jules_review_examples (
     id              BIGSERIAL PRIMARY KEY,
@@ -296,7 +296,7 @@ Jules Workflow — State Management.
 Asyncpg-Layer für security_analyst.jules_pr_reviews.
 Atomic Lock-Claim, Stale-Lock-Recovery, CRUD.
 
-Siehe docs/plans/2026-04-11-jules-secops-workflow-design.md §7.1.
+Siehe docs/design/jules-workflow.md §7.1.
 """
 from __future__ import annotations
 
@@ -1040,7 +1040,7 @@ Jules Review Prompt Builder.
 Baut den Claude-Prompt für strukturierte PR-Reviews mit Learning-Kontext
 aus agent_learning DB (few-shot examples + project knowledge).
 
-Siehe docs/plans/2026-04-11-jules-secops-workflow-design.md §8.
+Siehe docs/design/jules-workflow.md §8.
 """
 from __future__ import annotations
 
@@ -2044,7 +2044,7 @@ Jules SecOps Workflow Mixin.
 Handler-Eintritt für GitHub pull_request und issue_comment Events.
 Koordiniert die Gate-Pipeline, den AI-Call und das Comment-Management.
 
-Siehe docs/plans/2026-04-11-jules-secops-workflow-design.md §4-§6.
+Siehe docs/design/jules-workflow.md §4-§6.
 """
 from __future__ import annotations
 
@@ -3620,7 +3620,7 @@ Suche in `src/integrations/security_engine/scan_agent.py` die Stelle wo `SKIP_IS
 
 ```python
 # === Jules SecOps Workflow — Fix-Mode-Klassifizierung ===
-# Siehe docs/plans/2026-04-11-jules-secops-workflow-design.md §9.1
+# Siehe docs/design/jules-workflow.md §9.1
 
 FIX_MODE_DECISION: Dict[str, str] = {
     # Code-Findings → Jules (PR via GitHub-Issue)
@@ -4528,7 +4528,7 @@ Füge im Abschnitt "Architektur-Entscheidungen" hinzu:
 - **State:** `security_analyst.jules_pr_reviews` mit atomic Lock-Claim, Stale-Lock-Recovery nach 10min
 - **Learning:** `agent_learning.jules_review_examples` + `agent_knowledge` (Few-Shot + Projekt-Konventionen), Nightly-Batch klassifiziert Outcomes
 - **Rollback:** Config-Flag `jules_workflow.enabled: false` → ~30s
-- **Design-Doc:** `docs/plans/2026-04-11-jules-secops-workflow-design.md`
+- **Design-Doc:** `docs/design/jules-workflow.md`
 - **Implementation-Plan:** `docs/plans/2026-04-11-jules-secops-workflow.md`
 - **Vorfall-Referenz:** PR #123 (ZERODOX) — 31 Kommentare Loop durch `issue_comment` Re-Trigger; siehe Design-Doc Anhang A
 ```

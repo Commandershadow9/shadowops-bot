@@ -6,7 +6,7 @@ last_reviewed: 2026-04-15
 owner: CommanderShadow9
 related:
   - ../../adr/007-jules-secops-workflow.md
-  - ../../plans/2026-04-11-jules-secops-workflow-design.md
+  - ../../design/jules-workflow.md
 ---
 
 # Jules Workflow — Overview
@@ -16,7 +16,7 @@ Siehe auch: [detection.md](detection.md), [review-pipeline.md](review-pipeline.m
 ## Phase 0: Vorbereitung (kein Code, nur Verständnis)
 
 **Lies vor dem ersten Task:**
-1. Design-Doc komplett: `docs/plans/2026-04-11-jules-secops-workflow-design.md`
+1. Design-Doc komplett: `docs/design/jules-workflow.md`
 2. Bestehender Handler-Flow: `src/integrations/github_integration/core.py` + `event_handlers_mixin.py`
 3. Bestehende DB-Abstraktion: `src/integrations/security_engine/db.py`
 4. Config-Ladelogik: `src/utils/config.py` (wie `self.config.foo.bar` aufgelöst wird)
@@ -204,7 +204,7 @@ Füge im Abschnitt "Architektur-Entscheidungen" hinzu:
 - **State:** `security_analyst.jules_pr_reviews` mit atomic Lock-Claim, Stale-Lock-Recovery nach 10min
 - **Learning:** `agent_learning.jules_review_examples` + `agent_knowledge` (Few-Shot + Projekt-Konventionen), Nightly-Batch klassifiziert Outcomes
 - **Rollback:** Config-Flag `jules_workflow.enabled: false` → ~30s
-- **Design-Doc:** `docs/plans/2026-04-11-jules-secops-workflow-design.md`
+- **Design-Doc:** `docs/design/jules-workflow.md`
 - **Implementation-Plan:** `docs/plans/2026-04-11-jules-secops-workflow.md`
 - **Vorfall-Referenz:** PR #123 (ZERODOX) — 31 Kommentare Loop durch `issue_comment` Re-Trigger; siehe Design-Doc Anhang A
 ```
