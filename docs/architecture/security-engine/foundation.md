@@ -5,7 +5,6 @@ version: v6
 last_reviewed: 2026-04-15
 owner: CommanderShadow9
 related:
-  - ../../plans/2026-03-24-security-engine-v6.md
 ---
 
 # Security Engine v6 — Foundation (Phase 1)

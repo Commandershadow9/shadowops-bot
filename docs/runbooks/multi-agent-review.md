@@ -337,7 +337,7 @@ agent_review:
 
 - **ADR:** [`docs/adr/008-multi-agent-review-pipeline.md`](adr/008-multi-agent-review-pipeline.md)
 - **Design-Doc:** [`docs/design/multi-agent-review.md`](../design/multi-agent-review.md)
-- **Implementierungsplan:** [`docs/plans/2026-04-14-multi-agent-review.md`](plans/2026-04-14-multi-agent-review.md)
+- **Implementierungsplan:** [`docs/archive/INDEX.md` (archiviert — letzter Stand per `git show`)](plans/2026-04-14-multi-agent-review.md)
 - **Rollout-Guide:** [`docs/operations/multi-agent-review-rollout.md`](../operations/multi-agent-review-rollout.md)
 - **Safety-Rules:** [`.claude/rules/safety.md`](../.claude/rules/safety.md#multi-agent-review-pipeline-seit-2026-04-14)
 - **Jules-Vorgänger:** [`docs/adr/007-jules-secops-workflow.md`](adr/007-jules-secops-workflow.md)

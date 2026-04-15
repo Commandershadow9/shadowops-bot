@@ -205,7 +205,7 @@ Füge im Abschnitt "Architektur-Entscheidungen" hinzu:
 - **Learning:** `agent_learning.jules_review_examples` + `agent_knowledge` (Few-Shot + Projekt-Konventionen), Nightly-Batch klassifiziert Outcomes
 - **Rollback:** Config-Flag `jules_workflow.enabled: false` → ~30s
 - **Design-Doc:** `docs/design/jules-workflow.md`
-- **Implementation-Plan:** `docs/plans/2026-04-11-jules-secops-workflow.md`
+- **Implementation-Plan:** `docs/archive/INDEX.md` (archiviert — letzter Stand per `git show`)
 - **Vorfall-Referenz:** PR #123 (ZERODOX) — 31 Kommentare Loop durch `issue_comment` Re-Trigger; siehe Design-Doc Anhang A
 ```
 
@@ -261,4 +261,4 @@ git commit -m "docs: Jules SecOps Workflow — CLAUDE.md + safety.md Integration
 
 ---
 
-**Plan complete and saved to `docs/plans/2026-04-11-jules-secops-workflow.md`.**
+**Plan complete and saved to `docs/archive/INDEX.md` (archiviert — letzter Stand per `git show`).**

@@ -5,8 +5,6 @@ version: v6
 last_reviewed: 2026-04-15
 owner: CommanderShadow9
 related:
-  - ../../plans/2026-03-24-security-engine-v6.md
-  - ../../plans/2026-03-24-security-scan-agent-design.md
 ---
 
 # Security Engine v6 — Deep Scan Mode
@@ -28,7 +26,7 @@ related:
 >
 > Fuer den aktuellen Stand siehe CLAUDE.md (Abschnitt "Security Engine v6" und
 > "SecurityScanAgent") sowie das ADR
-> `docs/plans/2026-03-24-security-scan-agent-design.md`. Das Doc hier beschreibt
+> `docs/archive/INDEX.md` (archiviert). Das Doc hier beschreibt
 > die **urspruengliche Planung** — der Scope und die Rolle sind gleich, die
 > Implementierungsdatei heisst jetzt `scan_agent.py` statt `deep_scan.py`.
 
