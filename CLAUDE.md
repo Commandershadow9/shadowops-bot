@@ -203,30 +203,26 @@ Eigenstaendiges Package mit 5-Stufen State Machine. Ersetzt die alten Mixins (`a
 |-------|-------|
 | `auto-label-pr.yml` | Auto-Label PRs aus Conventional Commit Prefixen (feat→feature, fix→bugfix, etc.). SHA-gepinnter actions/github-script, 10 Labels konfiguriert |
 
-### Dokumentation
+### Dokumentation (Lifecycle-Struktur, seit 2026-04-15)
 | Pfad | Inhalt |
 |------|--------|
-| `docs/` | Aktive Referenz-Doku (API, Overview, Security Engine v6) |
-| `docs/guides/` | Benutzer-Anleitungen (Setup, Quickstart, Multi-Guild) |
-| `docs/plans/` | Design- und Implementierungsdokumente |
-| `docs/adr/` | Architecture Decision Records (6 ADRs) |
-| `docs/archive/` | Veraltete Dokumentation (historisch) |
+| `docs/README.md` | Semantic Map, Einstiegspunkt fuer AI-Navigation |
+| `docs/architecture/` | Wie funktioniert das System (jules-workflow/, security-engine/, multi-agent-review/) |
+| `docs/operations/` | Wie wird es betrieben (Setup, Quickstart, Deployment, Webhooks, Multi-Guild) |
+| `docs/runbooks/` | Schritt-fuer-Schritt bei Incidents (jules-workflow, multi-agent-review) |
+| `docs/design/` | Aktive Design-Docs (patch-notes-v6, jules-workflow, multi-agent-review, doku-refactor) |
+| `docs/reference/` | Nachschlagen (API-Reference) |
+| `docs/adr/` | Architecture Decision Records (8 ADRs) |
+| `docs/plans/` | Aktueller Implementierungsplan + IST-Bewertung |
+| `docs/archive/INDEX.md` | Tabelle aller archivierten Dateien mit Git-SHAs (via `git show`) |
+| `docs/assets/` | Bilder und Grafiken |
 
-## Architektur-Historie
+Alle aktiven Docs haben YAML Front-Matter (`status`, `last_reviewed`, `owner`).
 
-Alle grossen Architektur-Entscheidungen (seit 15.03.2026) sind in einer separaten Doku gebuendelt — damit CLAUDE.md unter der 40k-Context-Schwelle bleibt.
+## Operative Safety
 
-**→ [`docs/architecture-decisions.md`](docs/architecture-decisions.md)**
+Safety-Regeln (Verbote, OOM-Schutz, Patch-Notes-Pipeline v6 Sperren, Jules-Loop-Schutz,
+Multi-Agent-Review Rollback-Sequenz) stehen in `.claude/rules/safety.md`.
 
-Enthaelt Details zu:
-- Knowledge-Konsolidierung (3 DBs → 1 PostgreSQL)
-- Security Analyst Learning (2-Phasen-Architektur, 4 DB-Tabellen, Quality-Gates)
-- Token-Budget & AI-Call-Sicherheit (stdin, Quota-Erkennung, DSN via Config)
-- Security-DB & Agent-Learning DB (PostgreSQL Schemas)
-- Patch Notes Pipeline v6 (5-Stufen State Machine) + Post-Deploy-Fixes (2026-04-14)
-- Security Engine v6 + SecurityScanAgent (seit 2026-03-24)
-- Changelog Redesign (shared-ui v0.2.0), MayDay Einsatzprotokoll (2026-03-30)
-- Discord-Nachrichten-Optimierung, Externes Mini-Dashboard
-- Jules SecOps Workflow (seit 2026-04-11) + Multi-Agent Review Pipeline (seit 2026-04-14)
-
-Operative Safety-Regeln zu diesen Themen stehen weiterhin in `.claude/rules/safety.md`.
+Historische Architektur-Entscheidungen sind ins Archiv gewandert:
+**→ [`docs/archive/INDEX.md`](docs/archive/INDEX.md)** (Tabelle mit Git-SHAs fuer `git show`-Lookup)
