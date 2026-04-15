@@ -1198,7 +1198,7 @@ for key in self.config.projects.keys():
 
 **Phase 6: Documentation & Cleanup:**
 - **README.md** - Updated to v3.1 with all new features
-- **docs/API.md** - Complete API reference (700+ lines):
+- **docs/reference/api.md** - Complete API reference (700+ lines):
   - All Discord commands documented
   - Full configuration reference
   - GitHub webhook API
@@ -1285,7 +1285,7 @@ for key in self.config.projects.keys():
 - `tests/integration/test_learning_workflow.py` (200+ lines)
 
 **Documentation (Phase 6):**
-- `docs/API.md` (700+ lines) - Complete API reference
+- `docs/reference/api.md` (700+ lines) - Complete API reference
 - `docs/SETUP_GUIDE.md` (1000+ lines) - Installation guide
 
 **Configuration:**
@@ -1413,7 +1413,7 @@ for key in self.config.projects.keys():
 #### 📚 Documentation
 
 **New Documentation:**
-- [API.md](./docs/API.md) - Complete API reference with all commands, config, and Python APIs
+- [API.md](./docs/reference/api.md) - Complete API reference with all commands, config, and Python APIs
 - [SETUP_GUIDE.md](./docs/SETUP_GUIDE.md) - Step-by-step installation and configuration guide
 
 **Updated Documentation:**
