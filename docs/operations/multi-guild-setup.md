@@ -1,3 +1,10 @@
+---
+title: Multi-Guild Support - Setup Guide
+status: active
+last_reviewed: 2026-04-15
+owner: CommanderShadow9
+---
+
 # Multi-Guild Support - Setup Guide
 **Date:** 2025-11-25
 **Status:** ✅ IMPLEMENTED

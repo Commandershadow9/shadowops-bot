@@ -1,3 +1,10 @@
+---
+title: ADR 008 — Multi-Agent Review Pipeline
+status: accepted
+last_reviewed: 2026-04-15
+owner: CommanderShadow9
+---
+
 # ADR 008 — Multi-Agent Review Pipeline
 
 **Status:** Accepted

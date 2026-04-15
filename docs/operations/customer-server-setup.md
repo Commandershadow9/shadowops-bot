@@ -1,3 +1,10 @@
+---
+title: Customer Server Setup - GuildScout Bot
+status: active
+last_reviewed: 2026-04-15
+owner: CommanderShadow9
+---
+
 # Customer Server Setup - GuildScout Bot
 **Date:** 2025-11-25
 **Status:** ✅ READY

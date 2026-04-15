@@ -1,3 +1,10 @@
+---
+title: 🚀 ShadowOps Bot - Quick Start Guide
+status: active
+last_reviewed: 2026-04-15
+owner: CommanderShadow9
+---
+
 # 🚀 ShadowOps Bot - Quick Start Guide
 
 Schnellstart-Anleitung um den Bot in wenigen Minuten zum Laufen zu bringen.

@@ -1,3 +1,10 @@
+---
+title: 🔧 ShadowOps API Documentation v5.1
+status: active
+last_reviewed: 2026-04-15
+owner: CommanderShadow9
+---
+
 # 🔧 ShadowOps API Documentation v5.1
 
 Complete API reference for ShadowOps Security Guardian.

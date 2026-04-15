@@ -1,3 +1,10 @@
+---
+title: ADR-004: systemd statt Docker fuer Bot-Deployment
+status: accepted
+last_reviewed: 2026-04-15
+owner: CommanderShadow9
+---
+
 # ADR-004: systemd statt Docker fuer Bot-Deployment
 
 **Status:** Accepted

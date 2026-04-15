@@ -1,3 +1,10 @@
+---
+title: Multi-Agent Review — Operator Runbook
+status: active
+last_reviewed: 2026-04-15
+owner: CommanderShadow9
+---
+
 # Multi-Agent Review — Operator Runbook
 
 **Zielgruppe:** On-Call Engineer, SRE, Platform-Team

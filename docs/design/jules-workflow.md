@@ -1,3 +1,10 @@
+---
+title: Jules SecOps Workflow — Design Document
+status: active
+last_reviewed: 2026-04-15
+owner: CommanderShadow9
+---
+
 # Jules SecOps Workflow — Design Document
 
 **Datum:** 2026-04-11

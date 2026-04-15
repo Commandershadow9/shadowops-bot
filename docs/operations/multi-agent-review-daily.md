@@ -1,3 +1,10 @@
+---
+title: Multi-Agent Review — Operations Guide
+status: active
+last_reviewed: 2026-04-15
+owner: CommanderShadow9
+---
+
 # Multi-Agent Review — Operations Guide
 
 **Zielgruppe:** Dich (Shadow) im täglichen Betrieb. Kein Engineering-Ticket, sondern die Routine.

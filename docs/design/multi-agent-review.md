@@ -1,3 +1,10 @@
+---
+title: Multi-Agent Review Pipeline — Design Document
+status: active
+last_reviewed: 2026-04-15
+owner: CommanderShadow9
+---
+
 # Multi-Agent Review Pipeline — Design Document
 
 **Datum:** 2026-04-14

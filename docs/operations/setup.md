@@ -1,3 +1,10 @@
+---
+title: 🚀 ShadowOps Setup Guide v3.1
+status: active
+last_reviewed: 2026-04-15
+owner: CommanderShadow9
+---
+
 # 🚀 ShadowOps Setup Guide v3.1
 
 Complete step-by-step setup guide for ShadowOps Security Guardian.

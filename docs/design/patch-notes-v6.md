@@ -1,3 +1,10 @@
+---
+title: Patch Notes Pipeline v6 — Design Document
+status: active
+last_reviewed: 2026-04-15
+owner: CommanderShadow9
+---
+
 # Patch Notes Pipeline v6 — Design Document
 
 **Datum:** 2026-04-13
