@@ -358,8 +358,9 @@ async def _send_to_channel(
             return
 
         embeds = _split_embed_for_sending(embed)
-        view = _get_feedback_view(ctx) if with_feedback else None
+        view = _get_feedback_view(bot, ctx) if with_feedback else None
 
+        last_msg = None
         for i, e in enumerate(embeds):
             is_first = (i == 0)
             is_last = (i == len(embeds) - 1)
@@ -378,20 +379,39 @@ async def _send_to_channel(
             # Nur erste Message tracken (für Rollback)
             if is_first:
                 ctx.sent_message_ids.append([channel_id, msg.id])
+            if is_last:
+                last_msg = msg
+
+        # Feedback-Collector über die View informieren (Like-Zähler / Bewerten brauchen Projekt+Version)
+        if view is not None and last_msg is not None:
+            collector = getattr(bot, 'feedback_collector', None)
+            if collector is not None:
+                try:
+                    changelog_url = ctx.project_config.get('patch_notes', {}).get('changelog_url', '')
+                    await collector.track_patch_notes_message(
+                        last_msg, ctx.project, ctx.version, changelog_url,
+                    )
+                except Exception as e:
+                    logger.debug(f"[v6] track_patch_notes_message fehlgeschlagen: {e}")
 
     except Exception as e:
         logger.warning(f"[v6] Channel {channel_id} fehlgeschlagen: {e}")
 
 
-def _get_feedback_view(ctx: PipelineContext):
-    """Lade bestehende Feedback-Buttons View."""
+def _get_feedback_view(bot, ctx: PipelineContext):
+    """Like+Bewerten View über bot.feedback_collector bauen (benötigt Collector-Instanz).
+
+    Fällt lautlos auf None zurück wenn der Collector noch nicht initialisiert ist
+    oder das Modul nicht importiert werden kann.
+    """
+    collector = getattr(bot, 'feedback_collector', None)
+    if collector is None:
+        return None
     try:
-        from integrations.patch_notes_feedback import PatchNotesFeedbackView
-        return PatchNotesFeedbackView(
-            project=ctx.project,
-            version=ctx.version,
-        )
-    except ImportError:
+        changelog_url = ctx.project_config.get('patch_notes', {}).get('changelog_url', '')
+        return collector.create_view(changelog_url)
+    except Exception as e:
+        logger.debug(f"[v6] Feedback-View konnte nicht erstellt werden: {e}")
         return None
 
 
