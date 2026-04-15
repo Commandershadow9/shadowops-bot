@@ -305,8 +305,9 @@ async def _send_customer(bot, embed: discord.Embed, ctx: PipelineContext) -> Non
     """Sende an Kunden-Channels mit Feedback-Buttons."""
     pn_config = ctx.project_config.get('patch_notes', {})
 
-    # Update Channel (öffentlich)
-    channel_id = pn_config.get('update_channel_id')
+    # Channel-IDs werden zur Laufzeit von bot.py auf Top-Level des project_config injiziert.
+    # patch_notes.* wird als Fallback behalten, falls jemand sie manuell dort pflegt.
+    channel_id = pn_config.get('update_channel_id') or ctx.project_config.get('update_channel_id')
     if channel_id:
         await _send_to_channel(
             bot, int(channel_id), embed, ctx,
@@ -314,8 +315,7 @@ async def _send_customer(bot, embed: discord.Embed, ctx: PipelineContext) -> Non
             with_feedback=True,
         )
 
-    # Internal Customer Channel
-    internal_id = pn_config.get('internal_channel_id')
+    internal_id = pn_config.get('internal_channel_id') or ctx.project_config.get('internal_channel_id')
     if internal_id:
         await _send_to_channel(
             bot, int(internal_id), embed, ctx,

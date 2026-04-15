@@ -5,6 +5,7 @@ from patch_notes.stages.distribute import (
     _build_full_embed, _build_summary_embed, _build_footer_text,
     _type_to_emoji, _log_metrics, _truncate_description,
     _split_embed_for_sending, _format_change_line,
+    _send_customer,
     distribute, retract_patch_notes,
 )
 from patch_notes.context import PipelineContext
@@ -220,6 +221,52 @@ async def test_distribute_no_bot():
     ctx = _make_ctx()
     await distribute(ctx, bot=None)
     assert ctx.sent_message_ids == []
+
+
+@pytest.mark.asyncio
+async def test_send_customer_reads_channel_id_from_top_level(monkeypatch):
+    """Regression: bot.py injiziert update_channel_id auf Top-Level des project_config.
+    _send_customer muss Top-Level als Fallback lesen (Vorfall 2026-04-14, messages_sent=0)."""
+    ctx = _make_ctx(project_config={
+        "patch_notes": {"type": "devops", "language": "de"},
+        "color": 0x00FF00,
+        "update_channel_id": 1234567890,
+        "internal_channel_id": 9876543210,
+    })
+
+    sent_channel_ids = []
+
+    async def fake_send_to_channel(bot, channel_id, embed, ctx, **kwargs):
+        sent_channel_ids.append(channel_id)
+
+    monkeypatch.setattr("patch_notes.stages.distribute._send_to_channel", fake_send_to_channel)
+
+    await _send_customer(bot=MagicMock(), embed=MagicMock(), ctx=ctx)
+
+    assert 1234567890 in sent_channel_ids
+    assert 9876543210 in sent_channel_ids
+
+
+@pytest.mark.asyncio
+async def test_send_customer_prefers_patch_notes_nested(monkeypatch):
+    """Wenn jemand patch_notes.update_channel_id manuell in config.yaml pflegt, hat das Vorrang."""
+    ctx = _make_ctx(project_config={
+        "patch_notes": {"type": "devops", "update_channel_id": 1111111111},
+        "color": 0x00FF00,
+        "update_channel_id": 2222222222,
+    })
+
+    sent_channel_ids = []
+
+    async def fake_send_to_channel(bot, channel_id, embed, ctx, **kwargs):
+        sent_channel_ids.append(channel_id)
+
+    monkeypatch.setattr("patch_notes.stages.distribute._send_to_channel", fake_send_to_channel)
+
+    await _send_customer(bot=MagicMock(), embed=MagicMock(), ctx=ctx)
+
+    assert 1111111111 in sent_channel_ids
+    assert 2222222222 not in sent_channel_ids
 
 
 # ── Metriken ──
