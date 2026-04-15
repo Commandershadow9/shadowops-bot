@@ -223,3 +223,109 @@ class TestReleaseHandling:
         await integration.handle_release_event(payload)
 
         integration._send_release_notification.assert_called_once()
+
+
+class TestV6BatcherGate:
+    """Regression: v6 darf bei Webhook NIE direkt releasen — nur via Cron/manuell/Notbremse.
+
+    Hintergrund: Vorfall 2026-04-15. Vor dem Fix erzeugte jeder Push einen
+    eigenen Mini-Release (z.B. zerodox 1.3.2 → 1.3.3 → 1.3.4 …) statt zu
+    sammeln. Der Batcher MUSS zwischen Webhook und Pipeline.run() liegen.
+    """
+
+    @pytest.fixture
+    def v6_project_config(self):
+        return {
+            'patch_notes': {'engine': 'v6', 'language': 'de'},
+            'color': 0x00FF00,
+        }
+
+    @pytest.mark.asyncio
+    async def test_webhook_only_batches_no_pipeline_run(self, mock_bot, enabled_config, v6_project_config, monkeypatch):
+        """Webhook-Push (skip_batcher=False) → batcher.add_commits, KEIN pipeline.run."""
+        integration = GitHubIntegration(mock_bot, enabled_config)
+        integration.config.projects = {'demo': v6_project_config}
+
+        batcher = MagicMock()
+        batcher.add_commits = MagicMock(return_value={'ready': False, 'total_pending': 7})
+        batcher.release_batch = MagicMock(return_value=None)
+        integration.patch_notes_batcher = batcher
+
+        pipeline_run = AsyncMock()
+        monkeypatch.setattr('patch_notes.pipeline.PatchNotePipeline.run', pipeline_run)
+
+        await integration._send_push_notification(
+            repo_name='demo', repo_url='', branch='main', pusher='alice',
+            commits=[{'id': 'abc', 'message': 'feat: x'}],
+            skip_batcher=False,
+        )
+
+        batcher.add_commits.assert_called_once()
+        pipeline_run.assert_not_awaited()
+        batcher.release_batch.assert_not_called()
+
+    @pytest.mark.asyncio
+    async def test_webhook_never_releases_even_at_high_volume(self, mock_bot, enabled_config, v6_project_config, monkeypatch):
+        """Auch bei 50+ Commits darf der Webhook NICHT direkt releasen.
+        Cron / /release-notes ist die einzige Release-Quelle."""
+        integration = GitHubIntegration(mock_bot, enabled_config)
+        integration.config.projects = {'demo': v6_project_config}
+
+        batcher = MagicMock()
+        batcher.add_commits = MagicMock(return_value={'ready': False, 'total_pending': 73})
+        batcher.release_batch = MagicMock(return_value=None)
+        integration.patch_notes_batcher = batcher
+
+        pipeline_run = AsyncMock()
+        monkeypatch.setattr('patch_notes.pipeline.PatchNotePipeline.run', pipeline_run)
+
+        await integration._send_push_notification(
+            repo_name='demo', repo_url='', branch='main', pusher='alice',
+            commits=[{'id': f'c{i}', 'message': f'feat: {i}'} for i in range(15)],
+            skip_batcher=False,
+        )
+
+        batcher.add_commits.assert_called_once()
+        pipeline_run.assert_not_awaited()
+        batcher.release_batch.assert_not_called()
+
+    @pytest.mark.asyncio
+    async def test_skip_batcher_true_runs_pipeline_directly(self, mock_bot, enabled_config, v6_project_config, monkeypatch):
+        """Cron/manueller Pfad (skip_batcher=True) umgeht den Batcher und ruft pipeline.run."""
+        integration = GitHubIntegration(mock_bot, enabled_config)
+        integration.config.projects = {'demo': v6_project_config}
+
+        batcher = MagicMock()
+        integration.patch_notes_batcher = batcher
+
+        pipeline_run = AsyncMock()
+        monkeypatch.setattr('patch_notes.pipeline.PatchNotePipeline.run', pipeline_run)
+
+        await integration._send_push_notification(
+            repo_name='demo', repo_url='', branch='main', pusher='cron',
+            commits=[{'id': 'a', 'message': 'feat: x'}, {'id': 'b', 'message': 'fix: y'}],
+            skip_batcher=True,
+        )
+
+        batcher.add_commits.assert_not_called()
+        pipeline_run.assert_awaited_once()
+
+    @pytest.mark.asyncio
+    async def test_no_batcher_fails_closed_no_pipeline_run(self, mock_bot, enabled_config, v6_project_config, monkeypatch):
+        """Wenn der Batcher fehlt, NICHT releasen (fail-closed gegen Spam)."""
+        integration = GitHubIntegration(mock_bot, enabled_config)
+        integration.config.projects = {'demo': v6_project_config}
+        integration.patch_notes_batcher = None
+        # Auch am Bot nicht vorhanden
+        mock_bot.patch_notes_batcher = None
+
+        pipeline_run = AsyncMock()
+        monkeypatch.setattr('patch_notes.pipeline.PatchNotePipeline.run', pipeline_run)
+
+        await integration._send_push_notification(
+            repo_name='demo', repo_url='', branch='main', pusher='alice',
+            commits=[{'id': 'a', 'message': 'feat: x'}],
+            skip_batcher=False,
+        )
+
+        pipeline_run.assert_not_awaited()

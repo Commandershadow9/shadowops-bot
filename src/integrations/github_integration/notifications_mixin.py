@@ -40,6 +40,10 @@ class NotificationsMixin:
             project_config = self.config.projects.get(repo_name, {})
 
         # ── v6 Pipeline Dispatch ──────────────────────────────────
+        # Push-Webhooks dürfen NICHT direkt einen Release auslösen, sonst
+        # entsteht pro Commit eine Mini-Version (Spam). Stattdessen sammelt
+        # der Batcher alle Commits, und der Release passiert via
+        # Daily/Weekly-Cron, /release-notes oder Notbremse (≥20 + Cooldown).
         patch_config = project_config.get('patch_notes', {})
         if patch_config.get('engine') == 'v6':
             try:
@@ -47,11 +51,36 @@ class NotificationsMixin:
                 from patch_notes.pipeline import PatchNotePipeline
                 from patch_notes.context import PipelineContext
 
+                commits_for_pipeline = commits
+                trigger = 'manual' if skip_batcher else 'webhook'
+
+                # Batcher-Gate: bei Webhook NIE direkt releasen — alles sammeln.
+                # Release nur via Daily/Weekly-Cron oder manuell (/release-notes).
+                # Egal wie viele Commits anfallen: lieber ein großer Mega-Release
+                # mit Hype, als 50 Mini-Versionen mit je 1 Commit.
+                if not skip_batcher:
+                    batcher = getattr(self, 'patch_notes_batcher', None) or \
+                              getattr(self.bot, 'patch_notes_batcher', None)
+                    if batcher is None:
+                        self.logger.warning(
+                            f"⚠️ [v6] {repo_name}: PatchNotesBatcher nicht verfügbar — "
+                            f"Push wird nicht in Discord released (fail-closed gegen Spam)."
+                        )
+                        return
+
+                    result = batcher.add_commits(repo_name, commits)
+                    pending_total = result.get('total_pending', len(commits))
+                    self.logger.info(
+                        f"📦 [v6] {repo_name}: {pending_total} Commits gesammelt — "
+                        f"Release wartet auf Cron / /release-notes."
+                    )
+                    return
+
                 ctx = PipelineContext(
                     project=repo_name,
                     project_config=project_config,
-                    raw_commits=commits,
-                    trigger='manual' if skip_batcher else 'webhook',
+                    raw_commits=commits_for_pipeline,
+                    trigger=trigger,
                 )
                 data_dir = Path(__file__).resolve().parent.parent.parent.parent / 'data'
                 pipeline = PatchNotePipeline(data_dir=data_dir, bot=self.bot)
