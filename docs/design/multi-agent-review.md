@@ -612,6 +612,6 @@ Farbkodiert:
 ## 15. Referenzen
 
 - Bestehender Jules-Workflow: `docs/design/jules-workflow.md`
-- Operational Runbook: `docs/guides/JULES_RUNBOOK.md`
+- Operational Runbook: `docs/runbooks/jules-workflow.md`
 - ADR-007: `docs/adr/007-jules-secops-workflow.md`
 - PR #123 Incident: Jules Design-Doc Anhang A
