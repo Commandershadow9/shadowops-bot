@@ -25,9 +25,11 @@ Grundlage: Design-Doc `2026-04-15-doku-refactor-design.md`, Abschnitt D5 (IST-Be
 | ADRs | 8 |
 | Monolithen > 20 KB | 14 |
 | Monolithen > 500 Zeilen (aktiv, ohne archive) | 15 |
-| Dateien mit YAML Front-Matter (aktiv) | 1 / 48 (2 %) |
+| Dateien mit YAML Front-Matter (aktiv) | 1 / 48 |
 | Top-Level Indexdatei (`docs/README.md`) | fehlt |
 | `docs/OVERVIEW.md` vorhanden | ja, verweist aber auf archivierte Dateien |
+
+Erhoben via: `find docs -name '*.md' | wc -l`, `find docs -name '*.md' -exec head -1 {} \; | grep '^---'`, `find docs -name '*.md' -exec wc -l {} + | sort -rn`.
 
 ### Top 5 groesste Dateien (Zeilen)
 
@@ -91,7 +93,7 @@ Solide Basis, aber fuer Enterprise-Betrieb reicht's nicht. Operative Doku ist lu
 - Post-Go-Live-Fixes und Vorfall-Historie (Loop-Bug 2026-04-14, PR #123) in CLAUDE.md ergaenzt
 
 **Negativ:**
-- `docs/OVERVIEW.md` ist **kaputt**: verweist auf `ACTIVE_SECURITY_GUARDIAN.md` (liegt im archive), markiert selbst 2 Files als "⚠️ Veraltet" — Index pflegt sich nicht mit
+- `docs/OVERVIEW.md` ist **kaputt**: verweist auf `ACTIVE_SECURITY_GUARDIAN.md` (liegt im archive), markiert selbst 2 Files als "(Warn-Hinweis) Veraltet" — Index pflegt sich nicht mit
 - Guides aus Nov 2025 (`QUICKSTART.md` vom 2025-11-12, `SETUP_GUIDE.md` vom 2025-11-24) nicht als "reviewed am" markiert — unklar ob noch gueltig (Stack hat sich zwischen Nov 2025 und Apr 2026 stark veraendert)
 - 11 aktive Files enthalten TODO/FIXME/geplant/veraltet-Marker — meistens in Design-Docs okay, aber nicht systematisch als "offene Punkte" kuratiert
 - Kein `last_reviewed`-Feld irgendwo (Front-Matter-Coverage 2 %), d. h. es gibt keinen Mechanismus um Altdoku zu finden ausser mtime
@@ -134,7 +136,7 @@ Struktur ist Ablage, keine Architektur.
 
 1. **Die Struktur ist der Flaschenhals** (Score 4): ohne Index, mit drei Monolithen ueber 1700 Zeilen und 9 Top-Level-Dateien ist die Doku fuer neue Mitglieder und AI-Agents nur noch mit Vorwissen brauchbar — das ist fuer einen Enterprise-Betrieb mit Multi-Agent-Pipeline, Learning-DB und Jules-Integration nicht tragbar.
 2. **Aktualitaet taeuscht ueber Vollstaendigkeit hinweg** (6/7 vs. 4): die neuesten Features sind gut dokumentiert, aber es fehlen operative Grundlagen (Monitoring-Doc, Troubleshooting-FAQ, Deploy-Doc, Glossar) und das einzige Index-Aequivalent (`OVERVIEW.md`) zeigt schon selbst auf archivierte Dateien — die Decke traegt die Wand nicht mehr.
-3. **Ein Leicht-Touch wuerde die Monolithen, das fehlende Lifecycle-Modell und die Fehlende Front-Matter-Hygiene nicht adressieren** — das sind genau die Punkte aus dem Design-Doc (D1, D2, D7), die der Refactor anpacken soll, und sie lassen sich nicht durch punktuelles Flicken loesen.
+3. **Ein Leicht-Touch wuerde die Monolithen, das fehlende Lifecycle-Modell und die fehlende Front-Matter-Hygiene nicht adressieren** — das sind genau die Punkte aus dem Design-Doc (D1, D2, D7), die der Refactor anpacken soll, und sie lassen sich nicht durch punktuelles Flicken loesen.
 
 ## 4. Empfohlene Folge-Tasks
 
