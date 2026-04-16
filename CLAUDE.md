@@ -57,21 +57,27 @@ Eigenstaendiges Package mit 5-Stufen State Machine. Ersetzt die alten Mixins (`a
 | `versioning.py` | DB-basierte SemVer (EINE Quelle: Changelog-DB, kein Git-Tag) |
 | `grouping.py` | Deterministische Commit-Gruppierung (ALLE Commits, kein Cap, PR-Label Override) |
 | `stages/collect.py` | Stufe 1: PR-Daten anreichern, Git-Stats, Self-Healing (Commits aus Git wenn leer) |
-| `stages/classify.py` | Stufe 2: Gruppierung + Version + Team-Credits + Update-Groesse |
+| `stages/classify.py` | Stufe 2: Gruppierung + Version + Team-Credits + Update-Groesse (5 Stufen: small/normal/big/major/mega) |
 | `stages/generate.py` | Stufe 3: Template-Auswahl + AI-Call (Codex/Claude) + Structured Output Parsing |
-| `stages/validate.py` | Stufe 4: 5 Safety-Checks (Feature-Count, Design-Doc-Leak, Version-Strip, Sanitizer, Umlaute) + Inline-Credits |
-| `stages/distribute.py` | Stufe 5: Discord (Summary/Full Embed), Changelog-DB, Web-Export, Feedback-Buttons, Rollback, Metriken |
-| `templates/base.py` | BaseTemplate mit `build_prompt()`, Classification-Rules (DE+EN), Release-Guide, Context-Files |
-| `templates/gaming.py` | Gaming-Template: MayDay Sim (Storytelling, BOS-Sprache, Hype, 12 Badges) |
-| `templates/saas.py` | SaaS-Template: GuildScout, ZERODOX (sachlich, Business-Value, 6 Badges) |
-| `templates/devops.py` | DevOps-Template: ShadowOps, AI-Agent-Framework (kompakt, technisch, 4 Badges) |
+| `stages/validate.py` | Stufe 4: Safety-Checks (Feature-Count, Design-Doc-Leak, Version-Strip, Sanitizer, Umlaute) + Multi-Author-Enrichment (`change.authors[]` Top-3 pro Change) |
+| `stages/distribute.py` | Stufe 5: Discord (Hero-Stats, Narrative-Sections, Multi-Author-Credits), Changelog-DB, Web-Export, Feedback-Buttons, Rollback, Metriken, `release_notes.md` Archive |
+| `templates/base.py` | BaseTemplate mit `build_prompt()`, Narrative-Override (mega/major), Anti-Patterns, Few-Shot, `release_notes.md` Reader, Classification-Rules (DE+EN), Zeitfenster + Autor-Fakten |
+| `templates/gaming.py` | Gaming-Template: MayDay Sim (Anrede "Dispatcher", Storytelling, Hype-Few-Shot, 12 Badges) |
+| `templates/saas.py` | SaaS-Template: GuildScout, ZERODOX (Anrede "Team", sachlich, Business-Value, 6 Badges) |
+| `templates/devops.py` | DevOps-Template: ShadowOps, AI-Agent-Framework (Anrede "Ops", kompakt, technisch, 4 Badges) |
 
-**Trigger-Pfade (alle fuehren zu v6):**
-- Webhook Push (Port 9090) → `_send_push_notification` → engine=v6 → `PatchNotePipeline.run()`
-- Local Polling (60s) → gleicher Pfad
+**Trigger-Pfade:**
+- Webhook Push (Port 9090) → sammelt nur im `PatchNotesBatcher`, KEIN direkter Release (fix 2026-04-15 gegen Mini-Version-Spam)
 - Daily Cron (22:00, ≥15 Commits) → `generate_release()` direkt aus Git
 - Weekly Cron (Sonntag 20:00, ≥3 Commits) → `generate_release()` direkt aus Git
 - `/release-notes <projekt>` → `generate_release()` direkt aus Git, kein Minimum
+
+**Narrative v1 (seit 2026-04-15):**
+- Bei `update_size ∈ {mega, major}` generiert die AI web_content im Gaming-Dev-Commentary + Product-Story Mix (Anrede → Leitidee → 3 Momente → Was dahinter steckt → Warum zusammen → Demnächst)
+- Anti-Pattern-Liste verhindert Statistik-Listings und Marketing-Floskeln
+- Few-Shot-Beispiel pro Template-Typ als wörtliches Muster
+- `release_notes.md` im Projekt-Root (optional): Dev-Kommentare werden wörtlich als DEV-KONTEXT in den Prompt übergeben, nach erfolgreichem Release nach `docs/release-history/v<version>.md` archiviert
+- Design-Doc: `docs/plans/2026-04-15-narrative-patch-notes-design.md`
 
 **Self-Healing:** Wenn Pipeline ohne Commits aufgerufen wird (Restart, Webhook-Ausfall), holt Stufe 1 automatisch ALLE Commits seit dem letzten Release aus Git via `_gather_commits_since_last_release()`.
 

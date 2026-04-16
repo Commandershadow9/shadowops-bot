@@ -737,3 +737,36 @@ Format: `METRICS|patch_notes_pipeline|{json}` — kompatibel mit bestehendem Mon
 | Crash-Resilience | Kein State, Crash = von vorne | State Machine, Restart ab letztem Schritt |
 | Testbarkeit | Kaum (alles gekoppelt) | Jede Stufe einzeln testbar |
 | Migration | — | Feature-Flag, Projekt für Projekt |
+
+---
+
+## Erweiterungen seit 2026-04-15
+
+**Narrative v1** — Qualitäts-Upgrade für mega/major-Updates:
+- Anti-Pattern-Liste + 6-Sektionen-Structure + Few-Shot-Beispiel im Prompt
+- Optional `release_notes.md` pro Projekt als DEV-KONTEXT (wörtlich, keine Halluzination)
+- Archive-Flow: nach erfolgreichem Release → `docs/release-history/v<version>.md`, Template zurückgeschrieben
+- **Design-Doc:** [`2026-04-15-narrative-patch-notes-design.md`](../plans/2026-04-15-narrative-patch-notes-design.md)
+
+**Multi-Author pro Change** — Team-Wachstum-Vorarbeit:
+- `enrich_changes_with_authors` scoring: alle Autoren mit ≥2 Keyword-Overlap in `change.authors` (Top-3)
+- Discord Summary-Embed bei mega/major: `   — Shadow + Mapu` als italic Sub-Zeile
+- Discord Full-Embed: inline `· *Shadow + Mapu*`
+- `TEAM_MAPPING` in `classify.py` dedupliziert Git-Aliases desselben Menschen
+
+**Webhook-Gate** — verhindert Mini-Version-Spam:
+- Webhook-Push triggert **nicht mehr** direkt einen Release
+- Commits werden im `PatchNotesBatcher` gesammelt
+- Release nur via Daily-Cron / Weekly-Cron / `/release-notes`
+- Fix gegen den 2026-04-14 Vorfall (63 Mini-Versionen in 12h)
+
+**Discord-Embed-Glow-Up**:
+- Hero-Stats-Zeile bei mega/major (Commits · Dateien · Zeilen · Themen)
+- Section-Headers im Embed (`🆕 Neue Features`, `🎮 Gameplay & UX`, etc.)
+- Sub-Bullets mit `↳` für das erste Detail pro Highlight (nur mega)
+- Bold TL;DR als Lead statt Blockquote (bei mega/major)
+
+**Channel-ID-Fallback** — Bug-Fix für `messages_sent: 0`:
+- `bot.py` injiziert `update_channel_id` auf Top-Level von `project_config`
+- Pipeline las aus `project_config.patch_notes` → mismatch
+- Fix: beide Pfade lesen, Top-Level als Fallback
