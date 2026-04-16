@@ -189,7 +189,13 @@ def extract_display_content(ctx: 'PipelineContext') -> None:
 
 
 def enrich_changes_with_authors(ctx: 'PipelineContext') -> None:
-    """Post-Processing: Matche AI-Changes gegen Git-Commits per Keyword-Overlap → author-Feld."""
+    """Post-Processing: Matche AI-Changes gegen Git-Commits per Keyword-Overlap.
+
+    Setzt sowohl `change.author` (Primary, Backward-Compat) als auch
+    `change.authors` (Top-3-Liste) damit Co-Autoren sichtbar werden.
+    Team-Wachstum: wenn 2-3 Leute an einem Feature arbeiten, stehen
+    alle im Credit.
+    """
     if not ctx.changes or not ctx.enriched_commits:
         return
 
@@ -215,23 +221,37 @@ def enrich_changes_with_authors(ctx: 'PipelineContext') -> None:
         if keywords:
             commit_authors.append((keywords, name))
 
-    # Changes matchen
+    # Changes matchen: alle Autoren mit ausreichendem Overlap sammeln
     for change in ctx.changes:
-        if not isinstance(change, dict) or change.get('author'):
+        if not isinstance(change, dict):
             continue
+        # Wenn AI bereits einen author gesetzt hat UND keine authors-Liste,
+        # normalisieren wir trotzdem — so werden Co-Autoren auch für ältere
+        # AI-Outputs ergänzt.
         desc = change.get('description', '').lower()
         details_text = ' '.join(change.get('details', [])).lower()
         change_text = desc + ' ' + details_text
         change_words = set(re.findall(r'[a-zäöü]{4,}', change_text))
 
-        best_match = ''
-        best_overlap = 0
+        # Overlap pro Autor summieren (mehrere Commits desselben Autors stacken)
+        author_scores: dict[str, int] = {}
         for keywords, author_name in commit_authors:
             overlap = len(keywords & change_words)
-            if overlap > best_overlap:
-                best_overlap = overlap
-                best_match = author_name
+            if overlap >= 2:
+                author_scores[author_name] = author_scores.get(author_name, 0) + overlap
 
-        if best_match and best_overlap >= 2:
-            team = TEAM_MAPPING.get(best_match.lower().strip())
-            change['author'] = team[0] if team else best_match
+        if not author_scores:
+            continue
+
+        # Top-3 nach Score, dann auf Display-Namen mappen
+        top_authors = sorted(author_scores.items(), key=lambda x: x[1], reverse=True)[:3]
+        display_names: list[str] = []
+        for raw_name, _ in top_authors:
+            team = TEAM_MAPPING.get(raw_name.lower().strip())
+            display = team[0] if team else raw_name
+            if display not in display_names:  # Aliases deduplizieren
+                display_names.append(display)
+
+        if display_names:
+            change['author'] = display_names[0]  # Primary — Backward-Compat
+            change['authors'] = display_names    # Vollständige Liste

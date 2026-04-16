@@ -141,3 +141,67 @@ async def test_validate_empty_string_raises():
     ctx = _make_ctx(ai_result="   ")
     with pytest.raises(RuntimeError, match="leer"):
         await validate(ctx)
+
+
+# ── Multi-Author Enrichment (2026-04-15) ───────────────────────
+
+
+def test_enrich_multi_author_primary_plus_coauthors():
+    """Zwei Autoren mit ausreichendem Overlap -> beide in change.authors, Primary zuerst."""
+    from patch_notes.stages.validate import enrich_changes_with_authors
+
+    ctx = _make_ctx(
+        enriched_commits=[
+            {"message": "feat: kaskaden einsatz phase state machine", "author": {"name": "cmdshadow"}},
+            {"message": "feat: kaskaden timer phase", "author": {"name": "cmdshadow"}},
+            {"message": "feat: einsatz phase rueckzuendung", "author": {"name": "cmdshadow"}},
+            {"message": "feat: kaskaden marker phase", "author": {"name": "renjihoshida"}},
+            {"message": "feat: einsatz phase transition", "author": {"name": "renjihoshida"}},
+        ],
+        changes=[
+            {"type": "feature", "description": "einsatz kaskaden phase",
+             "details": ["rueckzuendung per timer", "marker transition"]},
+        ],
+    )
+    enrich_changes_with_authors(ctx)
+    authors = ctx.changes[0].get('authors') or []
+    assert len(authors) == 2, f"Expected 2 authors, got: {authors}"
+    assert authors[0] == "Shadow"  # Primary (hoechster Overlap)
+    assert "Mapu" in authors
+    assert ctx.changes[0].get('author') == "Shadow"  # Backward-Compat
+
+
+def test_enrich_single_author_fills_list():
+    """Nur ein Author mit Overlap -> authors=[Primary]."""
+    from patch_notes.stages.validate import enrich_changes_with_authors
+
+    ctx = _make_ctx(
+        enriched_commits=[
+            {"message": "feat: transport klinik marker", "author": {"name": "cmdshadow"}},
+            {"message": "feat: transport uebergabe timer", "author": {"name": "cmdshadow"}},
+        ],
+        changes=[
+            {"type": "feature", "description": "transport klinik", "details": ["marker timer"]},
+        ],
+    )
+    enrich_changes_with_authors(ctx)
+    assert ctx.changes[0].get('author') == "Shadow"
+    assert ctx.changes[0].get('authors') == ["Shadow"]
+
+
+def test_enrich_dedups_aliases():
+    """Zwei git-Aliases desselben Menschen -> nur EINMAL im authors-Array."""
+    from patch_notes.stages.validate import enrich_changes_with_authors
+
+    ctx = _make_ctx(
+        enriched_commits=[
+            {"message": "feat: kaskaden phase state", "author": {"name": "cmdshadow"}},
+            {"message": "feat: kaskaden timer state", "author": {"name": "commandershadow9"}},
+        ],
+        changes=[
+            {"type": "feature", "description": "kaskaden phase", "details": ["timer state"]},
+        ],
+    )
+    enrich_changes_with_authors(ctx)
+    authors = ctx.changes[0].get('authors') or []
+    assert authors.count("Shadow") == 1

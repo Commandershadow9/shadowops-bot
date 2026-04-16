@@ -117,16 +117,16 @@ def _build_summary_embed(ctx: PipelineContext, changelog_url: str) -> discord.Em
                 for change in items:
                     badge = _type_to_emoji(change.get('type', 'other'))
                     desc = change.get('description', '')
-                    author = change.get('author', '')
                     parts.append(f"{badge} **{desc[:200]}**")
                     # bei mega noch 1. Detail als Sub-Bullet
                     if size == "mega":
                         details = change.get('details') or []
                         if details and isinstance(details[0], str):
                             parts.append(f"   ↳ {details[0][:180]}")
-                    # Inline-Credit als dezente Sub-Zeile (Team-Wachstum-Vorbereitung)
-                    if author:
-                        parts.append(f"   *— {author}*")
+                    # Inline-Credit: authors-Liste (Multi-Author) oder single author (legacy)
+                    credit = _format_authors_line(change)
+                    if credit:
+                        parts.append(credit)
                     # Leerzeile zwischen Highlights — atmet
                     parts.append("")
         else:
@@ -134,8 +134,8 @@ def _build_summary_embed(ctx: PipelineContext, changelog_url: str) -> discord.Em
             for change in changes_subset:
                 badge = _type_to_emoji(change.get('type', 'other'))
                 desc = change.get('description', '')
-                author = change.get('author', '')
-                credit = f" · {author}" if author else ""
+                display = _authors_display(change)
+                credit = f" · {display}" if display else ""
                 parts.append(f"{badge} {desc[:200]}{credit}")
 
         if len(ctx.changes) > max_n:
@@ -304,12 +304,34 @@ def _build_full_embed(ctx: PipelineContext) -> discord.Embed:
 
 
 def _format_change_line(change: dict, show_author: bool) -> str:
-    """Formatiere eine Change-Zeile mit optionaler Inline-Attribution."""
+    """Formatiere eine Change-Zeile mit optionaler Inline-Attribution (Multi-Author)."""
     desc = change.get('description', '')
-    author = change.get('author', '')
-    if show_author and author:
-        return f"→ {desc} · *{author}*"
+    if show_author:
+        credit = _authors_display(change)
+        if credit:
+            return f"→ {desc} · *{credit}*"
     return f"→ {desc}"
+
+
+def _authors_display(change: dict) -> str:
+    """Authors-Liste zu String: 'Shadow', 'Shadow + Mapu', 'Shadow, Mapu, Renji'."""
+    authors = change.get('authors') or []
+    if not authors:
+        single = change.get('author', '')
+        return single or ''
+    if len(authors) == 1:
+        return authors[0]
+    if len(authors) == 2:
+        return f"{authors[0]} + {authors[1]}"
+    return ", ".join(authors)
+
+
+def _format_authors_line(change: dict) -> str:
+    """Sub-Zeile unter einem Highlight für Inline-Credits in hype-Embeds."""
+    credit = _authors_display(change)
+    if not credit:
+        return ""
+    return f"   *— {credit}*"
 
 
 def _build_footer_text(ctx: PipelineContext) -> str:

@@ -133,6 +133,35 @@ def test_build_summary_embed_mega_has_hero_stats():
     assert "87 Dateien" in embed.description
 
 
+def test_authors_display_formats():
+    """_authors_display: 1 -> 'X', 2 -> 'X + Y', 3+ -> 'X, Y, Z'."""
+    from patch_notes.stages.distribute import _authors_display
+    assert _authors_display({"authors": ["Shadow"]}) == "Shadow"
+    assert _authors_display({"authors": ["Shadow", "Mapu"]}) == "Shadow + Mapu"
+    assert _authors_display({"authors": ["Shadow", "Mapu", "Renji"]}) == "Shadow, Mapu, Renji"
+    # Fallback auf single author
+    assert _authors_display({"author": "Shadow"}) == "Shadow"
+    # authors hat Vorrang vor single author
+    assert _authors_display({"author": "Alt", "authors": ["Shadow"]}) == "Shadow"
+    # Nichts gesetzt
+    assert _authors_display({}) == ""
+
+
+def test_build_summary_embed_mega_shows_multi_authors():
+    """Mega-Embed rendert authors-Liste als dezente Sub-Zeile."""
+    ctx = _make_ctx(
+        update_size="mega",
+        changes=[{
+            "type": "feature",
+            "description": "Kaskaden-System",
+            "details": ["Rueckzuendung per Timer"],
+            "authors": ["Shadow", "Mapu"],
+        }],
+    )
+    embed = _build_summary_embed(ctx, "https://example.com/changelog")
+    assert "Shadow + Mapu" in embed.description
+
+
 def test_build_summary_embed_small_uses_blockquote():
     """Kleine Updates bleiben kompakt mit Blockquote-TL;DR (kein Hype)."""
     ctx = _make_ctx(update_size="small", tldr="Kleiner Fix")
