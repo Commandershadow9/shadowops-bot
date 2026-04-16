@@ -107,12 +107,38 @@ def test_build_summary_embed_has_link():
     assert "example.com" in embed.description
 
 
-def test_build_summary_embed_max_6_highlights():
-    changes = [{"type": "feature", "description": f"Feature {i}"} for i in range(10)]
-    ctx = _make_ctx(changes=changes)
+def test_build_summary_embed_max_highlights_by_size():
+    """Highlight-Count je update_size: small=3, normal=5, big=6, major=8, mega=10."""
+    changes = [{"type": "feature", "description": f"Feature {i}"} for i in range(15)]
+
+    # normal: 5 Highlights → 10 weitere
+    ctx = _make_ctx(changes=changes, update_size="normal")
     embed = _build_summary_embed(ctx, "https://example.com/changelog")
-    # 6 Highlights + "+4 weitere" + Link
-    assert "+4 weitere" in embed.description
+    assert "+10 weitere" in embed.description
+
+    # mega: 10 Highlights → 5 weitere
+    ctx = _make_ctx(changes=changes, update_size="mega")
+    embed = _build_summary_embed(ctx, "https://example.com/changelog")
+    assert "+5 weitere" in embed.description
+
+
+def test_build_summary_embed_mega_has_hero_stats():
+    """Bei mega/major MUSS eine Hero-Stats-Zeile mit Commits-Count oben drin sein."""
+    ctx = _make_ctx(
+        update_size="mega",
+        git_stats={"commits": 73, "files_changed": 87, "lines_added": 9399, "lines_removed": 312},
+    )
+    embed = _build_summary_embed(ctx, "https://example.com/changelog")
+    assert "73 Commits" in embed.description
+    assert "87 Dateien" in embed.description
+
+
+def test_build_summary_embed_small_uses_blockquote():
+    """Kleine Updates bleiben kompakt mit Blockquote-TL;DR (kein Hype)."""
+    ctx = _make_ctx(update_size="small", tldr="Kleiner Fix")
+    embed = _build_summary_embed(ctx, "https://example.com/changelog")
+    assert "> Kleiner Fix" in embed.description
+    assert "🚀" not in (embed.title or "")
 
 
 def test_build_summary_embed_inline_credits():

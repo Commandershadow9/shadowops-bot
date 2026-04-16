@@ -54,44 +54,93 @@ async def distribute(ctx: PipelineContext, bot=None) -> None:
     # 8. Metriken loggen
     _log_metrics(ctx)
 
+    # 9. release_notes.md archivieren + Template wiederherstellen
+    #    NUR bei erfolgreichem Discord-Send (messages_sent > 0), damit ein halb-
+    #    fehlgeschlagener Release nicht den Dev-Kontext des Users verliert.
+    if ctx.sent_message_ids:
+        _archive_release_notes(ctx)
+
 
 # ── Embed Builder ──────────────────────────────────────────────
 
 
+_HIGHLIGHT_COUNT_BY_SIZE = {
+    "small": 3, "normal": 5, "big": 6, "major": 8, "mega": 10,
+}
+_TITLE_PREFIX_BY_SIZE = {
+    "mega": "🚀 ",
+    "major": "⚡ ",
+}
+
+
 def _build_summary_embed(ctx: PipelineContext, changelog_url: str) -> discord.Embed:
-    """Kurzformat für Projekte MIT Web-Changelog — TL;DR + Highlights + Link."""
+    """Kurzformat für Projekte MIT Web-Changelog — bei mega/major hypig, sonst kompakt."""
     color = ctx.project_config.get('color', 0x3498DB)
     slug = ctx.version.replace('.', '-')
+    size = ctx.update_size or "normal"
+    is_hype = size in ("mega", "major")
 
+    title_prefix = _TITLE_PREFIX_BY_SIZE.get(size, "")
     embed = discord.Embed(
-        title=f"v{ctx.version} — {ctx.title}",
+        title=f"{title_prefix}v{ctx.version} — {ctx.title}",
         url=f"{changelog_url}/{slug}",
         color=color,
     )
 
-    # TL;DR als Blockquote
-    parts = []
+    parts: list[str] = []
+
+    # TL;DR — bei mega/major als fetter Lead, sonst als Blockquote (dezenter)
     if ctx.tldr:
-        parts.append(f"> {ctx.tldr}")
+        parts.append(f"**{ctx.tldr}**" if is_hype else f"> {ctx.tldr}")
         parts.append("")
 
-    # Max 6 Highlights aus Changes
-    if ctx.changes:
-        for change in ctx.changes[:6]:
-            if not isinstance(change, dict):
-                continue
-            badge = _type_to_emoji(change.get('type', 'other'))
-            desc = change.get('description', '')
-            # Inline-Credit wenn vorhanden
-            author = change.get('author', '')
-            credit = f" · {author}" if author else ""
-            parts.append(f"{badge} {desc[:200]}{credit}")
-        if len(ctx.changes) > 6:
-            parts.append(f"*+{len(ctx.changes) - 6} weitere Änderungen*")
+    # Hero-Stats-Zeile bei mega/major (auch visuell sichtbar, nicht im Footer begraben)
+    if is_hype:
+        hero = _build_hero_stats(ctx)
+        if hero:
+            parts.append(hero)
+            parts.append("═══════════════════════════════════════")
+            parts.append("")
+
+    # Highlights: nach Typ gruppieren, Section-Header bei mega/major, Leerzeile zwischen Items
+    max_n = _HIGHLIGHT_COUNT_BY_SIZE.get(size, 6)
+    changes_subset = [c for c in (ctx.changes or []) if isinstance(c, dict)][:max_n]
+
+    if changes_subset:
+        if is_hype:
+            # Nach Typ gruppieren, je Section eine Headline
+            sections = _group_changes_for_embed(changes_subset)
+            for section_title, items in sections:
+                if not items:
+                    continue
+                parts.append(f"**{section_title}**")
+                for change in items:
+                    badge = _type_to_emoji(change.get('type', 'other'))
+                    desc = change.get('description', '')
+                    parts.append(f"{badge} **{desc[:200]}**")
+                    # bei mega noch 1. Detail als Sub-Bullet
+                    if size == "mega":
+                        details = change.get('details') or []
+                        if details and isinstance(details[0], str):
+                            parts.append(f"   ↳ {details[0][:180]}")
+                    # Leerzeile zwischen Highlights — atmet
+                    parts.append("")
+        else:
+            # Kompakte Variante: keine Sections, aber Leerzeile zwischen Items
+            for change in changes_subset:
+                badge = _type_to_emoji(change.get('type', 'other'))
+                desc = change.get('description', '')
+                author = change.get('author', '')
+                credit = f" · {author}" if author else ""
+                parts.append(f"{badge} {desc[:200]}{credit}")
+
+        if len(ctx.changes) > max_n:
+            parts.append(f"*… +{len(ctx.changes) - max_n} weitere Änderungen auf der Website*")
+            parts.append("")
 
     # "Alle Details" Link
-    parts.append("")
-    parts.append(f"**[Alle Details auf der Website →]({changelog_url}/{slug})**")
+    label = "📖 Alle Details auf der Website" if is_hype else "Alle Details auf der Website"
+    parts.append(f"**[{label} →]({changelog_url}/{slug})**")
 
     description = '\n'.join(parts)
     embed.description = description[:_EMBED_DESC_LIMIT]
@@ -100,6 +149,56 @@ def _build_summary_embed(ctx: PipelineContext, changelog_url: str) -> discord.Em
     embed.timestamp = datetime.now(timezone.utc)
 
     return embed
+
+
+_SECTION_ORDER = [
+    ("🆕 Neue Features", ("feature", "content")),
+    ("🎮 Gameplay & UX", ("gameplay", "multiplayer")),
+    ("🎨 Design & Look", ("design",)),
+    ("⚡ Performance", ("performance",)),
+    ("🐛 Fixes", ("fix",)),
+    ("🛡️ Stabilität & Security", ("security", "infrastructure", "breaking")),
+    ("📖 Weiteres", ("improvement", "docs", "refactor")),
+]
+
+
+def _group_changes_for_embed(changes: list[dict]) -> list[tuple[str, list[dict]]]:
+    """Gruppiere Changes nach Typ für Section-Header im Embed.
+
+    Unbekannte Typen landen in 'Weiteres'. Reihenfolge wie _SECTION_ORDER.
+    """
+    buckets: dict[str, list[dict]] = {title: [] for title, _ in _SECTION_ORDER}
+    fallback = "📖 Weiteres"
+    for c in changes:
+        ctype = (c.get('type') or '').lower()
+        placed = False
+        for title, types in _SECTION_ORDER:
+            if ctype in types:
+                buckets[title].append(c)
+                placed = True
+                break
+        if not placed:
+            buckets[fallback].append(c)
+    return [(title, buckets[title]) for title, _ in _SECTION_ORDER if buckets[title]]
+
+
+def _build_hero_stats(ctx: PipelineContext) -> str:
+    """Hero-Zeile mit den wichtigen Kennzahlen — nur bei big/major/mega sichtbar."""
+    stats = ctx.git_stats or {}
+    parts: list[str] = []
+    commits = stats.get('commits') or len(ctx.enriched_commits or ctx.raw_commits or [])
+    if commits:
+        parts.append(f"🔢 **{commits} Commits**")
+    files_changed = stats.get('files_changed')
+    if files_changed:
+        parts.append(f"📁 {files_changed} Dateien")
+    added = stats.get('lines_added')
+    removed = stats.get('lines_removed', 0)
+    if added:
+        parts.append(f"✏️ +{added:,} / -{removed:,} Zeilen".replace(",", "."))
+    if ctx.groups:
+        parts.append(f"🧩 {len(ctx.groups)} Themen")
+    return " · ".join(parts)
 
 
 def _build_full_embed(ctx: PipelineContext) -> discord.Embed:
@@ -305,21 +404,30 @@ async def _send_customer(bot, embed: discord.Embed, ctx: PipelineContext) -> Non
     """Sende an Kunden-Channels mit Feedback-Buttons."""
     pn_config = ctx.project_config.get('patch_notes', {})
 
-    # Channel-IDs werden zur Laufzeit von bot.py auf Top-Level des project_config injiziert.
-    # patch_notes.* wird als Fallback behalten, falls jemand sie manuell dort pflegt.
+    # Channel-IDs UND Role-Mentions werden in config.yaml teils auf Top-Level
+    # des project_config gepflegt (so werden sie historisch gesetzt), patch_notes.*
+    # bleibt als expliziter Fallback.
     channel_id = pn_config.get('update_channel_id') or ctx.project_config.get('update_channel_id')
+    update_role = (
+        pn_config.get('update_channel_role_mention')
+        or ctx.project_config.get('update_channel_role_mention', '')
+    )
     if channel_id:
         await _send_to_channel(
             bot, int(channel_id), embed, ctx,
-            role_mention=pn_config.get('update_channel_role_mention', ''),
+            role_mention=update_role,
             with_feedback=True,
         )
 
     internal_id = pn_config.get('internal_channel_id') or ctx.project_config.get('internal_channel_id')
+    internal_role = (
+        pn_config.get('internal_channel_role_mention')
+        or ctx.project_config.get('internal_channel_role_mention', '')
+    )
     if internal_id:
         await _send_to_channel(
             bot, int(internal_id), embed, ctx,
-            role_mention=pn_config.get('internal_channel_role_mention', ''),
+            role_mention=internal_role,
             with_feedback=False,
         )
 
@@ -575,3 +683,87 @@ def _log_metrics(ctx: PipelineContext) -> None:
         'messages_sent': len(ctx.sent_message_ids),
     }
     logger.info("METRICS|patch_notes_pipeline|%s", json.dumps(metrics, default=str))
+
+
+# ── Release-Notes Archivierung ──────────────────────────────────
+
+_RELEASE_NOTES_TEMPLATE = """<!-- release_notes.md — Dev-Kontext fuer den naechsten Patch-Notes-Release
+
+Fuege hier zwischen Commits 1-3 Saetze fuer wirklich interessante Sachen an:
+- Warum hast du X so und nicht anders gebaut?
+- Was war die Reise/der Stolperstein?
+- Was sollen User wissen, das sie sonst nie erfahren?
+
+Beispiele:
+- Shadow hat drei Naechte an der State-Machine gesessen, weil Enum-Transitionen
+  inkonsistent wurden. DDD-Aggregate war die Loesung.
+- Die Klinik-API nutzt Overpass als Primary-Source, nicht Google Maps — Kosten-
+  und ToS-Gruende.
+- Ursprunglich als Polling gedacht, aber unter Last bei 5+ gleichzeitigen Einsaetzen
+  hat das nicht skaliert. Event-Driven war die einzige Option.
+
+Wird beim naechsten Release automatisch nach docs/release-history/v<version>.md
+archiviert und hier wieder geleert. Du fangst also frisch an fuer den naechsten Cycle.
+-->
+"""
+
+
+def _archive_release_notes(ctx: PipelineContext) -> None:
+    """Archiviert release_notes.md nach docs/release-history/v<version>.md
+    und setzt das Template zurück in die Original-Datei.
+
+    Idempotent: wenn die Datei nicht existiert oder nur Template enthält,
+    passiert nichts. Läuft nur bei erfolgreichem Discord-Send (messages_sent > 0).
+    """
+    from pathlib import Path
+    import re
+
+    project_path = ctx.project_config.get('path', '')
+    if not project_path:
+        return
+    base = Path(project_path)
+    if not base.exists():
+        return
+
+    # Finde die release_notes.md-Quelle
+    notes_path = None
+    for name in ('release_notes.md', 'RELEASE_NOTES.md'):
+        candidate = base / name
+        if candidate.exists():
+            notes_path = candidate
+            break
+    if notes_path is None:
+        return
+
+    try:
+        raw = notes_path.read_text(encoding='utf-8')
+    except Exception as e:
+        logger.debug(f"[v6] Archive-Read fehlgeschlagen: {e}")
+        return
+
+    # HTML-Kommentare strippen — wenn nichts übrig: nur Template, nicht archivieren
+    stripped = re.sub(r'<!--.*?-->', '', raw, flags=re.DOTALL).strip()
+    if len(stripped) < 20:
+        logger.debug(f"[v6] release_notes.md enthält nur Template — kein Archiv nötig")
+        return
+
+    # Archiv-Pfad: docs/release-history/v<version>.md
+    archive_dir = base / 'docs' / 'release-history'
+    archive_dir.mkdir(parents=True, exist_ok=True)
+    archive_file = archive_dir / f'v{ctx.version}.md'
+
+    archive_content = (
+        f"# Release Notes — {ctx.project} v{ctx.version}\n"
+        f"_Archiviert am {datetime.now(timezone.utc).strftime('%Y-%m-%d %H:%M UTC')}_\n\n"
+        f"{stripped}\n"
+    )
+
+    try:
+        archive_file.write_text(archive_content, encoding='utf-8')
+        notes_path.write_text(_RELEASE_NOTES_TEMPLATE, encoding='utf-8')
+        logger.info(
+            f"[v6] {ctx.project}: release_notes.md archiviert -> {archive_file.name} "
+            f"(Template zurückgesetzt)"
+        )
+    except Exception as e:
+        logger.warning(f"[v6] release_notes Archivierung fehlgeschlagen: {e}")
