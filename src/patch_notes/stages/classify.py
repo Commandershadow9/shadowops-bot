@@ -18,13 +18,31 @@ _AI_AUTHORS = {
     'noreply', 'copilot',
 }
 
+# Git-Username (lowercase) → (Display-Name, Rolle)
+#
+# Wird für zwei Zwecke genutzt:
+# 1. Team-Credits im Footer (aus den 3 meistgezählten Autoren)
+# 2. Inline-Credits pro Change (author-Feld im AI-Output + Discord-Embed +
+#    Page-Rendering /changelog/[version]/page.tsx)
+#
+# NEUE TEAM-MITGLIEDER HINZUFÜGEN (z.B. wenn ein Game-Designer dazukommt):
+# 1. Alle Git-Usernames (auch Aliases wie 'jdoe-work' vs 'johndoe') als Keys
+#    EINTRAGEN, immer lowercase.
+# 2. Rolle möglichst kurz (max ~20 Zeichen) — landet im Footer-Credit.
+# 3. Deployment: Bot-Restart reicht. KEINE DB-Migration nötig.
+#
+# Unbekannte Git-Autoren bekommen automatisch display=git-name, role='Contributor'
+# (siehe _extract_credits). Mapping ist also OPTIONAL — nur für saubere Rolle.
 TEAM_MAPPING: dict[str, tuple[str, str]] = {
     'commandershadow9': ('Shadow', 'Founder & Lead Dev'),
     'cmdshadow': ('Shadow', 'Founder & Lead Dev'),
     'shadow': ('Shadow', 'Founder & Lead Dev'),
+    'commandershadow': ('Shadow', 'Founder & Lead Dev'),
     'renjihoshida': ('Mapu', 'Co-Founder & Dev'),
     'mapu': ('Mapu', 'Co-Founder & Dev'),
-    'commandershadow': ('Shadow', 'Founder & Lead Dev'),
+    # Wenn neue Team-Mitglieder dazukommen: hier eintragen.
+    # Beispiel:
+    # 'newdesigner':    ('Newbie', 'Game Designer'),
 }
 
 

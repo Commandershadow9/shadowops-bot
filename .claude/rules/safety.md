@@ -42,7 +42,7 @@ Bei Aenderungen an Shared-Services (Redis, PostgreSQL, Traefik) MUESSEN alle Kon
 - **Versionierung (versioning.py):** NUR Changelog-DB + SemVer. EINE Quelle, KEIN Git-Tag, KEINE AI-Version
 - **Commit-Gruppierung (grouping.py):** ALLE Commits, KEIN Cap. PR-Labels ueberschreiben Commit-Prefix
 - **Templates (templates/):** `gaming` (MayDay), `saas` (GuildScout, ZERODOX), `devops` (ShadowOps, AI-Agent). Classification-Rules DE+EN werden IMMER angehaengt
-- **Team-Credits:** `TEAM_MAPPING` in `stages/classify.py`. Bei neuen Teammitgliedern pflegen
+- **Team-Credits:** `TEAM_MAPPING` in `stages/classify.py`. Bei neuen Teammitgliedern PFLICHT zu pflegen — Git-Username(s) in lowercase als Key, `(Display-Name, Rolle)` als Value. Landet als Inline-Credit pro Change (AI-Output + Discord-Embed + Page /changelog/[version]) und als Team-Footer. Unbekannte Git-Autoren bekommen automatisch `Contributor`-Rolle.
 - **Concurrency:** asyncio Lock in `pipeline.py` + Circuit Breaker (5 Fehler → 1h Pause)
 - **Crash-Resilience:** Pipeline-State nach jeder Stufe persistiert. Resume nach Restart
 - **Self-Healing:** Leere Commits → aus Git seit letztem Release. Kein Commit verloren nach Restart

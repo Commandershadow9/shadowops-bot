@@ -117,12 +117,16 @@ def _build_summary_embed(ctx: PipelineContext, changelog_url: str) -> discord.Em
                 for change in items:
                     badge = _type_to_emoji(change.get('type', 'other'))
                     desc = change.get('description', '')
+                    author = change.get('author', '')
                     parts.append(f"{badge} **{desc[:200]}**")
                     # bei mega noch 1. Detail als Sub-Bullet
                     if size == "mega":
                         details = change.get('details') or []
                         if details and isinstance(details[0], str):
                             parts.append(f"   ↳ {details[0][:180]}")
+                    # Inline-Credit als dezente Sub-Zeile (Team-Wachstum-Vorbereitung)
+                    if author:
+                        parts.append(f"   *— {author}*")
                     # Leerzeile zwischen Highlights — atmet
                     parts.append("")
         else:
