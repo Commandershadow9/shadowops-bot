@@ -37,6 +37,80 @@ _schema_cache: Dict[str, dict] = {}
 
 
 # ============================================================================
+# TOKEN USAGE PARSER (modul-lokal, pure, leicht testbar)
+# ============================================================================
+
+_ZERO_USAGE: Dict[str, int] = {"input_tokens": 0, "output_tokens": 0, "total_tokens": 0}
+
+
+def _parse_token_usage(stdout: str, stderr: str = "") -> Dict[str, int]:
+    """Extrahiert Token-Verbrauch aus CLI-Output.
+
+    Unterstuetzte Formate:
+    1. Claude CLI `--output-format json`: `{"usage": {"input_tokens": X,
+       "output_tokens": Y, "cache_creation_input_tokens": C, "cache_read_input_tokens": R}}`
+       → input_tokens = X + C + R (Cache wird zur Input-Seite addiert, damit die
+       Kosten stimmen), output_tokens = Y, total = summe.
+    2. Codex CLI text mode: endet mit `tokens used\\n<number-with-optional-commas>`
+       → nur Gesamtverbrauch bekannt, input/output bleiben 0.
+
+    Gibt bei Fehlern / unbekanntem Format `_ZERO_USAGE`-Kopie zurueck. Nie `None` —
+    die aufrufende Logik schreibt das Ergebnis direkt in eine INT-Spalte.
+    """
+    if not stdout and not stderr:
+        return dict(_ZERO_USAGE)
+
+    # 1. Versuch: Claude JSON-Output
+    for source in (stdout, stderr):
+        if not source:
+            continue
+        text = source.strip()
+        if not text.startswith("{"):
+            continue
+        try:
+            payload = json.loads(text)
+        except (json.JSONDecodeError, ValueError):
+            continue
+        if not isinstance(payload, dict):
+            continue
+        usage = payload.get("usage")
+        if not isinstance(usage, dict):
+            continue
+        try:
+            input_base = int(usage.get("input_tokens", 0) or 0)
+            cache_creation = int(usage.get("cache_creation_input_tokens", 0) or 0)
+            cache_read = int(usage.get("cache_read_input_tokens", 0) or 0)
+            output = int(usage.get("output_tokens", 0) or 0)
+        except (TypeError, ValueError):
+            continue
+        input_total = input_base + cache_creation + cache_read
+        return {
+            "input_tokens": input_total,
+            "output_tokens": output,
+            "total_tokens": input_total + output,
+        }
+
+    # 2. Versuch: Codex text-Modus — "tokens used\n<number>"
+    codex_re = re.compile(r"tokens\s+used\s*\n\s*([\d,]+)", re.IGNORECASE)
+    for source in (stdout, stderr):
+        if not source:
+            continue
+        match = codex_re.search(source)
+        if match:
+            try:
+                total = int(match.group(1).replace(",", ""))
+            except ValueError:
+                continue
+            return {
+                "input_tokens": 0,
+                "output_tokens": 0,
+                "total_tokens": total,
+            }
+
+    return dict(_ZERO_USAGE)
+
+
+# ============================================================================
 # CODEX CLI PROVIDER
 # ============================================================================
 
@@ -507,6 +581,85 @@ class ClaudeProvider:
         except Exception:
             return False
 
+    async def query_raw_with_usage(
+        self,
+        prompt: str,
+        model: str = 'standard',
+        timeout: Optional[int] = None,
+    ) -> Tuple[Optional[str], Dict[str, int]]:
+        """Wie query_raw, aber mit `--output-format json` um Usage-Metriken zu ernten.
+
+        Returns:
+            (text, usage) — text ist der vom Modell erzeugte Response-String
+            (aus dem JSON-"result"-Feld extrahiert), usage ist ein Dict
+            `{input_tokens, output_tokens, total_tokens}`. Bei Fehlern ist
+            text None, usage = {0, 0, 0}.
+
+        Wird von `AIEngine.review_pr` verwendet, damit Jules-Reviews den
+        tatsaechlichen Token-Verbrauch in die DB schreiben koennen.
+        """
+        resolved_model = self._resolve_model(model)
+        effective_timeout = timeout or self.timeout
+        env = self._get_clean_env()
+
+        args = [
+            self.cli_path,
+            '-p', '-',
+            '--output-format', 'json',
+            '--model', resolved_model,
+            '--max-turns', '1',
+        ]
+
+        try:
+            proc = await asyncio.create_subprocess_exec(
+                *args,
+                stdin=asyncio.subprocess.PIPE,
+                stdout=asyncio.subprocess.PIPE,
+                stderr=asyncio.subprocess.PIPE,
+                env=env,
+            )
+
+            stdout_bytes, stderr_bytes = await asyncio.wait_for(
+                proc.communicate(input=prompt.encode('utf-8')),
+                timeout=effective_timeout,
+            )
+
+            stdout = stdout_bytes.decode('utf-8', errors='replace').strip()
+            stderr = stderr_bytes.decode('utf-8', errors='replace').strip()
+
+            if proc.returncode != 0:
+                logger.warning(
+                    f"Claude CLI Usage-Raw Fehler (Exit {proc.returncode}): {stderr[:200]}"
+                )
+                return None, dict(_ZERO_USAGE)
+
+            if not stdout:
+                logger.warning("Claude CLI Usage-Raw: Leere Antwort erhalten")
+                return None, dict(_ZERO_USAGE)
+
+            usage = _parse_token_usage(stdout, stderr)
+
+            # Result-Text aus dem JSON-Wrapper extrahieren
+            text: Optional[str] = None
+            try:
+                payload = json.loads(stdout)
+                if isinstance(payload, dict):
+                    result_val = payload.get("result")
+                    if isinstance(result_val, str):
+                        text = result_val
+            except (json.JSONDecodeError, ValueError):
+                # Fallback: gib stdout roh zurueck, Parser oben hat Usage schon
+                text = stdout
+
+            return text, usage
+
+        except asyncio.TimeoutError:
+            logger.error(f"Claude CLI Usage-Raw: Timeout nach {effective_timeout}s")
+            return None, dict(_ZERO_USAGE)
+        except Exception as e:
+            logger.error(f"Claude CLI Usage-Raw: Fehler: {e}")
+            return None, dict(_ZERO_USAGE)
+
 
 # ============================================================================
 # TASK ROUTER
@@ -699,6 +852,11 @@ class AIEngine:
         # Zuletzt erfolgreich genutzte Engine (codex | claude | None)
         # Wird von Patch-Notes-Pipeline fuer Metriken ausgelesen.
         self._last_engine: Optional[str] = None
+
+        # Token-Verbrauch der letzten AI-Operation. Wird nach jedem erfolgreichen
+        # CLI-Call aktualisiert. Jules liest dies nach review_pr, der Scan-Agent
+        # akkumuliert pro Session. Nicht `None` — immer ein Dict.
+        self._last_token_usage: Dict[str, int] = dict(_ZERO_USAGE)
 
         # Logging
         logger.info("AI Engine initialisiert (Dual-Engine: Codex + Claude)")
@@ -1050,12 +1208,26 @@ class AIEngine:
             fallback = "standard" if is_complex else "thinking"
         timeout_s = 180 if primary == "thinking" else 120
 
+        # Usage-Tracking initial leer — wird nach erfolgreichem Call befuellt.
+        # Falls beide Modelle scheitern, bleibt 0 (kein Tokenverbrauch gemeldet).
+        self._last_token_usage = dict(_ZERO_USAGE)
+
         raw = None
         for model_class, t in ((primary, timeout_s), (fallback, 120)):
             try:
-                raw = await self.claude.query_raw(prompt, model=model_class, timeout=t)
+                # query_raw_with_usage nutzt --output-format json, damit wir
+                # tokens_consumed fuer jules_pr_reviews aus dem usage-Block holen
+                # koennen. Text kommt aus dem "result"-Feld wie bei query_raw.
+                raw, usage = await self.claude.query_raw_with_usage(
+                    prompt, model=model_class, timeout=t,
+                )
                 if raw:
-                    logger.info(f"[jules] Claude-Response erhalten (model={model_class}, {len(raw)} chars)")
+                    self._last_token_usage = usage
+                    logger.info(
+                        f"[jules] Claude-Response erhalten "
+                        f"(model={model_class}, {len(raw)} chars, "
+                        f"tokens={usage.get('total_tokens', 0)})"
+                    )
                     break
                 logger.warning(f"[jules] Claude empty response (model={model_class}), Fallback")
             except Exception as e:
@@ -1489,13 +1661,16 @@ class AIEngine:
                     return self._read_analyst_result(tmp_path, stdout)
 
             self._codex_quota_exhausted_until = 0.0
+            # Token-Verbrauch aus Codex-Output extrahieren ("tokens used\n<n>")
+            self._last_token_usage = _parse_token_usage(stdout, stderr)
             result = self._read_analyst_result(tmp_path, stdout) or self.codex._extract_json(stdout)
             if result and ('summary' in result or 'findings' in result):
                 findings_count = len(result.get('findings', []))
                 knowledge_count = len(result.get('knowledge_updates', []))
                 logger.info(
-                    "Codex-Analyst erfolgreich: %d Findings, %d Knowledge-Updates",
+                    "Codex-Analyst erfolgreich: %d Findings, %d Knowledge-Updates, tokens=%d",
                     findings_count, knowledge_count,
+                    self._last_token_usage.get('total_tokens', 0),
                 )
                 self.stats['codex_success'] = self.stats.get('codex_success', 0) + 1
                 return result
@@ -1586,12 +1761,13 @@ class AIEngine:
 
         # Prompt via stdin (ARG_MAX), skip-permissions (damit Tools ohne Approval laufen)
         # --allowed-tools: Read-only Bash + Write (nur für Ergebnis-Datei)
+        # --output-format json: liefert usage-Block fuer Token-Tracking (Text-Mode hat keinen)
         args = [
             self.claude.cli_path,
             '-p', '-',
             '--model', model,
             '--max-turns', str(max_turns),
-            '--output-format', 'text',
+            '--output-format', 'json',
             '--verbose',
             '--dangerously-skip-permissions',
             '--allowed-tools', allowed_tools,
@@ -1645,14 +1821,17 @@ class AIEngine:
                 return self._read_analyst_result(tmp_path, stdout)
 
             self._claude_quota_exhausted_until = 0.0
+            # Token-Verbrauch aus Claude-JSON-Output (usage-Block) extrahieren
+            self._last_token_usage = _parse_token_usage(stdout, stderr)
             result = self._read_analyst_result(tmp_path, stdout)
 
             if result:
                 findings_count = len(result.get('findings', []))
                 knowledge_count = len(result.get('knowledge_updates', []))
                 logger.info(
-                    "Claude-Analyst erfolgreich: %d Findings, %d Knowledge-Updates",
+                    "Claude-Analyst erfolgreich: %d Findings, %d Knowledge-Updates, tokens=%d",
                     findings_count, knowledge_count,
+                    self._last_token_usage.get('total_tokens', 0),
                 )
                 self.stats['claude_success'] = self.stats.get('claude_success', 0) + 1
             else:
