@@ -7,7 +7,7 @@
 - **Data:** PostgreSQL (Knowledge + Findings, konsolidiert), SQLite (Changelog DB), JSON State Files
 - **Deploy:** systemd (system-level), logrotate
 - **Patch Notes:** Pipeline v6 (State Machine, seit 2026-04-13)
-- **Version:** v5.2.0 (2026-04-17: Fingerprint-Dedup + Token-Tracking, Issue #149 traegt Phase 2+3)
+- **Version:** v5.3.0 (2026-04-17: WAL-G-Fixer + Auto-Deploy-Hardening + cross-repo Security-Sweep, siehe `.claude/rules/safety.md`)
 
 ## Services & Ports
 | Service | Port | Bind | Zweck |
@@ -140,7 +140,8 @@ Eigenstaendiges Package mit 5-Stufen State Machine. Ersetzt die alten Mixins (`a
 #### Unterverzeichnisse
 | Verzeichnis | Zweck |
 |-------------|-------|
-| `fixers/` | Tool-spezifische Fixer (trivy, crowdsec, fail2ban, aide) |
+| `fixers/` | Tool-spezifische Fixer (trivy, crowdsec, fail2ban, aide, **walg** seit 2026-04-17) |
+| `fixers/walg_fixer.py` | Auto-Updater fuer WAL-G-Binary (Download v3.0.8+, SHA256-Verify, Backup, Rollback). Source `walg`/`wal-g` im SecurityEngine registriert |
 | `ai_learning/` | Legacy AI Learning (DEAKTIVIERT — knowledge_db, knowledge_synthesizer, continuous_learning_agent) |
 | `analyst/` | Legacy Security Analyst (DEAKTIVIERT — ersetzt durch SecurityScanAgent in `security_engine/`) |
 | `security_engine/` | Unified Security Engine v6 (engine, db, executor, reactive, deep_scan, proactive, learning_bridge, providers, registry, circuit_breaker, fixer_adapters, models, scan_agent, prompts, activity_monitor, **fingerprint** seit 2026-04-17) |

@@ -164,3 +164,19 @@ Bei Aenderungen an Shared-Services (Redis, PostgreSQL, Traefik) MUESSEN alle Kon
   2. Dependabot-PRs mit jules-Label (werden automatisch reviewt)
   3. Manuelle `jules new "..."` CLI-Sessions
   4. GitHub-Issues mit jules-Label (Jules iteriert darauf)
+
+## Auto-Deploy-Hardening (seit 2026-04-17, Finding #131 / PR #135)
+- **`github.auto_deploy` ist auf `false` gesetzt** in `config/config.yaml`. Direct-Push auf `main` loest kein Deploy mehr aus.
+- **Hardcoded Block in `event_handlers_mixin.py:72-81`:** Auch wenn `auto_deploy` wieder auf `true` gestellt wird, blockiert der Code den Deploy auf direct-push und loggt Warning. Fuer Deploys immer `scripts/restart.sh --pull` manuell oder ueber Merge-Hook.
+- **`recovery_mixin._deploy_after_fix()`** erstellt statt Direct-Push auf main einen `fix/security-auto-YYYYMMDD-HHMMSS` Branch und pusht dorthin. Security-Fixes landen nicht mehr blind auf Production-Branches.
+- NIEMALS den Block in `event_handlers_mixin.py` entfernen ohne Review. Er ist die letzte Verteidigungslinie gegen AI-Commits, die ohne Human-Gate deployed werden.
+- NIEMALS `_deploy_after_fix` wieder auf `git push` (ohne Branch-Check) umbauen — das wuerde PR #135 (#131) regressieren.
+
+## WAL-G-Fixer (seit 2026-04-17, Finding #120 / PR #127)
+- **Code:** `src/integrations/fixers/walg_fixer.py` + Adapter in `security_engine/fixer_adapters.py:WalGFixerAdapter`.
+- **Registrierung:** In `bot.py` on_ready via `self.security_engine.register_existing_fixers(walg_fixer=WalGFixer(...))`. Source `walg` + `wal-g` triggern den Fixer.
+- **Aktion bei Trigger:** Download des GitHub-Release (Target-Tag hardcoded `v3.0.8`), SHA256-Verify gegen vier hardcoded Checksums (amd64/aarch64 × ubuntu 20.04/22.04), Backup `/usr/local/bin/wal-g.bak_security_update`, Replace, Post-Verify, Rollback bei Fail.
+- **Bedingungen fuer Lauf:** `sudo`-Rechte (nutzt `sudo cp`/`mv`/`chown`), `curl` im PATH.
+- NIEMALS die hardcoded Checksums in `walg_fixer.py:self.checksums` ohne Verifikation gegen das offizielle Release aendern — sie sind die einzige Integritaets-Barriere.
+- NIEMALS den `target_version` ohne Checksum-Update bumpen — WAL-G veroeffentlicht pro Release neue Assets.
+- **Follow-up offen:** Unit-Tests fuer `walg_fixer.py` (aktuell 0% Coverage), dynamisches Release-Lookup statt Hardcoding.
