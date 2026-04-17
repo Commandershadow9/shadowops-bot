@@ -29,6 +29,7 @@ from typing import Dict, List, Optional
 import discord
 
 from .activity_monitor import ActivityMonitor
+from .fingerprint import compute_finding_fingerprint
 from .prompts import (ANALYST_SYSTEM_PROMPT, ANALYST_CONTEXT_TEMPLATE, FIX_SESSION_PROMPT,
                        WEEKLY_DEEP_PROMPT, REFLECTION_PROMPT)
 
@@ -1098,9 +1099,29 @@ class SecurityScanAgent:
                     finding.get('affected_project', ''))
 
                 title = finding.get('title', 'Unbenannt')
-                existing = await self._find_similar_open_finding(title)
+                existing = await self._find_similar_open_finding_by_fingerprint(
+                    category=finding.get('category', 'unknown'),
+                    affected_project=finding.get('affected_project', '') or '',
+                    affected_files=list(finding.get('affected_files') or []),
+                    title=title,
+                )
                 if existing:
                     duplicates_skipped += 1
+                    logger.info(
+                        "[scan-agent] Finding '%s' dedupliziert gegen #%d",
+                        title[:60], existing["id"],
+                    )
+                    # Feedback an Learning-DB (Task 0.5 liefert die Methode record_dedup_decision)
+                    lb = getattr(self, "learning_bridge", None)
+                    if lb and getattr(lb, "is_connected", False) and hasattr(lb, "record_dedup_decision"):
+                        try:
+                            await lb.record_dedup_decision(
+                                parent_id=existing["id"],
+                                new_title=title,
+                                project=finding.get('affected_project'),
+                            )
+                        except Exception as e:
+                            logger.debug("[scan-agent] record_dedup_decision fehlgeschlagen: %s", e)
                     continue
 
                 fix_type = finding.get('fix_type', 'info_only')
@@ -1126,14 +1147,21 @@ class SecurityScanAgent:
                         if github_issue_url:
                             issues_created += 1
 
+                fp = compute_finding_fingerprint(
+                    finding.get('category', 'unknown'),
+                    finding.get('affected_project', '') or '',
+                    list(finding.get('affected_files') or []),
+                    title,
+                )
                 await self.db.pool.execute("""
                     INSERT INTO findings (severity, category, title, description, session_id,
-                        affected_project, affected_files, fix_type, github_issue_url)
-                    VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9)
+                        affected_project, affected_files, fix_type, github_issue_url,
+                        finding_fingerprint)
+                    VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10)
                 """, finding.get('severity', 'info'), finding.get('category', 'unknown'),
                     title, finding.get('description', ''), session_id,
                     finding.get('affected_project'), finding.get('affected_files'),
-                    fix_type, github_issue_url)
+                    fix_type, github_issue_url, fp)
             except Exception as e:
                 logger.error("Finding-Verarbeitung fehlgeschlagen: %s", e)
 
@@ -1405,6 +1433,29 @@ class SecurityScanAgent:
             if row:
                 return dict(row)
         return None
+
+    async def _find_similar_open_finding_by_fingerprint(
+        self,
+        category: str,
+        affected_project: str,
+        affected_files,
+        title: str,
+    ) -> Optional[Dict]:
+        """
+        Fingerprint-basierte Dedup. Ersetzt die alte Titel-Methode.
+
+        Findet ein existierendes offenes Finding mit identischem (category,
+        project, normalisierte Files, Signatur-Keywords) Fingerprint. Zwei
+        Findings mit gleichem Fingerprint sind semantisch dasselbe Problem —
+        auch bei unterschiedlichem Wording.
+        """
+        fp = compute_finding_fingerprint(category, affected_project, affected_files, title)
+        row = await self.db.pool.fetchrow(
+            "SELECT id, title, github_issue_url, finding_fingerprint FROM findings "
+            "WHERE status='open' AND finding_fingerprint=$1 LIMIT 1",
+            fp,
+        )
+        return dict(row) if row else None
 
     async def _get_open_findings_summary(self) -> List[Dict]:
         rows = await self.db.pool.fetch("""
@@ -1975,7 +2026,12 @@ von der ShadowOps Review-Pipeline reviewt — halte den Scope eng."""
                 return None
 
         repo = self._resolve_repo(ap)
-        existing = await self._find_similar_open_finding(finding.get('title', ''))
+        existing = await self._find_similar_open_finding_by_fingerprint(
+            category=finding.get('category', 'unknown'),
+            affected_project=finding.get('affected_project', '') or '',
+            affected_files=list(finding.get('affected_files') or []),
+            title=finding.get('title', ''),
+        )
         if existing:
             return existing.get('github_issue_url') or None
 
