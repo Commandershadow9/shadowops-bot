@@ -96,6 +96,7 @@ class TestPushEventHandling:
 
     @pytest.mark.asyncio
     async def test_handle_push_event_to_main(self, mock_bot, enabled_config):
+        """Test that direct push to main DOES NOT trigger auto-deploy (Security Hardening)."""
         integration = GitHubIntegration(mock_bot, enabled_config)
         integration._trigger_deployment = AsyncMock()
         integration._send_push_notification = AsyncMock()
@@ -119,7 +120,8 @@ class TestPushEventHandling:
         await integration.handle_push_event(payload)
 
         integration._send_push_notification.assert_called_once()
-        integration._trigger_deployment.assert_called_once()
+        # MUST NOT trigger deployment on direct push for security
+        integration._trigger_deployment.assert_not_called()
 
     @pytest.mark.asyncio
     async def test_handle_push_event_to_feature_branch(self, mock_bot, enabled_config):

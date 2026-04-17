@@ -265,7 +265,7 @@ Dann in GitHub: `https://webhook.yourdomain.com/webhook`
   - Beispiel: ZERODOX Patch Notes werden auf dem ZERODOX-Server in `📋patch-notes` (öffentlich) und `🔧dev-updates` (intern) gepostet
 
 ### Auto-Deploy (optional)
-- Setze `github.auto_deploy: true`
+- Setze `github.auto_deploy: false`
 - Pushs zu main/master Branch triggern automatisches Deployment
 - Erfordert `DeploymentManager` Konfiguration
 
