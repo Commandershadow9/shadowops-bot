@@ -6,6 +6,9 @@ This separates state from static configuration.
 
 import json
 import logging
+import os
+import shutil
+import tempfile
 from pathlib import Path
 from typing import Any, Dict, Optional, Union
 
@@ -22,27 +25,60 @@ class StateManager:
         self.load()
 
     def load(self) -> None:
-        """Loads state from the JSON file."""
+        """Loads state from the JSON file (mit Backup-Fallback)."""
         try:
             if self.state_path.exists():
                 with open(self.state_path, 'r', encoding='utf-8') as f:
                     self._state = json.load(f)
-                logger.info(f"✅ State loaded from {self.state_path}")
+                if not isinstance(self._state, dict):
+                    logger.error("State file root ist kein dict, resette")
+                    self._state = {}
+                else:
+                    logger.info(f"✅ State loaded from {self.state_path}")
             else:
                 logger.info("No state file found, starting with a fresh state.")
                 self._state = {}
-        except (json.JSONDecodeError, IOError) as e:
-            logger.error(f"❌ Could not load state file at {self.state_path}: {e}. Starting fresh.", exc_info=True)
+        except (json.JSONDecodeError, IOError, Exception) as e:
+            logger.error(f"❌ Could not load state file at {self.state_path}: {e}.", exc_info=True)
+            # Backup-Fallback
+            backup = self.state_path.with_suffix('.backup')
+            if backup.exists():
+                try:
+                    with open(backup, 'r', encoding='utf-8') as f:
+                        self._state = json.load(f)
+                    if isinstance(self._state, dict):
+                        logger.warning(f"🔄 State aus Backup wiederhergestellt: {backup}")
+                        return
+                except Exception:
+                    pass
+            logger.error("State und Backup nicht ladbar — starte mit leerem State")
             self._state = {}
     
     def _save(self) -> None:
-        """Saves the current state to the JSON file."""
+        """Saves the current state to the JSON file (atomic via temp-file + rename)."""
         try:
-            # Ensure the directory exists
             self.state_path.parent.mkdir(parents=True, exist_ok=True)
-            with open(self.state_path, 'w', encoding='utf-8') as f:
-                json.dump(self._state, f, indent=4)
-        except IOError as e:
+            # Backup der aktuellen Datei vor dem Ueberschreiben
+            try:
+                if self.state_path.exists():
+                    shutil.copy2(str(self.state_path),
+                                 str(self.state_path.with_suffix('.backup')))
+            except Exception as e:
+                logger.warning("State-Backup fehlgeschlagen: %s", e)
+            # Atomic write: temp-file im selben Verzeichnis, dann rename
+            fd, tmp_path = tempfile.mkstemp(
+                dir=self.state_path.parent, suffix='.tmp', prefix='.state_'
+            )
+            try:
+                with os.fdopen(fd, 'w', encoding='utf-8') as f:
+                    json.dump(self._state, f, indent=4)
+                os.replace(tmp_path, self.state_path)
+            except Exception:
+                # Temp-Datei aufraeumen bei Fehler
+                if os.path.exists(tmp_path):
+                    os.unlink(tmp_path)
+                raise
+        except Exception as e:
             logger.error(f"❌ Could not save state file to {self.state_path}: {e}", exc_info=True)
 
     def get_guild_state(self, guild_id: int) -> Dict[str, Any]:

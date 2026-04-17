@@ -38,10 +38,25 @@ class GitOpsMixin:
             self.logger.debug(f"Git command error: {' '.join(args)}: {e}")
             return None
 
-    def _safe_git_fetch(self, repo_path: Path) -> None:
-        result = self._run_git(repo_path, ['fetch', '--all', '--prune'], timeout=60)
-        if result is None:
-            self.logger.debug(f"Git fetch failed for {repo_path}")
+    def _safe_git_fetch(self, repo_path: Path) -> bool:
+        """Git fetch ausfuehren. Gibt True bei Erfolg zurueck, False bei Fehler."""
+        try:
+            proc = subprocess.run(
+                ['git', 'fetch', '--all', '--prune'],
+                cwd=repo_path,
+                capture_output=True,
+                text=True,
+                timeout=60
+            )
+            if proc.returncode != 0:
+                self.logger.warning(
+                    f"⚠️ Git fetch fehlgeschlagen fuer {repo_path}: {proc.stderr.strip()}"
+                )
+                return False
+            return True
+        except Exception as e:
+            self.logger.warning(f"⚠️ Git fetch Fehler fuer {repo_path}: {e}")
+            return False
 
     def _get_repo_branch(self, repo_path: Path, project_config: Dict) -> str:
         """Deploy-Branch aus Config nehmen, NICHT den aktuell ausgecheckten Branch.

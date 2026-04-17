@@ -18,7 +18,7 @@ logger = logging.getLogger('shadowops.learning_bridge')
 
 def _get_agent_learning_dsn() -> str:
     """Agent-Learning DSN aus Config/Env laden."""
-    from src.utils.config import get_config
+    from utils.config import get_config
     dsn = get_config().agent_learning_dsn
     if not dsn:
         raise RuntimeError("agent_learning DSN nicht konfiguriert (AGENT_LEARNING_DB_URL oder config.yaml)")
@@ -173,3 +173,54 @@ class LearningBridge:
             'quality_trend': quality,
             'connected': self.is_connected,
         }
+
+    # ── DEDUP-FEEDBACK ──
+
+    async def record_dedup_decision(
+        self, parent_id: int, new_title: str, project: Optional[str] = None
+    ) -> None:
+        """Schreibt eine Auto-Dedup-Entscheidung in agent_feedback."""
+        if not self.pool:
+            return
+        try:
+            await self.pool.execute(
+                """INSERT INTO agent_feedback
+                   (agent, project, reference_id, feedback_type, metadata)
+                   VALUES ($1, $2, $3, $4, $5)""",
+                "security-scan-agent",
+                project or "infrastructure",
+                str(parent_id),
+                "auto_dedup_merge",
+                json.dumps({"new_title": new_title[:200]}),
+            )
+        except Exception as e:
+            logger.warning("record_dedup_decision failed: %s", e)
+
+    async def record_manual_merge(
+        self,
+        parent_id: int,
+        child_id: int,
+        user_id: int,
+        user_name: str,
+        project: Optional[str] = None,
+    ) -> None:
+        """User hat manuell zwei Findings als Duplikat markiert (via /mark-duplicate)."""
+        if not self.pool:
+            return
+        try:
+            await self.pool.execute(
+                """INSERT INTO agent_feedback
+                   (agent, project, reference_id, feedback_type, user_id, user_name,
+                    score_delta, metadata)
+                   VALUES ($1, $2, $3, $4, $5, $6, $7, $8)""",
+                "security-scan-agent",
+                project or "infrastructure",
+                str(parent_id),
+                "manual_dedup_merge",
+                user_id,
+                user_name,
+                1,  # positives Signal: Dedup war korrekt
+                json.dumps({"child_id": child_id}),
+            )
+        except Exception as e:
+            logger.warning("record_manual_merge failed: %s", e)

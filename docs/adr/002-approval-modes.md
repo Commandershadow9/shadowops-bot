@@ -1,3 +1,10 @@
+---
+title: ADR-002: Dreistufiges Approval-Mode-System
+status: accepted
+last_reviewed: 2026-04-15
+owner: CommanderShadow9
+---
+
 # ADR-002: Dreistufiges Approval-Mode-System
 
 **Status:** Accepted

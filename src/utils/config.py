@@ -201,6 +201,14 @@ class Config:
         )
 
     @property
+    def redis_url(self) -> str:
+        return self._get_secret(
+            'REDIS_URL',
+            ['redis', 'url'],
+            warn=False,
+        ) or "redis://127.0.0.1:6379/0"
+
+    @property
     def guild_id(self) -> int:
         return int(self.discord.get('guild_id', 0))
 

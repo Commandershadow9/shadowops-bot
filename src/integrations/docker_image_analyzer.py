@@ -7,6 +7,7 @@ import logging
 import re
 import os
 import json
+import yaml
 import subprocess
 from pathlib import Path
 from typing import Dict, List, Optional, Tuple
@@ -230,66 +231,39 @@ class DockerImageAnalyzer:
         Returns:
             Dict with upgrade info or None if not recommended
         """
-        # Known safe upgrade paths with migration notes
-        safe_upgrades = {
-            'postgres': {
-                '15': {
-                    'next': '16',
-                    'notes': 'Requires pg_upgrade or dump/restore. Breaking changes: logical replication changes, new pg_hba.conf defaults',
-                    'risk': 'medium',
-                    'migration_url': 'https://www.postgresql.org/docs/16/release-16.html'
-                },
-                '14': {
-                    'next': '15',
-                    'notes': 'Minor breaking changes in config. Check SECURITY INVOKER views',
-                    'risk': 'low',
-                    'migration_url': 'https://www.postgresql.org/docs/15/release-15.html'
-                },
-                '13': {
-                    'next': '14',
-                    'notes': 'Mostly compatible. Check server encoding changes',
-                    'risk': 'low',
-                    'migration_url': 'https://www.postgresql.org/docs/14/release-14.html'
-                },
-            },
-            'redis': {
-                '7': {
-                    'next': '8',
-                    'notes': 'NOT YET RELEASED - Monitor redis.io for Redis 8.0',
-                    'risk': 'unknown',
-                    'migration_url': 'https://redis.io/'
-                },
-                '6': {
-                    'next': '7',
-                    'notes': 'Check for deprecated commands. Review ACL changes. Functions vs EVAL changes',
-                    'risk': 'medium',
-                    'migration_url': 'https://redis.io/docs/about/releases/'
-                },
-            },
-            'mysql': {
-                '8.0': {
-                    'next': '8.4',
-                    'notes': 'LTS upgrade. Check authentication plugin changes',
-                    'risk': 'low',
-                    'migration_url': 'https://dev.mysql.com/doc/relnotes/mysql/8.4/en/'
-                },
-            },
-            'nginx': {
-                '1.24': {
-                    'next': '1.26',
-                    'notes': 'Stable to stable upgrade. Review new directives',
-                    'risk': 'low',
-                    'migration_url': 'https://nginx.org/en/CHANGES'
-                },
-            },
-        }
+        # Load safe upgrade paths from YAML config
+        config_path = os.path.join(os.getcwd(), 'config', 'safe_upgrades.yaml')
+        safe_upgrades = {}
+
+        if os.path.exists(config_path):
+            try:
+                with open(config_path, 'r') as f:
+                    safe_upgrades = yaml.safe_load(f) or {}
+                logger.debug(f"   Loaded {len(safe_upgrades)} safe upgrade paths from config")
+            except Exception as e:
+                logger.error(f"❌ Could not load safe_upgrades.yaml: {e}")
+        else:
+            logger.warning(f"⚠️  safe_upgrades.yaml not found at {config_path}")
 
         # Extract major version from tag
-        version_match = re.match(r'^(\d+)(?:\.(\d+))?', current_tag)
+        version_match = re.match(r'^v?(\d+)(?:\.(\d+))?', current_tag)
         if not version_match:
+            # Fallback for non-numeric tags like 'v3' if exact match exists
+            if image_name in safe_upgrades and current_tag in safe_upgrades[image_name]:
+                upgrade_info = safe_upgrades[image_name][current_tag]
+                return {
+                    'current_version': current_tag,
+                    'recommended_version': upgrade_info['next'],
+                    'upgrade_type': 'major',
+                    'notes': upgrade_info['notes'],
+                    'risk_level': upgrade_info['risk'],
+                    'migration_url': upgrade_info.get('migration_url'),
+                    'requires_manual_migration': True
+                }
             return None
 
         current_major = version_match.group(1)
+        major_only = current_major
         if version_match.group(2):
             current_major += f".{version_match.group(2)}"
 
@@ -297,10 +271,15 @@ class DockerImageAnalyzer:
         if image_name not in safe_upgrades:
             return None
 
-        if current_major not in safe_upgrades[image_name]:
+        # Check both major.minor and major only versions
+        if current_major in safe_upgrades[image_name]:
+            upgrade_info = safe_upgrades[image_name][current_major]
+        elif major_only in safe_upgrades[image_name]:
+            upgrade_info = safe_upgrades[image_name][major_only]
+        elif current_tag in safe_upgrades[image_name]:
+            upgrade_info = safe_upgrades[image_name][current_tag]
+        else:
             return None
-
-        upgrade_info = safe_upgrades[image_name][current_major]
 
         # Preserve tag variant (e.g., -alpine, -slim)
         tag_variant = ''
@@ -314,7 +293,7 @@ class DockerImageAnalyzer:
             'upgrade_type': 'major',
             'notes': upgrade_info['notes'],
             'risk_level': upgrade_info['risk'],
-            'migration_url': upgrade_info['migration_url'],
+            'migration_url': upgrade_info.get('migration_url'),
             'requires_manual_migration': True
         }
 

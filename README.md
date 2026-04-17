@@ -1,18 +1,29 @@
-# 🗡️ ShadowOps - Active Security Guardian v5.0 🚀
+# 🗡️ ShadowOps - Active Security Guardian v5.1 🚀
 
-**Status:** AKTIV | **Version:** 5.0.0 | **Letzte Aktualisierung:** 29.03.2026
+**Status:** AKTIV | **Version:** 5.1.0 | **Letzte Aktualisierung:** 12.04.2026
 
 **ShadowOps** ist ein **vollständig autonomer Security Guardian** mit lernfähigem AI Security Analyst, KI-gesteuerter Auto-Remediation, adaptiver Session-Steuerung und wachsender Knowledge-DB — kein statischer Scanner, sondern ein **System das aus seinen Erfahrungen lernt und immer besser wird**.
 
 > 📖 **Security Analyst Doku:** [docs/SECURITY_ANALYST.md](./docs/SECURITY_ANALYST.md)
 > 📚 **Dokumentations-Übersicht:** [DOCS_OVERVIEW.md](./DOCS_OVERVIEW.md)
-> 🔧 **API Dokumentation:** [docs/API.md](./docs/API.md)
+> 🔧 **API Dokumentation:** [docs/reference/api.md](./docs/reference/api.md)
 > 🚀 **Setup Guide:** [docs/SETUP_GUIDE.md](./docs/SETUP_GUIDE.md)
 > 📐 **Learning Pipeline Design:** [docs/plans/2026-03-18-analyst-learning-pipeline-design.md](./docs/plans/2026-03-18-analyst-learning-pipeline-design.md)
 
-## ⚡ Highlights v5.0
+## ⚡ Highlights v5.1
 
-### 🧠 **Lernender Security Analyst (v5.0 - NEW)**
+### 🔗 **Jules SecOps Workflow (v5.1 - NEW)**
+
+Automatisierter Security-Fix-Workflow mit Google Jules + Claude Opus Review:
+
+- **Hybrid-Fix:** ScanAgent fixt Server-Haertung selbst, delegiert Code-Fixes an Jules via GitHub-Issue
+- **Strukturierter Review:** Claude Opus prueft jeden Jules-PR (BLOCKER/SUGGESTION/NIT), deterministisches Verdict
+- **7-Schichten Loop-Schutz:** Trigger-Whitelist, SHA-Dedupe, Cooldown, Iteration-Cap, Circuit-Breaker, Time-Cap, Single-Comment-Edit
+- **Selbstlernend:** Few-Shot-Beispiele + Projekt-Konventionen aus `agent_learning` DB
+- **Defense-in-Depth:** Entwickelt nach Analyse des PR #123 Vorfalls (31 Comments in 90min durch Review-Loop)
+- **Monitoring:** `/health/jules` Endpoint, Discord-Alerts, Nightly-Batch fuer Quality-Tracking
+
+### 🧠 **Lernender Security Analyst (v5.0)**
 - ✅ **Full Learning Pipeline**: 4 neue DB-Tabellen (fix_attempts, fix_verifications, finding_quality, scan_coverage)
 - ✅ **Adaptive Session-Steuerung**: 4 Modi (full_scan, quick_scan, fix_only, maintenance) — passt Intensität an Workload an
 - ✅ **Pre-Session Maintenance**: Git-Activity-Sync, Fix-Verifikation, Knowledge-Decay, Security-Profile
@@ -346,7 +357,7 @@ Der Bot erstellt automatisch alle benötigten Channels beim ersten Start:
 
 ## ⚙️ Konfiguration
 
-Vollständige Konfigurationsdokumentation: [docs/API.md](./docs/API.md)
+Vollständige Konfigurationsdokumentation: [docs/reference/api.md](./docs/reference/api.md)
 
 Basis-Config in `config/config.yaml`:
 
@@ -404,7 +415,7 @@ github:
   enabled: false
   webhook_secret: "your_webhook_secret"
   webhook_port: 8080
-  auto_deploy: true
+  auto_deploy: false
   deploy_branches: [main, master]
 
 deployment:
@@ -672,7 +683,7 @@ See [CHANGELOG.md](./CHANGELOG.md) for detailed version history.
 - Basic security monitoring
 - Discord integration
 
-## 📊 Statistics (v5.0.0)
+## 📊 Statistics (v5.1.0)
 
 - **Total Lines of Code**: 20,000+
 - **AI Engines**: 2 (Codex CLI + Claude CLI)
@@ -744,7 +755,7 @@ tail -f logs/shadowops.log | grep deployment
 ### Vollständige Dokumentation
 
 - 📖 [Setup Guide](./docs/SETUP_GUIDE.md) - Schritt-für-Schritt Installation
-- 🔧 [API Documentation](./docs/API.md) - Vollständige API-Referenz
+- 🔧 [API Documentation](./docs/reference/api.md) - Vollständige API-Referenz
 - 📚 [Docs Overview](./DOCS_OVERVIEW.md) - Dokumentations-Index
 
 ### Bei Problemen
@@ -759,4 +770,4 @@ tail -f logs/shadowops.log | grep deployment
 
 **Made with 🗡️ by CommanderShadow**
 
-*ShadowOps v5.0 - Lernender AI Security Guardian mit Full Learning Pipeline*
+*ShadowOps v5.1 - Lernender AI Security Guardian mit Jules SecOps Workflow + Full Learning Pipeline*

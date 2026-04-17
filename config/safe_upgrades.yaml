@@ -124,6 +124,20 @@ nginx:
     notes: "Multiple versions behind, upgrade recommended"
     risk: medium
 
+traefik:
+  "3.0":
+    next: "3.3"
+    notes: "Security Update: Mitigates HIGH severity CVEs in Go stdlib. Rebuild/Restart required."
+    risk: critical
+    migration_url: "https://doc.traefik.io/traefik/release-notes/"
+    breaking_changes:
+      - "Verify dynamic configuration and certificates after restart"
+      - "Downtime for all external services during restart"
+  "v3":
+    next: "v3"
+    notes: "Security Update: Always pull latest patch release to mitigate Go stdlib CVEs."
+    risk: critical
+
 apache:
   "2.4":
     next: "2.4"

@@ -1,3 +1,10 @@
+---
+title: ADR-003: SmartQueue mit Analyse-Pool, Fix-Lock und Circuit Breaker
+status: accepted
+last_reviewed: 2026-04-15
+owner: CommanderShadow9
+---
+
 # ADR-003: SmartQueue mit Analyse-Pool, Fix-Lock und Circuit Breaker
 
 **Status:** Accepted

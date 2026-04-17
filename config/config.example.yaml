@@ -191,6 +191,36 @@ ai_learning:
   enabled: true  # EMPFOHLEN: Aktiviert A/B-Testing, Learning-DB, Feedback-Loop
 
 # ╔═══════════════════════════════════════════════════════════════════════════╗
+# ║ JULES WORKFLOW (AI-gesteuerter Code-Review-Loop)                         ║
+# ║ Iterativer Review-Zyklus: PR öffnen → AI Review → Autor fixt → Repeat   ║
+# ║ Default: DEAKTIVIERT — erst nach Testing aktivieren                      ║
+# ╚═══════════════════════════════════════════════════════════════════════════╝
+jules_workflow:
+  enabled: false                   # Master-Switch (Default aus bis Rollout)
+  dry_run: false                   # Logge statt auszuführen (Testing-Phase)
+  max_iterations: 5                # Hard-Cap pro PR
+  cooldown_seconds: 300            # Min. Zeit zwischen Reviews (5 Min)
+  max_hours_per_pr: 2              # Timeout pro PR
+
+  circuit_breaker:
+    max_reviews_per_hour: 20       # Pro Repo
+    pause_duration_seconds: 3600
+
+  excluded_projects:
+    - sicherheitsdienst
+
+  # Prompt-Konfiguration
+  max_diff_chars: 8000
+  few_shot_examples: 3
+  project_knowledge_limit: 10
+  token_cap_per_pr: 50000
+
+  # Discord
+  notification_channel: "🛡️-security-ops"
+  escalation_channel: "🚨-alerts"
+  role_ping_on_escalation: "@Shadow"
+
+# ╔═══════════════════════════════════════════════════════════════════════════╗
 # ║ PROJECTS (Überwachte Projekte)                                           ║
 # ╚═══════════════════════════════════════════════════════════════════════════╝
 projects:
@@ -294,8 +324,12 @@ projects:
     update_channel_id: 0  # Discord Channel-ID fuer Patch Notes + Feedback-Buttons
 
     patch_notes:
+      engine: "v6"                    # "v6" (State Machine) oder "v5" (Legacy Mixins)
+      type: "devops"                  # "gaming" | "saas" | "devops" — bestimmt Template
       language: "de"
       use_ai: true
+      target_audience: "Entwickler und Admins"
+      project_description: "Security Monitoring & Patch Notes Bot"
 
 # ╔═══════════════════════════════════════════════════════════════════════════╗
 # ║ ALERTS & NOTIFICATIONS                                                    ║
@@ -356,6 +390,67 @@ permissions:
 changelog_api:
   enabled: true
   api_key: "CHANGE_ME_RANDOM_STRING"  # Authentifizierung fuer POST Requests
+
+# ╔═══════════════════════════════════════════════════════════════════════════╗
+# ║ MULTI-AGENT REVIEW PIPELINE (seit 2026-04-14)                            ║
+# ║ Adapter-Pattern erweitert Jules-Workflow um SEO + Codex.                 ║
+# ║ Jules-Suggestions Auto-Start. Auto-Merge-Whitelist + Outcome-Tracking.   ║
+# ║ Kein Tages-Limit fuer SEO/Codex (lokale Server-Agents).                  ║
+# ║ Jules: 100/24h + 15 concurrent (Mittel-Plan hard limits).                ║
+# ╚═══════════════════════════════════════════════════════════════════════════╝
+agent_review:
+  enabled: false                       # Master-Switch — default off bis Phase 6
+  dry_run: false                       # Loggt Actions ohne sie auszufuehren
+
+  # Queue fuer Jules-Session-Starts (einzige Queue im System)
+  jules_queue:
+    max_new_sessions_per_24h: 100      # Jules' hard limit (Mittel-Plan)
+    max_concurrent_sessions: 15        # Jules' hard limit
+    retry_interval_seconds: 60         # Wenn Queue voll, alle 60s pruefen
+    scheduler_interval_seconds: 60
+
+  # Claude-Review Capacity (Bot-Resource-Schutz, kein Tages-Limit)
+  claude_review:
+    max_concurrent_calls: 8            # Empirisch bestimmt aus Live-Test 2026-04-13
+
+  # Jules Suggestions Poller (separat aktivierbar)
+  suggestions_poller:
+    enabled: false
+    interval_hours: 8                  # 3x taeglich (~08:00, 16:00, 00:00)
+    repos:
+      - "Commandershadow9/ZERODOX"
+      - "Commandershadow9/GuildScout"
+      - "Commandershadow9/shadowops-bot"
+      - "Commandershadow9/ai-agent-framework"
+      - "Commandershadow9/mayday-sim"
+
+  # Auto-Merge Policies pro Projekt
+  auto_merge:
+    enabled: false                     # separat aktivierbar (Phase 6)
+    default_method: "squash"
+    projects:
+      ZERODOX:            { allowed: true,  trivial_threshold: 100 }
+      GuildScout:         { allowed: true,  trivial_threshold: 150 }
+      mayday-sim:         { allowed: true,  trivial_threshold: 500 }
+      shadowops-bot:      { allowed: true,  trivial_threshold: 50 }
+      sicherheitsdienst:  { allowed: false }
+      ai-agent-framework: { allowed: true,  trivial_threshold: 100 }
+
+  # Discord Channels (alle existierend ausser agent_reviews — neu 2026-04-14)
+  discord:
+    jules_reviews:       "🔧-code-fixes"
+    seo_reviews:         "seo-fixes"
+    codex_reviews:       "🤖-agent-reviews"
+    escalations:         "✋-approvals"
+    daily_digest:        "🧠-ai-learning"
+    daily_digest_hour:   8
+    daily_digest_minute: 15
+
+  # Adapter-Toggle (Phase 1: nur Jules, Phase 2 aktiviert SEO+Codex)
+  adapters:
+    jules: true
+    seo: false
+    codex: false
 
 # ╔═══════════════════════════════════════════════════════════════════════════╗
 # ║ ENDE DER KONFIGURATION                                                   ║

@@ -4,8 +4,9 @@ Local git polling methods for GitHubIntegration.
 
 import asyncio
 import logging
+import subprocess
 from pathlib import Path
-from typing import Dict
+from typing import Dict, Optional
 
 logger = logging.getLogger('shadowops')
 
@@ -66,11 +67,33 @@ class PollingMixin:
             branch = self._get_repo_branch(repo_path, project_config)
             # IMMER origin/{deploy_branch} als Referenz — nicht den lokalen Branch
             # Verhindert dass Feature-Branch-Commits als "neue Updates" erkannt werden
+            fetch_ok = True
             if self.local_polling_fetch:
-                self._safe_git_fetch(repo_path)
+                fetch_ok = self._safe_git_fetch(repo_path)
+                if not fetch_ok:
+                    self.logger.warning(
+                        f"⚠️ Git fetch fuer {project_name} ({repo_path}) fehlgeschlagen "
+                        f"— versuche GitHub API Fallback"
+                    )
 
             head_ref = f"origin/{branch}"
             head_sha = self._get_commit_sha(repo_path, head_ref)
+
+            # Fallback: GitHub API wenn fetch fehlgeschlagen oder kein SHA
+            if (not head_sha or not fetch_ok) and project_config.get('repo_url'):
+                api_sha = self._gh_api_latest_sha(project_config['repo_url'], branch)
+                if api_sha and api_sha != head_sha:
+                    self.logger.info(
+                        f"🔄 GitHub API Fallback fuer {project_name}: "
+                        f"origin/{branch} veraltet, fetche SHA {api_sha[:8]}"
+                    )
+                    # Branch-Ref aktualisieren (bare SHA fetch geht auf GitHub nicht)
+                    self._run_git(repo_path, ['fetch', 'origin', branch], timeout=60)
+                    # Nochmal pruefen
+                    new_sha = self._get_commit_sha(repo_path, head_ref)
+                    if new_sha:
+                        head_sha = new_sha
+
             if not head_sha:
                 continue
 
@@ -129,3 +152,21 @@ class PollingMixin:
                         self.logger.debug(f"Push Security Review Fehler: {e}")
             finally:
                 self._unmark_commit_inflight(normalized_project, branch, head_sha)
+
+    @staticmethod
+    def _gh_api_latest_sha(repo_url: str, branch: str) -> Optional[str]:
+        """GitHub API Fallback: Hole den aktuellen SHA eines Branches via gh CLI."""
+        try:
+            # repo_url: https://github.com/owner/repo → owner/repo
+            repo_slug = repo_url.rstrip('/').replace('https://github.com/', '').replace('.git', '')
+            if '/' not in repo_slug:
+                return None
+            result = subprocess.run(
+                ['gh', 'api', f'repos/{repo_slug}/commits/{branch}', '--jq', '.sha'],
+                capture_output=True, text=True, timeout=15
+            )
+            if result.returncode == 0 and result.stdout.strip():
+                return result.stdout.strip()
+        except Exception:
+            pass
+        return None

@@ -26,9 +26,11 @@ import time
 from datetime import datetime, timezone, date, timedelta
 from typing import Dict, List, Optional
 
+import asyncpg
 import discord
 
 from .activity_monitor import ActivityMonitor
+from .fingerprint import compute_finding_fingerprint
 from .prompts import (ANALYST_SYSTEM_PROMPT, ANALYST_CONTEXT_TEMPLATE, FIX_SESSION_PROMPT,
                        WEEKLY_DEEP_PROMPT, REFLECTION_PROMPT)
 
@@ -98,6 +100,104 @@ PROJECT_REPO_MAP = {
 }
 DEFAULT_REPO = 'Commandershadow9/shadowops-bot'
 SKIP_ISSUE_PROJECTS = {'openclaw', 'agents', 'blogger', 'content-pipeline'}
+
+# === Jules SecOps Workflow — Fix-Mode-Klassifizierung ===
+# Siehe docs/plans/2026-04-11-jules-secops-workflow-design.md §9.1
+
+FIX_MODE_DECISION: Dict[str, str] = {
+    # Code-Findings → Jules (PR via GitHub-Issue)
+    'npm_audit':          'jules',
+    'pip_audit':          'jules',
+    'dockerfile':         'jules',
+    'code_vulnerability': 'jules',
+
+    # Infrastruktur → Self-Fix durch den ScanAgent
+    'ufw':                'self_fix',
+    'fail2ban':           'self_fix',
+    'crowdsec':           'self_fix',
+    'aide':               'self_fix',
+    'docker_config':      'self_fix',
+
+    # Explizit NICHT automatisiert
+    'ssh_config':         'human_only',
+    'database_schema':    'human_only',
+}
+
+
+def classify_fix_mode(finding) -> str:
+    """
+    Gibt 'jules', 'self_fix' oder 'human_only' zurück.
+    """
+    project = getattr(finding, "project", None)
+    category = getattr(finding, "category", None)
+
+    if project in SKIP_ISSUE_PROJECTS:
+        return "human_only"
+
+    mode = FIX_MODE_DECISION.get(category, "human_only")
+    if mode == "jules":
+        if project not in PROJECT_REPO_MAP:
+            return "human_only"
+    return mode
+
+
+def build_jules_issue_body(finding) -> str:
+    """
+    Erzeugt den GitHub-Issue-Body für Jules-Delegation.
+    Enthält Acceptance-Criteria, Scope-Warnung und explizite Anweisung
+    KEIN "Acknowledged"-Comment zu posten (PR #123 Second Line of Defense).
+    """
+    cve = getattr(finding, "cve", None) or "N/A"
+    severity = getattr(finding, "severity", "medium")
+    category = getattr(finding, "category", "n/a")
+    title = getattr(finding, "title", "Security Finding")
+    description = getattr(finding, "description", "(keine Beschreibung)")
+    files = getattr(finding, "affected_files", None) or []
+    finding_id = getattr(finding, "id", 0)
+
+    files_block = "\n".join(f"- `{f}`" for f in files) if files else "(im Scan-Report)"
+
+    return f"""## 🛡️ Security Finding
+
+**Severity:** {severity.upper()}
+**Category:** `{category}`
+**CVE:** {cve}
+
+### Problem
+
+{description}
+
+### Betroffene Dateien
+
+{files_block}
+
+### Acceptance Criteria
+
+- [ ] Das spezifische Problem oben ist behoben
+- [ ] Keine unrelated Changes (Scope strikt halten!)
+- [ ] `npm audit` / `pip audit` zeigt kein Finding mehr für diese CVE
+- [ ] Existing Tests laufen noch (`npm run test` / `pytest`)
+- [ ] Keine neuen Dependencies ohne Begründung
+
+---
+
+### 🤖 Task for Jules
+
+@google-labs-jules please fix the security issue described above.
+
+**Wichtig — bitte lies das:**
+
+1. **Scope strikt halten** — nur die in "Betroffene Dateien" genannten Dateien anfassen
+2. **Kein Refactoring** — auch wenn du "besseren" Code siehst
+3. **PR-Body muss `Fixes #N` enthalten** (mit diesem Issue-Number)
+4. **Reagiere NICHT mit "Acknowledged" auf Review-Kommentare** — das hat in der Vergangenheit zu Review-Loops geführt
+5. Du wirst automatisch von Claude Opus reviewt (strukturiert: Blockers/Suggestions/Nits)
+6. Bei Approval → Shadow merged manuell. Max 5 Review-Iterationen, sonst Human-Eskalation.
+
+---
+*Auto-created by ShadowOps SecOps Workflow · Finding ID: {finding_id}*
+"""
+
 
 # Issue-Quality-Gates
 MIN_ISSUE_TITLE_LEN = 10
@@ -279,6 +379,12 @@ class SecurityScanAgent:
         self._sessions_today: int = 0
         self._today: date = date.today()
         self._session_tokens_start: int = 0
+        # Akkumulierter Echtwert aus ai_engine._last_token_usage ueber die
+        # gesamte Session hinweg (ersetzt die alte prompt-laengen-basierte
+        # Schaetzung). Wird per _mark_token_start() auf 0 gesetzt und nach
+        # jedem run_analyst_session/run_fix_session per _accumulate_ai_usage()
+        # um den CLI-Reported Wert erhoeht.
+        self._session_tokens_accumulated: int = 0
         self._running: bool = False
         self._weekly_deep_done_this_week: bool = False
         self._briefing_pending: bool = False
@@ -571,6 +677,8 @@ class SecurityScanAgent:
                 prompt=prompt, timeout=mode_config[0], max_turns=mode_config[1],
                 codex_model=self.codex_model, claude_model=self.claude_model,
             )
+            # Echten Token-Verbrauch aus der AI-Engine in die Session-Summe ziehen
+            self._accumulate_ai_usage()
 
             health_after = await self._take_health_snapshot(session_id)
             health_ok = self._compare_health(health_before, health_after)
@@ -991,6 +1099,7 @@ class SecurityScanAgent:
         auto_fixes = 0
         issues_created = 0
         duplicates_skipped = 0
+        jules_delegated = 0  # Multi-Agent-Queue: Code-Fixes an Jules delegiert
 
         for finding in findings:
             try:
@@ -999,9 +1108,31 @@ class SecurityScanAgent:
                     finding.get('affected_project', ''))
 
                 title = finding.get('title', 'Unbenannt')
-                existing = await self._find_similar_open_finding(title)
+                fp, existing = await self._find_similar_open_finding_by_fingerprint(
+                    category=finding.get('category', 'unknown'),
+                    affected_project=finding.get('affected_project', '') or '',
+                    affected_files=list(finding.get('affected_files') or []),
+                    title=title,
+                )
                 if existing:
                     duplicates_skipped += 1
+                    logger.info(
+                        "[scan-agent] Finding '%s' dedupliziert gegen #%d",
+                        title[:60], existing["id"],
+                    )
+                    # Feedback an Learning-DB (Task 0.5 liefert die Methode record_dedup_decision)
+                    lb = getattr(self, "learning_bridge", None)
+                    if lb and getattr(lb, "is_connected", False) and hasattr(lb, "record_dedup_decision"):
+                        try:
+                            await lb.record_dedup_decision(
+                                parent_id=existing["id"],
+                                new_title=title,
+                                project=finding.get('affected_project'),
+                            )
+                        except (asyncpg.PostgresError, ConnectionError, asyncio.TimeoutError) as e:
+                            logger.warning(
+                                "LearningBridge dedup-feedback fehlgeschlagen: %s", e,
+                            )
                     continue
 
                 fix_type = finding.get('fix_type', 'info_only')
@@ -1012,18 +1143,32 @@ class SecurityScanAgent:
                 should_issue = (fix_type == 'issue_needed' or
                     (fix_type == 'needs_decision' and finding.get('severity') in ('critical', 'high', 'medium')))
                 if should_issue:
-                    github_issue_url = await self._create_github_issue(finding)
-                    if github_issue_url:
-                        issues_created += 1
+                    # Code-Security-Findings → Multi-Agent-Queue (Jules fixt autonom)
+                    # Alles andere (docker, config, permissions, ...) → GitHub-Issue
+                    if self._should_delegate_to_jules(finding):
+                        queued = await self._enqueue_jules_fix(finding)
+                        if queued:
+                            jules_delegated += 1
+                            logger.info(
+                                "[scan-agent] Finding '%s' → Jules-Queue (task_id=%d)",
+                                title[:60], queued,
+                            )
+                    else:
+                        github_issue_url = await self._create_github_issue(finding)
+                        if github_issue_url:
+                            issues_created += 1
 
+                # fp wurde oben beim Dedup-Lookup bereits berechnet — hier wiederverwenden,
+                # damit Lookup-FP und INSERT-FP garantiert identisch sind (DRY-Contract).
                 await self.db.pool.execute("""
                     INSERT INTO findings (severity, category, title, description, session_id,
-                        affected_project, affected_files, fix_type, github_issue_url)
-                    VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9)
+                        affected_project, affected_files, fix_type, github_issue_url,
+                        finding_fingerprint)
+                    VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10)
                 """, finding.get('severity', 'info'), finding.get('category', 'unknown'),
                     title, finding.get('description', ''), session_id,
                     finding.get('affected_project'), finding.get('affected_files'),
-                    fix_type, github_issue_url)
+                    fix_type, github_issue_url, fp)
             except Exception as e:
                 logger.error("Finding-Verarbeitung fehlgeschlagen: %s", e)
 
@@ -1133,6 +1278,8 @@ class SecurityScanAgent:
             await self._notify_fix_phase_start(len(fixable))
             fix_result = await self.ai_engine.run_fix_session(
                 prompt=prompt, timeout=7200, max_turns=200, model=self.claude_model)
+            # Echten Token-Verbrauch der Fix-Phase in die Session-Summe ziehen
+            self._accumulate_ai_usage()
 
             if not fix_result:
                 logger.warning("Fix-Phase: Kein Ergebnis")
@@ -1280,6 +1427,9 @@ class SecurityScanAgent:
         """)
         return dict(row) if row else None
 
+    # DEPRECATED: Titel-basierte Dedup. Ersetzt durch _find_similar_open_finding_by_fingerprint.
+    # Keine aktiven Caller mehr (siehe Scan-Agent Dedup Plan Task 0.3).
+    # Loeschung in Folge-Plan nach 7 Tagen Fingerprint-Stabilitaet.
     async def _find_similar_open_finding(self, title: str) -> Optional[Dict]:
         row = await self.db.pool.fetchrow(
             "SELECT id, title, github_issue_url FROM findings WHERE status='open' AND LOWER(title)=LOWER($1)",
@@ -1295,6 +1445,55 @@ class SecurityScanAgent:
             if row:
                 return dict(row)
         return None
+
+    async def _find_similar_open_finding_by_fingerprint(
+        self,
+        category: str,
+        affected_project: str,
+        affected_files,
+        title: str,
+    ) -> tuple[str, Optional[Dict]]:
+        """
+        Fingerprint-basierte Dedup. Returns (fingerprint, matching_row_or_None).
+
+        Findet ein existierendes offenes Finding mit identischem (category,
+        project, normalisierte Files, Signatur-Keywords) Fingerprint. Zwei
+        Findings mit gleichem Fingerprint sind semantisch dasselbe Problem —
+        auch bei unterschiedlichem Wording.
+
+        Der berechnete Fingerprint wird ausserhalb fuer das INSERT wiederverwendet,
+        damit Lookup-FP und INSERT-FP nicht divergieren koennen (DRY-Contract).
+        """
+        fp = compute_finding_fingerprint(category, affected_project, affected_files, title)
+        row = await self.db.pool.fetchrow(
+            "SELECT id, title, github_issue_url, finding_fingerprint FROM findings "
+            "WHERE status='open' AND finding_fingerprint=$1 LIMIT 1",
+            fp,
+        )
+        return fp, (dict(row) if row else None)
+
+    async def _was_fix_attempted_recently(
+        self, fingerprint: str, fix_type: str, cooldown_hours: int = 24
+    ) -> bool:
+        """True wenn in den letzten N Stunden bereits ein Fix-Versuch mit identischer
+        (fingerprint, fix_type) Kombination lief — egal ob erfolgreich oder nicht.
+
+        Idempotenz-Barriere gegen Fix-Wiederholung: Die DB filtert bereits via
+        created_at-Interval, die Python-Seite prueft zusaetzlich das Alter, um
+        auch bei Clock-Skew oder Mock-Tests korrekt zu blocken/passen.
+        """
+        if not fingerprint or not fix_type:
+            return False
+        last_attempt = await self.db.pool.fetchval("""
+            SELECT MAX(created_at) FROM fix_attempts_v2
+            WHERE event_signature=$1 AND approach=$2
+              AND created_at > NOW() - ($3 || ' hours')::interval
+        """, fingerprint, fix_type, str(cooldown_hours))
+        if last_attempt is None:
+            return False
+        if last_attempt.tzinfo is None:
+            last_attempt = last_attempt.replace(tzinfo=timezone.utc)
+        return (datetime.now(timezone.utc) - last_attempt) < timedelta(hours=cooldown_hours)
 
     async def _get_open_findings_summary(self) -> List[Dict]:
         rows = await self.db.pool.fetch("""
@@ -1441,8 +1640,17 @@ class SecurityScanAgent:
     # ─── Token-Tracking ──────────────────────────────────────────────
 
     def _get_session_tokens(self) -> int:
+        """Liefert den akkumulierten CLI-Token-Verbrauch der aktuellen Session.
+
+        Faellt auf die alte Delta-Schaetzung (_daily_tokens_used) nur zurueck,
+        wenn noch nichts via _accumulate_ai_usage gesammelt wurde — sonst
+        dominiert die echte Messung die Prompt-Laenge-Schaetzung.
+        """
         try:
-            return max(0, (self.ai_engine._daily_tokens_used if self.ai_engine else 0) - self._session_tokens_start)
+            if self._session_tokens_accumulated > 0:
+                return self._session_tokens_accumulated
+            daily = self.ai_engine._daily_tokens_used if self.ai_engine else 0
+            return max(0, daily - self._session_tokens_start)
         except Exception:
             return 0
 
@@ -1451,6 +1659,28 @@ class SecurityScanAgent:
             self._session_tokens_start = self.ai_engine._daily_tokens_used if self.ai_engine else 0
         except Exception:
             self._session_tokens_start = 0
+        self._session_tokens_accumulated = 0
+
+    def _accumulate_ai_usage(self) -> None:
+        """Addiert den zuletzt von der AI-Engine gemeldeten Token-Verbrauch.
+
+        Soll direkt nach jedem run_analyst_session / run_fix_session aufgerufen
+        werden. Nutzt ai_engine._last_token_usage (gesetzt vom Token-Parser in
+        der AI-Engine nach jedem CLI-Call). Fehlendes Attribut oder falscher
+        Typ -> No-Op (Backward-Compat).
+        """
+        engine = getattr(self, "ai_engine", None)
+        if engine is None:
+            return
+        usage = getattr(engine, "_last_token_usage", None)
+        if not isinstance(usage, dict):
+            return
+        try:
+            delta = int(usage.get("total_tokens", 0) or 0)
+        except (TypeError, ValueError):
+            return
+        if delta > 0:
+            self._session_tokens_accumulated += delta
 
     # ─── Failure-Backoff ──────────────────────────────────────────────
 
@@ -1729,6 +1959,127 @@ class SecurityScanAgent:
                 return r
         return DEFAULT_REPO
 
+    # ── Multi-Agent Review Integration (Jules-Delegation) ──────────
+
+    @property
+    def agent_task_queue(self):
+        """Lazy accessor: Queue aus github_integration (kann None sein)."""
+        gh = getattr(self.bot, 'github_integration', None)
+        return getattr(gh, 'agent_task_queue', None) if gh else None
+
+    @property
+    def agent_review_enabled(self) -> bool:
+        """Lazy accessor: Feature-Flag aus github_integration."""
+        gh = getattr(self.bot, 'github_integration', None)
+        return bool(getattr(gh, '_agent_review_enabled', False)) if gh else False
+
+    # Categories die als Code-Security gelten und an Jules delegiert werden.
+    # Case-insensitive Match (ScanAgent nutzt beide Varianten).
+    _JULES_DELEGATABLE_CATEGORIES = frozenset({
+        'code_security', 'code security',
+        'xss', 'sql_injection', 'command_injection',
+        'auth', 'authentication', 'authorization',
+        'input_validation', 'csrf',
+    })
+
+    # Projekte die Jules kennt (haben GitHub-Integration + Code-Repo)
+    _JULES_KNOWN_PROJECTS = frozenset({
+        'zerodox', 'guildscout', 'shadowops-bot',
+        'ai-agent-framework', 'mayday-sim', 'mayday_sim',
+    })
+
+    def _should_delegate_to_jules(self, finding: Dict) -> bool:
+        """Entscheidet ob ein Finding an Jules delegiert werden soll.
+
+        Kriterien (alle muessen erfuellt sein):
+        1. Category ist Code-Security (nicht Infrastructure/Config/Docker)
+        2. affected_project ist ein Jules-bekanntes Repo
+        3. affected_files ist nicht leer (Jules braucht einen Fix-Context)
+        4. Feature ist aktiviert (agent_review.enabled + agent_review.adapters.jules)
+        """
+        if not getattr(self, 'agent_review_enabled', False):
+            return False
+        category = (finding.get('category', '') or '').lower().strip()
+        if category not in self._JULES_DELEGATABLE_CATEGORIES:
+            return False
+        project = (finding.get('affected_project', '') or '').lower().strip()
+        if project not in self._JULES_KNOWN_PROJECTS:
+            return False
+        affected_files = finding.get('affected_files') or []
+        if isinstance(affected_files, str):
+            affected_files = [affected_files]
+        if not affected_files:
+            return False
+        return True
+
+    async def _enqueue_jules_fix(self, finding: Dict) -> Optional[int]:
+        """Baut Jules-Prompt aus Finding und queued in agent_task_queue.
+
+        Returns:
+            task_id bei Erfolg, None bei Fehler.
+        """
+        queue = getattr(self, 'agent_task_queue', None)
+        if queue is None:
+            logger.warning("[scan-agent] agent_task_queue nicht verfuegbar")
+            return None
+
+        project = (finding.get('affected_project', '') or '').lower().strip()
+        # Projekt → Repo-Mapping (via existierender _repo_for_finding Logik)
+        repo_slug = self._repo_for_finding(finding)
+        try:
+            owner, repo_name = repo_slug.split('/', 1)
+        except ValueError:
+            logger.warning("[scan-agent] ungueltige repo_slug: %s", repo_slug)
+            return None
+
+        title = finding.get('title', 'Security-Fix')
+        severity = finding.get('severity', 'medium')
+        description = finding.get('description', '')
+        affected_files = finding.get('affected_files') or []
+        if isinstance(affected_files, str):
+            affected_files = [affected_files]
+        files_list = "\n".join(f"- {f}" for f in affected_files[:10])
+
+        prompt = f"""Security-Fix fuer {project} ({severity} severity).
+
+**Finding:** {title}
+
+**Beschreibung:**
+{description}
+
+**Betroffene Dateien:**
+{files_list}
+
+**Aufgabe:**
+Analysiere das Finding und behebe das Problem. Halte dich strikt an:
+1. NUR die betroffenen Dateien aendern — kein unrelated Refactoring
+2. Vorhandene Tests muessen gruen bleiben
+3. Commit-Message-Format: "fix: {title[:60]}"
+4. Bei Unsicherheit: Issue-Kommentar statt Fix
+
+Das ist ein von SecurityScanAgent delegierter Task. Der PR wird automatisch
+von der ShadowOps Review-Pipeline reviewt — halte den Scope eng."""
+
+        try:
+            task_id = await queue.enqueue(
+                source='scan_agent',
+                priority=1,  # hoch, nach manual (0)
+                payload={
+                    'owner': owner,
+                    'repo': repo_name,
+                    'prompt': prompt,
+                    'title': f"Security: {title[:60]}",
+                    'branch': 'main',
+                    'finding_category': finding.get('category', ''),
+                    'finding_severity': severity,
+                },
+                project=project,
+            )
+            return int(task_id)
+        except Exception as e:
+            logger.exception("[scan-agent] queue.enqueue fehlgeschlagen: %s", e)
+            return None
+
     async def _create_github_issue(self, finding: Dict) -> Optional[str]:
         ap = finding.get('affected_project', '').strip()
         title = finding.get('issue_title', finding.get('title', '')).strip()
@@ -1744,7 +2095,12 @@ class SecurityScanAgent:
                 return None
 
         repo = self._resolve_repo(ap)
-        existing = await self._find_similar_open_finding(finding.get('title', ''))
+        fp, existing = await self._find_similar_open_finding_by_fingerprint(
+            category=finding.get('category', 'unknown'),
+            affected_project=finding.get('affected_project', '') or '',
+            affected_files=list(finding.get('affected_files') or []),
+            title=finding.get('title', 'Unbenannt'),
+        )
         if existing:
             return existing.get('github_issue_url') or None
 
@@ -1762,12 +2118,39 @@ class SecurityScanAgent:
         except Exception:
             pass
 
-        ft = f"[Security] {title}"
-        bb = f"**Severity:** {severity.upper()} | **Projekt:** {ap or 'Server'}\n\n{body}"
+        # Jules SecOps Workflow: Fix-Mode-Routing
+        # classify_fix_mode/build_jules_issue_body erwarten Attribute (getattr),
+        # finding ist aber ein Dict → SimpleNamespace als Adapter
+        from types import SimpleNamespace
+        _f = SimpleNamespace(
+            id=finding.get('id', 0),
+            title=title,
+            severity=severity,
+            category=finding.get('category', finding.get('source', 'unknown')),
+            description=body,
+            cve=finding.get('cve'),
+            project=ap.lower() if ap else 'infrastructure',
+            affected_files=finding.get('affected_files', []),
+        )
+        fix_mode = classify_fix_mode(_f)
+        if fix_mode == 'jules':
+            ft = f"[Security] {title}"
+            bb = build_jules_issue_body(_f)
+            labels = f"security,jules,priority:{severity}"
+            logger.info(f"[jules] Erstelle Jules-Issue: {ft[:60]}... (Repo: {repo})")
+        elif fix_mode == 'self_fix':
+            # Self-Fix: kein Issue erstellen, wird vom ScanAgent direkt gefixt
+            logger.info(f"[jules] Finding '{title[:40]}' wird self-fix — kein Issue")
+            return None
+        else:
+            ft = f"[Security] {title}"
+            bb = f"**Severity:** {severity.upper()} | **Projekt:** {ap or 'Server'}\n\n{body}"
+            labels = f"security,priority:{severity}"
+
         try:
             proc = await asyncio.create_subprocess_exec(
                 'gh', 'issue', 'create', '--repo', repo,
-                '--title', ft, '--body', bb, '--label', f"security,priority:{severity}",
+                '--title', ft, '--body', bb, '--label', labels,
                 stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.PIPE)
             out, err = await asyncio.wait_for(proc.communicate(), timeout=30)
             if proc.returncode == 0:
@@ -1850,6 +2233,7 @@ class SecurityScanAgent:
                     codex_model=None,
                     claude_model=self.claude_model,
                 )
+                self._accumulate_ai_usage()
                 if not result and self.ai_engine.is_claude_quota_exhausted():
                     logger.warning(
                         "Weekly-Deep #%d: Claude-Quota erschopft — Retry via Codex (%s)",
@@ -1860,6 +2244,7 @@ class SecurityScanAgent:
                         codex_model=self.codex_model,
                         claude_model=self.claude_model,
                     )
+                    self._accumulate_ai_usage()
 
                 health_after = await self._take_health_snapshot(session_id)
                 health_ok = self._compare_health(health_before, health_after)
@@ -1974,6 +2359,7 @@ class SecurityScanAgent:
             # Reflection via Claude (kurze Session)
             reflection = await self.ai_engine.run_fix_session(
                 prompt=prompt, timeout=120, max_turns=5, model=self.claude_model)
+            self._accumulate_ai_usage()
 
             if reflection and isinstance(reflection, dict):
                 # Insights in Knowledge-DB speichern

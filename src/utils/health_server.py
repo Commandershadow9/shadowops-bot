@@ -64,6 +64,9 @@ class HealthCheckServer:
         app.router.add_get('/ping', self.ping)
         app.router.add_get('/status', self.detailed_status)
 
+        # Jules SecOps Workflow
+        app.router.add_get('/health/jules', self._health_jules)
+
         # Changelog API
         app.router.add_get('/api/changelogs/feed', self.changelog_feed)
         app.router.add_get('/api/changelogs/sitemap', self.changelog_sitemap)
@@ -198,6 +201,24 @@ class HealthCheckServer:
         status_code = 200 if is_healthy else 503
 
         return web.json_response(response_data, status=status_code)
+
+    # --- Jules SecOps Workflow ---
+
+    async def _health_jules(self, request: web.Request) -> web.Response:
+        """Jules SecOps Workflow Health-Endpoint."""
+        gh = getattr(self.bot, "github_integration", None)
+        jules_enabled = bool(gh and getattr(gh, "_jules_enabled", False))
+
+        if not jules_enabled or not getattr(gh, "jules_state", None):
+            return web.json_response({"enabled": False, "status": "disabled"})
+
+        try:
+            stats = await gh.jules_state.fetch_health_stats()
+            return web.json_response({"enabled": True, "status": "healthy", **stats})
+        except Exception as e:
+            return web.json_response(
+                {"enabled": True, "status": "error", "error": str(e)}, status=500
+            )
 
     # --- Changelog API ---
 

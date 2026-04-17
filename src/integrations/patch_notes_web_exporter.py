@@ -393,7 +393,14 @@ class PatchNotesWebExporter:
         if index_path.exists():
             try:
                 with open(index_path, 'r', encoding='utf-8') as f:
-                    index = json.load(f)
+                    data = json.load(f)
+                # Altes Dict-Format abfangen: {'project': ..., 'versions': [...]}
+                if isinstance(data, dict) and 'versions' in data:
+                    index = data['versions']
+                elif isinstance(data, list):
+                    index = data
+                else:
+                    index = []
             except Exception:
                 index = []
 

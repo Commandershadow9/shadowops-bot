@@ -391,6 +391,7 @@ class ShadowOpsBot(commands.Bot):
     async def setup_hook(self):
         """Setup Hook - wird VOR Discord-Verbindung aufgerufen"""
         self.logger.info("🗡️ ShadowOps Bot startet...")
+        self._startup_time = datetime.now()
         await self.load_cogs()
 
         # SIGTERM-Handler im Event-Loop registrieren für graceful shutdown.
@@ -1120,6 +1121,22 @@ class ShadowOpsBot(commands.Bot):
             self.daily_patch_notes_release.start()
         if not self.learning_maintenance.is_running():
             self.learning_maintenance.start()
+        if not self.jules_nightly_batch_task.is_running():
+            self.jules_nightly_batch_task.start()
+
+        # Multi-Agent Review (Phase 3) — nur wenn enabled
+        gh = getattr(self, "github_integration", None)
+        if gh and getattr(gh, "_agent_review_enabled", False):
+            if not self.agent_task_queue_scheduler.is_running():
+                self.agent_task_queue_scheduler.start()
+            if not self.agent_suggestions_poller_task.is_running():
+                self.agent_suggestions_poller_task.start()
+            if not self.agent_outcome_check_task.is_running():
+                self.agent_outcome_check_task.start()
+            if not self.agent_daily_digest_task.is_running():
+                self.agent_daily_digest_task.start()
+            if not self.agent_weekly_recap_task.is_running():
+                self.agent_weekly_recap_task.start()
 
         # Setze Status
         await self.change_presence(
@@ -1187,6 +1204,57 @@ class ShadowOpsBot(commands.Bot):
         except Exception as e:
             self.logger.warning(f"   ⚠️ {name} Shutdown-Fehler: {e}")
 
+    async def _kill_orphan_subprocesses(self, grace_period: float = 2.0):
+        """Beendet alle noch laufenden Child-Prozesse (Codex-CLI, gh-api etc.).
+
+        Hintergrund: AI-Scan-Sessions (Codex/Claude CLI) laufen als Subprocesses
+        ueber `asyncio.create_subprocess_exec`. Bei Bot-Shutdown werden sie
+        teilweise nicht sauber beendet, was `bot.run()` nach `close()` bis zu
+        120s warten laesst (systemd TimeoutStopSec) — das verursachte bisher
+        2min Discord-Ausfall pro Deploy.
+
+        Fix: Nach dem komponenten-weisen Shutdown alle noch lebenden Children
+        per SIGTERM/SIGKILL killen. Grace-Period 2s fuer SIGTERM.
+        """
+        import os
+        import signal as _sig
+        try:
+            # /proc/<pid>/task/<tid>/children enthaelt direkte Kind-PIDs
+            own_pid = os.getpid()
+            children_path = f"/proc/{own_pid}/task/{own_pid}/children"
+            if not os.path.exists(children_path):
+                return
+            with open(children_path) as f:
+                raw = f.read().strip()
+            pids = [int(p) for p in raw.split() if p.strip().isdigit()]
+            if not pids:
+                return
+            self.logger.info(
+                f"🧹 {len(pids)} Child-Prozess(e) gefunden — sende SIGTERM"
+            )
+            for pid in pids:
+                try:
+                    os.kill(pid, _sig.SIGTERM)
+                except ProcessLookupError:
+                    pass
+            # Grace-Period abwarten
+            await asyncio.sleep(grace_period)
+            # Nachhilfe: SIGKILL fuer hartnaeckige
+            remaining = []
+            for pid in pids:
+                try:
+                    os.kill(pid, 0)  # Existenz-Check
+                    os.kill(pid, _sig.SIGKILL)
+                    remaining.append(pid)
+                except ProcessLookupError:
+                    pass
+            if remaining:
+                self.logger.info(
+                    f"🔨 SIGKILL fuer {len(remaining)} hartnaeckige Child-Prozess(e)"
+                )
+        except Exception as e:
+            self.logger.warning(f"⚠️ Child-Cleanup fehlgeschlagen: {e}")
+
     async def close(self):
         """Clean shutdown of the bot mit Timeouts pro Komponente"""
         import traceback
@@ -1222,6 +1290,10 @@ class ShadowOpsBot(commands.Bot):
 
         # Close parent bot (Discord Connection)
         await self._shutdown_component("Discord Connection", super().close(), timeout=15.0)
+
+        # Orphan-Child-Prozesse terminieren (Codex/Claude CLI, gh-api etc.)
+        # Verhindert 2min SIGTERM-Timeout durch verwaiste asyncio-Subprocesses
+        await self._kill_orphan_subprocesses(grace_period=2.0)
 
         self.logger.info("✅ ShadowOps Bot shutdown complete")
 
@@ -1358,6 +1430,16 @@ class ShadowOpsBot(commands.Bot):
                 return
 
             now = datetime.now()
+
+            # Startup-Grace-Period: Ersten Loop-Durchlauf nach Restart überspringen
+            # verhindert sofortiges Feuern wenn der Bot während der Cron-Stunde restarted
+            startup_elapsed = (now - self._startup_time).total_seconds()
+            if startup_elapsed < 300:  # 5 Minuten Grace Period
+                self.logger.debug(
+                    f"📅 Weekly Cron: Startup-Grace ({startup_elapsed:.0f}s < 300s) — übersprungen"
+                )
+                return
+
             day_names = {
                 'monday': 0, 'tuesday': 1, 'wednesday': 2, 'thursday': 3,
                 'friday': 4, 'saturday': 5, 'sunday': 6,
@@ -1367,14 +1449,53 @@ class ShadowOpsBot(commands.Bot):
             if now.weekday() != target_day or now.hour != batcher.cron_hour:
                 return
 
+            # ── v6 Projekte: Direkt aus Git ──
+            released_v6 = set()
+            for project_name, project_config in self.config.projects.items():
+                if not isinstance(project_config, dict):
+                    continue
+                pn_config = project_config.get('patch_notes', {})
+                if pn_config.get('engine') != 'v6':
+                    continue
+                cron_min = pn_config.get('cron_min_commits', 3)
+                project_path = project_config.get('path', '')
+                try:
+                    from patch_notes.stages.collect import _gather_commits_since_last_release
+
+                    # Commit-Count prüfen BEVOR AI-Call
+                    preview_commits = _gather_commits_since_last_release(
+                        project_name, project_path, project_config
+                    )
+                    if len(preview_commits) < cron_min:
+                        self.logger.debug(f"📅 Weekly {project_name}: {len(preview_commits)} < {cron_min} — skip")
+                        continue
+
+                    from patch_notes import generate_release
+                    ctx = await generate_release(
+                        project=project_name,
+                        project_config=project_config,
+                        bot=self,
+                        trigger='cron',
+                        commits=preview_commits,
+                    )
+                    self.logger.info(
+                        f"📅 [v6] Wöchentlicher Release: {project_name} v{ctx.version} ({len(preview_commits)} Commits)"
+                    )
+                    released_v6.add(project_name)
+                except Exception as e:
+                    self.logger.error(f"❌ [v6] Weekly Release {project_name}: {e}", exc_info=True)
+
+            # ── v5 Projekte: Batcher-basiert ──
             releasable = batcher.get_cron_releasable_projects()
-            # Weekly fängt ALLE Projekte mit genug Commits auf — auch daily-Projekte
-            # die unter dem daily_min_commits Threshold geblieben sind
-            if not releasable:
+            # v6-Projekte rausfiltern (schon oben behandelt)
+            releasable = [p for p in releasable if p not in released_v6]
+
+            if not releasable and not released_v6:
                 self.logger.info("📅 Wöchentlicher Patch-Notes-Check: Keine Projekte mit genug Commits")
                 return
 
-            self.logger.info(f"📅 Wöchentlicher Patch-Notes-Release: {len(releasable)} Projekt(e)")
+            if releasable:
+                self.logger.info(f"📅 Wöchentlicher Patch-Notes-Release (v5): {len(releasable)} Projekt(e)")
 
             for project_name in releasable:
                 try:
@@ -1386,7 +1507,6 @@ class ShadowOpsBot(commands.Bot):
                         f"🚀 Wöchentlicher Release: {project_name} ({len(commits)} Commits)"
                     )
 
-                    # Projekt-Config holen
                     project_config = {}
                     for key, cfg in self.config.projects.items():
                         if key.lower() == project_name.lower():
@@ -1438,6 +1558,14 @@ class ShadowOpsBot(commands.Bot):
             # Lokalzeit (nicht UTC) — daily_release_hour ist in Serverzeit konfiguriert
             now = datetime.now()
 
+            # Startup-Grace-Period: verhindert sofortiges Feuern nach Restart
+            startup_elapsed = (now - self._startup_time).total_seconds()
+            if startup_elapsed < 300:  # 5 Minuten Grace Period
+                self.logger.debug(
+                    f"📅 Daily Cron: Startup-Grace ({startup_elapsed:.0f}s < 300s) — übersprungen"
+                )
+                return
+
             # Nur Projekte mit release_mode: daily und passender Stunde
             for project_name, project_config in self.config.projects.items():
                 if not isinstance(project_config, dict):
@@ -1450,7 +1578,39 @@ class ShadowOpsBot(commands.Bot):
                 if now.hour != daily_hour:
                     continue
 
-                # Batcher-Methode nutzen fuer Min-Commits-Check
+                # ── v6: Direkt aus Git, kein Batcher ──
+                if pn_config.get('engine') == 'v6':
+                    try:
+                        from patch_notes.stages.collect import _gather_commits_since_last_release
+                        daily_min = pn_config.get('daily_min_commits', 15)
+                        project_path = project_config.get('path', '')
+
+                        # Erst Commit-Count prüfen BEVOR AI-Call (spart Kosten)
+                        preview_commits = _gather_commits_since_last_release(
+                            project_name, project_path, project_config
+                        )
+                        if len(preview_commits) < daily_min:
+                            self.logger.info(
+                                f"📅 Daily {project_name}: {len(preview_commits)} Commits < {daily_min} Minimum — übersprungen (Weekly fängt auf)"
+                            )
+                            continue
+
+                        from patch_notes import generate_release
+                        ctx = await generate_release(
+                            project=project_name,
+                            project_config=project_config,
+                            bot=self,
+                            trigger='cron',
+                            commits=preview_commits,
+                        )
+                        self.logger.info(
+                            f"📅 [v6] Täglicher Release: {project_name} v{ctx.version} ({len(preview_commits)} Commits)"
+                        )
+                    except Exception as e:
+                        self.logger.error(f"❌ [v6] Daily Release {project_name}: {e}", exc_info=True)
+                    continue
+
+                # ── v5: Batcher-basiert ──
                 daily_min = pn_config.get('daily_min_commits', 3)
                 releasable = batcher.get_daily_releasable_projects(daily_min_commits=daily_min)
                 if project_name not in releasable:
@@ -1562,6 +1722,253 @@ class ShadowOpsBot(commands.Bot):
     async def before_learning_maintenance(self):
         await self.wait_until_ready()
         self.logger.info("🧠 Learning-Maintenance Loop gestartet (alle 12h)")
+
+    @tasks.loop(time=time(hour=23, minute=7))
+    async def jules_nightly_batch_task(self):
+        """Nightly: klassifiziert Jules-Review-Outcomes fuer Learning-Loop."""
+        await self._jules_nightly_batch()
+
+    async def _jules_nightly_batch(self):
+        """Nightly: klassifiziert Jules-Review-Outcomes fuer Learning-Loop."""
+        gh = getattr(self, "github_integration", None)
+        if not gh or not getattr(gh, "_jules_enabled", False):
+            return
+        try:
+            from integrations.github_integration.jules_batch import run_nightly_batch
+            counts = await run_nightly_batch(
+                jules_state_pool=gh.jules_state._pool,
+                learning_pool=gh.jules_learning._pool,
+            )
+            if hasattr(self, "discord_logger") and self.discord_logger:
+                await self.discord_logger._send_to_channel(
+                    "🧠-ai-learning",
+                    message=(f"🛡️ Jules Nightly: classified={counts['classified']}, "
+                             f"examples={counts['examples_written']}"))
+        except Exception:
+            self.logger.exception("[jules] nightly batch crashed")
+
+    @jules_nightly_batch_task.before_loop
+    async def before_jules_nightly_batch(self):
+        await self.wait_until_ready()
+        self.logger.info("🛡️ Jules Nightly-Batch Task gestartet (taeglich 23:07)")
+
+    # ── Multi-Agent Review (Phase 3) ────────────────────────────────
+
+    @tasks.loop(seconds=60)
+    async def agent_task_queue_scheduler(self):
+        """Released Jules-Sessions aus Queue unter Respektierung 100/24h + 15 concurrent."""
+        try:
+            gh = getattr(self, "github_integration", None)
+            if not gh or not getattr(gh, "_agent_review_enabled", False):
+                return
+            if not gh._agent_review_started:
+                await gh._agent_review_startup()
+            queue = gh.agent_task_queue
+            jules_api = gh.jules_api_client
+            if not queue or not jules_api:
+                return
+
+            concurrent = await jules_api.count_concurrent_sessions()
+            if concurrent >= 15:
+                self.logger.debug(
+                    "[agent-queue] %d concurrent sessions, pausing scheduler",
+                    concurrent,
+                )
+                return
+
+            released_24h = await queue.count_released_last_24h()
+            budget = min(15 - concurrent, 100 - released_24h)
+            if budget <= 0:
+                self.logger.info(
+                    "[agent-queue] 24h-budget erschoepft (released_24h=%d)",
+                    released_24h,
+                )
+                return
+
+            batch = await queue.get_next_batch(limit=budget)
+            for task in batch:
+                try:
+                    sid = await jules_api.create_session(
+                        prompt=task.payload.get("prompt", ""),
+                        owner=task.payload.get("owner", ""),
+                        repo=task.payload.get("repo", ""),
+                        title=task.payload.get("title", ""),
+                        branch=task.payload.get("branch", "main"),
+                    )
+                    await queue.mark_released(task.id, sid)
+                    self.logger.info(
+                        "[agent-queue] task=%d -> Jules-Session %s", task.id, sid,
+                    )
+                except Exception as e:
+                    retryable = "network" in str(e) or "rate_limited" in str(e)
+                    await queue.mark_failed(task.id, str(e)[:200], retry=retryable)
+        except Exception:
+            self.logger.exception("[agent-queue] scheduler crashed (continuing)")
+
+    @agent_task_queue_scheduler.before_loop
+    async def before_agent_task_queue_scheduler(self):
+        await self.wait_until_ready()
+        self.logger.info("🛡️ Agent-Review Queue-Scheduler gestartet (60s Loop)")
+
+    @tasks.loop(hours=8)
+    async def agent_suggestions_poller_task(self):
+        """Pollt Jules Top-Suggestions 3x taeglich (alle 8h)."""
+        try:
+            gh = getattr(self, "github_integration", None)
+            if not gh or not getattr(gh, "_agent_review_enabled", False):
+                return
+            poller = getattr(gh, "suggestions_poller", None)
+            if not poller:
+                return
+            queued = await poller.poll_and_queue()
+            self.logger.info("[agent-suggestions] %d tasks queued", queued)
+        except Exception:
+            self.logger.exception("[agent-suggestions] poll crashed (continuing)")
+
+    @agent_suggestions_poller_task.before_loop
+    async def before_agent_suggestions_poller(self):
+        await self.wait_until_ready()
+        self.logger.info("🛡️ Agent-Review Suggestions-Poller gestartet (alle 8h)")
+
+    @tasks.loop(minutes=60)
+    async def agent_outcome_check_task(self):
+        """Stuendlicher Check: Auto-Merges > 24h auf Revert/CI/Follow-up pruefen.
+
+        Aktuell minimale Implementierung: markiert alle pending Outcomes als
+        checked_at=now() ohne Revert-Detection (die volle Git-Revert-Analyse
+        kommt in einer Folge-Iteration, Design-Doc sieht sie als Phase 4.2
+        plus spaetere Extensions vor).
+        """
+        try:
+            gh = getattr(self, "github_integration", None)
+            if not gh or not getattr(gh, "_agent_review_enabled", False):
+                return
+            tracker = getattr(gh, "outcome_tracker", None)
+            if not tracker:
+                return
+            pending = await tracker.get_pending_outcomes(min_age_hours=24)
+            if not pending:
+                return
+            self.logger.info(
+                "[agent-outcome] %d pending auto-merges to check", len(pending),
+            )
+            for o in pending:
+                try:
+                    reverted = await self._check_pr_reverted(
+                        o.repo, o.pr_number,
+                    )
+                    await tracker.mark_checked(o.id, reverted=reverted)
+                except Exception:
+                    self.logger.exception(
+                        "[agent-outcome] check failed for outcome=%d", o.id,
+                    )
+        except Exception:
+            self.logger.exception("[agent-outcome] task crashed (continuing)")
+
+    async def _check_pr_reverted(self, repo: str, pr_number: int) -> bool:
+        """Prueft via gh api ob der Merge-Commit des PRs revertet wurde.
+
+        Minimal: sucht nach Commits mit Message 'Revert "...PR #{pr_number}"'
+        auf main. Gibt False bei Fehler (konservativ — lieber Healthy
+        annehmen als False-Positives).
+        """
+        import asyncio as _asyncio
+        try:
+            proc = await _asyncio.create_subprocess_exec(
+                "gh", "api", f"repos/{repo}/commits",
+                "-X", "GET", "-f", "per_page=50",
+                stdout=_asyncio.subprocess.PIPE, stderr=_asyncio.subprocess.PIPE,
+            )
+            stdout, _ = await _asyncio.wait_for(proc.communicate(), timeout=20)
+            if proc.returncode != 0:
+                return False
+            import json as _json
+            commits = _json.loads(stdout.decode() or "[]")
+            marker = f"#{pr_number}"
+            for c in commits:
+                msg = (c.get("commit", {}).get("message") or "")
+                if msg.startswith("Revert") and marker in msg:
+                    return True
+            return False
+        except Exception:
+            return False
+
+    @agent_outcome_check_task.before_loop
+    async def before_agent_outcome_check(self):
+        await self.wait_until_ready()
+        self.logger.info("🛡️ Agent-Review Outcome-Check gestartet (stuendlich)")
+
+    @tasks.loop(time=time(hour=8, minute=15))
+    async def agent_daily_digest_task(self):
+        """Taeglicher Digest-Post in 🧠-ai-learning um 08:15."""
+        try:
+            gh = getattr(self, "github_integration", None)
+            if not gh or not getattr(gh, "_agent_review_enabled", False):
+                return
+            queue = getattr(gh, "agent_task_queue", None)
+            tracker = getattr(gh, "outcome_tracker", None)
+            if not queue or not tracker:
+                return
+            pool = gh.jules_state._pool if getattr(gh, "jules_state", None) else None
+
+            from integrations.github_integration.agent_review.daily_digest import (
+                collect_digest_data, render_digest,
+            )
+            data = await collect_digest_data(
+                jules_state_pool=pool, task_queue=queue, outcome_tracker=tracker,
+            )
+            body = render_digest(data)
+
+            if hasattr(self, "discord_logger") and self.discord_logger:
+                await self.discord_logger._send_to_channel(
+                    "🧠-ai-learning", message=body,
+                )
+                self.logger.info("[agent-digest] posted")
+        except Exception:
+            self.logger.exception("[agent-digest] task crashed (continuing)")
+
+    @agent_daily_digest_task.before_loop
+    async def before_agent_daily_digest(self):
+        await self.wait_until_ready()
+        self.logger.info("🛡️ Agent-Review Daily-Digest gestartet (taeglich 08:15)")
+
+    @tasks.loop(time=time(hour=18, minute=0))
+    async def agent_weekly_recap_task(self):
+        """Weekly-Recap Freitags 18:00. Fires an allen Wochentagen, skippt
+        intern wenn nicht Freitag (discord.py @tasks.loop(time=...) hat kein
+        Weekday-Filter)."""
+        if datetime.now().weekday() != 4:  # 4 = Freitag
+            return
+        try:
+            gh = getattr(self, "github_integration", None)
+            if not gh or not getattr(gh, "_agent_review_enabled", False):
+                return
+            pool = gh.jules_state._pool if getattr(gh, "jules_state", None) else None
+            if pool is None:
+                self.logger.debug("[agent-weekly] jules_state pool not ready — skip")
+                return
+
+            from integrations.github_integration.agent_review.weekly_recap import (
+                collect_weekly_recap_data, render_weekly_embed,
+            )
+            data = await collect_weekly_recap_data(pool)
+            embed = render_weekly_embed(data)
+
+            if hasattr(self, "discord_logger") and self.discord_logger:
+                await self.discord_logger._send_to_channel(
+                    "🧠-ai-learning", message="", embed=embed,
+                )
+                self.logger.info(
+                    "[agent-weekly] posted (warnings=%d, sessions_24h=%d)",
+                    data.warnings, data.jules_sessions_24h,
+                )
+        except Exception:
+            self.logger.exception("[agent-weekly] task crashed (continuing)")
+
+    @agent_weekly_recap_task.before_loop
+    async def before_agent_weekly_recap(self):
+        await self.wait_until_ready()
+        self.logger.info("🛡️ Agent-Review Weekly-Recap gestartet (Freitags 18:00)")
 
     @tasks.loop(minutes=5)
     async def update_dashboard(self):
@@ -1905,6 +2312,14 @@ def main():
         # damit bot.close() die HTTP-Server-Sockets sauber freigibt.
         bot = ShadowOpsBot()
         bot.run(config.discord_token, log_handler=None)
+        # Hard-Exit Safety-Net: falls verwaiste Threads/Subprocesses den
+        # Event-Loop hindern sauber zu terminieren, erzwingt os._exit die
+        # sofortige Beendigung. close() hat bereits alle Komponenten und
+        # Child-Prozesse beendet — os._exit ist nur der finale Fallback.
+        # NICHT in Tests ausfuehren — pytest wuerde sonst abgewuergt.
+        import os as _os
+        if _os.getenv("PYTEST_CURRENT_TEST") is None:
+            _os._exit(0)
         return 0
 
     except FileNotFoundError as e:
