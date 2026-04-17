@@ -39,6 +39,7 @@ from .learning_bridge import LearningBridge
 from .fixer_adapters import (
     Fail2banFixerAdapter, TrivyFixerAdapter,
     CrowdSecFixerAdapter, AideFixerAdapter,
+    WalGFixerAdapter,
 )
 
 logger = logging.getLogger('shadowops.security_engine')
@@ -209,7 +210,8 @@ class SecurityEngine:
         logger.info(f"Fixer registriert: {source}/{phase_type.value if phase_type else '*'} -> {type(provider).__name__}")
 
     def register_existing_fixers(self, fail2ban_fixer=None, trivy_fixer=None,
-                                  crowdsec_fixer=None, aide_fixer=None):
+                                  crowdsec_fixer=None, aide_fixer=None,
+                                  walg_fixer=None):
         """Registriert bestehende Fixer als FixProvider-Adapter"""
         if fail2ban_fixer:
             adapter = Fail2banFixerAdapter(fail2ban_fixer)
@@ -230,6 +232,12 @@ class SecurityEngine:
             adapter = AideFixerAdapter(aide_fixer)
             self.registry.register('aide', None, adapter)
             logger.info("AIDE-Fixer registriert")
+
+        if walg_fixer:
+            adapter = WalGFixerAdapter(walg_fixer)
+            self.registry.register('walg', None, adapter)
+            self.registry.register('wal-g', None, adapter)
+            logger.info("WAL-G-Fixer registriert")
 
     # ── Event-Handler ───────────────────────────────────────────────
 
