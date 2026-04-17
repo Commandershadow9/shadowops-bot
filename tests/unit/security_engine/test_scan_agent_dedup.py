@@ -17,6 +17,9 @@ async def test_fingerprint_based_dedup_catches_semantic_dupes():
     Zwei Findings mit anderem Titel aber gleichem (category, project, files)
     muessen als Duplikat erkannt werden — Fingerprint-Lookup liefert die
     existierende Finding-ID zurueck.
+
+    Return ist (fp, row_or_None) — der Fingerprint wird ausserhalb fuer das
+    INSERT wiederverwendet, damit Lookup-FP und INSERT-FP nicht divergieren.
     """
     agent = SecurityScanAgent.__new__(SecurityScanAgent)
     agent.db = MagicMock()
@@ -28,7 +31,7 @@ async def test_fingerprint_based_dedup_catches_semantic_dupes():
         "finding_fingerprint": "deadbeef",
     })
 
-    result = await agent._find_similar_open_finding_by_fingerprint(
+    fp, result = await agent._find_similar_open_finding_by_fingerprint(
         category="dependencies",
         affected_project="infrastructure",
         affected_files=["Dockerfile"],
@@ -36,23 +39,28 @@ async def test_fingerprint_based_dedup_catches_semantic_dupes():
     )
     assert result is not None
     assert result["id"] == 123
+    # Fingerprint ist SHA1 hex -> 40 Zeichen
+    assert isinstance(fp, str)
+    assert len(fp) == 40
 
 
 @pytest.mark.asyncio
 async def test_fingerprint_dedup_returns_none_when_no_match():
-    """Kein Fingerprint-Treffer -> None (kein Fallback auf Titel-Match)."""
+    """Kein Fingerprint-Treffer -> (fp, None). Kein Fallback auf Titel-Match."""
     agent = SecurityScanAgent.__new__(SecurityScanAgent)
     agent.db = MagicMock()
     agent.db.pool = MagicMock()
     agent.db.pool.fetchrow = AsyncMock(return_value=None)
 
-    result = await agent._find_similar_open_finding_by_fingerprint(
+    fp, result = await agent._find_similar_open_finding_by_fingerprint(
         category="x",
         affected_project="y",
         affected_files=[],
         title="z",
     )
     assert result is None
+    assert isinstance(fp, str)
+    assert len(fp) == 40
 
 
 @pytest.mark.asyncio
@@ -60,13 +68,14 @@ async def test_fingerprint_dedup_uses_compute_finding_fingerprint():
     """
     Die Methode MUSS compute_finding_fingerprint nutzen, damit identische
     Findings denselben FP berechnen wie beim INSERT (sonst kein Match).
+    Der zurueckgegebene fp MUSS exakt dem DB-Query-Parameter entsprechen.
     """
     agent = SecurityScanAgent.__new__(SecurityScanAgent)
     agent.db = MagicMock()
     agent.db.pool = MagicMock()
     agent.db.pool.fetchrow = AsyncMock(return_value=None)
 
-    await agent._find_similar_open_finding_by_fingerprint(
+    fp, _ = await agent._find_similar_open_finding_by_fingerprint(
         category="dependencies",
         affected_project="infrastructure",
         affected_files=["Dockerfile"],
@@ -83,3 +92,5 @@ async def test_fingerprint_dedup_uses_compute_finding_fingerprint():
     # Fingerprint ist SHA1 hex -> 40 Zeichen
     assert isinstance(fp_param, str)
     assert len(fp_param) == 40
+    # Rueckgabe-fp MUSS exakt dem DB-Query-Parameter entsprechen (DRY: kein Re-Compute)
+    assert fp == fp_param

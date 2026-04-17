@@ -26,6 +26,7 @@ import time
 from datetime import datetime, timezone, date, timedelta
 from typing import Dict, List, Optional
 
+import asyncpg
 import discord
 
 from .activity_monitor import ActivityMonitor
@@ -1099,7 +1100,7 @@ class SecurityScanAgent:
                     finding.get('affected_project', ''))
 
                 title = finding.get('title', 'Unbenannt')
-                existing = await self._find_similar_open_finding_by_fingerprint(
+                fp, existing = await self._find_similar_open_finding_by_fingerprint(
                     category=finding.get('category', 'unknown'),
                     affected_project=finding.get('affected_project', '') or '',
                     affected_files=list(finding.get('affected_files') or []),
@@ -1120,8 +1121,10 @@ class SecurityScanAgent:
                                 new_title=title,
                                 project=finding.get('affected_project'),
                             )
-                        except Exception as e:
-                            logger.debug("[scan-agent] record_dedup_decision fehlgeschlagen: %s", e)
+                        except (asyncpg.PostgresError, ConnectionError, asyncio.TimeoutError) as e:
+                            logger.warning(
+                                "LearningBridge dedup-feedback fehlgeschlagen: %s", e,
+                            )
                     continue
 
                 fix_type = finding.get('fix_type', 'info_only')
@@ -1147,12 +1150,8 @@ class SecurityScanAgent:
                         if github_issue_url:
                             issues_created += 1
 
-                fp = compute_finding_fingerprint(
-                    finding.get('category', 'unknown'),
-                    finding.get('affected_project', '') or '',
-                    list(finding.get('affected_files') or []),
-                    title,
-                )
+                # fp wurde oben beim Dedup-Lookup bereits berechnet — hier wiederverwenden,
+                # damit Lookup-FP und INSERT-FP garantiert identisch sind (DRY-Contract).
                 await self.db.pool.execute("""
                     INSERT INTO findings (severity, category, title, description, session_id,
                         affected_project, affected_files, fix_type, github_issue_url,
@@ -1418,6 +1417,9 @@ class SecurityScanAgent:
         """)
         return dict(row) if row else None
 
+    # DEPRECATED: Titel-basierte Dedup. Ersetzt durch _find_similar_open_finding_by_fingerprint.
+    # Keine aktiven Caller mehr (siehe Scan-Agent Dedup Plan Task 0.3).
+    # Loeschung in Folge-Plan nach 7 Tagen Fingerprint-Stabilitaet.
     async def _find_similar_open_finding(self, title: str) -> Optional[Dict]:
         row = await self.db.pool.fetchrow(
             "SELECT id, title, github_issue_url FROM findings WHERE status='open' AND LOWER(title)=LOWER($1)",
@@ -1440,14 +1442,17 @@ class SecurityScanAgent:
         affected_project: str,
         affected_files,
         title: str,
-    ) -> Optional[Dict]:
+    ) -> tuple[str, Optional[Dict]]:
         """
-        Fingerprint-basierte Dedup. Ersetzt die alte Titel-Methode.
+        Fingerprint-basierte Dedup. Returns (fingerprint, matching_row_or_None).
 
         Findet ein existierendes offenes Finding mit identischem (category,
         project, normalisierte Files, Signatur-Keywords) Fingerprint. Zwei
         Findings mit gleichem Fingerprint sind semantisch dasselbe Problem —
         auch bei unterschiedlichem Wording.
+
+        Der berechnete Fingerprint wird ausserhalb fuer das INSERT wiederverwendet,
+        damit Lookup-FP und INSERT-FP nicht divergieren koennen (DRY-Contract).
         """
         fp = compute_finding_fingerprint(category, affected_project, affected_files, title)
         row = await self.db.pool.fetchrow(
@@ -1455,7 +1460,7 @@ class SecurityScanAgent:
             "WHERE status='open' AND finding_fingerprint=$1 LIMIT 1",
             fp,
         )
-        return dict(row) if row else None
+        return fp, (dict(row) if row else None)
 
     async def _get_open_findings_summary(self) -> List[Dict]:
         rows = await self.db.pool.fetch("""
@@ -2026,11 +2031,11 @@ von der ShadowOps Review-Pipeline reviewt — halte den Scope eng."""
                 return None
 
         repo = self._resolve_repo(ap)
-        existing = await self._find_similar_open_finding_by_fingerprint(
+        fp, existing = await self._find_similar_open_finding_by_fingerprint(
             category=finding.get('category', 'unknown'),
             affected_project=finding.get('affected_project', '') or '',
             affected_files=list(finding.get('affected_files') or []),
-            title=finding.get('title', ''),
+            title=finding.get('title', 'Unbenannt'),
         )
         if existing:
             return existing.get('github_issue_url') or None
