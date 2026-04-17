@@ -41,7 +41,7 @@ class KnowledgeBase:
             dsn: PostgreSQL DSN-String für psycopg2.connect(). Wird aus Config/Env geladen wenn None.
         """
         if dsn is None:
-            from src.utils.config import get_config
+            from utils.config import get_config
             dsn = get_config().security_analyst_dsn
             if not dsn:
                 raise RuntimeError("security_analyst DSN nicht konfiguriert (SECURITY_ANALYST_DB_URL oder config.yaml)")

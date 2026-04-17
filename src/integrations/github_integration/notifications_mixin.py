@@ -39,8 +39,60 @@ class NotificationsMixin:
         if not project_config:
             project_config = self.config.projects.get(repo_name, {})
 
-        project_color = project_config.get('color', 0x3498DB)  # Default blue
+        # ── v6 Pipeline Dispatch ──────────────────────────────────
+        # Push-Webhooks dürfen NICHT direkt einen Release auslösen, sonst
+        # entsteht pro Commit eine Mini-Version (Spam). Stattdessen sammelt
+        # der Batcher alle Commits, und der Release passiert via
+        # Daily/Weekly-Cron, /release-notes oder Notbremse (≥20 + Cooldown).
         patch_config = project_config.get('patch_notes', {})
+        if patch_config.get('engine') == 'v6':
+            try:
+                from pathlib import Path
+                from patch_notes.pipeline import PatchNotePipeline
+                from patch_notes.context import PipelineContext
+
+                commits_for_pipeline = commits
+                trigger = 'manual' if skip_batcher else 'webhook'
+
+                # Batcher-Gate: bei Webhook NIE direkt releasen — alles sammeln.
+                # Release nur via Daily/Weekly-Cron oder manuell (/release-notes).
+                # Egal wie viele Commits anfallen: lieber ein großer Mega-Release
+                # mit Hype, als 50 Mini-Versionen mit je 1 Commit.
+                if not skip_batcher:
+                    batcher = getattr(self, 'patch_notes_batcher', None) or \
+                              getattr(self.bot, 'patch_notes_batcher', None)
+                    if batcher is None:
+                        self.logger.warning(
+                            f"⚠️ [v6] {repo_name}: PatchNotesBatcher nicht verfügbar — "
+                            f"Push wird nicht in Discord released (fail-closed gegen Spam)."
+                        )
+                        return
+
+                    result = batcher.add_commits(repo_name, commits)
+                    pending_total = result.get('total_pending', len(commits))
+                    self.logger.info(
+                        f"📦 [v6] {repo_name}: {pending_total} Commits gesammelt — "
+                        f"Release wartet auf Cron / /release-notes."
+                    )
+                    return
+
+                ctx = PipelineContext(
+                    project=repo_name,
+                    project_config=project_config,
+                    raw_commits=commits_for_pipeline,
+                    trigger=trigger,
+                )
+                data_dir = Path(__file__).resolve().parent.parent.parent.parent / 'data'
+                pipeline = PatchNotePipeline(data_dir=data_dir, bot=self.bot)
+                await pipeline.run(ctx)
+                self.logger.info(f"[v6] {repo_name} v{ctx.version} — Pipeline erfolgreich")
+                return
+            except Exception as e:
+                self.logger.error(f"[v6] Pipeline-Fehler für {repo_name}, Fallback auf v5: {e}")
+                # Fallback auf v5 bei Fehler
+        # ── Ende v6 Dispatch ──────────────────────────────────────
+
+        project_color = project_config.get('color', 0x3498DB)  # Default blue
         language = patch_config.get('language', 'de')
 
         # === GLOBALER SAFETY-CHECK: Mindestens N Commits für Patch Notes ===
@@ -512,6 +564,21 @@ class NotificationsMixin:
             self.logger.debug(f"Git-Tag-Suche fehlgeschlagen: {e}")
             return None
 
+    def _strip_version_from_title(self, title: str) -> str:
+        """Entferne JEDE SemVer-Version aus einem Titel (generisch).
+
+        Fängt AI-erfundene Versionen ab, egal ob sie mit der berechneten
+        Version übereinstimmen oder nicht. Beispiele:
+          "v0.21.0 - Content Update"  → "Content Update"
+          "v1.2.3: Neues Feature"     → "Neues Feature"
+          "Content Update"            → "Content Update" (unverändert)
+        """
+        title = re.sub(
+            r'(?:GuildScout|ZERODOX|ShadowOps|mayday_sim)?\s*v?\d+\.\d+\.\d+[:\s\u2014-]*',
+            '', title, flags=re.IGNORECASE
+        ).strip(' :\u2014-')
+        return title if title else 'Update'
+
     def _resolve_title(self, ai_result, version: str) -> str:
         """Titel aus AI oder Fallback. Doppelte Version entfernen."""
         title = 'Update'
@@ -523,14 +590,8 @@ class NotificationsMixin:
             if first and len(first) < 100 and not first.startswith('**'):
                 title = first
 
-        # Version aus Titel entfernen (Dopplung vermeiden)
-        if version:
-            title = re.sub(
-                rf'(?:GuildScout|ZERODOX|ShadowOps)?\s*v?{re.escape(version)}[:\s\u2014-]*',
-                '', title, flags=re.IGNORECASE
-            ).strip(' :\u2014-')
-        if not title:
-            title = 'Update'
+        # Version aus Titel entfernen (generisch — fängt auch AI-erfundene Versionen)
+        title = self._strip_version_from_title(title)
         return title
 
     def _build_discord_summary(self, ai_result, commits: list, language: str,
@@ -930,6 +991,9 @@ class NotificationsMixin:
         """Extrahiere Titel, TL;DR, Content, Changes, SEO aus jedem AI-Ergebnis."""
         if isinstance(ai_result, dict):
             title = ai_result.get('title', f'{repo_name} Update')
+            # AI-erfundene Version aus Titel entfernen — die korrekte Version
+            # wird separat gespeichert und vom Template eingefügt
+            title = self._strip_version_from_title(title)
             tldr = ai_result.get('tldr', '')
             content = ai_result.get('web_content', ai_result.get('summary', ''))
             changes = ai_result.get('changes', [])

@@ -42,7 +42,7 @@
         "reason":        { "type": "string", "maxLength": 1000 },
         "file":          { "type": "string", "maxLength": 300 },
         "line":          { "type": ["integer", "null"] },
-        "severity":      { "type": "string", "enum": ["critical", "high", "medium"] },
+        "severity":      { "type": "string", "enum": ["critical", "high", "medium", "low"] },
         "suggested_fix": { "type": "string", "maxLength": 1000 }
       }
     }

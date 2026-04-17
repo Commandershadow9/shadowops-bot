@@ -1,3 +1,10 @@
+---
+title: ADR-005: SIGUSR1-basierte Log-Rotation
+status: accepted
+last_reviewed: 2026-04-15
+owner: CommanderShadow9
+---
+
 # ADR-005: SIGUSR1-basierte Log-Rotation
 
 **Status:** Accepted

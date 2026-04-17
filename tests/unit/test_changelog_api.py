@@ -183,11 +183,30 @@ async def test_post_validates_required_fields(client):
 
 
 @pytest.mark.asyncio
-async def test_cors_headers(client):
-    """API-Responses enthalten CORS-Header."""
-    resp = await client.get('/api/changelogs?project=zerodox')
+async def test_cors_headers_allowed_origin(client):
+    """API echoed den Origin zurueck wenn er in CORS_ALLOWED_ORIGINS ist.
+
+    Seit 2026-03-30 nutzt health_server.py eine Origin-Allowlist statt '*'
+    (Defense-in-Depth — siehe CORS_ALLOWED_ORIGINS in health_server.py).
+    """
+    resp = await client.get(
+        '/api/changelogs?project=zerodox',
+        headers={'Origin': 'https://zerodox.de'},
+    )
     assert resp.status == 200
-    assert resp.headers.get('Access-Control-Allow-Origin') == '*'
+    assert resp.headers.get('Access-Control-Allow-Origin') == 'https://zerodox.de'
+
+
+@pytest.mark.asyncio
+async def test_cors_headers_unknown_origin(client):
+    """Unbekannter Origin bekommt keinen CORS-Header (Allowlist greift)."""
+    resp = await client.get(
+        '/api/changelogs?project=zerodox',
+        headers={'Origin': 'https://evil.example.com'},
+    )
+    assert resp.status == 200
+    # Unbekannter Origin -> kein Allow-Origin-Header
+    assert resp.headers.get('Access-Control-Allow-Origin') is None
 
 
 @pytest.mark.asyncio

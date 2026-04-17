@@ -41,10 +41,16 @@ class JulesReviewRow:
     updated_at: datetime
     closed_at: Optional[datetime]
     human_override: bool
+    # Multi-Agent Review Pipeline (seit 2026-04-14, Phase 0):
+    # additive Spalte mit Default 'jules' — erlaubt SEO/Codex-Adapter-Tracking
+    agent_type: str = "jules"
 
     @classmethod
     def from_record(cls, rec: asyncpg.Record) -> "JulesReviewRow":
-        return cls(**dict(rec))
+        # Tolerant gegenueber zukuenftigen Schema-Erweiterungen:
+        # filtere nur Keys die im Dataclass existieren (keine Crash bei neuen Spalten)
+        fields = {f.name for f in cls.__dataclass_fields__.values()}
+        return cls(**{k: v for k, v in dict(rec).items() if k in fields})
 
 
 class JulesState:

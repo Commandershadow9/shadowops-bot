@@ -100,7 +100,7 @@ zerodox-web (3000 intern), zerodox-db (5434)
 
 - Port 8766 (Health) auf 0.0.0.0 — KORREKT (UFW: nur Docker 172.16.0.0/12)
 - Port 9090 (GitHub Webhook) auf 0.0.0.0 — GEWOLLT (Traefik)
-- Port 9091 (Alerts) auf 127.0.0.1 — KORREKT
+- Port 9091 (Alerts) auf 0.0.0.0 — KORREKT (UFW: nur Docker 172.16.0.0/12, wie 8766)
 - Docker-Container erreichen Host ueber 172.17.0.1 (Docker-Bridge)
 
 ## Ausgabe-Schema
