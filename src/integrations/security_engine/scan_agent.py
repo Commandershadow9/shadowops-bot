@@ -1462,6 +1462,29 @@ class SecurityScanAgent:
         )
         return fp, (dict(row) if row else None)
 
+    async def _was_fix_attempted_recently(
+        self, fingerprint: str, fix_type: str, cooldown_hours: int = 24
+    ) -> bool:
+        """True wenn in den letzten N Stunden bereits ein Fix-Versuch mit identischer
+        (fingerprint, fix_type) Kombination lief — egal ob erfolgreich oder nicht.
+
+        Idempotenz-Barriere gegen Fix-Wiederholung: Die DB filtert bereits via
+        created_at-Interval, die Python-Seite prueft zusaetzlich das Alter, um
+        auch bei Clock-Skew oder Mock-Tests korrekt zu blocken/passen.
+        """
+        if not fingerprint or not fix_type:
+            return False
+        last_attempt = await self.db.pool.fetchval("""
+            SELECT MAX(created_at) FROM fix_attempts_v2
+            WHERE event_signature=$1 AND approach=$2
+              AND created_at > NOW() - ($3 || ' hours')::interval
+        """, fingerprint, fix_type, str(cooldown_hours))
+        if last_attempt is None:
+            return False
+        if last_attempt.tzinfo is None:
+            last_attempt = last_attempt.replace(tzinfo=timezone.utc)
+        return (datetime.now(timezone.utc) - last_attempt) < timedelta(hours=cooldown_hours)
+
     async def _get_open_findings_summary(self) -> List[Dict]:
         rows = await self.db.pool.fetch("""
             SELECT f.id, f.severity, f.title, f.category FROM findings f
