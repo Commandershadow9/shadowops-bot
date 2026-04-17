@@ -415,7 +415,7 @@ github:
   enabled: false
   webhook_secret: "your_webhook_secret"
   webhook_port: 8080
-  auto_deploy: true
+  auto_deploy: false
   deploy_branches: [main, master]
 
 deployment:

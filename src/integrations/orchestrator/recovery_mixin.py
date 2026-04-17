@@ -498,6 +498,34 @@ class RecoveryMixin:
                 # Es gibt Änderungen — committen und pushen
                 logger.info(f"Uncommittete Aenderungen fuer {project_name} — committe...")
 
+                # SECURITY: Check for protected branches. NEVER push directly to main/master.
+                # Use a PR-based workflow instead for auditability and safety.
+                branch_proc = await asyncio.create_subprocess_exec(
+                    "git", "rev-parse", "--abbrev-ref", "HEAD",
+                    cwd=project_path,
+                    stdout=asyncio.subprocess.PIPE,
+                    stderr=asyncio.subprocess.PIPE,
+                )
+                branch_out, _ = await branch_proc.communicate()
+                current_branch = branch_out.decode().strip()
+
+                fix_branch = None
+                if current_branch in ('main', 'master'):
+                    logger.warning(f"⚠️ Working on protected branch {current_branch}. Creating fix branch...")
+                    from datetime import datetime, timezone
+                    fix_branch = f"fix/security-auto-{datetime.now(timezone.utc).strftime('%Y%m%d-%H%M%S')}"
+                    checkout_proc = await asyncio.create_subprocess_exec(
+                        "git", "checkout", "-b", fix_branch,
+                        cwd=project_path,
+                        stdout=asyncio.subprocess.PIPE,
+                        stderr=asyncio.subprocess.PIPE,
+                    )
+                    _, checkout_err = await checkout_proc.communicate()
+                    if checkout_proc.returncode != 0:
+                        logger.error(f"❌ Branch creation failed: {checkout_err.decode()[:200]}")
+                        return False
+
+                # Jetzt erst committen (auf dem neuen Branch falls gewechselt)
                 add_proc = await asyncio.create_subprocess_exec(
                     "git", "add", "-A",
                     cwd=project_path,
@@ -519,8 +547,13 @@ class RecoveryMixin:
                 )
                 await commit_proc.communicate()
 
+                if fix_branch:
+                    push_cmd = ["git", "push", "-u", "origin", fix_branch]
+                else:
+                    push_cmd = ["git", "push"]
+
                 push_proc = await asyncio.create_subprocess_exec(
-                    "git", "push",
+                    *push_cmd,
                     cwd=project_path,
                     stdout=asyncio.subprocess.PIPE,
                     stderr=asyncio.subprocess.PIPE,
@@ -530,6 +563,8 @@ class RecoveryMixin:
                 )
                 if push_proc.returncode == 0:
                     logger.info(f"Security-Fix committed und gepusht fuer {project_name}")
+                    if fix_branch:
+                        logger.info(f"🚀 Fix pushed to branch: {fix_branch}. Please open a PR.")
                 else:
                     logger.warning(f"git push fehlgeschlagen: {push_err.decode()[:200]}")
 

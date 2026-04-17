@@ -72,12 +72,13 @@ class EventHandlersMixin:
                 except Exception as e:
                     self.logger.debug(f"Push Security Review Fehler: {e}")
 
-            # Auto-deploy if enabled and on a deployment branch
-            # Assuming 'head_commit' is present if there are commits
-            commit_sha = payload.get('head_commit', {}).get('id', 'unknown')[:7]
+            # Auto-deploy on direct push is ARCHITECTURALLY DISABLED for security (PR review gate enforcement).
+            # This setting only triggers deployments via Pull Request merges (handle_pr_event).
             if self.auto_deploy_enabled and branch in self.deploy_branches:
-                self.logger.info(f"🚀 Triggering auto-deploy for {repo_name}/{branch}")
-                await self._trigger_deployment(repo_name, branch, commit_sha)
+                self.logger.warning(
+                    f"⚠️ Auto-deploy for direct push to {branch} skipped. "
+                    f"Deployment is restricted to PR merges to enforce human review."
+                )
 
         except Exception as e:
             self.logger.error(f"❌ Error handling push event: {e}", exc_info=True)

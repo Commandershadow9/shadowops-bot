@@ -402,7 +402,7 @@ github:
   enabled: true
   webhook_secret: "YOUR_GENERATED_SECRET_HERE"
   webhook_port: 8080
-  auto_deploy: true
+  auto_deploy: false
   deploy_branches:
     - main
     - master
