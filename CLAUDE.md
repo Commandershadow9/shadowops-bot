@@ -7,7 +7,7 @@
 - **Data:** PostgreSQL (Knowledge + Findings, konsolidiert), SQLite (Changelog DB), JSON State Files
 - **Deploy:** systemd (system-level), logrotate
 - **Patch Notes:** Pipeline v6 (State Machine, seit 2026-04-13)
-- **Version:** v5.1.0
+- **Version:** v5.2.0 (2026-04-17: Fingerprint-Dedup + Token-Tracking, Issue #149 traegt Phase 2+3)
 
 ## Services & Ports
 | Service | Port | Bind | Zweck |
@@ -40,7 +40,7 @@
 | Datei | Cog | Commands |
 |-------|-----|----------|
 | `monitoring.py` | MonitoringCog | `/status`, `/bans`, `/threats`, `/docker`, `/aide` |
-| `admin.py` | AdminCog | `/scan`, `/stop-all-fixes`, `/remediation-stats`, `/set-approval-mode`, `/reload-context`, `/release-notes`, `/pending-notes` |
+| `admin.py` | AdminCog | `/scan`, `/stop-all-fixes`, `/remediation-stats`, `/set-approval-mode`, `/reload-context`, `/release-notes`, `/pending-notes`, `/mark-duplicate` |
 | `inspector.py` | InspectorCog | `/get-ai-stats`, `/agent-stats`, `/projekt-status`, `/alle-projekte` |
 | `customer_setup_commands.py` | CustomerSetupCommands | `/setup-customer-server` |
 
@@ -143,7 +143,9 @@ Eigenstaendiges Package mit 5-Stufen State Machine. Ersetzt die alten Mixins (`a
 | `fixers/` | Tool-spezifische Fixer (trivy, crowdsec, fail2ban, aide) |
 | `ai_learning/` | Legacy AI Learning (DEAKTIVIERT — knowledge_db, knowledge_synthesizer, continuous_learning_agent) |
 | `analyst/` | Legacy Security Analyst (DEAKTIVIERT — ersetzt durch SecurityScanAgent in `security_engine/`) |
-| `security_engine/` | Unified Security Engine v6 (engine, db, executor, reactive, deep_scan, proactive, learning_bridge, providers, registry, circuit_breaker, fixer_adapters, models, scan_agent, prompts, activity_monitor) |
+| `security_engine/` | Unified Security Engine v6 (engine, db, executor, reactive, deep_scan, proactive, learning_bridge, providers, registry, circuit_breaker, fixer_adapters, models, scan_agent, prompts, activity_monitor, **fingerprint** seit 2026-04-17) |
+| `security_engine/fingerprint.py` | Deterministische SHA1-Finding-Fingerprints fuer Dedup (ersetzt Titel-Match). Umlaut-safe, Order-Independence, Pure-Funktion |
+| `security_engine/migrations/` | DB-Schema-Migrations (001_finding_fingerprint.sql) — einmalige Changes am security_analyst-Schema |
 
 ### Utils (`src/utils/`)
 | Datei | Zweck |
