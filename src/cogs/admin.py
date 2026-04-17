@@ -364,6 +364,63 @@ class AdminCog(commands.Cog):
         embed.set_footer(text="Release mit /release-notes <projekt>")
         await interaction.response.send_message(embed=embed)
 
+    @app_commands.command(
+        name="mark-duplicate",
+        description="Markiert ein Finding als Duplikat eines anderen (Learning-Feedback)",
+    )
+    @app_commands.describe(
+        parent_id="ID des beibehaltenen Findings",
+        child_id="ID des Findings, das als Duplikat markiert wird",
+    )
+    async def mark_duplicate(
+        self, interaction: discord.Interaction, parent_id: int, child_id: int
+    ):
+        """Slash Command: /mark-duplicate — markiert child als Duplikat von parent."""
+        if parent_id == child_id:
+            await interaction.response.send_message(
+                "parent_id und child_id muessen unterschiedlich sein.", ephemeral=True
+            )
+            return
+
+        engine = getattr(self.bot, "security_engine", None)
+        if not engine or not getattr(engine, "scan_agent", None):
+            await interaction.response.send_message(
+                "Security-Engine nicht verfuegbar.", ephemeral=True
+            )
+            return
+
+        agent = engine.scan_agent
+        child = await agent.db.pool.fetchrow(
+            "SELECT id, title, status, affected_project FROM findings WHERE id=$1",
+            child_id,
+        )
+        if not child:
+            await interaction.response.send_message(
+                f"Finding #{child_id} nicht gefunden.", ephemeral=True
+            )
+            return
+
+        await agent.db.pool.execute(
+            "UPDATE findings SET status='duplicate_of', fixed_at=NOW() WHERE id=$1",
+            child_id,
+        )
+
+        lb = getattr(agent, "learning_bridge", None)
+        if lb and getattr(lb, "is_connected", False):
+            await lb.record_manual_merge(
+                parent_id=parent_id,
+                child_id=child_id,
+                user_id=interaction.user.id,
+                user_name=interaction.user.name,
+                project=child["affected_project"],
+            )
+
+        await interaction.response.send_message(
+            f"Finding #{child_id} als Duplikat von #{parent_id} markiert. "
+            f"Learning-Feedback gespeichert.",
+            ephemeral=True,
+        )
+
 
 async def setup(bot):
     await bot.add_cog(AdminCog(bot))
