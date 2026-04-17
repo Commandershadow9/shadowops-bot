@@ -33,6 +33,11 @@ class TestExtractSignatureKeywords:
         text = "imagemagick debian ubuntu redhat alpine container docker"
         assert len(extract_signature_keywords(text)) == 3
 
+    def test_extracts_german_umlauts(self):
+        kws = extract_signature_keywords("Prüfsumme für Übergabe fehlt")
+        assert "prüfsumme" in kws
+        assert "übergabe" in kws
+
 
 class TestComputeFingerprint:
     def test_same_category_project_files_same_fingerprint(self):
@@ -68,4 +73,24 @@ class TestComputeFingerprint:
     def test_order_independent_files(self):
         fp1 = compute_finding_fingerprint("c", "p", ["a.py", "b.py"], "t imagemagick")
         fp2 = compute_finding_fingerprint("c", "p", ["b.py", "a.py"], "t imagemagick")
+        assert fp1 == fp2
+
+    def test_order_independent_title_keywords(self):
+        fp1 = compute_finding_fingerprint("c", "p", [], "imagemagick debian")
+        fp2 = compute_finding_fingerprint("c", "p", [], "debian imagemagick")
+        assert fp1 == fp2
+
+    def test_umlaut_title_same_fingerprint(self):
+        # Kern-Check: mit Umlaut-Support im Regex produzieren semantisch gleiche
+        # Titel identische Keywords ("prüfsumme", "größe") und damit identische
+        # Fingerprints. Ohne Umlaut-Support wuerden beide auf Artefakt-Tokens
+        # ("fsumme", "e") reduziert, was zu zufaelligen False-Matches fuehrt.
+        fp1 = compute_finding_fingerprint(
+            "config", "zerodox", ["prisma/schema.prisma"],
+            "Prüfsumme über Größe der Datei"
+        )
+        fp2 = compute_finding_fingerprint(
+            "config", "zerodox", ["prisma/schema.prisma"],
+            "Größe und Prüfsumme der Datei"
+        )
         assert fp1 == fp2

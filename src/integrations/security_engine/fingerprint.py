@@ -12,19 +12,22 @@ from typing import Optional, Sequence
 # Stopwords fuer Signature-Extraktion (DE + EN, alles lowercase)
 _STOPWORDS = frozenset({
     "die", "der", "das", "und", "oder", "aber", "nicht", "ist", "sind",
-    "den", "dem", "des", "auf", "mit", "fuer", "von", "bei", "zu", "aus",
+    "den", "dem", "des", "auf", "mit", "fuer", "von", "bei", "zu", "aus", "über",
     "als", "auch", "eine", "einer", "eines", "einem", "einen", "ein",
     "the", "and", "but", "not", "for", "with", "from", "that", "this",
     "aktuelle", "neue", "alte", "aktuell", "neu",
-    "optimal", "nicht", "situation", "problem",
+    "optimal", "situation", "problem",
     "security", "update", "updates", "fix", "fixes",
     "auszusetzen", "aussetzen", "einspielen", "nachziehen",
-    "host", "server", "service",
+    "host",
 })
 
-# Technische Signature-Keywords: Laenge >= 4, kein Stopword, alphanumerisch
-# Bindestriche trennen Tokens (debian-host -> debian, host) damit "debian" matcht
-_KEYWORD_RE = re.compile(r"[a-zA-Z][a-zA-Z0-9_]{3,}")
+# Technische Signature-Keywords: Laenge >= 4, kein Stopword, alphanumerisch.
+# Bindestriche trennen Tokens (debian-host -> debian, host) damit "debian" matcht.
+# Deutsche Umlaute + ß werden als Wortzeichen behandelt — sonst wuerde "Prüfsumme"
+# mitten im Wort gerissen ("fsumme") und identische Findings bekaemen unterschiedliche
+# Fingerprints (Dedup-Miss + False-Matches auf Artefakt-Tokens).
+_KEYWORD_RE = re.compile(r"[a-zA-ZäöüÄÖÜß][a-zA-Z0-9äöüÄÖÜß_]{3,}")
 
 
 def normalize_files(files: Optional[Sequence[str]]) -> tuple[str, ...]:
@@ -63,7 +66,8 @@ def compute_finding_fingerprint(
 
     Zwei Findings mit gleichem Fingerprint sind semantisch dasselbe Problem.
     """
-    # Keywords sortiert joinen -> gleiche Woerter in anderer Reihenfolge = gleicher Fingerprint
+    # Keywords hier sortiert (nicht in extract_*): Order-Independence im Fingerprint,
+    # aber extract_signature_keywords behaelt Vorkommen-Reihenfolge fuer externe Nutzer
     keywords = sorted(extract_signature_keywords(title or ""))
     parts = [
         (category or "unknown").strip().lower(),
