@@ -69,6 +69,10 @@ class PatchNotePipeline:
 
         ctx.started_at = datetime.now(timezone.utc).isoformat()
         pipeline_start = time.monotonic()
+        # In den Context schreiben, damit die Distribute-Stage die bisherige
+        # Laufzeit fuer den Metric-Output ableiten kann (fix: pipeline_total_time_s
+        # war in Metrics immer 0, weil _log_metrics VOR dem Loop-Ende lief).
+        ctx.pipeline_start_monotonic = pipeline_start
 
         for target_state, stage_fn in stages:
             if ctx.state >= target_state:

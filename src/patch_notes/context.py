@@ -64,6 +64,9 @@ class PipelineContext:
     error: str | None = None
     started_at: str | None = None
     completed_at: str | None = None
+    # Monotonic-Timestamp fuer Wall-Clock-Messung (Pipeline-Total-Time).
+    # Nicht JSON-persistiert — wird beim Resume aus dem State neu gesetzt.
+    pipeline_start_monotonic: float | None = None
 
     # --- Metriken ---
     metrics: dict = field(default_factory=dict)

@@ -330,3 +330,52 @@ async def test_send_customer_prefers_patch_notes_nested(monkeypatch):
 def test_log_metrics_no_crash():
     ctx = _make_ctx()
     _log_metrics(ctx)  # Darf nicht crashen
+
+
+def test_log_metrics_ai_engine_from_context(caplog):
+    """ai_engine-Feld muss aus ctx.ai_engine_used kommen, nicht 'unknown' sein."""
+    import json as _json
+    import logging as _logging
+    ctx = _make_ctx(ai_engine_used="codex")
+    with caplog.at_level(_logging.INFO, logger="shadowops"):
+        _log_metrics(ctx)
+    metrics_records = [r for r in caplog.records if "METRICS|patch_notes_pipeline|" in r.getMessage()]
+    assert metrics_records, "Kein METRICS-Log gefunden"
+    raw_json = metrics_records[-1].getMessage().split("METRICS|patch_notes_pipeline|", 1)[1]
+    payload = _json.loads(raw_json)
+    assert payload["ai_engine"] == "codex"
+
+
+def test_log_metrics_pipeline_total_time_from_monotonic(monkeypatch, caplog):
+    """pipeline_total_time_s wird aus ctx.pipeline_start_monotonic abgeleitet."""
+    import json as _json
+    import logging as _logging
+    import time as _time
+
+    # Pipeline-Start simulieren: 42.5s vor jetzt
+    fake_now = 1000.0
+    monkeypatch.setattr(_time, "monotonic", lambda: fake_now)
+    ctx = _make_ctx(pipeline_start_monotonic=fake_now - 42.5)
+
+    with caplog.at_level(_logging.INFO, logger="shadowops"):
+        _log_metrics(ctx)
+    metrics_records = [r for r in caplog.records if "METRICS|patch_notes_pipeline|" in r.getMessage()]
+    assert metrics_records, "Kein METRICS-Log gefunden"
+    raw_json = metrics_records[-1].getMessage().split("METRICS|patch_notes_pipeline|", 1)[1]
+    payload = _json.loads(raw_json)
+    assert payload["pipeline_total_time_s"] == 42.5
+
+
+def test_log_metrics_pipeline_total_time_fallback_to_metrics_dict(caplog):
+    """Falls pipeline_start_monotonic None ist, fällt Builder auf ctx.metrics-Dict zurück."""
+    import json as _json
+    import logging as _logging
+    ctx = _make_ctx()
+    ctx.metrics["pipeline_total_time_s"] = 12.3
+    with caplog.at_level(_logging.INFO, logger="shadowops"):
+        _log_metrics(ctx)
+    metrics_records = [r for r in caplog.records if "METRICS|patch_notes_pipeline|" in r.getMessage()]
+    assert metrics_records, "Kein METRICS-Log gefunden"
+    raw_json = metrics_records[-1].getMessage().split("METRICS|patch_notes_pipeline|", 1)[1]
+    payload = _json.loads(raw_json)
+    assert payload["pipeline_total_time_s"] == 12.3

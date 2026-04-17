@@ -690,6 +690,17 @@ async def _record_learning(ctx: PipelineContext, bot) -> None:
 
 def _log_metrics(ctx: PipelineContext) -> None:
     """Pipeline-Metriken als JSON loggen (kompatibel mit bestehendem Monitoring)."""
+    # Wall-Clock-Time bis jetzt (Distribute-Stage laeuft noch, deshalb kann die
+    # Pipeline selbst das Feld in ctx.metrics erst nach der Stage setzen). Wir
+    # leiten den Wert hier live aus pipeline_start_monotonic ab.
+    if ctx.pipeline_start_monotonic is not None:
+        import time as _time
+        pipeline_total_time_s = round(_time.monotonic() - ctx.pipeline_start_monotonic, 2)
+    else:
+        # Fallback: falls Resume ohne frisches Monotonic — greife auf das
+        # bereits gesetzte Metrics-Feld zurueck (vom Pipeline-Finalize).
+        pipeline_total_time_s = ctx.metrics.get('pipeline_total_time_s', 0)
+
     metrics = {
         'project': ctx.project,
         'version': ctx.version,
@@ -699,10 +710,10 @@ def _log_metrics(ctx: PipelineContext) -> None:
         'groups': len(ctx.groups),
         'player_facing_groups': sum(1 for g in ctx.groups if g.get('is_player_facing')),
         'infra_groups': sum(1 for g in ctx.groups if not g.get('is_player_facing')),
-        'ai_engine': ctx.ai_engine_used,
+        'ai_engine': ctx.ai_engine_used or 'unknown',
         'variant_id': ctx.variant_id,
         'generation_time_s': ctx.generation_time_s,
-        'pipeline_total_time_s': ctx.metrics.get('pipeline_total_time_s', 0),
+        'pipeline_total_time_s': pipeline_total_time_s,
         'hallucinations_caught': len(ctx.fixes_applied),
         'warnings': len(ctx.warnings),
         'version_source': ctx.version_source,

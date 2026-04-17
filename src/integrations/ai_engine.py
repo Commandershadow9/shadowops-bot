@@ -696,6 +696,10 @@ class AIEngine:
             'claude_failures': 0,
         }
 
+        # Zuletzt erfolgreich genutzte Engine (codex | claude | None)
+        # Wird von Patch-Notes-Pipeline fuer Metriken ausgelesen.
+        self._last_engine: Optional[str] = None
+
         # Logging
         logger.info("AI Engine initialisiert (Dual-Engine: Codex + Claude)")
         logger.info(f"  Codex-Modelle: {primary_cfg.get('models', {})}")
@@ -934,11 +938,14 @@ class AIEngine:
         # Primaer: Codex
         result = await self.codex.query_raw(full_prompt, model=model)
         if result:
+            self._last_engine = 'codex'
             return result
 
         # Fallback: Claude
         logger.info("Codex Raw fehlgeschlagen, Fallback auf Claude")
         result = await self.claude.query_raw(full_prompt, model=model)
+        if result:
+            self._last_engine = 'claude'
         return result
 
     async def verify_fix(
@@ -1867,6 +1874,7 @@ class AIEngine:
             if result:
                 if self._validate_schema(result, schema_path):
                     self.stats[f'{primary_name}_success'] += 1
+                    self._last_engine = primary_name
                     return result
                 else:
                     logger.warning("%s-Ergebnis hat Schema-Validierung nicht bestanden — Fallback",
@@ -1887,6 +1895,7 @@ class AIEngine:
         if result:
             if self._validate_schema(result, schema_path):
                 self.stats[f'{fallback_name}_success'] += 1
+                self._last_engine = fallback_name
                 return result
             else:
                 logger.warning("%s-Ergebnis hat Schema-Validierung nicht bestanden — verwerfe Ergebnis",
