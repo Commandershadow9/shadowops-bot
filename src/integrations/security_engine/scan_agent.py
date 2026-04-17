@@ -379,6 +379,12 @@ class SecurityScanAgent:
         self._sessions_today: int = 0
         self._today: date = date.today()
         self._session_tokens_start: int = 0
+        # Akkumulierter Echtwert aus ai_engine._last_token_usage ueber die
+        # gesamte Session hinweg (ersetzt die alte prompt-laengen-basierte
+        # Schaetzung). Wird per _mark_token_start() auf 0 gesetzt und nach
+        # jedem run_analyst_session/run_fix_session per _accumulate_ai_usage()
+        # um den CLI-Reported Wert erhoeht.
+        self._session_tokens_accumulated: int = 0
         self._running: bool = False
         self._weekly_deep_done_this_week: bool = False
         self._briefing_pending: bool = False
@@ -671,6 +677,8 @@ class SecurityScanAgent:
                 prompt=prompt, timeout=mode_config[0], max_turns=mode_config[1],
                 codex_model=self.codex_model, claude_model=self.claude_model,
             )
+            # Echten Token-Verbrauch aus der AI-Engine in die Session-Summe ziehen
+            self._accumulate_ai_usage()
 
             health_after = await self._take_health_snapshot(session_id)
             health_ok = self._compare_health(health_before, health_after)
@@ -1270,6 +1278,8 @@ class SecurityScanAgent:
             await self._notify_fix_phase_start(len(fixable))
             fix_result = await self.ai_engine.run_fix_session(
                 prompt=prompt, timeout=7200, max_turns=200, model=self.claude_model)
+            # Echten Token-Verbrauch der Fix-Phase in die Session-Summe ziehen
+            self._accumulate_ai_usage()
 
             if not fix_result:
                 logger.warning("Fix-Phase: Kein Ergebnis")
@@ -1630,8 +1640,17 @@ class SecurityScanAgent:
     # ─── Token-Tracking ──────────────────────────────────────────────
 
     def _get_session_tokens(self) -> int:
+        """Liefert den akkumulierten CLI-Token-Verbrauch der aktuellen Session.
+
+        Faellt auf die alte Delta-Schaetzung (_daily_tokens_used) nur zurueck,
+        wenn noch nichts via _accumulate_ai_usage gesammelt wurde — sonst
+        dominiert die echte Messung die Prompt-Laenge-Schaetzung.
+        """
         try:
-            return max(0, (self.ai_engine._daily_tokens_used if self.ai_engine else 0) - self._session_tokens_start)
+            if self._session_tokens_accumulated > 0:
+                return self._session_tokens_accumulated
+            daily = self.ai_engine._daily_tokens_used if self.ai_engine else 0
+            return max(0, daily - self._session_tokens_start)
         except Exception:
             return 0
 
@@ -1640,6 +1659,28 @@ class SecurityScanAgent:
             self._session_tokens_start = self.ai_engine._daily_tokens_used if self.ai_engine else 0
         except Exception:
             self._session_tokens_start = 0
+        self._session_tokens_accumulated = 0
+
+    def _accumulate_ai_usage(self) -> None:
+        """Addiert den zuletzt von der AI-Engine gemeldeten Token-Verbrauch.
+
+        Soll direkt nach jedem run_analyst_session / run_fix_session aufgerufen
+        werden. Nutzt ai_engine._last_token_usage (gesetzt vom Token-Parser in
+        der AI-Engine nach jedem CLI-Call). Fehlendes Attribut oder falscher
+        Typ -> No-Op (Backward-Compat).
+        """
+        engine = getattr(self, "ai_engine", None)
+        if engine is None:
+            return
+        usage = getattr(engine, "_last_token_usage", None)
+        if not isinstance(usage, dict):
+            return
+        try:
+            delta = int(usage.get("total_tokens", 0) or 0)
+        except (TypeError, ValueError):
+            return
+        if delta > 0:
+            self._session_tokens_accumulated += delta
 
     # ─── Failure-Backoff ──────────────────────────────────────────────
 
@@ -2192,6 +2233,7 @@ von der ShadowOps Review-Pipeline reviewt — halte den Scope eng."""
                     codex_model=None,
                     claude_model=self.claude_model,
                 )
+                self._accumulate_ai_usage()
                 if not result and self.ai_engine.is_claude_quota_exhausted():
                     logger.warning(
                         "Weekly-Deep #%d: Claude-Quota erschopft — Retry via Codex (%s)",
@@ -2202,6 +2244,7 @@ von der ShadowOps Review-Pipeline reviewt — halte den Scope eng."""
                         codex_model=self.codex_model,
                         claude_model=self.claude_model,
                     )
+                    self._accumulate_ai_usage()
 
                 health_after = await self._take_health_snapshot(session_id)
                 health_ok = self._compare_health(health_before, health_after)
@@ -2316,6 +2359,7 @@ von der ShadowOps Review-Pipeline reviewt — halte den Scope eng."""
             # Reflection via Claude (kurze Session)
             reflection = await self.ai_engine.run_fix_session(
                 prompt=prompt, timeout=120, max_turns=5, model=self.claude_model)
+            self._accumulate_ai_usage()
 
             if reflection and isinstance(reflection, dict):
                 # Insights in Knowledge-DB speichern

@@ -356,12 +356,21 @@ class JulesWorkflowMixin:
                 await self._jules_escalate(row, "ai_review_failed")
                 return
 
+            # Echte Token-Zahl aus der AI-Engine holen (Default 0 falls Feld
+            # fehlt — alter AI-Engine-Stand oder Mock). Die Engine setzt
+            # _last_token_usage nach jedem Claude-Call via query_raw_with_usage.
+            usage = getattr(self.ai_service, "_last_token_usage", None) or {}
+            try:
+                tokens_consumed = int(usage.get("total_tokens", 0) or 0)
+            except (TypeError, ValueError):
+                tokens_consumed = 0
+
             await self._jules_post_or_edit_comment(
                 owner=owner, repo=repo, pr_number=pr_number,
                 review=review, row=row, iteration=iteration)
             await self.jules_state.mark_reviewed_sha(row.id, head_sha)
             await self.jules_state.store_review_result(
-                row.id, review, review.get("blockers", []), tokens=0)
+                row.id, review, review.get("blockers", []), tokens=tokens_consumed)
 
             # Discord-Embed senden (egal ob approved oder revision)
             await self._jules_discord_review_embed(
