@@ -1138,6 +1138,10 @@ class SecurityScanAgent:
                 logger.warning("Fix-Phase: Kein Ergebnis")
                 return
 
+            if not isinstance(fix_result, dict):
+                logger.warning("Fix-Phase: Ergebnis ist %s statt dict", type(fix_result).__name__)
+                return
+
             fixed_count = 0
             pr_count = 0
             for r in fix_result.get('results', []):
