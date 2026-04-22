@@ -173,7 +173,7 @@ class TestPersistence:
 class TestFactoryFunction:
     def test_get_patch_notes_batcher_default(self, monkeypatch, tmp_path):
         """Standard-Verhalten der Factory-Funktion."""
-        monkeypatch.setattr('src.integrations.patch_notes_batcher.Path.home', lambda: tmp_path)
+        monkeypatch.setattr(Path, 'home', lambda: tmp_path)
 
         batcher = get_patch_notes_batcher()
         expected_dir = tmp_path / '.shadowops' / 'patch_notes_training'
@@ -183,6 +183,8 @@ class TestFactoryFunction:
 
     def test_get_patch_notes_batcher_custom(self, tmp_path):
         """Factory-Funktion mit eigenen Parametern."""
-        batcher = get_patch_notes_batcher(data_dir=tmp_path, batch_threshold=15)
-        assert batcher.data_dir == tmp_path
+        custom_dir = tmp_path / 'custom_dir'
+        batcher = get_patch_notes_batcher(data_dir=custom_dir, batch_threshold=15)
+        assert batcher.data_dir == custom_dir
         assert batcher.batch_threshold == 15
+        assert custom_dir.exists()
