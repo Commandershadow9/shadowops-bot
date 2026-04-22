@@ -891,8 +891,12 @@ class AutoFixManager:
                 stdout_bytes, stderr_bytes = await asyncio.wait_for(proc.communicate(), timeout=20)
             except asyncio.TimeoutError:
                 try:
-                    proc.kill()
-                    await proc.wait()
+                    proc.terminate()
+                    try:
+                        await asyncio.wait_for(proc.wait(), timeout=3.0)
+                    except asyncio.TimeoutError:
+                        proc.kill()
+                        await proc.wait()
                 except OSError:
                     pass
                 return False, "Timeout bei create_branch"
