@@ -683,7 +683,7 @@ class LogAnalyzer:
         """
         insights = []
 
-        for tool_name in self.log_paths.keys():
+        for tool_name in self.log_paths:
             context = self.generate_context_for_ai(tool_name, hours)
             if context and len(context) > 50:
                 insights.append(context)
@@ -696,7 +696,7 @@ class LogAnalyzer:
     def get_anomalies_summary(self, hours: int = 6) -> List[str]:
         """Return list of anomaly summaries for alerting."""
         alerts = []
-        for tool_name in self.log_paths.keys():
+        for tool_name in self.log_paths:
             anomalies = self.detect_anomalies(tool_name, threshold=2.5)
             if anomalies:
                 for anomaly in anomalies[:3]:
