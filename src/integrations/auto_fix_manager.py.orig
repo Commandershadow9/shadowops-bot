@@ -854,7 +854,7 @@ class AutoFixManager:
         try:
             proc = await asyncio.create_subprocess_exec(
                 "git", "status", "--porcelain",
-                cwd=project_path,
+                cwd=str(project_path),
                 stdout=asyncio.subprocess.PIPE,
                 stderr=asyncio.subprocess.PIPE
             )
@@ -864,8 +864,7 @@ class AutoFixManager:
                 proc.kill()
                 await proc.wait()
                 return False
-            # errors="replace" macht kaputte Pfad-Encodings sichtbar statt sie lautlos zu verschlucken
-            return proc.returncode == 0 and stdout.decode(errors="replace").strip() == ""
+            return proc.returncode == 0 and stdout.decode(errors="ignore").strip() == ""
         except Exception as e:
             logger.debug(f"git status failed: {e}")
             return False
