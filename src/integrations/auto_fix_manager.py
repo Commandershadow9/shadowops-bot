@@ -852,14 +852,19 @@ class AutoFixManager:
     async def _check_git_clean(self, project_path: Path) -> bool:
         """Prüft, ob Working Tree clean ist."""
         try:
-            result = subprocess.run(
-                ["git", "status", "--porcelain"],
-                cwd=project_path,
-                capture_output=True,
-                text=True,
-                timeout=10
+            proc = await asyncio.create_subprocess_exec(
+                "git", "status", "--porcelain",
+                cwd=str(project_path),
+                stdout=asyncio.subprocess.PIPE,
+                stderr=asyncio.subprocess.PIPE
             )
-            return result.returncode == 0 and result.stdout.strip() == ""
+            try:
+                stdout, stderr = await asyncio.wait_for(proc.communicate(), timeout=10.0)
+            except asyncio.TimeoutError:
+                proc.kill()
+                await proc.wait()
+                return False
+            return proc.returncode == 0 and stdout.decode(errors="ignore").strip() == ""
         except Exception as e:
             logger.debug(f"git status failed: {e}")
             return False
