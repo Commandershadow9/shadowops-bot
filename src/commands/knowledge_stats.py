@@ -8,6 +8,7 @@ Bietet Commands um gelernte Patterns und Empfehlungen anzuzeigen:
 """
 
 import logging
+import itertools
 from discord import app_commands
 from discord.ext import commands
 import discord
@@ -147,7 +148,7 @@ class KnowledgeStatsCommands(commands.Cog):
         ram_patterns = kb.get("ram_patterns", {})
         if ram_patterns:
             models_text = ""
-            for model_name, pattern in list(ram_patterns.items())[:5]:
+            for model_name, pattern in itertools.islice(ram_patterns.items(), 5):
                 avg_ram = pattern.get("avg_ram_total_gb", 0)
                 best_method = pattern.get("best_cleanup_method", "unknown")
                 models_text += f"• **{model_name}**: ~{avg_ram:.1f}GB, cleanup: `{best_method}`\n"
