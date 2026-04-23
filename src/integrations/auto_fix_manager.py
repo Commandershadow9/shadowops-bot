@@ -881,15 +881,31 @@ class AutoFixManager:
         """Erstellt neuen Branch und wechselt hinein."""
         try:
             # fetch not needed in safe mode
-            res = subprocess.run(
-                ["git", "checkout", "-B", branch_name],
+            proc = await asyncio.create_subprocess_exec(
+                "git", "checkout", "-B", branch_name,
                 cwd=project_path,
-                capture_output=True,
-                text=True,
-                timeout=20
+                stdout=asyncio.subprocess.PIPE,
+                stderr=asyncio.subprocess.PIPE
             )
-            if res.returncode != 0:
-                return False, (res.stderr or res.stdout or "Unbekannter Fehler").strip()
+            try:
+                stdout_bytes, stderr_bytes = await asyncio.wait_for(proc.communicate(), timeout=20)
+            except asyncio.TimeoutError:
+                try:
+                    proc.terminate()
+                    try:
+                        await asyncio.wait_for(proc.wait(), timeout=3.0)
+                    except asyncio.TimeoutError:
+                        proc.kill()
+                        await proc.wait()
+                except OSError:
+                    pass
+                return False, "Timeout bei create_branch"
+
+            stdout = stdout_bytes.decode('utf-8', errors='replace') if stdout_bytes else ""
+            stderr = stderr_bytes.decode('utf-8', errors='replace') if stderr_bytes else ""
+
+            if proc.returncode != 0:
+                return False, (stderr or stdout or "Unbekannter Fehler").strip()
             return True, ""
         except Exception as e:
             logger.debug(f"create branch failed: {e}")
