@@ -1,5 +1,50 @@
 # ShadowOps Bot - Changelog
 
+## [5.0.0] - 2026-04-23
+
+### Enterprise Level Cleanup & Security Hardening
+
+#### 🔐 Security
+
+**Comprehensive Secret Management:**
+- Migrated all hardcoded credentials from `.claude/settings.local.json` to environment variables.
+- Introduced `python-dotenv` for secure environment variable management (protected by `.gitignore`).
+- Migrated database DSNs, GitHub tokens, and API keys to a centralized `.env` system.
+- Hardened SEO-Agent configuration to support environment-based IndexNow keys.
+- Restricted directory permissions to `700` and files to `600` for all security-sensitive configurations.
+
+**Backup Encryption (Enterprise Grade):**
+- Implemented **GPG Symmetric Encryption (AES256)** for all database and file backups.
+- Added `BACKUP_PASSPHRASE` support to `BackupManager` via `CommandExecutor` stdin piping.
+- Updated restoration workflows to handle transparent decryption of `.gpg` archives.
+- All backup exports are now encrypted by default to prevent data exfiltration.
+
+**Vulnerability Mitigation:**
+- Full patching of core container stack: **Traefik v3**, **PostgreSQL 16-alpine**, and **Redis 7-alpine** updated to latest security fix levels.
+- Rebuilt **GuildScout-API** using Go 1.25.9+ and updated `pgx/v5.9.0` to resolve `CVE-2026-32280` and `CVE-2026-32282`.
+- Executed host-level security patching via `apply-security-patches.sh` (Chromium & System updates).
+- Closed critical "Block-Policy" gap by permanently banning persistent high-score threats via UFW.
+
+#### 🚀 Features & Automation
+
+**Auto-Merge Scharfstellung (Phase 2+3):**
+- Migrated to the new `agent_review` configuration schema.
+- Enabled **Auto-Merge** for ZERODOX, GuildScout, and mayday-sim projects.
+- Shifted global `approval_mode` from `paranoid` to `balanced` (auto-fixes for LOW/MEDIUM).
+- Activated `suggestions_poller` for proactive agent-driven reviews.
+
+**Performance & Reliability:**
+- Merged 11 optimization PRs focusing on dictionary iterations, generator expressions, and non-blocking subprocesses.
+- Fixed critical RAM leaks and orphaned process management using process groups (`os.killpg`).
+- Increased systemd memory limits to 3G to handle deep-scan sessions.
+- Reclaimed **12 GB of disk space** on root-FS through Docker build cache pruning and redundant backup cleanup.
+
+#### 🧪 Quality & Testing
+
+- **Type-Safety:** Integrated defensive `isinstance` checks and JSON normalization for AI Fix-Session results.
+- **Test Suite:** Validated all **1044 Unit-Tests** successfully after infrastructure migration.
+- **Documentation:** Enhanced docstrings for CircuitBreaker and infrastructure components.
+
 ## [4.0.2] - 2026-04-12
 
 ### Security
