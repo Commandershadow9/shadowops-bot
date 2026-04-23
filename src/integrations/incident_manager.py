@@ -524,7 +524,8 @@ class IncidentManager:
         """Automatically close resolved incidents after configured time"""
         cutoff_time = datetime.now(timezone.utc) - timedelta(hours=self.auto_close_after_hours)
 
-        for incident in list(self.incidents.values()):
+        # Safe to iterate view directly: update_status() does not add/remove keys from self.incidents, and no await in loop body prevents concurrent modification
+        for incident in self.incidents.values():
             if incident.status == IncidentStatus.RESOLVED and incident.resolved_at:
                 if incident.resolved_at < cutoff_time:
                     incident.update_status(IncidentStatus.CLOSED)
