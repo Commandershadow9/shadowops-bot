@@ -854,7 +854,7 @@ class AutoFixManager:
         try:
             proc = await asyncio.create_subprocess_exec(
                 "git", "status", "--porcelain",
-                cwd=project_path,
+                cwd=str(project_path),
                 stdout=asyncio.subprocess.PIPE,
                 stderr=asyncio.subprocess.PIPE
             )
@@ -864,8 +864,7 @@ class AutoFixManager:
                 proc.kill()
                 await proc.wait()
                 return False
-            # errors="replace" macht kaputte Pfad-Encodings sichtbar statt sie lautlos zu verschlucken
-            return proc.returncode == 0 and stdout.decode(errors="replace").strip() == ""
+            return proc.returncode == 0 and stdout.decode(errors="ignore").strip() == ""
         except Exception as e:
             logger.debug(f"git status failed: {e}")
             return False
@@ -887,31 +886,15 @@ class AutoFixManager:
         """Erstellt neuen Branch und wechselt hinein."""
         try:
             # fetch not needed in safe mode
-            proc = await asyncio.create_subprocess_exec(
-                "git", "checkout", "-B", branch_name,
+            res = subprocess.run(
+                ["git", "checkout", "-B", branch_name],
                 cwd=project_path,
-                stdout=asyncio.subprocess.PIPE,
-                stderr=asyncio.subprocess.PIPE
+                capture_output=True,
+                text=True,
+                timeout=20
             )
-            try:
-                stdout_bytes, stderr_bytes = await asyncio.wait_for(proc.communicate(), timeout=20)
-            except asyncio.TimeoutError:
-                try:
-                    proc.terminate()
-                    try:
-                        await asyncio.wait_for(proc.wait(), timeout=3.0)
-                    except asyncio.TimeoutError:
-                        proc.kill()
-                        await proc.wait()
-                except OSError:
-                    pass
-                return False, "Timeout bei create_branch"
-
-            stdout = stdout_bytes.decode('utf-8', errors='replace') if stdout_bytes else ""
-            stderr = stderr_bytes.decode('utf-8', errors='replace') if stderr_bytes else ""
-
-            if proc.returncode != 0:
-                return False, (stderr or stdout or "Unbekannter Fehler").strip()
+            if res.returncode != 0:
+                return False, (res.stderr or res.stdout or "Unbekannter Fehler").strip()
             return True, ""
         except Exception as e:
             logger.debug(f"create branch failed: {e}")
