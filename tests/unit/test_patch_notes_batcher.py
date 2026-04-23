@@ -6,7 +6,7 @@ Stellt sicher, dass Batching, Release und die verschiedenen Freigabe-Methoden ko
 import pytest
 from pathlib import Path
 
-from src.integrations.patch_notes_batcher import PatchNotesBatcher
+from src.integrations.patch_notes_batcher import PatchNotesBatcher, get_patch_notes_batcher
 
 
 # ============================================================================
@@ -164,3 +164,27 @@ class TestPersistence:
         assert batcher2.has_pending('test_project')
         summary = batcher2.get_pending_summary()
         assert summary['test_project']['count'] == 4
+
+
+# ============================================================================
+# FACTORY FUNCTION
+# ============================================================================
+
+class TestFactoryFunction:
+    def test_get_patch_notes_batcher_default(self, monkeypatch, tmp_path):
+        """Standard-Verhalten der Factory-Funktion."""
+        monkeypatch.setattr(Path, 'home', lambda: tmp_path)
+
+        batcher = get_patch_notes_batcher()
+        expected_dir = tmp_path / '.shadowops' / 'patch_notes_training'
+        assert batcher.data_dir == expected_dir
+        assert batcher.batch_threshold == 8
+        assert expected_dir.exists()
+
+    def test_get_patch_notes_batcher_custom(self, tmp_path):
+        """Factory-Funktion mit eigenen Parametern."""
+        custom_dir = tmp_path / 'custom_dir'
+        batcher = get_patch_notes_batcher(data_dir=custom_dir, batch_threshold=15)
+        assert batcher.data_dir == custom_dir
+        assert batcher.batch_threshold == 15
+        assert custom_dir.exists()
