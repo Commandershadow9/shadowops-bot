@@ -2,10 +2,12 @@
 Cog for general monitoring commands.
 """
 
+import itertools
+from datetime import datetime, timezone
+
 import discord
 from discord import app_commands
 from discord.ext import commands
-from datetime import datetime, timezone
 
 from utils.embeds import EmbedBuilder
 
@@ -72,7 +74,7 @@ class MonitoringCog(commands.Cog):
 
             if f2b_bans:
                 f2b_text = ""
-                for jail, ips in list(f2b_bans.items())[:5]:
+                for jail, ips in itertools.islice(f2b_bans.items(), 5):
                     f2b_text += f"**{jail}:** {len(ips)} IPs\n"
                     f2b_text += "```\n" + "\n".join(ips[:3]) + "\n```\n"
                 embed.add_field(name="🛡️ Fail2ban", value=f2b_text or "Keine Bans", inline=False)
