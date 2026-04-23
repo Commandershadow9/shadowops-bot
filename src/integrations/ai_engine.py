@@ -1956,6 +1956,11 @@ class AIEngine:
             try:
                 with open(tmp_path, 'r', encoding='utf-8') as f:
                     data = json.load(f)
+                if isinstance(data, list):
+                    data = {"results": data, "summary": ""}
+                if not isinstance(data, dict):
+                    logger.warning("Temp-Datei enthält unerwarteten Typ: %s", type(data).__name__)
+                    return None
                 logger.debug("Analyst-Ergebnis aus Temp-Datei gelesen")
                 return data
             except (json.JSONDecodeError, OSError) as e:
