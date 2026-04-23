@@ -1,3 +1,10 @@
+---
+title: ADR-007: Jules SecOps Workflow
+status: accepted
+last_reviewed: 2026-04-15
+owner: CommanderShadow9
+---
+
 # ADR-007: Jules SecOps Workflow
 
 **Status:** Accepted
@@ -84,6 +91,6 @@ Jede Schicht faengt einen spezifischen Fehlervektor ab:
 
 ## Referenzen
 
-- Design-Doc: `docs/plans/2026-04-11-jules-secops-workflow-design.md`
-- Implementation-Plan: `docs/plans/2026-04-11-jules-secops-workflow.md`
+- Design-Doc: `docs/design/jules-workflow.md`
+- Implementation-Plan: `docs/archive/INDEX.md` (archiviert — letzter Stand per `git show`)
 - PR #123 Post-Mortem: Design-Doc Anhang A

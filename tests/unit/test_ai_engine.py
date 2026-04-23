@@ -756,18 +756,26 @@ class TestAIEngine:
 
     @pytest.mark.asyncio
     async def test_execute_with_fallback_primary_success(self, ai_config):
-        """_execute_with_fallback: Primary Engine erfolgreich -> kein Fallback"""
+        """_execute_with_fallback: Primary Engine erfolgreich -> kein Fallback.
+
+        Mockt `_query_with_retry` direkt (statt `.query`) weil _execute_with_fallback
+        intern die Retry-Logik aufruft. schema_path=None spart die jsonschema-
+        Validierung (reicht fuer Test-Zweck, echte Validierung getestet separat).
+        """
         from src.integrations.ai_engine import AIEngine
 
         engine = AIEngine(ai_config)
         mock_result = {'description': 'Codex Erfolg', 'confidence': 0.95}
 
-        with patch.object(engine.codex, 'query', return_value=mock_result):
+        async def mock_retry(provider, name, prompt, **kwargs):
+            return mock_result if name == 'codex' else None
+
+        with patch.object(engine, '_query_with_retry', side_effect=mock_retry):
             route = {
                 'engine': 'codex',
                 'model': 'gpt-5.3-codex',
                 'model_class': 'standard',
-                'schema_path': Path('/home/cmdshadow/shadowops-bot/src/schemas/fix_strategy.json'),
+                'schema_path': None,  # keine Schema-Validierung im Test
             }
             result = await engine._execute_with_fallback("Test Prompt", route)
 
@@ -778,21 +786,25 @@ class TestAIEngine:
 
     @pytest.mark.asyncio
     async def test_execute_with_fallback_primary_fails_fallback_succeeds(self, ai_config):
-        """_execute_with_fallback: Primary fehlgeschlagen -> Fallback erfolgreich"""
+        """_execute_with_fallback: Primary fehlgeschlagen -> Fallback erfolgreich."""
         from src.integrations.ai_engine import AIEngine
 
         engine = AIEngine(ai_config)
         mock_fallback_result = {'description': 'Claude Rettung', 'confidence': 0.8}
 
-        with patch.object(engine.codex, 'query', return_value=None):
-            with patch.object(engine.claude, 'query', return_value=mock_fallback_result):
-                route = {
-                    'engine': 'codex',
-                    'model': 'gpt-5.3-codex',
-                    'model_class': 'standard',
-                    'schema_path': Path('/home/cmdshadow/shadowops-bot/src/schemas/fix_strategy.json'),
-                }
-                result = await engine._execute_with_fallback("Test Prompt", route)
+        async def mock_retry(provider, name, prompt, **kwargs):
+            if name == 'codex':
+                return None
+            return mock_fallback_result
+
+        with patch.object(engine, '_query_with_retry', side_effect=mock_retry):
+            route = {
+                'engine': 'codex',
+                'model': 'gpt-5.3-codex',
+                'model_class': 'standard',
+                'schema_path': None,
+            }
+            result = await engine._execute_with_fallback("Test Prompt", route)
 
         assert result is not None
         assert result['description'] == 'Claude Rettung'

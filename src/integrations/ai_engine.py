@@ -23,7 +23,7 @@ import re
 import tempfile
 import time
 from datetime import datetime, timedelta
-from typing import Any, Dict, Optional, List
+from typing import Any, Dict, Optional, List, Tuple
 from pathlib import Path
 
 import jsonschema
@@ -35,6 +35,80 @@ SCHEMAS_DIR = Path(__file__).parent.parent / 'schemas'
 
 # Schema-Cache: Datei-Pfad → geladenes Schema-Dict
 _schema_cache: Dict[str, dict] = {}
+
+
+# ============================================================================
+# TOKEN USAGE PARSER (modul-lokal, pure, leicht testbar)
+# ============================================================================
+
+_ZERO_USAGE: Dict[str, int] = {"input_tokens": 0, "output_tokens": 0, "total_tokens": 0}
+
+
+def _parse_token_usage(stdout: str, stderr: str = "") -> Dict[str, int]:
+    """Extrahiert Token-Verbrauch aus CLI-Output.
+
+    Unterstuetzte Formate:
+    1. Claude CLI `--output-format json`: `{"usage": {"input_tokens": X,
+       "output_tokens": Y, "cache_creation_input_tokens": C, "cache_read_input_tokens": R}}`
+       → input_tokens = X + C + R (Cache wird zur Input-Seite addiert, damit die
+       Kosten stimmen), output_tokens = Y, total = summe.
+    2. Codex CLI text mode: endet mit `tokens used\\n<number-with-optional-commas>`
+       → nur Gesamtverbrauch bekannt, input/output bleiben 0.
+
+    Gibt bei Fehlern / unbekanntem Format `_ZERO_USAGE`-Kopie zurueck. Nie `None` —
+    die aufrufende Logik schreibt das Ergebnis direkt in eine INT-Spalte.
+    """
+    if not stdout and not stderr:
+        return dict(_ZERO_USAGE)
+
+    # 1. Versuch: Claude JSON-Output
+    for source in (stdout, stderr):
+        if not source:
+            continue
+        text = source.strip()
+        if not text.startswith("{"):
+            continue
+        try:
+            payload = json.loads(text)
+        except (json.JSONDecodeError, ValueError):
+            continue
+        if not isinstance(payload, dict):
+            continue
+        usage = payload.get("usage")
+        if not isinstance(usage, dict):
+            continue
+        try:
+            input_base = int(usage.get("input_tokens", 0) or 0)
+            cache_creation = int(usage.get("cache_creation_input_tokens", 0) or 0)
+            cache_read = int(usage.get("cache_read_input_tokens", 0) or 0)
+            output = int(usage.get("output_tokens", 0) or 0)
+        except (TypeError, ValueError):
+            continue
+        input_total = input_base + cache_creation + cache_read
+        return {
+            "input_tokens": input_total,
+            "output_tokens": output,
+            "total_tokens": input_total + output,
+        }
+
+    # 2. Versuch: Codex text-Modus — "tokens used\n<number>"
+    codex_re = re.compile(r"tokens\s+used\s*\n\s*([\d,]+)", re.IGNORECASE)
+    for source in (stdout, stderr):
+        if not source:
+            continue
+        match = codex_re.search(source)
+        if match:
+            try:
+                total = int(match.group(1).replace(",", ""))
+            except ValueError:
+                continue
+            return {
+                "input_tokens": 0,
+                "output_tokens": 0,
+                "total_tokens": total,
+            }
+
+    return dict(_ZERO_USAGE)
 
 
 # ============================================================================
@@ -561,6 +635,85 @@ class ClaudeProvider:
         except Exception:
             return False
 
+    async def query_raw_with_usage(
+        self,
+        prompt: str,
+        model: str = 'standard',
+        timeout: Optional[int] = None,
+    ) -> Tuple[Optional[str], Dict[str, int]]:
+        """Wie query_raw, aber mit `--output-format json` um Usage-Metriken zu ernten.
+
+        Returns:
+            (text, usage) — text ist der vom Modell erzeugte Response-String
+            (aus dem JSON-"result"-Feld extrahiert), usage ist ein Dict
+            `{input_tokens, output_tokens, total_tokens}`. Bei Fehlern ist
+            text None, usage = {0, 0, 0}.
+
+        Wird von `AIEngine.review_pr` verwendet, damit Jules-Reviews den
+        tatsaechlichen Token-Verbrauch in die DB schreiben koennen.
+        """
+        resolved_model = self._resolve_model(model)
+        effective_timeout = timeout or self.timeout
+        env = self._get_clean_env()
+
+        args = [
+            self.cli_path,
+            '-p', '-',
+            '--output-format', 'json',
+            '--model', resolved_model,
+            '--max-turns', '1',
+        ]
+
+        try:
+            proc = await asyncio.create_subprocess_exec(
+                *args,
+                stdin=asyncio.subprocess.PIPE,
+                stdout=asyncio.subprocess.PIPE,
+                stderr=asyncio.subprocess.PIPE,
+                env=env,
+            )
+
+            stdout_bytes, stderr_bytes = await asyncio.wait_for(
+                proc.communicate(input=prompt.encode('utf-8')),
+                timeout=effective_timeout,
+            )
+
+            stdout = stdout_bytes.decode('utf-8', errors='replace').strip()
+            stderr = stderr_bytes.decode('utf-8', errors='replace').strip()
+
+            if proc.returncode != 0:
+                logger.warning(
+                    f"Claude CLI Usage-Raw Fehler (Exit {proc.returncode}): {stderr[:200]}"
+                )
+                return None, dict(_ZERO_USAGE)
+
+            if not stdout:
+                logger.warning("Claude CLI Usage-Raw: Leere Antwort erhalten")
+                return None, dict(_ZERO_USAGE)
+
+            usage = _parse_token_usage(stdout, stderr)
+
+            # Result-Text aus dem JSON-Wrapper extrahieren
+            text: Optional[str] = None
+            try:
+                payload = json.loads(stdout)
+                if isinstance(payload, dict):
+                    result_val = payload.get("result")
+                    if isinstance(result_val, str):
+                        text = result_val
+            except (json.JSONDecodeError, ValueError):
+                # Fallback: gib stdout roh zurueck, Parser oben hat Usage schon
+                text = stdout
+
+            return text, usage
+
+        except asyncio.TimeoutError:
+            logger.error(f"Claude CLI Usage-Raw: Timeout nach {effective_timeout}s")
+            return None, dict(_ZERO_USAGE)
+        except Exception as e:
+            logger.error(f"Claude CLI Usage-Raw: Fehler: {e}")
+            return None, dict(_ZERO_USAGE)
+
 
 # ============================================================================
 # TASK ROUTER
@@ -749,6 +902,15 @@ class AIEngine:
             'claude_success': 0,
             'claude_failures': 0,
         }
+
+        # Zuletzt erfolgreich genutzte Engine (codex | claude | None)
+        # Wird von Patch-Notes-Pipeline fuer Metriken ausgelesen.
+        self._last_engine: Optional[str] = None
+
+        # Token-Verbrauch der letzten AI-Operation. Wird nach jedem erfolgreichen
+        # CLI-Call aktualisiert. Jules liest dies nach review_pr, der Scan-Agent
+        # akkumuliert pro Session. Nicht `None` — immer ein Dict.
+        self._last_token_usage: Dict[str, int] = dict(_ZERO_USAGE)
 
         # Logging
         logger.info("AI Engine initialisiert (Dual-Engine: Codex + Claude)")
@@ -988,11 +1150,14 @@ class AIEngine:
         # Primaer: Codex
         result = await self.codex.query_raw(full_prompt, model=model)
         if result:
+            self._last_engine = 'codex'
             return result
 
         # Fallback: Claude
         logger.info("Codex Raw fehlgeschlagen, Fallback auf Claude")
         result = await self.claude.query_raw(full_prompt, model=model)
+        if result:
+            self._last_engine = 'claude'
         return result
 
     async def verify_fix(
@@ -1049,6 +1214,8 @@ class AIEngine:
         project_knowledge: List[str],
         few_shot_examples: List[Dict[str, Any]],
         max_diff_chars: int = 8000,
+        prompt_override: Optional[str] = None,
+        model_preference: Optional[Tuple[str, str]] = None,
     ) -> Optional[Dict[str, Any]]:
         """
         Strukturiertes PR-Review via Claude (Thinking-Modell).
@@ -1057,54 +1224,119 @@ class AIEngine:
         validiert das Ergebnis gegen das jules_review-Schema und ueberschreibt
         das Verdict deterministisch via compute_verdict().
 
+        Args:
+            prompt_override: Optional vorgefertigter Prompt vom Adapter
+                (SEO/Codex build_prompt()). Wenn None, wird der Jules-Prompt
+                aus finding_context + few_shot gebaut (Legacy-Pfad).
+            model_preference: Optional (primary, fallback) vom Adapter.
+                Wenn None, wird die interne Security-Keyword-Heuristik genutzt.
+
         Returns:
             Validiertes Review-Dict oder None bei Fehler.
         """
-        from src.integrations.github_integration.jules_review_prompt import (
+        from integrations.github_integration.jules_review_prompt import (
             build_review_prompt, compute_verdict,
         )
 
-        prompt = build_review_prompt(
-            finding=finding_context, project=project, diff=diff,
-            iteration=iteration, project_knowledge=project_knowledge,
-            few_shot_examples=few_shot_examples, max_diff_chars=max_diff_chars,
-        )
+        if prompt_override is not None:
+            prompt = prompt_override
+        else:
+            prompt = build_review_prompt(
+                finding=finding_context, project=project, diff=diff,
+                iteration=iteration, project_knowledge=project_knowledge,
+                few_shot_examples=few_shot_examples, max_diff_chars=max_diff_chars,
+            )
 
-        try:
-            raw = await self.claude.query_raw(prompt, model="thinking", timeout=300)
-        except Exception as e:
-            self.logger.error(f"[jules] Claude-Call failed: {e}")
-            return None
+        # Modell-Wahl: explizite Praeferenz vom Adapter hat Vorrang
+        diff_len = len(diff)
+        if model_preference is not None:
+            primary, fallback = model_preference
+        else:
+            # Legacy-Heuristik: Opus fuer Security+komplexe PRs, Sonnet sonst
+            is_security = any(
+                k in (finding_context.get("category", "") + finding_context.get("title", "")).lower()
+                for k in ("xss", "cve", "injection", "dos", "security", "auth", "csrf")
+            )
+            is_complex = diff_len > 3000 or is_security
+            primary = "thinking" if is_complex else "standard"
+            fallback = "standard" if is_complex else "thinking"
+        timeout_s = 180 if primary == "thinking" else 120
+
+        # Usage-Tracking initial leer — wird nach erfolgreichem Call befuellt.
+        # Falls beide Modelle scheitern, bleibt 0 (kein Tokenverbrauch gemeldet).
+        self._last_token_usage = dict(_ZERO_USAGE)
+
+        raw = None
+        for model_class, t in ((primary, timeout_s), (fallback, 120)):
+            try:
+                # query_raw_with_usage nutzt --output-format json, damit wir
+                # tokens_consumed fuer jules_pr_reviews aus dem usage-Block holen
+                # koennen. Text kommt aus dem "result"-Feld wie bei query_raw.
+                raw, usage = await self.claude.query_raw_with_usage(
+                    prompt, model=model_class, timeout=t,
+                )
+                if raw:
+                    self._last_token_usage = usage
+                    logger.info(
+                        f"[jules] Claude-Response erhalten "
+                        f"(model={model_class}, {len(raw)} chars, "
+                        f"tokens={usage.get('total_tokens', 0)})"
+                    )
+                    break
+                logger.warning(f"[jules] Claude empty response (model={model_class}), Fallback")
+            except Exception as e:
+                logger.warning(f"[jules] Claude-Call failed (model={model_class}): {e}")
 
         if not raw:
-            self.logger.error("[jules] Claude returned empty response")
+            logger.error("[jules] Claude-Call komplett fehlgeschlagen (beide Modelle)")
             return None
 
         clean = raw.strip()
+        # Markdown-Fences entfernen
         if clean.startswith("```"):
             lines = clean.split("\n")
             clean = "\n".join(lines[1:-1] if lines[-1].startswith("```") else lines[1:])
 
+        # JSON extrahieren — Claude fügt manchmal Text vor/nach dem JSON ein
+        review = None
         try:
             review = json.loads(clean)
-        except json.JSONDecodeError as e:
-            self.logger.error(f"[jules] JSON parse failed: {e}")
-            return None
+        except json.JSONDecodeError:
+            # Versuche nur den JSON-Block zu finden ({...})
+            start = clean.find("{")
+            if start >= 0:
+                # Finde die passende schließende Klammer
+                depth = 0
+                for i, c in enumerate(clean[start:], start):
+                    if c == "{":
+                        depth += 1
+                    elif c == "}":
+                        depth -= 1
+                        if depth == 0:
+                            try:
+                                review = json.loads(clean[start:i + 1])
+                                logger.info(f"[jules] JSON extrahiert aus Position {start}-{i+1}")
+                            except json.JSONDecodeError:
+                                pass
+                            break
+            if review is None:
+                logger.error(f"[jules] JSON parse failed, raw[:300]={clean[:300]!r}")
+                return None
 
         schema_path = Path(__file__).parent.parent / "schemas" / "jules_review.json"
         try:
             schema = json.loads(schema_path.read_text())
             jsonschema.validate(review, schema)
         except jsonschema.ValidationError as e:
-            self.logger.error(f"[jules] Schema validation failed: {e.message}")
+            logger.error(f"[jules] Schema validation failed: {e.message}")
             return None
         except FileNotFoundError:
-            self.logger.error(f"[jules] Schema not found at {schema_path}")
+            logger.error(f"[jules] Schema not found at {schema_path}")
             return None
 
         review["verdict"] = compute_verdict(review)
 
-        self.logger.info(
+        logger.info(
             f"[jules] review ok: verdict={review['verdict']} "
             f"blockers={len(review['blockers'])} "
             f"suggestions={len(review['suggestions'])} "
@@ -1486,13 +1718,16 @@ class AIEngine:
                     return self._read_analyst_result(tmp_path, stdout)
 
             self._codex_quota_exhausted_until = 0.0
+            # Token-Verbrauch aus Codex-Output extrahieren ("tokens used\n<n>")
+            self._last_token_usage = _parse_token_usage(stdout, stderr)
             result = self._read_analyst_result(tmp_path, stdout) or self.codex._extract_json(stdout)
             if result and ('summary' in result or 'findings' in result):
                 findings_count = len(result.get('findings', []))
                 knowledge_count = len(result.get('knowledge_updates', []))
                 logger.info(
-                    "Codex-Analyst erfolgreich: %d Findings, %d Knowledge-Updates",
+                    "Codex-Analyst erfolgreich: %d Findings, %d Knowledge-Updates, tokens=%d",
                     findings_count, knowledge_count,
+                    self._last_token_usage.get('total_tokens', 0),
                 )
                 self.stats['codex_success'] = self.stats.get('codex_success', 0) + 1
                 return result
@@ -1583,12 +1818,13 @@ class AIEngine:
 
         # Prompt via stdin (ARG_MAX), skip-permissions (damit Tools ohne Approval laufen)
         # --allowed-tools: Read-only Bash + Write (nur für Ergebnis-Datei)
+        # --output-format json: liefert usage-Block fuer Token-Tracking (Text-Mode hat keinen)
         args = [
             self.claude.cli_path,
             '-p', '-',
             '--model', model,
             '--max-turns', str(max_turns),
-            '--output-format', 'text',
+            '--output-format', 'json',
             '--verbose',
             '--dangerously-skip-permissions',
             '--allowed-tools', allowed_tools,
@@ -1643,14 +1879,17 @@ class AIEngine:
                 return self._read_analyst_result(tmp_path, stdout)
 
             self._claude_quota_exhausted_until = 0.0
+            # Token-Verbrauch aus Claude-JSON-Output (usage-Block) extrahieren
+            self._last_token_usage = _parse_token_usage(stdout, stderr)
             result = self._read_analyst_result(tmp_path, stdout)
 
             if result:
                 findings_count = len(result.get('findings', []))
                 knowledge_count = len(result.get('knowledge_updates', []))
                 logger.info(
-                    "Claude-Analyst erfolgreich: %d Findings, %d Knowledge-Updates",
+                    "Claude-Analyst erfolgreich: %d Findings, %d Knowledge-Updates, tokens=%d",
                     findings_count, knowledge_count,
+                    self._last_token_usage.get('total_tokens', 0),
                 )
                 self.stats['claude_success'] = self.stats.get('claude_success', 0) + 1
             else:
@@ -1872,6 +2111,7 @@ class AIEngine:
             if result:
                 if self._validate_schema(result, schema_path):
                     self.stats[f'{primary_name}_success'] += 1
+                    self._last_engine = primary_name
                     return result
                 else:
                     logger.warning("%s-Ergebnis hat Schema-Validierung nicht bestanden — Fallback",
@@ -1892,6 +2132,7 @@ class AIEngine:
         if result:
             if self._validate_schema(result, schema_path):
                 self.stats[f'{fallback_name}_success'] += 1
+                self._last_engine = fallback_name
                 return result
             else:
                 logger.warning("%s-Ergebnis hat Schema-Validierung nicht bestanden — verwerfe Ergebnis",

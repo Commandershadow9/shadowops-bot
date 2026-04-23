@@ -111,7 +111,7 @@ Gib ausschliesslich JSON zurueck (ohne Markdown-Fence, ohne Text davor/danach):
       "reason": "Warum Blocker",
       "file": "web/package.json",
       "line": 23,
-      "severity": "critical|high|medium",
+      "severity": "critical|high|medium|low",
       "suggested_fix": "Wie Jules es fixen soll"
     }}
   ],

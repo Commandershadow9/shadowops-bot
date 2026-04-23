@@ -198,7 +198,39 @@ class AdminCog(commands.Cog):
                 )
                 return
 
-            # Pending Commits prüfen
+            # ── v6: Direkt aus Git, kein Batcher nötig ──
+            pn_config = project_config.get('patch_notes', {})
+            if pn_config.get('engine') == 'v6':
+                status_msg = await interaction.followup.send(
+                    f"⏳ **v6 Pipeline** für **{project_key}** gestartet...\n"
+                    f"Sammle Commits seit letztem Release aus Git..."
+                )
+
+                try:
+                    from patch_notes import generate_release
+                    ctx = await generate_release(
+                        project=project_key,
+                        project_config=project_config,
+                        bot=self.bot,
+                        trigger='manual',
+                    )
+                    commit_count = len(ctx.enriched_commits or ctx.raw_commits)
+                    await status_msg.edit(
+                        content=(
+                            f"✅ **v{ctx.version}** für **{project_key}** veröffentlicht!\n"
+                            f"{commit_count} Commits · {len(ctx.groups)} Gruppen · "
+                            f"{ctx.update_size.upper()}\n"
+                            f"Patch Notes im Update-Channel gepostet."
+                        )
+                    )
+                except Exception as e:
+                    self.logger.error(f"❌ v6 Pipeline fehlgeschlagen: {e}", exc_info=True)
+                    await status_msg.edit(
+                        content=f"❌ v6 Pipeline fehlgeschlagen:\n```{str(e)[:500]}```"
+                    )
+                return
+
+            # ── v5 Fallback: Batcher-basiert ──
             if not batcher.has_pending(project_key):
                 await interaction.followup.send(
                     f"📭 Keine gesammelten Commits für **{project_key}**.",
@@ -211,7 +243,6 @@ class AdminCog(commands.Cog):
             count = info.get('count', 0)
             first = info.get('first_added', '')[:10]
 
-            # Minimum-Check: Mindestens 2 Commits für sinnvolle Patch Notes
             min_commits = max(2, getattr(batcher, 'cron_min_commits', 3))
             if count < min_commits:
                 await interaction.followup.send(
@@ -222,7 +253,6 @@ class AdminCog(commands.Cog):
                 )
                 return
 
-            # Release durchführen
             commits = batcher.release_batch(project_key)
             if not commits:
                 await interaction.followup.send("❌ Release fehlgeschlagen", ephemeral=True)
@@ -233,14 +263,12 @@ class AdminCog(commands.Cog):
                 f"von {interaction.user}"
             )
 
-            # Status-Nachricht senden
             status_msg = await interaction.followup.send(
                 f"⏳ **{len(commits)} Commits** für **{project_key}** released\n"
                 f"Gesammelt seit: {first}\n"
                 f"KI generiert Patch Notes..."
             )
 
-            # Patch Notes generieren
             if gh:
                 repo_url = (
                     project_config.get('repo_url')
@@ -258,7 +286,6 @@ class AdminCog(commands.Cog):
                         commits=commits,
                         skip_batcher=True,
                     )
-                    # Erfolg — Status-Nachricht aktualisieren
                     await status_msg.edit(
                         content=(
                             f"✅ **{len(commits)} Commits** für **{project_key}** veröffentlicht!\n"
@@ -336,6 +363,63 @@ class AdminCog(commands.Cog):
 
         embed.set_footer(text="Release mit /release-notes <projekt>")
         await interaction.response.send_message(embed=embed)
+
+    @app_commands.command(
+        name="mark-duplicate",
+        description="Markiert ein Finding als Duplikat eines anderen (Learning-Feedback)",
+    )
+    @app_commands.describe(
+        parent_id="ID des beibehaltenen Findings",
+        child_id="ID des Findings, das als Duplikat markiert wird",
+    )
+    async def mark_duplicate(
+        self, interaction: discord.Interaction, parent_id: int, child_id: int
+    ):
+        """Slash Command: /mark-duplicate — markiert child als Duplikat von parent."""
+        if parent_id == child_id:
+            await interaction.response.send_message(
+                "parent_id und child_id muessen unterschiedlich sein.", ephemeral=True
+            )
+            return
+
+        engine = getattr(self.bot, "security_engine", None)
+        if not engine or not getattr(engine, "scan_agent", None):
+            await interaction.response.send_message(
+                "Security-Engine nicht verfuegbar.", ephemeral=True
+            )
+            return
+
+        agent = engine.scan_agent
+        child = await agent.db.pool.fetchrow(
+            "SELECT id, title, status, affected_project FROM findings WHERE id=$1",
+            child_id,
+        )
+        if not child:
+            await interaction.response.send_message(
+                f"Finding #{child_id} nicht gefunden.", ephemeral=True
+            )
+            return
+
+        await agent.db.pool.execute(
+            "UPDATE findings SET status='duplicate_of', fixed_at=NOW() WHERE id=$1",
+            child_id,
+        )
+
+        lb = getattr(agent, "learning_bridge", None)
+        if lb and getattr(lb, "is_connected", False):
+            await lb.record_manual_merge(
+                parent_id=parent_id,
+                child_id=child_id,
+                user_id=interaction.user.id,
+                user_name=interaction.user.name,
+                project=child["affected_project"],
+            )
+
+        await interaction.response.send_message(
+            f"Finding #{child_id} als Duplikat von #{parent_id} markiert. "
+            f"Learning-Feedback gespeichert.",
+            ephemeral=True,
+        )
 
 
 async def setup(bot):

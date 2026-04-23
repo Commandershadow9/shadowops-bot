@@ -1,3 +1,10 @@
+---
+title: ADR-006: Orchestrator + GitHub Integration Refactoring
+status: accepted
+last_reviewed: 2026-04-15
+owner: CommanderShadow9
+---
+
 # ADR-006: Orchestrator + GitHub Integration Refactoring
 
 **Status:** Umgesetzt

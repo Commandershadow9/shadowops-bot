@@ -1,3 +1,10 @@
+---
+title: ADR-001: Dual-Engine AI-System (Codex CLI + Claude CLI)
+status: accepted
+last_reviewed: 2026-04-15
+owner: CommanderShadow9
+---
+
 # ADR-001: Dual-Engine AI-System (Codex CLI + Claude CLI)
 
 **Status:** Accepted

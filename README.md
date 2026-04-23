@@ -6,7 +6,7 @@
 
 > 📖 **Security Analyst Doku:** [docs/SECURITY_ANALYST.md](./docs/SECURITY_ANALYST.md)
 > 📚 **Dokumentations-Übersicht:** [DOCS_OVERVIEW.md](./DOCS_OVERVIEW.md)
-> 🔧 **API Dokumentation:** [docs/API.md](./docs/API.md)
+> 🔧 **API Dokumentation:** [docs/reference/api.md](./docs/reference/api.md)
 > 🚀 **Setup Guide:** [docs/SETUP_GUIDE.md](./docs/SETUP_GUIDE.md)
 > 📐 **Learning Pipeline Design:** [docs/plans/2026-03-18-analyst-learning-pipeline-design.md](./docs/plans/2026-03-18-analyst-learning-pipeline-design.md)
 
@@ -357,7 +357,7 @@ Der Bot erstellt automatisch alle benötigten Channels beim ersten Start:
 
 ## ⚙️ Konfiguration
 
-Vollständige Konfigurationsdokumentation: [docs/API.md](./docs/API.md)
+Vollständige Konfigurationsdokumentation: [docs/reference/api.md](./docs/reference/api.md)
 
 Basis-Config in `config/config.yaml`:
 
@@ -415,7 +415,7 @@ github:
   enabled: false
   webhook_secret: "your_webhook_secret"
   webhook_port: 8080
-  auto_deploy: true
+  auto_deploy: false
   deploy_branches: [main, master]
 
 deployment:
@@ -755,7 +755,7 @@ tail -f logs/shadowops.log | grep deployment
 ### Vollständige Dokumentation
 
 - 📖 [Setup Guide](./docs/SETUP_GUIDE.md) - Schritt-für-Schritt Installation
-- 🔧 [API Documentation](./docs/API.md) - Vollständige API-Referenz
+- 🔧 [API Documentation](./docs/reference/api.md) - Vollständige API-Referenz
 - 📚 [Docs Overview](./DOCS_OVERVIEW.md) - Dokumentations-Index
 
 ### Bei Problemen

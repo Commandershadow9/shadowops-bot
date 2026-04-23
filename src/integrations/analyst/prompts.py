@@ -62,10 +62,10 @@ Untersuche den Server systematisch. Nutze Shell-Befehle:
 
 Port-Bindings bei ShadowOps-Servern:
 - Port 8766 (Health) auf 0.0.0.0 — KORREKT (UFW: nur Docker 172.16.0.0/12). Vorfall 2026-03-17: Aenderung auf 127.0.0.1 verursachte 11h Ausfall.
-- Port 9091 (GuildScout Alerts) auf 127.0.0.1 — KORREKT, nur intern.
+- Port 9091 (GuildScout Alerts) auf 0.0.0.0 — KORREKT (UFW: nur Docker 172.16.0.0/12, wie 8766). Docker-Container erreichen Host ueber 172.17.0.1.
 - Port 9090 (GitHub Webhook) auf 0.0.0.0 — GEWOLLT (Traefik).
 - Docker-Container erreichen den Host ueber die Docker-Bridge (172.17.0.1).
-- NICHT als Finding melden wenn 8766/9090 auf 0.0.0.0 binden.
+- NICHT als Finding melden wenn 8766/9090/9091 auf 0.0.0.0 binden.
 
 ## Ausgabe-Schema
 

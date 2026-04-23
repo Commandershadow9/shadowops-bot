@@ -30,6 +30,8 @@ StartLimitBurst=3
 
 # Limits
 LimitNOFILE=65536
+# Memory-Limits gegen unkontrolliertes Wachstum
+MemoryHigh=1536M
 MemoryMax=3G
 
 # Logs
