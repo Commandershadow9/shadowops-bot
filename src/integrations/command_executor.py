@@ -41,6 +41,8 @@ class CommandResult:
     timestamp: datetime
     mode: ExecutionMode
     error_message: Optional[str] = None
+    stdout_bytes: bytes = b""
+    stderr_bytes: bytes = b""
 
 
 @dataclass
@@ -107,7 +109,8 @@ class CommandExecutor:
         sudo: Optional[bool] = None,
         working_dir: Optional[str] = None,
         env_vars: Optional[Dict[str, str]] = None,
-        capture_output: bool = True
+        capture_output: bool = True,
+        input_str: Optional[str] = None
     ) -> CommandResult:
         """
         Execute a shell command
@@ -120,6 +123,7 @@ class CommandExecutor:
             working_dir: Working directory for command execution
             env_vars: Additional environment variables
             capture_output: Whether to capture stdout/stderr
+            input_str: Optional string to write to stdin
 
         Returns:
             CommandResult with execution details
@@ -176,7 +180,8 @@ class CommandExecutor:
                 cmd_timeout,
                 work_dir,
                 env,
-                capture_output
+                capture_output,
+                input_str
             )
 
         # Calculate duration
@@ -328,7 +333,8 @@ class CommandExecutor:
         timeout: int,
         working_dir: Optional[str],
         env_vars: Dict[str, str],
-        capture_output: bool
+        capture_output: bool,
+        input_str: Optional[str] = None
     ) -> CommandResult:
         """
         Execute command in LIVE mode
@@ -339,6 +345,7 @@ class CommandExecutor:
             working_dir: Working directory
             env_vars: Environment variables
             capture_output: Whether to capture stdout/stderr
+            input_str: Optional string to write to stdin
 
         Returns:
             CommandResult with execution details
@@ -352,6 +359,7 @@ class CommandExecutor:
             # Execute command
             process = await asyncio.create_subprocess_shell(
                 command,
+                stdin=asyncio.subprocess.PIPE if input_str else None,
                 stdout=asyncio.subprocess.PIPE if capture_output else asyncio.subprocess.DEVNULL,
                 stderr=asyncio.subprocess.PIPE if capture_output else asyncio.subprocess.DEVNULL,
                 cwd=working_dir,
@@ -362,8 +370,9 @@ class CommandExecutor:
 
             # Wait for completion with timeout
             try:
+                input_bytes = input_str.encode() if input_str else None
                 stdout_bytes, stderr_bytes = await asyncio.wait_for(
-                    process.communicate(),
+                    process.communicate(input=input_bytes),
                     timeout=timeout
                 )
             except asyncio.TimeoutError:
@@ -388,7 +397,9 @@ class CommandExecutor:
                 duration_seconds=0.0,  # Will be set by caller
                 timestamp=datetime.now(),
                 mode=ExecutionMode.LIVE,
-                error_message=stderr if not success else None
+                error_message=stderr if not success else None,
+                stdout_bytes=stdout_bytes or b"",
+                stderr_bytes=stderr_bytes or b""
             )
 
         except TimeoutError as e:

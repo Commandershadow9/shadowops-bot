@@ -46,6 +46,8 @@ class BackupConfig:
     retention_days: int = 7
     max_backup_size_mb: int = 1000  # Max 1GB per backup
     compression: bool = True
+    encryption: bool = True  # Enable encryption by default for Enterprise Level
+    encryption_passphrase_env: str = "BACKUP_PASSPHRASE"
     verify_after_backup: bool = True
 
     # Protected paths that should NEVER be modified without backup
@@ -338,7 +340,7 @@ class BackupManager:
         backup_id: str,
         metadata: Optional[Dict]
     ) -> BackupInfo:
-        """Backup a single file"""
+        """Backup a single file with optional encryption"""
         if not os.path.isfile(source):
             raise ValueError(f"File not found: {source}")
 
@@ -346,39 +348,47 @@ class BackupManager:
         backup_filename = Path(source).name
         if self.config.compression:
             backup_filename += '.gz'
+        if self.config.encryption:
+            backup_filename += '.gpg'
 
         backup_path = os.path.join(self.config.backup_root, f"{backup_id}_{backup_filename}")
 
         # Copy file — Systemdateien (/etc/) brauchen sudo zum Lesen.
-        # WICHTIG: 'sudo cmd > file' funktioniert NICHT, weil '>' vom
-        # unprivilegierten Shell ausgeführt wird. Stattdessen:
-        # 'sudo bash -c "cmd > file"' damit der Redirect auch als root läuft.
         needs_sudo = source.startswith('/etc/')
+        
+        # Pipeline construct
+        cmd = f"cat {shlex.quote(source)}"
         if self.config.compression:
-            if needs_sudo:
-                result = await self.executor.execute(
-                    f"bash -c {shlex.quote(f'gzip -c {shlex.quote(source)} > {shlex.quote(backup_path)}')}",
-                    sudo=True,
-                    timeout=300
-                )
+            cmd += " | gzip -c"
+            
+        passphrase = None
+        if self.config.encryption:
+            passphrase = os.getenv(self.config.encryption_passphrase_env)
+            if not passphrase:
+                logger.warning(f"Encryption enabled but {self.config.encryption_passphrase_env} not set. Falling back to unencrypted.")
             else:
-                result = await self.executor.execute(
-                    f"gzip -c {shlex.quote(source)} > {shlex.quote(backup_path)}",
-                    timeout=300
-                )
-            if not result.success:
-                raise RuntimeError(f"Backup failed: {result.error_message}")
+                cmd += " | gpg --batch --yes --symmetric --cipher-algo AES256 --passphrase-fd 0"
+
+        # Execute
+        if self.config.encryption and passphrase:
+            result = await self.executor.execute(
+                cmd,
+                input_str=passphrase,
+                sudo=needs_sudo,
+                timeout=300
+            )
+            if result.success:
+                with open(backup_path, 'wb') as f:
+                    f.write(result.stdout_bytes)
         else:
-            if needs_sudo:
-                result = await self.executor.execute(
-                    f"cp --preserve=timestamps {shlex.quote(source)} {shlex.quote(backup_path)}",
-                    sudo=True,
-                    timeout=300
-                )
-                if not result.success:
-                    raise RuntimeError(f"Backup failed: {result.error_message}")
-            else:
-                shutil.copy2(source, backup_path)
+            result = await self.executor.execute(
+                f"{cmd} > {shlex.quote(backup_path)}",
+                sudo=needs_sudo,
+                timeout=300
+            )
+
+        if not result.success:
+            raise RuntimeError(f"Backup failed: {result.error_message}")
 
         # Get size
         size_bytes = os.path.getsize(backup_path)
@@ -473,20 +483,46 @@ class BackupManager:
         backup_id: str,
         metadata: Optional[Dict]
     ) -> BackupInfo:
-        """Backup PostgreSQL database"""
+        """Backup PostgreSQL database with optional encryption"""
         # source format: "db:database_name"
         db_name = source.replace('db:', '')
 
         # Create backup path
-        backup_path = os.path.join(self.config.backup_root, f"{backup_id}.sql.gz")
+        ext = ".sql.gz"
+        if self.config.encryption:
+            ext += ".gpg"
+        
+        backup_path = os.path.join(self.config.backup_root, f"{backup_id}{ext}")
 
-        # Dump database with compression (shlex.quote prevents SQL injection)
-        result = await self.executor.execute(
-            f"pg_dump {shlex.quote(db_name)} | gzip > {shlex.quote(backup_path)}",
-            timeout=600
-        )
+        # Construct command pipeline
+        cmd = f"pg_dump {shlex.quote(db_name)} | gzip"
+        
+        if self.config.encryption:
+            passphrase = os.getenv(self.config.encryption_passphrase_env)
+            if not passphrase:
+                logger.warning(f"Encryption enabled but {self.config.encryption_passphrase_env} not set. Falling back to unencrypted.")
+            else:
+                # Use --batch --passphrase-fd 0 for safe passing of passphrase
+                cmd += f" | gpg --batch --yes --symmetric --cipher-algo AES256 --passphrase-fd 0"
 
-        if not result.success:
+        # Execute
+        if self.config.encryption and passphrase:
+            result = await self.executor.execute(
+                cmd,
+                input_str=passphrase,
+                timeout=600
+            )
+        else:
+            result = await self.executor.execute(
+                f"{cmd} > {shlex.quote(backup_path)}",
+                timeout=600
+            )
+
+        # Handle gpg output redirect if needed (gpg writes to stdout by default here)
+        if self.config.encryption and passphrase and result.success:
+            with open(backup_path, 'wb') as f:
+                f.write(result.stdout_bytes if hasattr(result, 'stdout_bytes') else result.stdout.encode())
+        elif not result.success:
             raise RuntimeError(f"Database backup failed: {result.error_message}")
 
         size_bytes = os.path.getsize(backup_path)
@@ -502,34 +538,39 @@ class BackupManager:
         )
 
     async def _restore_file(self, backup_info: BackupInfo) -> bool:
-        """Restore a file backup"""
+        """Restore a file backup with optional decryption"""
         try:
             needs_sudo = backup_info.source_path.startswith('/etc/')
-            if backup_info.backup_path.endswith('.gz'):
-                if needs_sudo:
-                    # sudo bash -c '...' damit der Redirect als root läuft
-                    result = await self.executor.execute(
-                        f"bash -c {shlex.quote(f'gzip -dc {shlex.quote(backup_info.backup_path)} > {shlex.quote(backup_info.source_path)}')}",
-                        sudo=True,
-                        timeout=300
-                    )
-                else:
-                    result = await self.executor.execute(
-                        f"gzip -dc {shlex.quote(backup_info.backup_path)} > {shlex.quote(backup_info.source_path)}",
-                        timeout=300
-                    )
-                return result.success
+            
+            # Build command pipeline
+            cmd = f"cat {shlex.quote(backup_info.backup_path)}"
+            
+            passphrase = None
+            if backup_info.backup_path.endswith('.gpg'):
+                passphrase = os.getenv(self.config.encryption_passphrase_env)
+                if not passphrase:
+                    logger.error("Cannot restore encrypted backup: passphrase not set")
+                    return False
+                cmd += " | gpg --batch --yes --decrypt --passphrase-fd 0"
+            
+            if backup_info.backup_path.endswith('.gz') or '.gz.' in backup_info.backup_path:
+                cmd += " | gzip -dc"
+
+            # Execute with redirection handled in shell
+            if passphrase:
+                result = await self.executor.execute(
+                    f"bash -c {shlex.quote(f'{cmd} > {shlex.quote(backup_info.source_path)}')}",
+                    input_str=passphrase,
+                    sudo=needs_sudo,
+                    timeout=300
+                )
             else:
-                if needs_sudo:
-                    result = await self.executor.execute(
-                        f"cp --preserve=timestamps {shlex.quote(backup_info.backup_path)} {shlex.quote(backup_info.source_path)}",
-                        sudo=True,
-                        timeout=300
-                    )
-                    return result.success
-                else:
-                    shutil.copy2(backup_info.backup_path, backup_info.source_path)
-                    return True
+                result = await self.executor.execute(
+                    f"bash -c {shlex.quote(f'{cmd} > {shlex.quote(backup_info.source_path)}')}",
+                    sudo=needs_sudo,
+                    timeout=300
+                )
+            return result.success
         except Exception as e:
             logger.error(f"File restore error: {e}")
             return False
@@ -564,13 +605,34 @@ class BackupManager:
             return False
 
     async def _restore_database(self, backup_info: BackupInfo) -> bool:
-        """Restore database from backup"""
+        """Restore database from backup with optional decryption"""
         try:
-            # Restore from compressed dump (shlex.quote prevents SQL injection)
-            result = await self.executor.execute(
-                f"gzip -dc {shlex.quote(backup_info.backup_path)} | psql {shlex.quote(backup_info.source_path)}",
-                timeout=600
-            )
+            # Build command pipeline
+            cmd = f"cat {shlex.quote(backup_info.backup_path)}"
+            
+            passphrase = None
+            if backup_info.backup_path.endswith('.gpg'):
+                passphrase = os.getenv(self.config.encryption_passphrase_env)
+                if not passphrase:
+                    logger.error("Cannot restore encrypted backup: passphrase not set")
+                    return False
+                cmd += " | gpg --batch --yes --decrypt --passphrase-fd 0"
+
+            cmd += " | gzip -dc"
+            cmd += f" | psql {shlex.quote(backup_info.source_path)}"
+
+            # Execute
+            if passphrase:
+                result = await self.executor.execute(
+                    cmd,
+                    input_str=passphrase,
+                    timeout=600
+                )
+            else:
+                result = await self.executor.execute(
+                    cmd,
+                    timeout=600
+                )
             return result.success
         except Exception as e:
             logger.error(f"Database restore error: {e}")
