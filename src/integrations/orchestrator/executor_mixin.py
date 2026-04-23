@@ -299,7 +299,7 @@ class ExecutorMixin:
         # Discord Channel Logger: Execution Start
         if self.discord_logger:
             if multi_project_mode:
-                project_list = "\n".join([f"   📂 {p.split('/')[-1]}" for p in projects_map.keys()])
+                project_list = "\n".join(f"   📂 {p.split('/')[-1]}" for p in projects_map)
                 self.discord_logger.log_orchestrator(
                     f"⚙️ **MULTI-PROJECT Execution gestartet**\n"
                     f"🆔 Batch: `{batch.batch_id}`\n"
@@ -579,7 +579,7 @@ class ExecutorMixin:
         exec_message = None
 
         if execution_channel:
-            project_list = "\n".join([f"• {p.split('/')[-1]}" for p in projects_map.keys()])
+            project_list = "\n".join(f"• {p.split('/')[-1]}" for p in projects_map)
             exec_embed = discord.Embed(
                 title="🐳 Multi-Project Remediation",
                 description=f"**Batch {batch.batch_id}**\n\nSequentielle Verarbeitung von {len(projects_map)} Projekten:\n{project_list}",
