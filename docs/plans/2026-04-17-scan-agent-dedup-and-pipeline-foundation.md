@@ -240,7 +240,7 @@ COMMENT ON COLUMN findings.finding_fingerprint IS
 **Step 2: Migration live anwenden**
 
 ```bash
-docker exec -e PGPASSWORD=sec_analyst_2026 guildscout-postgres psql \
+docker exec -e PGPASSWORD=${SECURITY_ANALYST_DB_PASSWORD} guildscout-postgres psql \
   -U security_analyst -d security_analyst \
   -f - < src/integrations/security_engine/migrations/001_finding_fingerprint.sql
 ```
@@ -250,7 +250,7 @@ Expected output: `ALTER TABLE`, `CREATE INDEX`, `COMMENT`
 **Step 3: Verifikation**
 
 ```bash
-docker exec -e PGPASSWORD=sec_analyst_2026 guildscout-postgres psql \
+docker exec -e PGPASSWORD=${SECURITY_ANALYST_DB_PASSWORD} guildscout-postgres psql \
   -U security_analyst -d security_analyst \
   -c "\d findings" | grep fingerprint
 ```
@@ -279,7 +279,7 @@ from integrations.security_engine.fingerprint import compute_finding_fingerprint
 async def main():
     dsn = os.environ.get(
         "SECURITY_ANALYST_DB_URL",
-        "postgresql://security_analyst:sec_analyst_2026@127.0.0.1:5433/security_analyst",
+        "postgresql://security_analyst:${SECURITY_ANALYST_DB_PASSWORD}@127.0.0.1:5433/security_analyst",
     )
     pool = await asyncpg.create_pool(dsn, min_size=1, max_size=2)
     try:
@@ -834,7 +834,7 @@ async def mark_duplicate(
 **Check-Constraint-Erweiterung (nur wenn `duplicate_of` noch nicht erlaubt):**
 
 ```bash
-docker exec -e PGPASSWORD=sec_analyst_2026 guildscout-postgres psql \
+docker exec -e PGPASSWORD=${SECURITY_ANALYST_DB_PASSWORD} guildscout-postgres psql \
   -U security_analyst -d security_analyst \
   -c "ALTER TABLE findings DROP CONSTRAINT IF EXISTS findings_status_check;
       ALTER TABLE findings ADD CONSTRAINT findings_status_check
@@ -884,7 +884,7 @@ import asyncpg
 async def main(apply: bool):
     dsn = os.environ.get(
         "SECURITY_ANALYST_DB_URL",
-        "postgresql://security_analyst:sec_analyst_2026@127.0.0.1:5433/security_analyst",
+        "postgresql://security_analyst:${SECURITY_ANALYST_DB_PASSWORD}@127.0.0.1:5433/security_analyst",
     )
     pool = await asyncpg.create_pool(dsn, min_size=1, max_size=2)
     try:

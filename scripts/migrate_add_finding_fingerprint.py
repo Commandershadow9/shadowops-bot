@@ -15,8 +15,7 @@ from integrations.security_engine.fingerprint import compute_finding_fingerprint
 
 async def main():
     dsn = os.environ.get(
-        "SECURITY_ANALYST_DB_URL",
-        "postgresql://security_analyst:sec_analyst_2026@127.0.0.1:5433/security_analyst",
+        "SECURITY_ANALYST_DB_URL", "postgresql://security_analyst:PASSWORD@127.0.0.1:5433/security_analyst"
     )
     pool = await asyncpg.create_pool(dsn, min_size=1, max_size=2)
     try:

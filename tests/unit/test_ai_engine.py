@@ -605,10 +605,13 @@ class TestAIEngine:
             returncode=1,
         )
 
+        # Nutze existierenden Pfad im Sandbox-Filesystem
+        schema_path = str(Path(__file__).parent.parent.parent / 'src' / 'schemas' / 'analyst_session.json')
+
         with patch('asyncio.create_subprocess_exec', return_value=mock_proc):
             result = await engine._run_analyst_claude(
                 prompt='Test',
-                schema_path=str(Path('/home/cmdshadow/shadowops-bot/src/schemas/analyst_session.json')),
+                schema_path=schema_path,
                 model='claude-opus-4-6',
                 timeout=5,
                 max_turns=1,

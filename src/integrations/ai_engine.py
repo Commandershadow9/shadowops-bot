@@ -18,6 +18,7 @@ import asyncio
 import json
 import logging
 import os
+import signal
 import re
 import tempfile
 import time
@@ -228,6 +229,7 @@ class CodexProvider:
         if schema_path:
             args.extend(['--output-schema', str(schema_path)])
 
+        proc = None
         try:
             proc = await asyncio.create_subprocess_exec(
                 *args,
@@ -235,6 +237,7 @@ class CodexProvider:
                 stdout=asyncio.subprocess.PIPE,
                 stderr=asyncio.subprocess.PIPE,
                 env=env,
+                start_new_session=True,
             )
 
             stdout_bytes, stderr_bytes = await asyncio.wait_for(
@@ -260,12 +263,24 @@ class CodexProvider:
 
         except asyncio.TimeoutError:
             logger.error(f"Codex CLI: Timeout nach {effective_timeout}s (Modell: {resolved_model})")
+            if proc:
+                try:
+                    os.killpg(os.getpgid(proc.pid), signal.SIGKILL)
+                    await proc.wait()
+                except Exception:
+                    pass
             return None
         except FileNotFoundError:
             logger.error("Codex CLI: 'codex' Befehl nicht gefunden")
             return None
         except Exception as e:
             logger.error(f"Codex CLI: Unerwarteter Fehler: {e}")
+            if proc:
+                try:
+                    os.killpg(os.getpgid(proc.pid), signal.SIGKILL)
+                    await proc.wait()
+                except Exception:
+                    pass
             return None
 
     async def query_raw(
@@ -299,6 +314,7 @@ class CodexProvider:
                 stdout=asyncio.subprocess.PIPE,
                 stderr=asyncio.subprocess.PIPE,
                 env=env,
+                start_new_session=True,
             )
 
             stdout_bytes, stderr_bytes = await asyncio.wait_for(
@@ -317,9 +333,21 @@ class CodexProvider:
 
         except asyncio.TimeoutError:
             logger.error(f"Codex CLI Raw: Timeout nach {effective_timeout}s")
+            if proc:
+                try:
+                    os.killpg(os.getpgid(proc.pid), signal.SIGKILL)
+                    await proc.wait()
+                except Exception:
+                    pass
             return None
         except Exception as e:
             logger.error(f"Codex CLI Raw: Fehler: {e}")
+            if proc:
+                try:
+                    os.killpg(os.getpgid(proc.pid), signal.SIGKILL)
+                    await proc.wait()
+                except Exception:
+                    pass
             return None
 
     async def is_available(self) -> bool:
@@ -481,6 +509,7 @@ class ClaudeProvider:
                 stdout=asyncio.subprocess.PIPE,
                 stderr=asyncio.subprocess.PIPE,
                 env=env,
+                start_new_session=True,
             )
 
             stdout_bytes, stderr_bytes = await asyncio.wait_for(
@@ -506,12 +535,24 @@ class ClaudeProvider:
 
         except asyncio.TimeoutError:
             logger.error(f"Claude CLI: Timeout nach {effective_timeout}s (Modell: {resolved_model})")
+            if proc:
+                try:
+                    os.killpg(os.getpgid(proc.pid), signal.SIGKILL)
+                    await proc.wait()
+                except Exception:
+                    pass
             return None
         except FileNotFoundError:
             logger.error(f"Claude CLI: '{self.cli_path}' nicht gefunden")
             return None
         except Exception as e:
             logger.error(f"Claude CLI: Unerwarteter Fehler: {e}")
+            if proc:
+                try:
+                    os.killpg(os.getpgid(proc.pid), signal.SIGKILL)
+                    await proc.wait()
+                except Exception:
+                    pass
             return None
 
     async def query_raw(
@@ -545,6 +586,7 @@ class ClaudeProvider:
                 stdout=asyncio.subprocess.PIPE,
                 stderr=asyncio.subprocess.PIPE,
                 env=env,
+                start_new_session=True,
             )
 
             stdout_bytes, stderr_bytes = await asyncio.wait_for(
@@ -563,9 +605,21 @@ class ClaudeProvider:
 
         except asyncio.TimeoutError:
             logger.error(f"Claude CLI Raw: Timeout nach {effective_timeout}s")
+            if proc:
+                try:
+                    os.killpg(os.getpgid(proc.pid), signal.SIGKILL)
+                    await proc.wait()
+                except Exception:
+                    pass
             return None
         except Exception as e:
             logger.error(f"Claude CLI Raw: Fehler: {e}")
+            if proc:
+                try:
+                    os.killpg(os.getpgid(proc.pid), signal.SIGKILL)
+                    await proc.wait()
+                except Exception:
+                    pass
             return None
 
     async def is_available(self) -> bool:
@@ -1504,6 +1558,7 @@ class AIEngine:
                 stderr=asyncio.subprocess.PIPE,
                 env=env,
                 cwd='/home/cmdshadow',
+                start_new_session=True,
             )
 
             stdout_bytes, stderr_bytes = await asyncio.wait_for(
@@ -1540,9 +1595,9 @@ class AIEngine:
             logger.warning("Fix-Session: Timeout nach %ds — versuche Teilergebnisse zu retten", timeout)
             if proc:
                 try:
-                    proc.kill()
+                    os.killpg(os.getpgid(proc.pid), signal.SIGKILL)
                     await proc.wait()
-                except ProcessLookupError:
+                except Exception:
                     pass
             # Teilergebnisse retten — Claude hat möglicherweise schon Findings gefixt
             partial = self._read_analyst_result(tmp_path)
@@ -1601,6 +1656,7 @@ class AIEngine:
                 stderr=asyncio.subprocess.PIPE,
                 env=env,
                 cwd='/home/cmdshadow',
+                start_new_session=True,
             )
 
             stdout_bytes, stderr_bytes = await asyncio.wait_for(
@@ -1638,6 +1694,7 @@ class AIEngine:
                         stderr=asyncio.subprocess.PIPE,
                         env=env,
                         cwd='/home/cmdshadow',
+                        start_new_session=True,
                     )
                     stdout_bytes, stderr_bytes = await asyncio.wait_for(
                         proc.communicate(input=prompt.encode('utf-8')), timeout=timeout
@@ -1686,9 +1743,9 @@ class AIEngine:
             logger.warning("Codex-Analyst: Timeout nach %ds", timeout)
             if proc:
                 try:
-                    proc.kill()
+                    os.killpg(os.getpgid(proc.pid), signal.SIGKILL)
                     await proc.wait()
-                except ProcessLookupError:
+                except Exception:
                     pass
             return None
 
@@ -1789,6 +1846,7 @@ class AIEngine:
                 stderr=asyncio.subprocess.PIPE,
                 env=env,
                 cwd='/home/cmdshadow',
+                start_new_session=True,
             )
 
             stdout_bytes, stderr_bytes = await asyncio.wait_for(
@@ -1857,9 +1915,9 @@ class AIEngine:
             logger.warning("Claude-Analyst: Timeout nach %ds — versuche Teilergebnisse", timeout)
             if proc:
                 try:
-                    proc.kill()
+                    os.killpg(os.getpgid(proc.pid), signal.SIGKILL)
                     await proc.wait()
-                except ProcessLookupError:
+                except Exception:
                     pass
 
             result = self._read_analyst_result(tmp_path)

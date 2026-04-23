@@ -426,6 +426,28 @@ class SecurityScanAgent:
         """Taeglicher Reset"""
         self._sessions_today = 0
 
+    async def _cleanup_orphaned_processes(self):
+        """Bereinigt verwaiste MCP-Server und KI-Prozesse."""
+        try:
+            logger.info("Starte explizite Prozess-Bereinigung...")
+            # Bekannte MCP-Server und KI-CLI Pattern
+            patterns = [
+                'mcp-server',
+                'modelcontextprotocol',
+                'codex exec',
+                'claude -p',
+            ]
+            for pattern in patterns:
+                proc = await asyncio.create_subprocess_exec(
+                    'pkill', '-f', pattern,
+                    stdout=asyncio.subprocess.DEVNULL,
+                    stderr=asyncio.subprocess.DEVNULL
+                )
+                await proc.wait()
+            logger.info("Prozess-Bereinigung abgeschlossen")
+        except Exception as e:
+            logger.warning("Fehler bei Prozess-Bereinigung: %s", e)
+
     # ─── Main Loop ────────────────────────────────────────────────────
 
     async def _main_loop(self):
@@ -730,6 +752,7 @@ class SecurityScanAgent:
                     pass
         finally:
             self._current_session_id = None
+            await self._cleanup_orphaned_processes()
 
     # ─── Pre-Session Maintenance ──────────────────────────────────────
 
@@ -1355,6 +1378,8 @@ class SecurityScanAgent:
                                                    fix_result.get('summary', '') + summary_extra)
         except Exception as e:
             logger.error("Fix-Phase Fehler: %s", e, exc_info=True)
+        finally:
+            await self._cleanup_orphaned_processes()
 
     # ─── Event-Scan ───────────────────────────────────────────────────
 
@@ -2310,6 +2335,7 @@ von der ShadowOps Review-Pipeline reviewt — halte den Scope eng."""
                     self._weekly_deep_done_this_week = True
             finally:
                 self._current_session_id = None
+                await self._cleanup_orphaned_processes()
 
     # ─── Post-Scan Reflection (SEO Agent Pattern) ───────────────────
 
