@@ -9,6 +9,7 @@ from pathlib import Path
 from typing import Any, Dict, List, Optional
 
 import yaml
+from dotenv import load_dotenv
 
 from .state_manager import get_state_manager
 
@@ -19,6 +20,7 @@ class Config:
     """Type-safe configuration helper with convenient access patterns."""
 
     def __init__(self, config_path: str = "config/config.yaml"):
+        load_dotenv()
         self.config_path = Path(config_path)
         self._config: Dict[str, Any] = {}
         self.load()
