@@ -919,14 +919,20 @@ class AutoFixManager:
 
     async def _get_diff_stat(self, project_path: Path) -> str:
         try:
-            res = subprocess.run(
-                ["git", "diff", "--stat"],
-                cwd=project_path,
-                capture_output=True,
-                text=True,
-                timeout=10
+            proc = await asyncio.create_subprocess_exec(
+                "git", "diff", "--stat",
+                cwd=str(project_path),
+                stdout=asyncio.subprocess.PIPE,
+                stderr=asyncio.subprocess.PIPE
             )
-            return res.stdout.strip()[:1000]
+            try:
+                stdout, _ = await asyncio.wait_for(proc.communicate(), timeout=10.0)
+                return stdout.decode(errors="ignore").strip()[:1000]
+            except asyncio.TimeoutError:
+                proc.kill()
+                await proc.wait()
+                logger.debug("diff stat failed: timeout")
+                return ""
         except Exception as e:
             logger.debug(f"diff stat failed: {e}")
             return ""
