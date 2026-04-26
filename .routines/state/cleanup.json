@@ -1,0 +1,14 @@
+{
+  "schema_version": 1,
+  "repo": "Commandershadow9/shadowops-bot",
+  "worker": "cleanup",
+  "last_run": null,
+  "open_prs": [],
+  "closed_findings": [],
+  "rejected_findings": [],
+  "_schema": {
+    "open_prs": "Liste von { pr_number, branch, finding_id, opened_at, status }",
+    "closed_findings": "Liste von { finding_id, fixed_in_pr, closed_at }",
+    "rejected_findings": "Liste von { finding_id, reason, rejected_at } — nicht erneut melden"
+  }
+}
