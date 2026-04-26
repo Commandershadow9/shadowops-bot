@@ -1,237 +1,197 @@
-# ShadowOps Security Bot
+# CLAUDE.md — shadowops-bot
 
-## Stack
-- **Runtime:** Python 3.12, discord.py 2.7
-- **AI:** Dual-Engine (Codex CLI Primary + Claude CLI Fallback)
-- **Monitoring:** Trivy, CrowdSec, Fail2ban, AIDE
-- **Data:** PostgreSQL (Knowledge + Findings, konsolidiert), SQLite (Changelog DB), JSON State Files
-- **Deploy:** systemd (system-level), logrotate
-- **Patch Notes:** Pipeline v6 (State Machine, seit 2026-04-13)
-- **Version:** v5.3.0 (2026-04-17: WAL-G-Fixer + Auto-Deploy-Hardening + cross-repo Security-Sweep, siehe `.claude/rules/safety.md`)
+> Diese Datei ist die Wissensbasis fuer alle KI-Tools (Claude Code, Codex, Routine-Worker).
+> Sie wird automatisch geladen. Halte sie aktuell — wenn die Doku luegt, lernt die KI Falsches.
 
-## Services & Ports
-| Service | Port | Bind | Zweck |
-|---------|------|------|-------|
-| Discord Bot | — | — | Gateway-Connection (DEV + ZERODOX Server) |
-| Health Check + Changelog API | 8766 | 0.0.0.0 | Health, REST API, RSS Feed, Sitemap (UFW: nur Docker 172.16.0.0/12) |
-| GitHub Webhook | 9090 | 0.0.0.0 | Push/PR Events (Traefik) |
-| GuildScout Alerts | 9091 | 0.0.0.0 | Alert Forwarding (UFW: nur Docker 172.16.0.0/12) |
+## Projekt-Ueberblick
 
-## Befehle
-| Aktion | Befehl |
-|--------|--------|
-| Status | `sudo systemctl status shadowops-bot` |
-| Restart | `scripts/restart.sh [--pull] [--logs]` |
-| Logs (live) | `journalctl -u shadowops-bot -f` |
-| Logs (Datei) | `tail -f logs/shadowops_YYYYMMDD.log` |
-| Tests | `pytest tests/ -x` (einzeln! OOM-Gefahr bei 8 GB VPS) |
+**ShadowOps** ist ein autonomer Security-Discord-Bot fuer Server-Monitoring (Fail2ban, CrowdSec, Docker, AIDE) mit Dual-Engine AI (Codex + Claude CLI), persistentem Lernsystem (SQL Knowledge Base) und Multi-Project-Management.
 
-## Absolute Verbote
-- NIEMALS `config/config.yaml` loeschen (Discord Token + API Keys)
-- NIEMALS `.venv/` loeschen
-- NIEMALS `data/` Dateien loeschen (State, Knowledge DB, Incidents)
-- NIEMALS `logs/` komplett loeschen (logrotate verwaltet)
-- Tests EINZELN ausfuehren (VPS hat nur 8 GB RAM)
-- NIEMALS `git push --force` ohne explizite Bestaetigung
+- **Repo:** https://github.com/Commandershadow9/shadowops-bot
+- **Default-Branch:** `main`
+- **Lizenz:** MIT
+- **Maintainer:** Solo-Dev (CommanderShadow), entwickelt mit hohem KI-Anteil
 
-## Wo liegt was?
+## Tech-Stack
 
-### Slash Commands (`src/cogs/`)
-| Datei | Cog | Commands |
-|-------|-----|----------|
-| `monitoring.py` | MonitoringCog | `/status`, `/bans`, `/threats`, `/docker`, `/aide` |
-| `admin.py` | AdminCog | `/scan`, `/stop-all-fixes`, `/remediation-stats`, `/set-approval-mode`, `/reload-context`, `/release-notes`, `/pending-notes`, `/mark-duplicate` |
-| `inspector.py` | InspectorCog | `/get-ai-stats`, `/agent-stats`, `/projekt-status`, `/alle-projekte` |
-| `customer_setup_commands.py` | CustomerSetupCommands | `/setup-customer-server` |
+| Bereich | Technologie | Version |
+|---|---|---|
+| Sprache | Python | 3.9+ (CI nutzt 3.11) |
+| Discord | discord.py | siehe requirements.txt |
+| Datenbank | PostgreSQL | 3 DBs: security_analyst, agent_learning, seo_agent |
+| Cache | Redis | — |
+| AI Primary | Codex CLI | gpt-4o / gpt-5.3-codex / o3 |
+| AI Fallback | Claude CLI | claude-sonnet-4-6 / claude-opus-4-6 |
+| Container | Docker | mit Trivy fuer Scans |
+| Service | systemd | `/etc/systemd/system/shadowops-bot.service` |
+| Tests | pytest | 150+ Tests, unit + integration |
+| Webhook | GitHub Webhooks | HMAC-SHA256 verifiziert |
 
-### Patch Notes Pipeline v6 (`src/patch_notes/`)
+## Architektur-Prinzipien
 
-Eigenstaendiges Package mit 5-Stufen State Machine. Ersetzt die alten Mixins (`ai_patch_notes_mixin.py`, Teile von `notifications_mixin.py`).
+1. **Defense-in-Depth.** Jede destruktive Aktion hat Backup → Fix → Verify → Restart, mit Rollback-Pfad.
+2. **Confidence-Based AI.** <85% confidence → Fix wird blockiert.
+3. **Lernen statt Wiederholen.** Knowledge Base speichert jeden Fix-Versuch + Outcome. Beim Retry waehlt der Agent einen anderen Ansatz.
+4. **Single Approval pro Plan.** Multi-Event-Batching, ein Plan, eine Genehmigung.
+5. **Dry-Run-First.** Neue Fix-Strategien laufen erst im Dry-Run-Mode.
+6. **Loop-Schutz.** 7 Schichten gegen Review-Loops (Trigger-Whitelist, SHA-Dedupe, Cooldown, Iteration-Cap, Circuit-Breaker, Time-Cap, Single-Comment-Edit).
 
-| Datei | Zweck |
-|-------|-------|
-| `__init__.py` | Public API: `generate_release()`, `retract_patch_notes()` |
-| `pipeline.py` | `PatchNotePipeline` — State Machine Orchestrator (asyncio Lock, Circuit Breaker, Crash-Resume) |
-| `context.py` | `PipelineContext` Dataclass — traegt alle Daten durch die 5 Stufen |
-| `state.py` | `PipelineStateStore` — JSON-Persistenz fuer Crash-Resilience (`data/pipeline_runs/`) |
-| `versioning.py` | DB-basierte SemVer (EINE Quelle: Changelog-DB, kein Git-Tag) |
-| `grouping.py` | Deterministische Commit-Gruppierung (ALLE Commits, kein Cap, PR-Label Override) |
-| `stages/collect.py` | Stufe 1: PR-Daten anreichern, Git-Stats, Self-Healing (Commits aus Git wenn leer) |
-| `stages/classify.py` | Stufe 2: Gruppierung + Version + Team-Credits + Update-Groesse (5 Stufen: small/normal/big/major/mega) |
-| `stages/generate.py` | Stufe 3: Template-Auswahl + AI-Call (Codex/Claude) + Structured Output Parsing |
-| `stages/validate.py` | Stufe 4: Safety-Checks (Feature-Count, Design-Doc-Leak, Version-Strip, Sanitizer, Umlaute) + Multi-Author-Enrichment (`change.authors[]` Top-3 pro Change) |
-| `stages/distribute.py` | Stufe 5: Discord (Hero-Stats, Narrative-Sections, Multi-Author-Credits), Changelog-DB, Web-Export, Feedback-Buttons, Rollback, Metriken, `release_notes.md` Archive |
-| `templates/base.py` | BaseTemplate mit `build_prompt()`, Narrative-Override (mega/major), Anti-Patterns, Few-Shot, `release_notes.md` Reader, Classification-Rules (DE+EN), Zeitfenster + Autor-Fakten |
-| `templates/gaming.py` | Gaming-Template: MayDay Sim (Anrede "Dispatcher", Storytelling, Hype-Few-Shot, 12 Badges) |
-| `templates/saas.py` | SaaS-Template: GuildScout, ZERODOX (Anrede "Team", sachlich, Business-Value, 6 Badges) |
-| `templates/devops.py` | DevOps-Template: ShadowOps, AI-Agent-Framework (Anrede "Ops", kompakt, technisch, 4 Badges) |
+## Verzeichnis-Struktur
 
-**Trigger-Pfade:**
-- Webhook Push (Port 9090) → sammelt nur im `PatchNotesBatcher`, KEIN direkter Release (fix 2026-04-15 gegen Mini-Version-Spam)
-- Daily Cron (22:00, ≥15 Commits) → `generate_release()` direkt aus Git
-- Weekly Cron (Sonntag 20:00, ≥3 Commits) → `generate_release()` direkt aus Git
-- `/release-notes <projekt>` → `generate_release()` direkt aus Git, kein Minimum
+```
+shadowops-bot/
+├── src/
+│   ├── bot.py                    # Haupt-Bot
+│   ├── cogs/                     # Slash-Commands (admin, inspector, monitoring)
+│   ├── integrations/             # Externe Systeme (siehe unten)
+│   └── utils/                    # config, logging, embeds, state
+├── tests/
+│   ├── unit/                     # 161+ Unit-Tests
+│   ├── integration/              # End-to-End-Workflows
+│   └── conftest.py
+├── config/
+│   ├── config.example.yaml       # Template (commited)
+│   ├── config.yaml               # Real config (gitignored)
+│   ├── DO-NOT-TOUCH.md           # Critical files protection
+│   ├── INFRASTRUCTURE.md
+│   └── PROJECT_*.md              # Per-projekt-Notizen
+├── deploy/
+│   └── shadowops-bot.service     # systemd Unit
+├── scripts/                      # Wartungs-Skripte
+├── docs/
+│   ├── SECURITY_ANALYST.md
+│   ├── SETUP_GUIDE.md
+│   ├── reference/api.md
+│   ├── adr/                      # Architecture Decision Records
+│   └── plans/                    # Design-Dokumente
+├── data/                         # Runtime-Daten (gitignored)
+├── logs/                         # Logs (gitignored)
+├── .claude/                      # KI-spezifische Configs
+└── .routines/                    # Worker State + Prompts (siehe unten)
+```
 
-**Narrative v1 (seit 2026-04-15):**
-- Bei `update_size ∈ {mega, major}` generiert die AI web_content im Gaming-Dev-Commentary + Product-Story Mix (Anrede → Leitidee → 3 Momente → Was dahinter steckt → Warum zusammen → Demnächst)
-- Anti-Pattern-Liste verhindert Statistik-Listings und Marketing-Floskeln
-- Few-Shot-Beispiel pro Template-Typ als wörtliches Muster
-- `release_notes.md` im Projekt-Root (optional): Dev-Kommentare werden wörtlich als DEV-KONTEXT in den Prompt übergeben, nach erfolgreichem Release nach `docs/release-history/v<version>.md` archiviert
-- Design-Doc: `docs/plans/2026-04-15-narrative-patch-notes-design.md`
+### Module unter `src/integrations/`
 
-**Self-Healing:** Wenn Pipeline ohne Commits aufgerufen wird (Restart, Webhook-Ausfall), holt Stufe 1 automatisch ALLE Commits seit dem letzten Release aus Git via `_gather_commits_since_last_release()`.
+- `ai_engine.py` — Dual-Engine Router (Codex Primary, Claude Fallback)
+- `smart_queue.py` — Analyse-Pool (Semaphore=3) + serieller Fix-Lock + Circuit Breaker
+- `verification.py` — Pre-Push Pipeline (Confidence ≥85% → Tests → Claude-Verify → KB-Check)
+- `orchestrator.py` — Multi-Event-Batching (10s Fenster) + Approval-Flow
+- `event_watcher.py` — Lauscht auf Fail2ban/CrowdSec/AIDE/Docker-Events
+- `knowledge_base.py` — SQL Learning (fix_attempts, fix_verifications, finding_quality, scan_coverage)
+- `code_analyzer.py` — Code Structure Analyzer (Git-History + AST)
+- `context_manager.py` — RAG: Project-Context + DO-NOT-TOUCH + Infra
+- `github_integration.py` — Webhooks mit HMAC-SHA256 Verification
+- `project_monitor.py` — Multi-Project Health-Checks
+- `deployment_manager.py` — Auto-Deploy mit Backup/Rollback
+- `incident_manager.py` — Incident Threads in Discord
+- `customer_notifications.py` — Customer-Facing Alerts (Multi-Guild)
+- `fail2ban.py` / `crowdsec.py` / `aide.py` / `docker.py` — Security-Integrationen
 
-### Integrationen (`src/integrations/`)
+## Coding-Conventions
 
-#### Kern-Module (Packages)
-| Package | Module | Zweck |
-|---------|--------|-------|
-| `orchestrator/` | `core`, `batch_mixin`, `planner_mixin`, `discord_mixin`, `executor_mixin`, `recovery_mixin`, `models` | Remediation-Orchestrator (Event-Batching, KI-Analyse, Fix-Ausfuehrung, Erfahrungslernen via KB) |
-| `github_integration/` | `core`, `webhook_mixin`, `polling_mixin`, `event_handlers_mixin`, `ci_mixin`, `state_mixin`, `git_ops_mixin`, `notifications_mixin`, `ai_patch_notes_mixin` | GitHub Webhook Server, Patch Notes, CI/CD |
-| `github_integration/jules_workflow_mixin.py` | Jules SecOps Workflow — PR-Handler, Gate-Pipeline (7 Schichten), Review-Orchestrierung, Multi-Agent Auto-Merge-Flow |
-| `github_integration/agent_review/` | Multi-Agent Review Pipeline (seit 2026-04-14) — Adapter, Detector, Queue, API-Client, Outcome-Tracker, Daily-Digest |
-| `github_integration/jules_state.py` | asyncpg-Layer fuer security_analyst.jules_pr_reviews, atomic Lock-Claim |
-| `github_integration/jules_learning.py` | Few-Shot + Projekt-Knowledge Loader aus agent_learning DB |
-| `github_integration/jules_review_prompt.py` | Claude-Prompt-Builder fuer strukturierte PR-Reviews |
-| `github_integration/jules_gates.py` | Pure Loop-Schutz-Gates (Trigger-Whitelist, Cooldown, Cap, Circuit-Breaker) |
-| `github_integration/jules_comment.py` | PR-Comment-Body-Builder + Self-Filter-Marker |
-| `github_integration/jules_batch.py` | Nightly Outcome-Klassifizierung + jules_review_examples Update |
-| `github_integration/jules_state_schema.sql` | DDL fuer security_analyst.jules_pr_reviews + jules_daily_stats View |
-| `github_integration/jules_learning_schema.sql` | DDL fuer agent_learning.jules_review_examples |
+- **Naming:** `snake_case` fuer Funktionen/Variablen, `PascalCase` fuer Klassen, `UPPER_CASE` fuer Konstanten.
+- **Type-Hints:** Pflicht fuer neue Funktionen (auch wenn mypy noch nicht strict laeuft).
+- **Docstrings:** Google-Style, mindestens fuer Public-Funktionen.
+- **Async-First:** discord.py + aiohttp — neue I/O ist `async`.
+- **Fehler-Handling:** Niemals leere `except:`. Mindestens loggen + re-raise oder klar entscheiden.
+- **Logging:** `from src.utils.logger import get_logger` — niemals `print()`.
+- **Secrets:** AUSSCHLIESSLICH via Env-Vars (DISCORD_BOT_TOKEN, OPENAI_API_KEY, ANTHROPIC_API_KEY). Niemals in Code, niemals in `config.yaml`.
+- **Tests:** Neue Module brauchen Tests in `tests/unit/test_<module>.py`. Fixtures in `conftest.py` wiederverwenden.
+- **Conventional Commits:** `fix:`, `feat:`, `refactor:`, `perf:`, `docs:`, `chore:`.
 
-#### Einzelne Module
-| Datei | Zweck |
-|-------|-------|
-| `ai_engine.py` | Dual-Engine AI (Codex Primary + Claude Fallback, Structured Output, Markdown-Fence-Parser, Schema-Validierung via jsonschema). Prompts werden via stdin uebergeben (kein Leak in ps/proc) |
-| `smart_queue.py` | SmartQueue (3 Analyse-Slots, 1 Fix-Lock, Circuit Breaker) |
-| `auto_fix_manager.py` | Discord Buttons fuer Approve/Reject, Persistent Views |
-| `event_watcher.py` | Periodischer Scanner (Trivy/CrowdSec/Fail2ban/AIDE) |
-| `self_healing.py` | SelfHealingCoordinator (Job-Management, Rollback) |
-| `fail2ban.py` | Fail2ban Monitor (IP-Bans, Jail Stats) |
-| `crowdsec.py` | CrowdSec Monitor (Alerts, Decisions, Metrics) |
-| `docker.py` | Docker/Trivy Security Scanner |
-| `aide.py` | AIDE File Integrity Monitoring |
-| `approval_modes.py` | Approval-Modi (paranoid/auto/dry-run) |
-| `context_manager.py` | Project-Context Loader fuer KI-Prompts |
-| `project_monitor.py` | Projekt-Health-Monitoring (Uptime, Response Times, systemd-Service-Checks) |
-| `deployment_manager.py` | Deployment-Verwaltung |
-| `incident_manager.py` | Incident-Tracking und -Management |
-| `customer_notifications.py` | Kunden-Benachrichtigungen (Patch Notes etc.) |
-| `customer_server_setup.py` | Auto-Setup von Kunden-Discord-Servern |
-| `guildscout_alerts.py` | GuildScout Alert-Forwarding (Port 9091) |
-| `server_assistant.py` | Server Assistant (ersetzt Legacy Learning System) |
-| `changelog_db.py` | Zentrale Changelog-DB (SQLite, alle Projekte, Upsert + Paginierung) |
-| `content_sanitizer.py` | Security-Filter fuer Patch Notes (Pfade, IPs, Ports, Secrets) |
-| `patch_notes_batcher.py` | Sammelt ALLE Commits ohne Ausnahme. Release via Cron (Sonntag 20:00 / täglich), manuell (/release-notes min 3), oder Notbremse (≥20 mit 24h Cooldown). Max 1 automatischer Release pro Projekt pro Tag. Cooldown persistiert in `last_releases.json` |
-| `patch_notes_feedback.py` | Discord Feedback (Persistent Buttons: Like + Bewerten, Text-Modal) + Learning-DB Integration |
-| `patch_notes_learning.py` | Patch Notes Learning Pipeline (PostgreSQL agent_learning DB, Varianten-Gewichtung, Feedback-Loop) |
-| `patch_notes_web_exporter.py` | Web-Export (zentrale DB Upsert + File-Backup + optional HTTP POST). Frontend: shared-ui v0.2.0 Changelog-Komponenten |
-| `learning_notifier.py` | Automatische Discord-Posts in 🧠-ai-learning (Session-Summaries, Feedback-Ergebnisse, Weekly, Meilensteine) |
-| `knowledge_base.py` | PostgreSQL Knowledge Database (konsolidiert: Fixes, Strategien, Pläne, Analyst-Cross-Referenz) |
-| `log_analyzer.py` | Log-Analyse und -Auswertung |
-| `code_analyzer.py` | Code-Analyse fuer Fix-Strategien |
-| `git_history_analyzer.py` | Git-History Analyse |
-| `command_executor.py` | Sichere Command-Ausfuehrung (kein shell=True) |
-| `impact_analyzer.py` | Impact-Analyse vor Fix-Ausfuehrung |
-| `backup_manager.py` | Backup vor Fixes (/tmp/shadowops_backups/) |
-| `service_manager.py` | systemd Service Management (8 Services: shadowops, guildscout, sicherheitstool, nexus, postgresql + 3 AI-Agent-Services) |
-| `verification.py` | Post-Fix Verifikation |
+## DO und DON'T
 
-#### Unterverzeichnisse
-| Verzeichnis | Zweck |
-|-------------|-------|
-| `fixers/` | Tool-spezifische Fixer (trivy, crowdsec, fail2ban, aide, **walg** seit 2026-04-17) |
-| `fixers/walg_fixer.py` | Auto-Updater fuer WAL-G-Binary (Download v3.0.8+, SHA256-Verify, Backup, Rollback). Source `walg`/`wal-g` im SecurityEngine registriert |
-| `ai_learning/` | Legacy AI Learning (DEAKTIVIERT — knowledge_db, knowledge_synthesizer, continuous_learning_agent) |
-| `analyst/` | Legacy Security Analyst (DEAKTIVIERT — ersetzt durch SecurityScanAgent in `security_engine/`) |
-| `security_engine/` | Unified Security Engine v6 (engine, db, executor, reactive, deep_scan, proactive, learning_bridge, providers, registry, circuit_breaker, fixer_adapters, models, scan_agent, prompts, activity_monitor, **fingerprint** seit 2026-04-17) |
-| `security_engine/fingerprint.py` | Deterministische SHA1-Finding-Fingerprints fuer Dedup (ersetzt Titel-Match). Umlaut-safe, Order-Independence, Pure-Funktion |
-| `security_engine/migrations/` | DB-Schema-Migrations (001_finding_fingerprint.sql) — einmalige Changes am security_analyst-Schema |
+### DO
+- Backups vor destruktiven Aktionen (`deployment_manager.py` macht das schon — beibehalten).
+- Confidence-Score in jeden AI-Output reflektieren.
+- Knowledge-Base updaten nach Fix (success/failure egal).
+- DO-NOT-TOUCH-Liste pruefen bevor Files angefasst werden.
+- Discord-Updates in Echtzeit (Backup → Fix → Verify → Restart sichtbar).
 
-### Utils (`src/utils/`)
-| Datei | Zweck |
-|-------|-------|
-| `config.py` | Config-Klasse (laedt `config/config.yaml`) |
-| `logger.py` | `setup_logger()` — Logging-Setup mit Rotation |
-| `embeds.py` | `EmbedBuilder` + `Severity` — Discord Embed Templates |
-| `discord_logger.py` | `DiscordChannelLogger` — Logging in Discord Channels |
-| `health_server.py` | `HealthCheckServer` — aiohttp auf Port 8766 (+ Changelog REST API, RSS, Sitemap) |
-| `state_manager.py` | `StateManager` — Persistenter Bot-State (`data/state.json`) |
-| `message_handler.py` | `MessageHandler` — Sicheres Senden (Split bei >2000 Zeichen) |
-| `changelog_parser.py` | `ChangelogParser` — CHANGELOG.md Parser fuer Patch Notes |
-| `process_lock.py` | `ProcessLock` — Cross-Process Advisory File Lock (fcntl) fuer Singleton-Services |
-| `circuit_breaker.py` | `CircuitBreaker` — Leichtgewichtiger CB (threshold + timeout), genutzt fuer AI Patch Notes |
+### DON'T
+- **Niemals** `config.yaml` oder `.env` committen.
+- **Niemals** Secrets in Logs schreiben (Logger maskiert standardmaessig nicht — selbst mitdenken).
+- **Niemals** `enforce_admins: true` in der Branch-Protection — sonst sperrt sich Solo-Dev aus.
+- **Niemals** Public API in `src/integrations/*` aendern ohne BREAKING-Markierung im Commit.
+- **Niemals** `pytest` mit Live-DB laufen lassen — Fixtures nutzen.
+- **Niemals** Discord-Token, Webhook-Secrets, oder DB-Passwords im Code referenzieren — nur `os.environ`.
+- **Niemals** systemd-Service per Worker-PR aendern — das ist Server-State, nicht Repo-State.
 
-### Schemas (`src/schemas/`)
-| Datei | Zweck |
-|-------|-------|
-| `fix_strategy.json` | Remediation-Plaene (Einzelne Events) |
-| `coordinated_plan.json` | Koordinierte Batch-Plaene (Orchestrator) |
-| `incident_analysis.json` | Incident-Analyse (Self-Healing) |
-| `patch_notes.json` | AI-generierte Patch Notes (v3: + seo_keywords, seo_category) |
-| `analyst_session.json` | Security Analyst Session Output (+ areas_checked, finding_assessments) |
-| `jules_review.json` | Claude PR-Review Output (verdict, blockers, suggestions, nits, scope_check) |
+## Setup-Commands
 
-### Konfiguration
-| Datei | Zweck |
-|-------|-------|
-| `config/config.yaml` | Hauptkonfiguration (NICHT in Git!) |
-| `config/config.example.yaml` | Template fuer neue Setups |
-| `config/config.recommended.yaml` | Empfohlene Einstellungen |
-| `config/safe_upgrades.yaml` | Curated Upgrade-Pfade fuer Packages |
-| `config/logrotate.conf` | Logrotate-Konfiguration |
-| `data/state.json` | Dynamischer Bot-State (Channel IDs, etc.) |
-| `data/ai_knowledge.db` | LEGACY SQLite (Daten nach PostgreSQL migriert, wird nicht mehr aktiv genutzt) |
-| `data/changelogs.db` | Zentrale Changelog-DB (alle Projekte, wird zur Laufzeit erstellt) |
-| `data/project_monitor_state.json` | Persistenter Monitor-State (Uptime-Stats pro Projekt) |
-| `data/last_releases.json` | 24h Release-Cooldown Timestamps pro Projekt (Patch Notes Safety Schicht 4) |
-| `.shadowops.lock` | Advisory File Lock — verhindert doppelte Bot-Instanzen (ProcessLock, NICHT in Git) |
+```bash
+# Dependencies
+pip3 install -r requirements.txt
+pip3 install -r requirements-dev.txt
 
-### Deploy
-| Datei | Zweck |
-|-------|-------|
-| `deploy/shadowops-bot.service` | systemd Unit-File (Quelle fuer /etc/systemd/system/), setzt XDG_RUNTIME_DIR fuer User-Service-Zugriff |
+# Config (einmalig)
+cp config/config.example.yaml config/config.yaml
+chmod 600 config/config.yaml
+# Secrets als Env-Vars in ~/.bashrc oder Service-EnvFile:
+#   export DISCORD_BOT_TOKEN="..."
+#   export OPENAI_API_KEY="..."
+#   export ANTHROPIC_API_KEY="..."
 
-### Scripts (`scripts/`)
-| Datei | Zweck |
-|-------|-------|
-| `restart.sh` | Bot neustarten (--pull, --logs) |
-| `diagnose-bot.sh` | Diagnose: Status, Ports, Logs, Konflikte |
-| `setup.sh` | Erstinstallation (venv, Dependencies, Service) |
-| `update-config.sh` | Config-Migration bei Updates |
-| `get_bot_invite.py` | Discord Bot Invite-URL generieren |
-| `test_alerts.py` | Test-Plan fuer Discord Alert Channels |
-| `run_tests_with_coverage.sh` | Tests mit Coverage ausfuehren, Ergebnisse nach data/test_results.json |
-| `migrate_changelogs.py` | Migration: ZERODOX + GuildScout PG-Changelogs → zentrale SQLite DB |
-| `setup_zerodox_channels.py` | Einmalig: ZERODOX Discord-Channels (Patch Notes) einrichten (Kategorie + Permissions) |
-| `commit-msg-hook.sh` | Conventional Commit Hook — validiert Commit-Messages (Prefix, Beschreibungslaenge). Auf allen 5 Projekten deployed |
-| `deploy-commit-hook.sh` | Deployt den Commit-Hook auf ein/alle Projekte (`--all` fuer alle 5) |
+# Lokal testen
+python3 src/bot.py
 
-### GitHub Actions (`.github/workflows/`)
-| Datei | Zweck |
-|-------|-------|
-| `auto-label-pr.yml` | Auto-Label PRs aus Conventional Commit Prefixen (feat→feature, fix→bugfix, etc.). SHA-gepinnter actions/github-script, 10 Labels konfiguriert |
+# Tests
+pytest tests/ -v
+pytest tests/ --cov=src --cov-report=html
 
-### Dokumentation (Lifecycle-Struktur, seit 2026-04-15)
-| Pfad | Inhalt |
-|------|--------|
-| `docs/README.md` | Semantic Map, Einstiegspunkt fuer AI-Navigation |
-| `docs/architecture/` | Wie funktioniert das System (jules-workflow/, security-engine/, multi-agent-review/) |
-| `docs/operations/` | Wie wird es betrieben (Setup, Quickstart, Deployment, Webhooks, Multi-Guild) |
-| `docs/runbooks/` | Schritt-fuer-Schritt bei Incidents (jules-workflow, multi-agent-review) |
-| `docs/design/` | Aktive Design-Docs (patch-notes-v6, jules-workflow, multi-agent-review, doku-refactor) |
-| `docs/reference/` | Nachschlagen (API-Reference) |
-| `docs/adr/` | Architecture Decision Records (8 ADRs) |
-| `docs/plans/` | Aktueller Implementierungsplan + IST-Bewertung |
-| `docs/archive/INDEX.md` | Tabelle aller archivierten Dateien mit Git-SHAs (via `git show`) |
-| `docs/assets/` | Bilder und Grafiken |
+# Service (Production)
+sudo systemctl restart shadowops-bot
+sudo journalctl -u shadowops-bot -f
+```
 
-Alle aktiven Docs haben YAML Front-Matter (`status`, `last_reviewed`, `owner`).
+## Beispiele fuer typische Tasks
 
-## Operative Safety
+### Neuen Slash-Command hinzufuegen
+1. Cog-Datei: `src/cogs/<bereich>.py` — Command als Methode mit `@app_commands.command(...)`.
+2. Cog in `bot.py` laden (`await self.add_cog(...)` falls noch nicht generisch gelistet).
+3. Test: `tests/unit/test_<bereich>.py` mit Mock-Interaction.
+4. Doku: README → "Slash Commands" Sektion ergaenzen.
 
-Safety-Regeln (Verbote, OOM-Schutz, Patch-Notes-Pipeline v6 Sperren, Jules-Loop-Schutz,
-Multi-Agent-Review Rollback-Sequenz) stehen in `.claude/rules/safety.md`.
+### Neue Security-Integration (analog zu fail2ban.py)
+1. Modul in `src/integrations/<name>.py` mit Klasse, async `check()`-Methode, gibt strukturierte Events zurueck.
+2. Im `event_watcher.py` registrieren.
+3. Config-Key in `config.example.yaml` ergaenzen.
+4. Test mit Mock-Subprocess-Output.
+5. README + `docs/SECURITY_ANALYST.md` updaten.
 
-Historische Architektur-Entscheidungen sind ins Archiv gewandert:
-**→ [`docs/archive/INDEX.md`](docs/archive/INDEX.md)** (Tabelle mit Git-SHAs fuer `git show`-Lookup)
+### Neuen AI-Provider als Engine
+1. Klasse in `ai_engine.py` analog zu `CodexEngine` / `ClaudeEngine`.
+2. In `TaskRouter` registrieren mit Routing-Regeln.
+3. Quota-Failover testen (Mock-Output mit Limit-Marker).
+4. Tests in `test_ai_engine.py` ergaenzen.
+5. CLAUDE.md (diese Datei) im Tech-Stack-Block updaten.
+
+## Routine-Worker
+
+Drei Worker laufen automatisch (siehe `.routines/prompts/`):
+
+- **Cleanup-Crew** — `.routines/prompts/cleanup.md` — taeglich 03:00 + 14:00. Refactor, Dead-Code, Konsistenz, Quick-Wins. State: `.routines/state/cleanup.json`
+- **Guardian** — `.routines/prompts/guardian.md` — taeglich 05:00 + bei Push-Webhook. SAST, Dependency-Scan, Secret-Scan, passive Live-Checks gegen `zerodox.de` (NICHT gegen shadowops-bot — das ist ein Server-side Bot, kein Public-Endpoint). State: `.routines/state/guardian.json`
+- **Doku-Kurator** — `.routines/prompts/doku.md` — taeglich 02:00. Drift, Luecken, KI-Konformitaet, Anti-Bloat. State: `.routines/state/doku.json`
+
+Worker-Konventionen:
+- Branches: `routine/<worker>/<topic>` (z.B. `routine/cleanup/dedupe-event-watcher`)
+- PR-Labels: `status:routine-generated`, `worker:<name>`, `type:<refactor|fix|...>`, `area:<modul>`
+- Bei Unsicherheit: Issue statt PR (`status:needs-info`).
+
+## Statistik (Stand v5.1)
+
+20.000+ LoC, 150+ Tests, 3 PostgreSQL DBs (21+7+11 Tabellen), 4 Security-Integrationen, 15 Discord-Commands, 3 Monitored Projects (GuildScout, ZERODOX, AI Agents).
+
+## Aktuelle Doku
+
+- [README.md](./README.md)
+- [docs/SECURITY_ANALYST.md](./docs/SECURITY_ANALYST.md)
+- [docs/SETUP_GUIDE.md](./docs/SETUP_GUIDE.md)
+- [docs/reference/api.md](./docs/reference/api.md)
+- [DOCS_OVERVIEW.md](./DOCS_OVERVIEW.md)
+- [config/DO-NOT-TOUCH.md](./config/DO-NOT-TOUCH.md)
+
+## Letztes Update dieser Datei
+
+2026-04-26 — initiales Setup, generiert aus Worker-Bundle.

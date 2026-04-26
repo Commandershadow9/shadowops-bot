@@ -1,0 +1,14 @@
+{
+  "schema_version": 1,
+  "repo": "Commandershadow9/shadowops-bot",
+  "worker": "doku",
+  "last_run": null,
+  "last_drift_check": null,
+  "open_prs": [],
+  "tracked_files": {
+    "README.md": { "last_synced_with_code_at": null },
+    "CLAUDE.md": { "last_synced_with_code_at": null },
+    "docs/reference/api.md": { "last_synced_with_code_at": null }
+  },
+  "open_questions": []
+}

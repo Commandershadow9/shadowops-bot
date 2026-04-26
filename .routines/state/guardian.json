@@ -1,0 +1,15 @@
+{
+  "schema_version": 1,
+  "repo": "Commandershadow9/shadowops-bot",
+  "worker": "guardian",
+  "last_run": null,
+  "last_full_scan": null,
+  "open_findings": [],
+  "fixed_findings": [],
+  "false_positives": [],
+  "_schema": {
+    "open_findings": "Liste von { id, type, severity, file, line, cwe, opened_at, issue_url }",
+    "fixed_findings": "Liste von { id, fixed_in_pr, fixed_at }",
+    "false_positives": "Liste von { id, reason, marked_at } — nicht erneut melden"
+  }
+}
