@@ -164,11 +164,11 @@ Shows AI provider status, fallback chain, and usage statistics.
 **Permissions:** None
 **Parameters:** None
 **Returns:** Embed with:
-- Ollama status (enabled/disabled, model, URL)
-- Claude status (enabled/disabled, model)
-- OpenAI status (enabled/disabled, model)
+- Codex CLI status (primary engine, model, last used)
+- Claude CLI status (fallback engine, model, last used)
 - Active fallback chain
 - Request counts per provider
+- Circuit breaker state
 
 **Example:**
 ```
@@ -266,25 +266,36 @@ channels:
 
 # ========================================
 # AI CONFIGURATION
+# Codex CLI ist Primary (97% der Anfragen), Claude CLI ist Fallback + Verification.
+# Ollama wurde vollstaendig entfernt (v4.0).
+# API-Keys werden NICHT hier gesetzt — nur ueber Env-Vars (OPENAI_API_KEY, ANTHROPIC_API_KEY).
 # ========================================
 ai:
-  ollama:
-    enabled: true                           # Enable Ollama (local AI)
-    url: http://localhost:11434             # Ollama API URL
-    model: phi3:mini                        # Model for regular analysis
-    model_critical: llama3.1                # Model for CRITICAL events
-    hybrid_models: true                     # Use different models by severity
-    request_delay_seconds: 4.0              # Rate limiting (seconds between requests)
+  codex:
+    enabled: true
+    cli_path: "codex"                        # Pfad zur Codex CLI
+    models:
+      fast: "gpt-5.3-codex"
+      standard: "gpt-5.3-codex"
+      thinking: "o3"
 
-  anthropic:
-    enabled: false                          # Enable Claude
-    api_key: null                           # Anthropic API key
-    model: claude-3-5-sonnet-20241022       # Claude model
+  claude:
+    enabled: true
+    cli_path: "/home/user/.local/bin/claude" # Pfad zur Claude CLI
+    models:
+      fast: "claude-sonnet-4-6"
+      standard: "claude-sonnet-4-6"
+      thinking: "claude-opus-4-6"
 
-  openai:
-    enabled: false                          # Enable OpenAI
-    api_key: null                           # OpenAI API key
-    model: gpt-4o                           # OpenAI model
+  timeouts:
+    codex_seconds: 300
+    claude_seconds: 300
+
+  routing:
+    critical_analysis: { engine: codex, model: thinking }
+    high_analysis:     { engine: codex, model: standard }
+    low_analysis:      { engine: codex, model: fast }
+    critical_verify:   { engine: claude, model: thinking }
 
 # ========================================
 # AUTO-REMEDIATION CONFIGURATION
@@ -583,7 +594,7 @@ Fallback auf das jeweils andere Modell bei Timeout oder leerer Response.
 from src.integrations.knowledge_base import KnowledgeBase
 
 # Initialize
-kb = KnowledgeBase(db_path="data/knowledge_base.db")
+kb = KnowledgeBase(dsn=config.security_analyst_dsn)  # PostgreSQL DSN aus config.yaml
 
 # Record a fix
 kb.record_fix(
@@ -791,28 +802,42 @@ event = SecurityEvent(
 
 ## Database Schema
 
-### Knowledge Base (SQLite)
+Das System nutzt **PostgreSQL** (nicht SQLite). Drei Datenbanken:
 
-#### fixes table
+| Datenbank | DSN-Config-Key | Zweck |
+|-----------|----------------|-------|
+| `security_analyst` | `security_analyst_dsn` / Env: `SECURITY_ANALYST_DB_URL` | Security-Findings, Sessions, Fix-Attempts |
+| `agent_learning` | `agent_learning_dsn` / Env: `AGENT_LEARNING_DB_URL` | Few-Shot-Learning, Patch-Notes-Feedback |
+| `seo_agent` | (sep. Config) | SEO-Agent-spezifische Tabellen |
+
+### Wichtige Tabellen (security_analyst DB)
+
+#### fix_attempts_v2
 ```sql
-CREATE TABLE fixes (
-    id INTEGER PRIMARY KEY AUTOINCREMENT,
-    timestamp TEXT NOT NULL,
-    event_signature TEXT NOT NULL,  -- Unique event identifier
-    event_type TEXT NOT NULL,  -- vulnerability, intrusion, etc.
+-- Alle Fix-Ergebnisse: success, failed, no_op, skipped_duplicate
+CREATE TABLE fix_attempts_v2 (
+    id SERIAL PRIMARY KEY,
+    created_at TIMESTAMPTZ DEFAULT NOW(),
+    event_source TEXT NOT NULL,
+    event_type TEXT NOT NULL,
     severity TEXT,
-    event_details TEXT,  -- JSON
-    strategy TEXT NOT NULL,  -- JSON: Full fix strategy
-    result TEXT NOT NULL,  -- 'success' or 'failed'
+    strategy JSONB,
+    result TEXT NOT NULL,
     duration_seconds REAL,
     error_message TEXT,
-    retry_count INTEGER DEFAULT 0
+    retry_count INT DEFAULT 0
 );
+```
 
-CREATE INDEX idx_event_signature ON fixes(event_signature);
-CREATE INDEX idx_event_type ON fixes(event_type);
-CREATE INDEX idx_result ON fixes(result);
-CREATE INDEX idx_timestamp ON fixes(timestamp);
+#### remediation_status
+```sql
+-- Cross-Mode Lock: verhindert doppelte Fix-Ausfuehrung
+CREATE TABLE remediation_status (
+    event_id TEXT PRIMARY KEY,
+    claimed_by TEXT,
+    claimed_at TIMESTAMPTZ,
+    status TEXT
+);
 ```
 
 ### Project Monitor State (JSON)
@@ -874,7 +899,8 @@ CREATE INDEX idx_timestamp ON fixes(timestamp);
 
 #### AI Service Errors
 - `No AI providers enabled` - All AI services disabled
-- `Ollama connection failed` - Cannot reach Ollama server
+- `Codex CLI not found` - `codex` binary nicht im PATH
+- `Claude CLI not found` - Claude CLI-Pfad nicht korrekt (siehe `ai.claude.cli_path`)
 - `AI request timeout` - AI provider took too long
 
 #### Deployment Errors
@@ -894,9 +920,9 @@ CREATE INDEX idx_timestamp ON fixes(timestamp);
 ## Rate Limiting
 
 ### AI Requests
-- **Ollama**: Configurable delay (`ai.ollama.request_delay_seconds`, default: 4.0s)
-- **Anthropic**: Built-in retry with exponential backoff (1s, 2s, 4s)
-- **OpenAI**: Built-in retry with exponential backoff (1s, 2s, 4s)
+- **Codex CLI**: Kein eingebautes Rate-Limiting — Codex CLI selbst drosselt bei API-Limits
+- **Claude CLI**: Kein eingebautes Rate-Limiting — Claude CLI selbst drosselt bei API-Limits
+- Bei Timeout: automatischer Failover auf das jeweils andere Modell (Sonnet ↔ Opus)
 
 ### Discord Commands
 - **Global**: No built-in rate limiting (Discord handles this)

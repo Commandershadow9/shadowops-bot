@@ -18,9 +18,11 @@ paths:
 | Datei | Cog | Commands |
 |-------|-----|----------|
 | `monitoring.py` | MonitoringCog | `/status`, `/bans`, `/threats`, `/docker`, `/aide` |
-| `admin.py` | AdminCog | `/scan`, `/stop-all-fixes`, `/remediation-stats`, `/set-approval-mode`, `/reload-context` |
-| `inspector.py` | InspectorCog | `/get-ai-stats`, `/projekt-status`, `/alle-projekte` |
+| `admin.py` | AdminCog | `/scan`, `/stop-all-fixes`, `/remediation-stats`, `/set-approval-mode`, `/reload-context`, `/release-notes`, `/pending-notes`, `/mark-duplicate` |
+| `inspector.py` | InspectorCog | `/get-ai-stats`, `/projekt-status`, `/alle-projekte`, `/agent-stats`, `/security-engine` |
 | `customer_setup_commands.py` | CustomerSetupCommands | `/setup-customer-server` |
+
+Alle AdminCog-Commands erfordern `administrator=True` (Discord-Berechtigung).
 
 ## Patterns
 - Alle async: `await` fuer Discord API Calls
