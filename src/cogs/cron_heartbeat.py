@@ -56,6 +56,11 @@ class HeartbeatTarget:
     project_tag: str = "🖥️ [ZERODOX]"
     """Project-Tag im Embed."""
 
+    channel_id_override: int | None = None
+    """Optional: spezifischer Channel statt des Standard-Critical-Channels.
+    Sinnvoll wenn das Target projekt-spezifisch ist (z.B. ZERODOX → #🧪-ci-zerodox)
+    statt des allgemeinen Server-Wide-Critical-Channels."""
+
     def max_age_minutes(self) -> int:
         return int(self.expected_interval_minutes * self.slack_factor) + self.slack_minutes
 
@@ -68,6 +73,9 @@ HEARTBEAT_TARGETS = [
         log_path=Path("/home/cmdshadow/ZERODOX/logs/synthetic-monitor.log"),
         expected_interval_minutes=15,
         # max_age = 15 × 2 + 5 = 35 Min → erst nach 2 verpassten Runs alarmieren
+        # Routing: ZERODOX-Heartbeat-Issues sind Dev-Konzept, kein Server-Security-Critical.
+        # Channel #🧪-ci-zerodox (Topic: "CI/CD Test-Ergebnisse fuer ZERODOX") passt thematisch.
+        channel_id_override=1463512208083521577,
     ),
 ]
 
@@ -194,20 +202,27 @@ class CronHeartbeatCog(commands.Cog):
             )
             return
 
-        # Bot-Config nach Critical-Channel fragen
-        critical_channel_id = self._resolve_critical_channel_id()
-        if not critical_channel_id:
+        # Channel-Resolution-Reihenfolge:
+        # 1. target.channel_id_override (projekt-spezifisch, z.B. #🧪-ci-zerodox)
+        # 2. bot.config.channels.critical (Server-Wide-Fallback)
+        # 3. CRITICAL_CHANNEL_ID env-var
+        if target.channel_id_override:
+            target_channel_id = target.channel_id_override
+        else:
+            target_channel_id = self._resolve_critical_channel_id()
+
+        if not target_channel_id:
             self.logger.warning(
-                "Heartbeat-Alert für %s konnte nicht gesendet werden: kein Critical-Channel konfiguriert",
+                "Heartbeat-Alert für %s konnte nicht gesendet werden: kein Channel konfiguriert",
                 target.name,
             )
             return
 
-        channel = self.bot.get_channel(critical_channel_id)
+        channel = self.bot.get_channel(target_channel_id)
         if not isinstance(channel, discord.TextChannel):
             self.logger.warning(
-                "Heartbeat-Alert für %s: Critical-Channel %s ist kein TextChannel",
-                target.name, critical_channel_id,
+                "Heartbeat-Alert für %s: Channel %s ist kein TextChannel",
+                target.name, target_channel_id,
             )
             return
 
