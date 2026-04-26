@@ -42,19 +42,46 @@
 shadowops-bot/
 ├── src/
 │   ├── bot.py                    # Haupt-Bot
-│   ├── cogs/                     # Slash-Commands (admin, inspector, monitoring)
-│   ├── integrations/             # Externe Systeme (siehe unten)
+│   ├── cogs/                     # Slash-Commands
+│   │   ├── admin.py              #   /scan, /stop-all-fixes, /release-notes, ...
+│   │   ├── inspector.py          #   /get-ai-stats, /agent-stats, /security-engine, ...
+│   │   ├── monitoring.py         #   /status, /bans, /threats, /docker, /aide
+│   │   └── customer_setup_commands.py  # /setup-customer-server
+│   ├── patch_notes/              # Patch-Notes Pipeline v6 (State Machine, ~2100 LOC)
+│   │   ├── pipeline.py           #   Hauptpipeline + asyncio Lock + Circuit Breaker
+│   │   ├── stages/               #   5 Stufen: collect, classify, generate, validate, distribute
+│   │   ├── templates/            #   gaming / saas / devops Templates
+│   │   └── versioning.py / grouping.py / state.py / ...
+│   ├── integrations/             # Externe Systeme
+│   │   ├── ai_engine.py          #   Dual-Engine Router (Codex Primary, Claude Fallback)
+│   │   ├── smart_queue.py        #   Analyse-Pool (Semaphore=3) + Fix-Lock + Circuit Breaker
+│   │   ├── verification.py       #   Pre-Push Pipeline (Confidence ≥85%)
+│   │   ├── orchestrator/         #   Multi-Event-Batching (10s Fenster) + Approval-Flow
+│   │   ├── event_watcher.py      #   Lauscht auf Fail2ban/CrowdSec/AIDE/Docker-Events
+│   │   ├── knowledge_base.py     #   SQL Learning (fix_attempts, finding_quality, ...)
+│   │   ├── code_analyzer.py      #   Code Structure Analyzer (Git-History + AST)
+│   │   ├── context_manager.py    #   RAG: Project-Context + DO-NOT-TOUCH + Infra
+│   │   ├── github_integration/   #   Webhooks (HMAC-SHA256) + Jules SecOps + Agent-Review
+│   │   ├── security_engine/      #   Security Engine v6 (Scan, Fix, Learning, Activity)
+│   │   ├── fixers/               #   Fix-Adapter: fail2ban, crowdsec, trivy, aide, walg
+│   │   ├── ai_learning/          #   Agent-Learning DB + Knowledge Synthesizer
+│   │   ├── analyst/              #   Legacy Security Analyst (Referenz, nicht aktiv gestartet)
+│   │   ├── project_monitor.py    #   Multi-Project Health-Checks
+│   │   ├── deployment_manager.py #   Auto-Deploy mit Backup/Rollback
+│   │   ├── incident_manager.py   #   Incident Threads in Discord
+│   │   ├── customer_notifications.py  # Customer-Facing Alerts (Multi-Guild)
+│   │   └── fail2ban.py / crowdsec.py / aide.py / docker.py
 │   └── utils/                    # config, logging, embeds, state
 ├── tests/
 │   ├── unit/                     # 161+ Unit-Tests
 │   ├── integration/              # End-to-End-Workflows
 │   └── conftest.py
 ├── config/
-│   ├── config.example.yaml       # Template (commited)
+│   ├── config.example.yaml       # Template (committed)
 │   ├── config.yaml               # Real config (gitignored)
 │   ├── DO-NOT-TOUCH.md           # Critical files protection
 │   ├── INFRASTRUCTURE.md
-│   └── PROJECT_*.md              # Per-projekt-Notizen
+│   └── PROJECT_*.md              # Per-Projekt-Notizen
 ├── deploy/
 │   └── shadowops-bot.service     # systemd Unit
 ├── scripts/                      # Wartungs-Skripte
@@ -69,23 +96,6 @@ shadowops-bot/
 ├── .claude/                      # KI-spezifische Configs
 └── .routines/                    # Worker State + Prompts (siehe unten)
 ```
-
-### Module unter `src/integrations/`
-
-- `ai_engine.py` — Dual-Engine Router (Codex Primary, Claude Fallback)
-- `smart_queue.py` — Analyse-Pool (Semaphore=3) + serieller Fix-Lock + Circuit Breaker
-- `verification.py` — Pre-Push Pipeline (Confidence ≥85% → Tests → Claude-Verify → KB-Check)
-- `orchestrator.py` — Multi-Event-Batching (10s Fenster) + Approval-Flow
-- `event_watcher.py` — Lauscht auf Fail2ban/CrowdSec/AIDE/Docker-Events
-- `knowledge_base.py` — SQL Learning (fix_attempts, fix_verifications, finding_quality, scan_coverage)
-- `code_analyzer.py` — Code Structure Analyzer (Git-History + AST)
-- `context_manager.py` — RAG: Project-Context + DO-NOT-TOUCH + Infra
-- `github_integration.py` — Webhooks mit HMAC-SHA256 Verification
-- `project_monitor.py` — Multi-Project Health-Checks
-- `deployment_manager.py` — Auto-Deploy mit Backup/Rollback
-- `incident_manager.py` — Incident Threads in Discord
-- `customer_notifications.py` — Customer-Facing Alerts (Multi-Guild)
-- `fail2ban.py` / `crowdsec.py` / `aide.py` / `docker.py` — Security-Integrationen
 
 ## Coding-Conventions
 
