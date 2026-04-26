@@ -34,6 +34,9 @@ HEALTH_CHECK_DEFAULTS: Dict[str, Any] = {
     'restart_count_warn': 3,      # > 3 Restarts in 24h -> Alert
     'ssl_cert_warn_days': 30,     # < 30 Tage -> Alert
     'backup_max_age_hours': 25,   # > 25h alt -> Alert
+    # Phase 5c: App-Health-Checks (DB-Pool, Failed-Login)
+    'db_pool_saturation_warn': 80,        # > 80% Pool-Sat -> Alert
+    'failed_login_per_5min_warn': 100,    # > 100 Fehlversuche/5 Min -> Brute-Force-Verdacht
 }
 
 # Min-Intervall pro Check-Typ (Sekunden). Verhindert dass teure Checks
@@ -44,6 +47,9 @@ HEALTH_CHECK_MIN_INTERVAL_SECONDS: Dict[str, int] = {
     'restart_count': 60 * 60,       # 1h (Trend)
     'ssl_cert_expiry': 6 * 60 * 60, # 6h (langsam-bewegender Wert)
     'backup_freshness': 30 * 60,    # 30 Min (taeglicher Cron)
+    # Phase 5c: App-Health-Checks via /api/internal/health-stats
+    'db_pool_saturation': 5 * 60,   # 5 Min (Pool-Sat ist Trend, nicht Spike)
+    'failed_login_rate': 60,        # 60s (Brute-Force kann schnell hochlaufen)
 }
 
 # Anti-Spam: pro Check-Typ wie lange ein bereits ausgeloester Alert
@@ -54,6 +60,9 @@ HEALTH_CHECK_ALERT_COOLDOWNS: Dict[str, timedelta] = {
     'restart_count': timedelta(hours=6),
     'ssl_cert_expiry': timedelta(hours=24),
     'backup_freshness': timedelta(minutes=60),
+    # Phase 5c
+    'db_pool_saturation': timedelta(minutes=30),  # Sat-Trend braucht keine sofortige Re-Alarmierung
+    'failed_login_rate': timedelta(minutes=15),   # Brute-Force-Burst kann mehrfach kommen
 }
 
 
@@ -393,7 +402,7 @@ class ProjectMonitor:
                 await self._check_project_logs(project)
                 await self._check_project_health(project)
 
-                # Health-Check-Erweiterung (Phase 5b, Issue #278).
+                # Health-Check-Erweiterung (Phase 5b + 5c, Issue #278).
                 # Jede Methode hat ihren eigenen Min-Intervall-Filter — die werden
                 # bei jedem Loop-Tick aufgerufen, fuehren aber nur dann tatsaechlich
                 # die Pruefung aus, wenn der Filter es erlaubt.
@@ -402,6 +411,9 @@ class ProjectMonitor:
                 await self._check_container_restart_count(project)
                 await self._check_ssl_cert_expiry(project)
                 await self._check_backup_freshness(project)
+                # Phase 5c: App-Health-Checks via internal API (skip wenn nicht konfiguriert)
+                await self._check_db_pool_saturation(project)
+                await self._check_failed_login_rate(project)
 
                 await asyncio.sleep(project.check_interval)
 
@@ -1845,3 +1857,188 @@ class ProjectMonitor:
             )
         else:
             self._clear_health_alert_cooldown(project, 'backup_freshness')
+
+    # === Phase 5c — App-Health-Checks via internal API ===
+    # Diese Checks pollen einen ZERODOX-API-Endpoint der DB-Pool-Saturation und
+    # Failed-Login-Rate exposed. Nur Projekte mit `monitor.internal_health_endpoint`
+    # in config.yaml werden geprüft (graceful skip bei fehlender Konfiguration).
+    #
+    # Auth: X-Agent-Key Header mit ZERODOX_AGENT_API_KEY (env-var).
+    # Endpoint: ZERODOX/api/internal/health-stats (Phase 5a, PR #279)
+
+    async def _fetch_app_health_stats(self, project: ProjectStatus) -> Optional[Dict[str, Any]]:
+        """HTTP-Call zur internal Health-Stats-API des Projekts.
+
+        Returnt None wenn:
+          - Kein internal_health_endpoint konfiguriert
+          - Keine API-Key env-var gesetzt
+          - HTTP-Fehler (Timeout, 4xx, 5xx)
+          - JSON-Parse-Fehler
+        """
+        proj_cfg = self._get_project_config(project.name)
+        if not isinstance(proj_cfg, dict):
+            return None
+
+        monitor_cfg = proj_cfg.get('monitor', {})
+        if not isinstance(monitor_cfg, dict):
+            return None
+
+        endpoint = monitor_cfg.get('internal_health_endpoint')
+        if not endpoint:
+            return None
+
+        api_key_env = monitor_cfg.get('health_api_key_env', 'ZERODOX_AGENT_API_KEY')
+        import os
+        api_key = os.environ.get(api_key_env)
+        if not api_key:
+            self.logger.debug(
+                f"ℹ️ App-Health-Check {project.name}: env-var {api_key_env} nicht gesetzt — skip"
+            )
+            return None
+
+        timeout = aiohttp.ClientTimeout(total=10)
+        try:
+            async with aiohttp.ClientSession(timeout=timeout) as session:
+                async with session.get(
+                    endpoint,
+                    headers={'X-Agent-Key': api_key, 'Accept': 'application/json'},
+                ) as resp:
+                    if resp.status != 200:
+                        self.logger.warning(
+                            f"⚠️ App-Health-Stats {project.name}: HTTP {resp.status} von {endpoint}"
+                        )
+                        return None
+                    return await resp.json()
+        except asyncio.TimeoutError:
+            self.logger.warning(f"⚠️ App-Health-Stats {project.name}: Timeout nach 10s")
+            return None
+        except aiohttp.ClientError as exc:
+            self.logger.warning(f"⚠️ App-Health-Stats {project.name}: ClientError — {exc}")
+            return None
+        except (ValueError, KeyError) as exc:
+            self.logger.warning(f"⚠️ App-Health-Stats {project.name}: JSON-Fehler — {exc}")
+            return None
+
+    async def _check_db_pool_saturation(self, project: ProjectStatus) -> None:
+        """
+        Check 6 (Phase 5c): DB-Connection-Pool-Saturation.
+
+        Schwelle: > db_pool_saturation_warn (default 80) % -> Alert.
+        Channel:  🧪-ci-zerodox (1463512208083521577), key='ci_zerodox'.
+        Severity: HIGH.
+        Cooldown: 30 Min.
+        Frequenz: alle 5 Min.
+
+        Datenquelle: ZERODOX /api/internal/health-stats Response.dbPool.saturationPercent.
+        """
+        if not self._should_run_health_check(project, 'db_pool_saturation'):
+            return
+        self._mark_health_check_ran(project, 'db_pool_saturation')
+
+        stats = await self._fetch_app_health_stats(project)
+        if not stats:
+            return
+
+        db_pool = stats.get('dbPool')
+        if not isinstance(db_pool, dict):
+            return
+
+        threshold = float(self._get_health_threshold(project, 'db_pool_saturation_warn'))
+        try:
+            saturation = float(db_pool.get('saturationPercent', 0))
+        except (TypeError, ValueError):
+            return
+
+        if saturation > threshold:
+            await self._send_health_alert(
+                project=project,
+                check_type='db_pool_saturation',
+                title=f"DB-Pool-Saturation hoch — {project.name}",
+                description=(
+                    f"Connection-Pool ist zu **{saturation:.0f}%** ausgelastet "
+                    f"(Schwelle: > {threshold:.0f}%).\n\n"
+                    f"Bei voll laufendem Pool kommen Auth-Logins und API-Requests zum Erliegen. "
+                    f"Mögliche Ursachen: Long-running Queries, Pool-Limit zu niedrig, Verbindungs-Leak."
+                ),
+                severity=Severity.HIGH,
+                fields=[
+                    {"name": "Saturation", "value": f"{saturation:.0f}%", "inline": True},
+                    {"name": "Schwelle", "value": f"> {threshold:.0f}%", "inline": True},
+                    {"name": "Active", "value": str(db_pool.get('active', '?')), "inline": True},
+                    {"name": "Idle", "value": str(db_pool.get('idle', '?')), "inline": True},
+                    {"name": "Total / Max", "value": f"{db_pool.get('total', '?')} / {db_pool.get('max', '?')}", "inline": True},
+                ],
+                channel_key='ci_zerodox',
+                fallback_channel_id=1463512208083521577,
+            )
+        else:
+            self._clear_health_alert_cooldown(project, 'db_pool_saturation')
+
+    async def _check_failed_login_rate(self, project: ProjectStatus) -> None:
+        """
+        Check 7 (Phase 5c): Failed-Login-Rate (5-Min-Fenster).
+
+        Schwelle: > failed_login_per_5min_warn (default 100) -> Alert (Brute-Force-Verdacht).
+        Channel:  🚨-critical (1441655480840617994), key='critical'.
+        Severity: HIGH (CRITICAL bei > 500).
+        Cooldown: 15 Min.
+        Frequenz: alle 60s (Brute-Force kann schnell hochlaufen).
+
+        Datenquelle: ZERODOX /api/internal/health-stats Response.failedLogins.count.
+        DSGVO-konform: nur Counts, keine Email-Adressen oder User-IDs.
+        """
+        if not self._should_run_health_check(project, 'failed_login_rate'):
+            return
+        self._mark_health_check_ran(project, 'failed_login_rate')
+
+        stats = await self._fetch_app_health_stats(project)
+        if not stats:
+            return
+
+        failed = stats.get('failedLogins')
+        if not isinstance(failed, dict):
+            return
+
+        threshold = int(self._get_health_threshold(project, 'failed_login_per_5min_warn'))
+        try:
+            count = int(failed.get('count', 0))
+        except (TypeError, ValueError):
+            return
+
+        unique_emails = failed.get('uniqueEmails', 0)
+        window_minutes = failed.get('windowMinutes', 5)
+
+        if count > threshold:
+            # Severity skaliert mit Volumen — > 500 ist klarer Brute-Force-Angriff
+            severity = Severity.CRITICAL if count > threshold * 5 else Severity.HIGH
+
+            # Verteilung gibt Hinweise: viele Versuche auf wenige Accounts = Credential-Stuffing
+            distribution_hint = ""
+            if unique_emails > 0:
+                ratio = count / max(unique_emails, 1)
+                if ratio > 10:
+                    distribution_hint = " (Credential-Stuffing-Verdacht: viele Versuche pro Account)"
+                elif ratio < 2:
+                    distribution_hint = " (verteilt über viele Accounts: möglicher Broad-Sweep)"
+
+            await self._send_health_alert(
+                project=project,
+                check_type='failed_login_rate',
+                title=f"Failed-Login-Rate hoch — {project.name}",
+                description=(
+                    f"**{count} fehlgeschlagene Logins** in den letzten {window_minutes} Min "
+                    f"(Schwelle: > {threshold}){distribution_hint}.\n\n"
+                    f"Möglicherweise Brute-Force oder Credential-Stuffing. "
+                    f"Bei Bedarf Account-Lockout-Schwellen prüfen oder IP-Sperren via Fail2ban."
+                ),
+                severity=severity,
+                fields=[
+                    {"name": "Versuche", "value": str(count), "inline": True},
+                    {"name": "Schwelle", "value": f"> {threshold} / {window_minutes} Min", "inline": True},
+                    {"name": "Unique Emails", "value": str(unique_emails), "inline": True},
+                ],
+                channel_key='critical',
+                fallback_channel_id=1441655480840617994,
+            )
+        else:
+            self._clear_health_alert_cooldown(project, 'failed_login_rate')

@@ -353,3 +353,203 @@ async def test_memory_usage_skip_when_no_container(tmp_path):
     # Sollte ohne docker-stats-Aufruf stille zurueckkehren.
     await monitor._check_memory_usage(project)
     channel.send.assert_not_called()
+
+
+# ════════════════════════════════════════════════════════════════════════
+# Phase 5c — App-Health-Checks via internal API
+# ════════════════════════════════════════════════════════════════════════
+
+
+def _build_monitor_with_api(
+    *,
+    api_key: str | None = "test-key-12345",
+    thresholds: dict | None = None,
+) -> tuple[ProjectMonitor, ProjectStatus, MagicMock]:
+    """Wie _build_monitor, aber mit internal_health_endpoint konfiguriert."""
+    monitor_cfg: dict = {
+        "enabled": True,
+        "url": "https://zerodox.de/api/health",
+        "expected_status": 200,
+        "check_interval": 60,
+        "container": "zerodox-web",
+        "internal_health_endpoint": "https://zerodox.de/api/internal/health-stats",
+        "health_api_key_env": "ZERODOX_AGENT_API_KEY_TEST",
+    }
+    if thresholds:
+        monitor_cfg["thresholds"] = thresholds
+
+    project_cfg: dict = {
+        "enabled": True,
+        "tag": "📘 [ZERODOX]",
+        "monitor": monitor_cfg,
+    }
+
+    config = MagicMock()
+    config.projects = {"zerodox": project_cfg}
+    config.customer_status_channel = 11111
+    config.customer_alerts_channel = 22222
+    config.channels = {
+        "critical": 1441655480840617994,
+        "bot_status": 1441655486981214309,
+        "ci_zerodox": 1463512208083521577,
+        "backups": 1486479593602023486,
+    }
+
+    bot = MagicMock()
+    channel = AsyncMock()
+    channel.send = AsyncMock()
+    bot.get_channel = MagicMock(return_value=channel)
+
+    if api_key:
+        os.environ["ZERODOX_AGENT_API_KEY_TEST"] = api_key
+    elif "ZERODOX_AGENT_API_KEY_TEST" in os.environ:
+        del os.environ["ZERODOX_AGENT_API_KEY_TEST"]
+
+    monitor = ProjectMonitor(bot, config)
+    project = monitor.projects["zerodox"]
+    return monitor, project, channel
+
+
+@pytest.mark.asyncio
+async def test_db_pool_saturation_above_threshold_triggers_alert(tmp_path):
+    """DB-Pool > 80% → HIGH-Alert in ci-zerodox."""
+    monitor, project, channel = _build_monitor_with_api()
+
+    fake_stats = {
+        "timestamp": "2026-04-26T20:00:00Z",
+        "dbPool": {"active": 85, "idle": 5, "total": 90, "max": 100, "saturationPercent": 90},
+        "failedLogins": {"count": 0, "windowMinutes": 5, "uniqueEmails": 0},
+    }
+    monitor._fetch_app_health_stats = AsyncMock(return_value=fake_stats)
+
+    await monitor._check_db_pool_saturation(project)
+
+    channel.send.assert_called_once()
+    sent_embed = channel.send.call_args.kwargs["embed"]
+    assert "DB-Pool-Saturation hoch" in sent_embed.title
+    assert sent_embed.color.value == Severity.HIGH.color
+
+
+@pytest.mark.asyncio
+async def test_db_pool_saturation_below_threshold_no_alert(tmp_path):
+    """DB-Pool <= 80% → kein Alert."""
+    monitor, project, channel = _build_monitor_with_api()
+
+    fake_stats = {
+        "dbPool": {"active": 10, "idle": 5, "total": 15, "max": 100, "saturationPercent": 15},
+        "failedLogins": {"count": 0, "windowMinutes": 5, "uniqueEmails": 0},
+    }
+    monitor._fetch_app_health_stats = AsyncMock(return_value=fake_stats)
+
+    await monitor._check_db_pool_saturation(project)
+
+    channel.send.assert_not_called()
+
+
+@pytest.mark.asyncio
+async def test_failed_login_rate_above_threshold_triggers_alert(tmp_path):
+    """Failed-Login > 100 in 5 Min → HIGH-Alert in critical."""
+    monitor, project, channel = _build_monitor_with_api()
+
+    fake_stats = {
+        "dbPool": {"saturationPercent": 5},
+        "failedLogins": {"count": 200, "windowMinutes": 5, "uniqueEmails": 50},
+    }
+    monitor._fetch_app_health_stats = AsyncMock(return_value=fake_stats)
+
+    await monitor._check_failed_login_rate(project)
+
+    channel.send.assert_called_once()
+    sent_embed = channel.send.call_args.kwargs["embed"]
+    assert "Failed-Login-Rate hoch" in sent_embed.title
+
+
+@pytest.mark.asyncio
+async def test_failed_login_rate_extreme_volume_critical_severity(tmp_path):
+    """Failed-Login > 500 (5x Threshold) → CRITICAL-Severity."""
+    monitor, project, channel = _build_monitor_with_api()
+
+    fake_stats = {
+        "dbPool": {"saturationPercent": 5},
+        "failedLogins": {"count": 600, "windowMinutes": 5, "uniqueEmails": 5},
+    }
+    monitor._fetch_app_health_stats = AsyncMock(return_value=fake_stats)
+
+    await monitor._check_failed_login_rate(project)
+
+    channel.send.assert_called_once()
+    sent_embed = channel.send.call_args.kwargs["embed"]
+    assert sent_embed.color.value == Severity.CRITICAL.color
+
+
+@pytest.mark.asyncio
+async def test_failed_login_rate_below_threshold_no_alert(tmp_path):
+    """Failed-Login <= 100 → kein Alert."""
+    monitor, project, channel = _build_monitor_with_api()
+
+    fake_stats = {
+        "dbPool": {"saturationPercent": 5},
+        "failedLogins": {"count": 50, "windowMinutes": 5, "uniqueEmails": 30},
+    }
+    monitor._fetch_app_health_stats = AsyncMock(return_value=fake_stats)
+
+    await monitor._check_failed_login_rate(project)
+
+    channel.send.assert_not_called()
+
+
+@pytest.mark.asyncio
+async def test_app_health_check_skip_when_no_endpoint_configured(tmp_path):
+    """Kein internal_health_endpoint → graceful skip ohne Crash."""
+    # _build_monitor (ohne _with_api) hat KEIN internal_health_endpoint
+    monitor, project, channel = _build_monitor(project_path=str(tmp_path))
+
+    await monitor._check_db_pool_saturation(project)
+    await monitor._check_failed_login_rate(project)
+
+    channel.send.assert_not_called()
+
+
+@pytest.mark.asyncio
+async def test_app_health_check_skip_when_api_key_missing(tmp_path):
+    """Kein API-Key in env → graceful skip."""
+    monitor, project, channel = _build_monitor_with_api(api_key=None)
+
+    # _fetch_app_health_stats sollte None returnen wenn Key fehlt
+    result = await monitor._fetch_app_health_stats(project)
+    assert result is None
+
+    # Folge: Checks senden nichts
+    await monitor._check_db_pool_saturation(project)
+    await monitor._check_failed_login_rate(project)
+    channel.send.assert_not_called()
+
+
+@pytest.mark.asyncio
+async def test_app_health_check_recovery_clears_cooldown(tmp_path):
+    """Nach Recovery (Wert wieder OK) sollte Cooldown geloescht werden."""
+    monitor, project, channel = _build_monitor_with_api()
+
+    # 1. Trigger: hohe Saturation → Alert + Cooldown
+    monitor._fetch_app_health_stats = AsyncMock(return_value={
+        "dbPool": {"saturationPercent": 95},
+        "failedLogins": {"count": 0, "windowMinutes": 5, "uniqueEmails": 0},
+    })
+    await monitor._check_db_pool_saturation(project)
+    assert channel.send.call_count == 1
+    cooldown_key = f"{project.name}:db_pool_saturation"
+    assert cooldown_key in monitor._health_check_alerts
+
+    # Min-Intervall zuruecksetzen, damit Recovery-Run direkt laeuft
+    if cooldown_key in monitor._health_check_last_run:
+        del monitor._health_check_last_run[cooldown_key]
+
+    # 2. Recovery: niedrige Saturation → kein Alert + Cooldown geloescht
+    monitor._fetch_app_health_stats = AsyncMock(return_value={
+        "dbPool": {"saturationPercent": 10},
+        "failedLogins": {"count": 0, "windowMinutes": 5, "uniqueEmails": 0},
+    })
+    await monitor._check_db_pool_saturation(project)
+    # Channel.send wurde nur 1x gerufen (initial), nicht 2x
+    assert channel.send.call_count == 1
+    assert cooldown_key not in monitor._health_check_alerts
