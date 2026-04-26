@@ -13,7 +13,7 @@
       "type": "drift"
     },
     {
-      "number": null,
+      "number": 179,
       "branch": "claude/doku/gaps-claudemd-structure",
       "title": "docs: update CLAUDE.md directory structure, remove stale highlights from README",
       "created_at": "2026-04-26T00:00:00Z",
