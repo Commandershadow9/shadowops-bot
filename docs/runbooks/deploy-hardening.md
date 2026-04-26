@@ -101,12 +101,50 @@ Bug-Container weiter gebaut worden.
 - CSP-Smoke + Auto-Rollback (~5s) bleiben aktiv
 - E2E-Tests dauern 5-10 Min und blockieren Webhook-Latenz
 
+## Auto-Deploy aktivieren / deaktivieren
+
+`config/config.yaml` Top-Level (gitignored, nur lokal!):
+
+```yaml
+github:
+  auto_deploy: true        # bei false werden PR-Merges NICHT auto-deployt
+  deploy_branches:
+    - main
+    - master
+```
+
+**Wichtig:** `config/config.yaml` ist in `.gitignore` — Änderungen sind nur lokal
+auf dem Server. Bei Server-Recovery muss `auto_deploy: true` manuell wiederhergestellt
+werden, sonst bleiben Deploys stumm (wie es vor 2026-04-26 für Wochen war).
+
+**Wo die Logik greift:**
+- `src/integrations/github_integration/event_handlers_mixin.py:113` — beim PR-Merge
+- Direct-Push auf `main` ist hart gesperrt (Security-Gate, nicht über Config)
+- `_trigger_deployment` in `ci_mixin.py` checkt zusätzlich `<project>.deploy.enabled`
+
+**Bot neustart nötig:**
+```bash
+sudo systemctl restart shadowops-bot
+```
+
+Logs zeigen Auto-Deploy-Trigger als:
+```
+🚀 PR merged to main, triggering deployment
+🚀 Starting deployment: <repo>@<sha>
+```
+
+Bei Auto-Deploy `false` würden Logs nichts zeigen — PR-Merge passiert, aber kein
+Deployment-Trigger.
+
 ## Verwandt
 
 - `runbooks/multi-agent-review.md` — Pre-Merge-Checks für PRs
+- `runbooks/health-checks-overview.md` — 7 Health-Checks für Post-Deploy-Monitoring
+- `runbooks/discord-routing.md` — Channel-Map aller Notifications
 - `operations/customer-server-setup.md` — Initial-Setup für neue Sites
 - ZERODOX `docs/SECURITY_CSP.md` — Defense-in-Depth-Strategie
 
 ---
 
 **Erstellt:** 2026-04-26 nach dem ZERODOX-CSP-Outage als Lessons-Learned-Doku.
+**Updated:** 2026-04-26 (Auto-Deploy reaktiviert nach Phase-5-Abschluss).
