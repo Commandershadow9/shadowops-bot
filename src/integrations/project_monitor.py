@@ -7,13 +7,54 @@ import asyncio
 import aiohttp
 import logging
 import json
+import shutil
+import ssl
 import time
-from typing import Dict, List, Optional
+from typing import Any, Dict, List, Optional
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 import discord
 
+# EmbedBuilder + Severity fuer die Enterprise-Health-Check-Erweiterung (Phase 5b, Issue #278).
+# Wird verwendet von _check_disk_space, _check_memory_usage, _check_container_restart_count,
+# _check_ssl_cert_expiry und _check_backup_freshness.
+try:  # pragma: no cover - Import-Pfad haengt von pythonpath ab (src/ vs. shadowops_bot/)
+    from utils.embeds import EmbedBuilder, Severity
+except ImportError:  # pragma: no cover
+    from src.utils.embeds import EmbedBuilder, Severity  # type: ignore[no-redef]
+
 logger = logging.getLogger('shadowops.project_monitor')
+
+
+# Default-Schwellen fuer die Enterprise-Health-Checks (Phase 5b).
+# Pro Projekt ueberschreibbar via projects.<name>.monitor.thresholds.* in config.yaml.
+HEALTH_CHECK_DEFAULTS: Dict[str, Any] = {
+    'disk_warn_percent': 15,      # < 15% frei -> Alert
+    'memory_warn_percent': 90,    # > 90% Container-Memory -> Alert
+    'restart_count_warn': 3,      # > 3 Restarts in 24h -> Alert
+    'ssl_cert_warn_days': 30,     # < 30 Tage -> Alert
+    'backup_max_age_hours': 25,   # > 25h alt -> Alert
+}
+
+# Min-Intervall pro Check-Typ (Sekunden). Verhindert dass teure Checks
+# (SSL via openssl, Disk via shutil) bei jedem Health-Loop-Tick laufen.
+HEALTH_CHECK_MIN_INTERVAL_SECONDS: Dict[str, int] = {
+    'disk_space': 5 * 60,           # 5 Min
+    'memory_usage': 60,             # 60s (zeitnah, da kritisch)
+    'restart_count': 60 * 60,       # 1h (Trend)
+    'ssl_cert_expiry': 6 * 60 * 60, # 6h (langsam-bewegender Wert)
+    'backup_freshness': 30 * 60,    # 30 Min (taeglicher Cron)
+}
+
+# Anti-Spam: pro Check-Typ wie lange ein bereits ausgeloester Alert
+# unterdrueckt wird, bevor neu alarmiert wird.
+HEALTH_CHECK_ALERT_COOLDOWNS: Dict[str, timedelta] = {
+    'disk_space': timedelta(minutes=60),
+    'memory_usage': timedelta(minutes=60),
+    'restart_count': timedelta(hours=6),
+    'ssl_cert_expiry': timedelta(hours=24),
+    'backup_freshness': timedelta(minutes=60),
+}
 
 
 class ProjectStatus:
@@ -200,6 +241,13 @@ class ProjectMonitor:
             int(uid) for uid in discord_config.get('alert_dm_user_ids', [])
         ]
 
+        # ── Enterprise-Health-Check-Erweiterung (Phase 5b, Issue #278) ─────────
+        # Pro Check + Project: Wann zuletzt alarmiert? (Anti-Spam-Cooldown)
+        # Key: f"{project.name}:{check_type}" -> datetime
+        self._health_check_alerts: Dict[str, datetime] = {}
+        # Pro Check + Project: Wann zuletzt ausgefuehrt? (Min-Intervall-Filter)
+        self._health_check_last_run: Dict[str, datetime] = {}
+
         self.logger.info(f"🔧 Project Monitor initialized with {len(self.projects)} projects")
 
     def _load_projects(self):
@@ -344,6 +392,17 @@ class ProjectMonitor:
             try:
                 await self._check_project_logs(project)
                 await self._check_project_health(project)
+
+                # Health-Check-Erweiterung (Phase 5b, Issue #278).
+                # Jede Methode hat ihren eigenen Min-Intervall-Filter — die werden
+                # bei jedem Loop-Tick aufgerufen, fuehren aber nur dann tatsaechlich
+                # die Pruefung aus, wenn der Filter es erlaubt.
+                await self._check_disk_space(project)
+                await self._check_memory_usage(project)
+                await self._check_container_restart_count(project)
+                await self._check_ssl_cert_expiry(project)
+                await self._check_backup_freshness(project)
+
                 await asyncio.sleep(project.check_interval)
 
             except asyncio.CancelledError:
@@ -1227,3 +1286,562 @@ class ProjectMonitor:
             List of status dictionaries
         """
         return [project.to_dict() for project in self.projects.values()]
+
+    # ════════════════════════════════════════════════════════════════════════
+    # Enterprise-Health-Check-Erweiterung (Phase 5b, Issue #278)
+    # ════════════════════════════════════════════════════════════════════════
+
+    def _get_project_config(self, project_name: str) -> Dict[str, Any]:
+        """Liefert die volle Projekt-Config (config.yaml -> projects.<name>)."""
+        projects_cfg = self._get_config_section('projects', {})
+        if isinstance(projects_cfg, dict):
+            cfg = projects_cfg.get(project_name)
+            if isinstance(cfg, dict):
+                return cfg
+        return {}
+
+    def _get_health_threshold(self, project: ProjectStatus, key: str) -> Any:
+        """Schwellenwert holen — projekt-spezifisch (monitor.thresholds.<key>) oder default."""
+        proj_cfg = self._get_project_config(project.name)
+        thresholds = proj_cfg.get('monitor', {}).get('thresholds', {}) if isinstance(proj_cfg, dict) else {}
+        if isinstance(thresholds, dict) and key in thresholds:
+            return thresholds[key]
+        return HEALTH_CHECK_DEFAULTS.get(key)
+
+    def _get_project_container(self, project: ProjectStatus) -> Optional[str]:
+        """Container-Name aus monitor.container holen (z.B. 'zerodox-web'). None = skip."""
+        proj_cfg = self._get_project_config(project.name)
+        monitor_cfg = proj_cfg.get('monitor', {}) if isinstance(proj_cfg, dict) else {}
+        container = monitor_cfg.get('container')
+        if isinstance(container, str) and container.strip():
+            return container.strip()
+        return None
+
+    def _get_project_domain(self, project: ProjectStatus) -> Optional[str]:
+        """Domain fuer SSL-Check aus project.url ableiten."""
+        if not project.url:
+            return None
+        try:
+            from urllib.parse import urlparse
+            parsed = urlparse(project.url)
+            host = parsed.hostname
+            if host and not host.startswith('127.') and host != 'localhost':
+                return host
+        except Exception:
+            pass
+        return None
+
+    def _should_run_health_check(self, project: ProjectStatus, check_type: str) -> bool:
+        """
+        Min-Intervall-Filter: Hat dieser Check fuer dieses Projekt schon
+        kuerzlich gelaufen? Wenn ja -> skip.
+        """
+        key = f"{project.name}:{check_type}"
+        last = self._health_check_last_run.get(key)
+        if last is None:
+            return True
+        min_interval = HEALTH_CHECK_MIN_INTERVAL_SECONDS.get(check_type, 60)
+        elapsed = (datetime.now(timezone.utc) - last).total_seconds()
+        return elapsed >= min_interval
+
+    def _mark_health_check_ran(self, project: ProjectStatus, check_type: str) -> None:
+        """Min-Intervall-State aktualisieren."""
+        self._health_check_last_run[f"{project.name}:{check_type}"] = datetime.now(timezone.utc)
+
+    def _resolve_health_alert_channel(self, channel_key: str, fallback_id: int) -> Optional[int]:
+        """
+        Channel-ID aus bot.config.channels.<channel_key> holen, mit Hardcoded-Fallback.
+
+        Args:
+            channel_key: 'critical', 'bot_status', 'backups', etc.
+            fallback_id: Hardcoded Channel-ID falls config nichts liefert.
+        """
+        channels_cfg = self._get_config_section('channels', {})
+        if isinstance(channels_cfg, dict):
+            val = channels_cfg.get(channel_key)
+            if isinstance(val, int) and val > 0:
+                return val
+        # Config-Object mit Attributen?
+        cfg = getattr(self.config, 'channels', None)
+        if cfg is not None:
+            val = getattr(cfg, channel_key, None)
+            if isinstance(val, int) and val > 0:
+                return val
+            if isinstance(cfg, dict):
+                val = cfg.get(channel_key)
+                if isinstance(val, int) and val > 0:
+                    return val
+        return fallback_id if fallback_id > 0 else None
+
+    def _project_tag(self, project: ProjectStatus) -> str:
+        """Tag fuer Embed-Header (z.B. '📘 [ZERODOX]')."""
+        proj_cfg = self._get_project_config(project.name)
+        tag = proj_cfg.get('tag') if isinstance(proj_cfg, dict) else None
+        return str(tag) if tag else f"[{project.name.upper()}]"
+
+    async def _send_health_alert(
+        self,
+        project: ProjectStatus,
+        check_type: str,
+        title: str,
+        description: str,
+        severity: Severity,
+        fields: List[Dict[str, Any]],
+        channel_key: str,
+        fallback_channel_id: int,
+    ) -> None:
+        """
+        Discord-Alert senden mit Cooldown-Check.
+
+        Anti-Spam: Wenn der gleiche Alert (project + check_type) innerhalb
+        des Cooldown-Fensters bereits gesendet wurde -> unterdruecken.
+        """
+        cooldown_key = f"{project.name}:{check_type}"
+        cooldown = HEALTH_CHECK_ALERT_COOLDOWNS.get(check_type, timedelta(minutes=60))
+        last_alert = self._health_check_alerts.get(cooldown_key)
+        now = datetime.now(timezone.utc)
+        if last_alert is not None and (now - last_alert) < cooldown:
+            self.logger.debug(
+                f"🔇 {project.name} {check_type}: Cooldown aktiv ({last_alert.isoformat()}), Alert unterdrueckt"
+            )
+            return
+
+        channel_id = self._resolve_health_alert_channel(channel_key, fallback_channel_id)
+        if not channel_id:
+            self.logger.warning(
+                f"⚠️ Kein Channel fuer {check_type}-Alert (key={channel_key}) konfiguriert — uebersprungen"
+            )
+            return
+
+        channel = self.bot.get_channel(channel_id) if hasattr(self.bot, 'get_channel') else None
+        if not channel:
+            self.logger.warning(f"⚠️ Channel {channel_id} fuer {check_type}-Alert nicht gefunden")
+            return
+
+        embed = EmbedBuilder.create_alert(
+            title=title,
+            description=description,
+            severity=severity,
+            fields=fields,
+            project_tag=self._project_tag(project),
+            footer="ShadowOps Enterprise Health-Checks",
+        )
+
+        try:
+            await channel.send(embed=embed)
+            self._health_check_alerts[cooldown_key] = now
+            self.logger.warning(
+                f"🚨 Health-Alert {check_type} fuer {project.name} -> Channel {channel_id}"
+            )
+        except discord.HTTPException as exc:
+            self.logger.error(f"❌ Discord-Send fuer {project.name} {check_type} fehlgeschlagen: {exc}")
+
+    def _clear_health_alert_cooldown(self, project: ProjectStatus, check_type: str) -> None:
+        """
+        Recovery-Logik: Wenn ein Wert wieder unterhalb der Schwelle ist,
+        Cooldown loeschen — damit ein erneuter Spike sofort alarmiert.
+        """
+        key = f"{project.name}:{check_type}"
+        if key in self._health_check_alerts:
+            del self._health_check_alerts[key]
+            self.logger.info(
+                f"✅ {project.name} {check_type}: Recovery — Cooldown zurueckgesetzt"
+            )
+
+    async def _check_disk_space(self, project: ProjectStatus) -> None:
+        """
+        Check 1: Disk-Space am Projekt-Pfad.
+
+        Schwelle: < disk_warn_percent (default 15) % freier Speicher -> Alert.
+        Channel:  🚨-critical (1441655480840617994), key='critical'.
+        Severity: CRITICAL.
+        Cooldown: 60 Min.
+        Frequenz: alle 5 Min (Disk-Full = potenzieller Service-Crash).
+        """
+        if not self._should_run_health_check(project, 'disk_space'):
+            return
+        self._mark_health_check_ran(project, 'disk_space')
+
+        proj_cfg = self._get_project_config(project.name)
+        path = proj_cfg.get('path') if isinstance(proj_cfg, dict) else None
+        if not path:
+            return
+
+        threshold_percent = float(self._get_health_threshold(project, 'disk_warn_percent'))
+
+        try:
+            # shutil.disk_usage ist blocking → in Thread-Pool offloaden.
+            usage = await asyncio.to_thread(shutil.disk_usage, path)
+        except FileNotFoundError:
+            self.logger.debug(f"ℹ️ Disk-Check {project.name}: Pfad {path} existiert nicht")
+            return
+        except Exception as exc:
+            self.logger.error(f"❌ Disk-Check {project.name} fehlgeschlagen: {exc}")
+            return
+
+        free_percent = (usage.free / usage.total) * 100 if usage.total > 0 else 100.0
+        free_gb = usage.free / (1024 ** 3)
+        total_gb = usage.total / (1024 ** 3)
+
+        if free_percent < threshold_percent:
+            await self._send_health_alert(
+                project=project,
+                check_type='disk_space',
+                title=f"Disk-Space niedrig — {project.name}",
+                description=(
+                    f"Nur noch **{free_percent:.1f}%** freier Speicher auf `{path}`.\n"
+                    f"Schwelle: **< {threshold_percent:.0f}%** frei.\n\n"
+                    f"Disk-Full kann den Service zum Crash bringen — bitte zeitnah aufraeumen."
+                ),
+                severity=Severity.CRITICAL,
+                fields=[
+                    {"name": "Frei", "value": f"{free_gb:.1f} GB ({free_percent:.1f}%)", "inline": True},
+                    {"name": "Gesamt", "value": f"{total_gb:.1f} GB", "inline": True},
+                    {"name": "Pfad", "value": f"`{path}`", "inline": False},
+                ],
+                channel_key='critical',
+                fallback_channel_id=1441655480840617994,
+            )
+        else:
+            self._clear_health_alert_cooldown(project, 'disk_space')
+
+    async def _check_memory_usage(self, project: ProjectStatus) -> None:
+        """
+        Check 2: Container-Memory-Auslastung.
+
+        Schwelle: > memory_warn_percent (default 90) % -> Alert.
+        Channel:  🚨-critical, key='critical'.
+        Severity: CRITICAL.
+        Cooldown: 60 Min.
+        Frequenz: alle 60s (zeitnah, da kritisch).
+
+        Container-Name: aus projects.<name>.monitor.container in config.yaml.
+        Wenn nicht gesetzt -> skip.
+        """
+        if not self._should_run_health_check(project, 'memory_usage'):
+            return
+        self._mark_health_check_ran(project, 'memory_usage')
+
+        container = self._get_project_container(project)
+        if not container:
+            return  # Kein Container konfiguriert -> skip
+
+        threshold_percent = float(self._get_health_threshold(project, 'memory_warn_percent'))
+
+        try:
+            proc = await asyncio.create_subprocess_exec(
+                'docker', 'stats', '--no-stream', '--format', '{{.MemPerc}}', container,
+                stdout=asyncio.subprocess.PIPE,
+                stderr=asyncio.subprocess.PIPE,
+            )
+            stdout, stderr = await asyncio.wait_for(proc.communicate(), timeout=10)
+        except (asyncio.TimeoutError, FileNotFoundError) as exc:
+            self.logger.debug(f"ℹ️ Memory-Check {project.name}: docker stats nicht verfuegbar ({exc})")
+            return
+        except Exception as exc:
+            self.logger.error(f"❌ Memory-Check {project.name} fehlgeschlagen: {exc}")
+            return
+
+        if proc.returncode != 0:
+            self.logger.debug(
+                f"ℹ️ Memory-Check {project.name}: docker stats exit {proc.returncode} "
+                f"(Container '{container}' evtl. nicht laufend)"
+            )
+            return
+
+        raw = stdout.decode().strip()
+        # Format: "12.34%" -> 12.34
+        try:
+            mem_percent = float(raw.rstrip('%'))
+        except ValueError:
+            self.logger.debug(f"ℹ️ Memory-Check {project.name}: Konnte '{raw}' nicht parsen")
+            return
+
+        if mem_percent > threshold_percent:
+            await self._send_health_alert(
+                project=project,
+                check_type='memory_usage',
+                title=f"Memory hoch — {project.name}",
+                description=(
+                    f"Container `{container}` nutzt **{mem_percent:.1f}%** des Memory-Limits.\n"
+                    f"Schwelle: **> {threshold_percent:.0f}%**.\n\n"
+                    f"Bei anhaltend hoher Auslastung droht OOM-Kill — bitte pruefen."
+                ),
+                severity=Severity.CRITICAL,
+                fields=[
+                    {"name": "Container", "value": f"`{container}`", "inline": True},
+                    {"name": "Memory", "value": f"{mem_percent:.1f}%", "inline": True},
+                    {"name": "Schwelle", "value": f"> {threshold_percent:.0f}%", "inline": True},
+                ],
+                channel_key='critical',
+                fallback_channel_id=1441655480840617994,
+            )
+        else:
+            self._clear_health_alert_cooldown(project, 'memory_usage')
+
+    async def _check_container_restart_count(self, project: ProjectStatus) -> None:
+        """
+        Check 3: Container-Restart-Count.
+
+        Schwelle: > restart_count_warn (default 3) Restarts in 24h -> Alert.
+        Channel:  🤖-bot-status (1441655486981214309), key='bot_status'.
+        Severity: MEDIUM (informativ — Trend-Erkennung, nicht kritisch).
+        Cooldown: 6 Stunden.
+        Frequenz: alle 1h (langsamer Trend, kein Sub-Minute-Sampling noetig).
+
+        Quelle: docker inspect --format '{{.RestartCount}}' <container>.
+        Hinweis: Docker liefert nur den Total-RestartCount seit Container-Erstellung.
+        Fuer "in 24h" mappen wir auf einen Delta-Vergleich gegen den letzten
+        beobachteten Wert (gespeichert in self._health_check_alerts via Helfer).
+        """
+        if not self._should_run_health_check(project, 'restart_count'):
+            return
+        self._mark_health_check_ran(project, 'restart_count')
+
+        container = self._get_project_container(project)
+        if not container:
+            return
+
+        threshold = int(self._get_health_threshold(project, 'restart_count_warn'))
+
+        try:
+            proc = await asyncio.create_subprocess_exec(
+                'docker', 'inspect', '--format', '{{.RestartCount}}', container,
+                stdout=asyncio.subprocess.PIPE,
+                stderr=asyncio.subprocess.PIPE,
+            )
+            stdout, _ = await asyncio.wait_for(proc.communicate(), timeout=10)
+        except (asyncio.TimeoutError, FileNotFoundError):
+            return
+        except Exception as exc:
+            self.logger.error(f"❌ Restart-Count-Check {project.name} fehlgeschlagen: {exc}")
+            return
+
+        if proc.returncode != 0:
+            return
+
+        raw = stdout.decode().strip()
+        try:
+            current_count = int(raw)
+        except ValueError:
+            return
+
+        # Rolling 24h-Snapshot: state-key haelt {timestamp: int(count)} der letzten 24h.
+        # Vereinfachte Loesung: Wir merken uns den Count vor 24h und vergleichen.
+        snapshot_key = f"{project.name}:restart_snapshot"
+        snapshots = getattr(self, '_restart_count_snapshots', None)
+        if snapshots is None:
+            self._restart_count_snapshots: Dict[str, List[Any]] = {}
+            snapshots = self._restart_count_snapshots
+
+        history = snapshots.setdefault(snapshot_key, [])
+        now = datetime.now(timezone.utc)
+        history.append((now, current_count))
+        # Alles aelter als 24h verwerfen.
+        cutoff = now - timedelta(hours=24)
+        snapshots[snapshot_key] = [(t, c) for (t, c) in history if t >= cutoff]
+        history = snapshots[snapshot_key]
+
+        # Restart-Count vor 24h (= aeltester Snapshot innerhalb des Fensters).
+        baseline = history[0][1] if history else current_count
+        delta = current_count - baseline
+
+        if delta > threshold:
+            await self._send_health_alert(
+                project=project,
+                check_type='restart_count',
+                title=f"Container-Restarts — {project.name}",
+                description=(
+                    f"Container `{container}` ist in den letzten 24h **{delta}×** neugestartet.\n"
+                    f"Schwelle: **> {threshold}** Restarts.\n\n"
+                    f"Hinweis: Crash-Loops oder OOM-Kills koennten die Ursache sein. "
+                    f"`docker logs {container}` und `journalctl` pruefen."
+                ),
+                severity=Severity.MEDIUM,
+                fields=[
+                    {"name": "Container", "value": f"`{container}`", "inline": True},
+                    {"name": "Restarts (24h)", "value": str(delta), "inline": True},
+                    {"name": "Total seit Erstellung", "value": str(current_count), "inline": True},
+                ],
+                channel_key='bot_status',
+                fallback_channel_id=1441655486981214309,
+            )
+        else:
+            self._clear_health_alert_cooldown(project, 'restart_count')
+
+    async def _check_ssl_cert_expiry(self, project: ProjectStatus) -> None:
+        """
+        Check 4: SSL-Zertifikats-Ablauf.
+
+        Schwelle: < ssl_cert_warn_days (default 30) Tage -> Alert.
+        Channel:  🤖-bot-status, key='bot_status'.
+        Severity: HIGH wenn < 7 Tage, sonst MEDIUM.
+        Cooldown: 24 Stunden.
+        Frequenz: alle 6h (langsam-bewegender Wert).
+
+        Domain: aus project.url (URL-Parsing).
+        Methode: TLS-Handshake via asyncio.open_connection + SSLContext —
+        liefert das Server-Zertifikat ohne externes openssl-Subprocess.
+        """
+        if not self._should_run_health_check(project, 'ssl_cert_expiry'):
+            return
+        self._mark_health_check_ran(project, 'ssl_cert_expiry')
+
+        domain = self._get_project_domain(project)
+        if not domain:
+            return  # Lokale URL oder kein URL -> skip
+
+        warn_days = int(self._get_health_threshold(project, 'ssl_cert_warn_days'))
+
+        try:
+            cert = await asyncio.wait_for(
+                self._fetch_peer_cert(domain, 443),
+                timeout=10,
+            )
+        except (asyncio.TimeoutError, OSError, ssl.SSLError) as exc:
+            self.logger.debug(f"ℹ️ SSL-Check {project.name} ({domain}) fehlgeschlagen: {exc}")
+            return
+        except Exception as exc:
+            self.logger.error(f"❌ SSL-Check {project.name} ({domain}) Fehler: {exc}")
+            return
+
+        not_after_str = cert.get('notAfter') if cert else None
+        if not not_after_str:
+            return
+
+        try:
+            # Format: "Apr 30 12:00:00 2026 GMT"
+            not_after = datetime.strptime(not_after_str, '%b %d %H:%M:%S %Y %Z').replace(tzinfo=timezone.utc)
+        except ValueError:
+            self.logger.debug(f"ℹ️ SSL-Check {project.name}: notAfter-Format unbekannt: {not_after_str}")
+            return
+
+        days_remaining = (not_after - datetime.now(timezone.utc)).days
+
+        if days_remaining < warn_days:
+            severity = Severity.HIGH if days_remaining < 7 else Severity.MEDIUM
+            await self._send_health_alert(
+                project=project,
+                check_type='ssl_cert_expiry',
+                title=f"SSL-Zertifikat laeuft bald ab — {project.name}",
+                description=(
+                    f"Das Zertifikat fuer **{domain}** laeuft in **{days_remaining} Tagen** ab "
+                    f"({not_after.strftime('%Y-%m-%d %H:%M UTC')}).\n"
+                    f"Schwelle: **< {warn_days} Tage**.\n\n"
+                    f"Let's Encrypt sollte automatisch renewen — falls nicht, "
+                    f"`certbot renew` oder Traefik-Logs pruefen."
+                ),
+                severity=severity,
+                fields=[
+                    {"name": "Domain", "value": domain, "inline": True},
+                    {"name": "Verbleibend", "value": f"{days_remaining} Tage", "inline": True},
+                    {"name": "Ablauf", "value": not_after.strftime('%Y-%m-%d'), "inline": True},
+                ],
+                channel_key='bot_status',
+                fallback_channel_id=1441655486981214309,
+            )
+        else:
+            self._clear_health_alert_cooldown(project, 'ssl_cert_expiry')
+
+    async def _fetch_peer_cert(self, host: str, port: int) -> Dict[str, Any]:
+        """TLS-Handshake durchfuehren und Server-Zertifikat (parsed) liefern."""
+        ctx = ssl.create_default_context()
+        loop = asyncio.get_running_loop()
+        # asyncio.open_connection liefert einen StreamWriter, ueber den wir den
+        # ssl-Transport abgreifen koennen, um das Peer-Cert auszulesen.
+        reader, writer = await asyncio.open_connection(host, port, ssl=ctx, server_hostname=host)
+        try:
+            ssl_obj = writer.get_extra_info('ssl_object')
+            if not ssl_obj:
+                raise ssl.SSLError(f"Kein ssl_object fuer {host}:{port}")
+            # binary_form=False -> dict {'subject': ..., 'notAfter': ..., ...}
+            cert = ssl_obj.getpeercert()
+            return cert or {}
+        finally:
+            writer.close()
+            try:
+                await writer.wait_closed()
+            except Exception:
+                pass
+
+    async def _check_backup_freshness(self, project: ProjectStatus) -> None:
+        """
+        Check 5: Backup-Freshness.
+
+        Schwelle: > backup_max_age_hours (default 25) -> Alert.
+        Channel:  backup-dashboard (1486479593602023486), key='backups'.
+        Severity: HIGH.
+        Cooldown: 60 Min.
+        Frequenz: alle 30 Min (taeglicher Cron, kein Sub-Hour-Sampling noetig).
+
+        Pfad: <project.path>/backups/daily/ — wenn der Pfad nicht existiert,
+        wird der Check uebersprungen (z.B. fuer Projekte ohne Backup-Strategie).
+        Aktuell nur ZERODOX hat einen daily-Backup-Pfad.
+        """
+        if not self._should_run_health_check(project, 'backup_freshness'):
+            return
+        self._mark_health_check_ran(project, 'backup_freshness')
+
+        proj_cfg = self._get_project_config(project.name)
+        path = proj_cfg.get('path') if isinstance(proj_cfg, dict) else None
+        if not path:
+            return
+
+        backup_dir = Path(path) / 'backups' / 'daily'
+        if not backup_dir.exists() or not backup_dir.is_dir():
+            return  # Projekt hat keinen Backup-Pfad -> skip
+
+        max_age_hours = float(self._get_health_threshold(project, 'backup_max_age_hours'))
+
+        try:
+            files = [p for p in backup_dir.iterdir() if p.is_file()]
+        except OSError as exc:
+            self.logger.error(f"❌ Backup-Check {project.name}: Verzeichnis-Lesefehler: {exc}")
+            return
+
+        if not files:
+            await self._send_health_alert(
+                project=project,
+                check_type='backup_freshness',
+                title=f"Keine Backups gefunden — {project.name}",
+                description=(
+                    f"Im Verzeichnis `{backup_dir}` liegen keine Backup-Dateien.\n"
+                    f"Backup-Cron wahrscheinlich tot — sofortige Pruefung erforderlich!"
+                ),
+                severity=Severity.HIGH,
+                fields=[
+                    {"name": "Pfad", "value": f"`{backup_dir}`", "inline": False},
+                ],
+                channel_key='backups',
+                fallback_channel_id=1486479593602023486,
+            )
+            return
+
+        # Neueste Datei finden.
+        latest = max(files, key=lambda p: p.stat().st_mtime)
+        latest_mtime = datetime.fromtimestamp(latest.stat().st_mtime, tz=timezone.utc)
+        age = datetime.now(timezone.utc) - latest_mtime
+        age_hours = age.total_seconds() / 3600
+
+        if age_hours > max_age_hours:
+            await self._send_health_alert(
+                project=project,
+                check_type='backup_freshness',
+                title=f"Backup veraltet — {project.name}",
+                description=(
+                    f"Letztes Backup ist **{age_hours:.1f} Stunden** alt.\n"
+                    f"Schwelle: **> {max_age_hours:.0f}h**.\n\n"
+                    f"Backup-Cron pruefen: `crontab -l`, `journalctl -u <backup-service>`."
+                ),
+                severity=Severity.HIGH,
+                fields=[
+                    {"name": "Letzte Datei", "value": f"`{latest.name}`", "inline": False},
+                    {"name": "Alter", "value": f"{age_hours:.1f}h", "inline": True},
+                    {"name": "Schwelle", "value": f"> {max_age_hours:.0f}h", "inline": True},
+                    {"name": "Pfad", "value": f"`{backup_dir}`", "inline": False},
+                ],
+                channel_key='backups',
+                fallback_channel_id=1486479593602023486,
+            )
+        else:
+            self._clear_health_alert_cooldown(project, 'backup_freshness')
