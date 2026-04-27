@@ -37,6 +37,9 @@
     │   │  Phase 5c (App-Insights via internal API):  │  │
     │   │   • _check_db_pool_saturation  → ci-zerodox │  │
     │   │   • _check_failed_login_rate   → critical   │  │
+    │   ├─────────────────────────────────────────────┤  │
+    │   │  Phase 5d (Functional-Smoke via API):       │  │
+    │   │   • _check_onboarding_smoke    → ci-zerodox │  │
     │   └─────────────────────────────────────────────┘  │
     │                                                     │
     │  CronHeartbeatCog (separate task.loop)              │
@@ -45,7 +48,7 @@
     └─────────────────────────────────────────────────────┘
 ```
 
-## Check-Tabelle (alle 7 Health-Checks)
+## Check-Tabelle (alle 8 Health-Checks)
 
 | Check | Was geprüft | Schwelle | Severity | Channel | Cooldown | Frequenz |
 |-------|-------------|----------|----------|---------|----------|----------|
@@ -56,6 +59,23 @@
 | **Backup** | Mtime von `<path>/backups/daily/` neuestem File | > 25h alt | HIGH | `backup-dashboard` | 60 Min | 30 Min |
 | **DB-Pool-Saturation** | `pg_stat_activity` / `max_connections` via API | > 80% | HIGH | `🧪-ci-zerodox` | 30 Min | 5 Min |
 | **Failed-Login-Rate** | `LoginAttempt.success=false WHERE createdAt > NOW()-5min` via API | > 100 / 5 Min | HIGH (CRITICAL >500) | `🚨-critical` | 15 Min | 60s |
+| **Onboarding-Smoke** *(Phase 5d, PR #189)* | `/api/internal/onboarding-smoke` ready-check (Schema + getNextCustomerId + DB) | `ready: false` | HIGH | `🧪-ci-zerodox` | 5 Min | 2 Min |
+
+### Phase 5d — Onboarding-Functional-Smoke
+
+Faengt Customer-Loss-Bugs wie ZERODOX PR #294 (Customer-ID-Kollision):
+Frontend lädt sauber, aber API-Submit schlägt mit 500 fehl. Frontend-Smoke
+und DB-Pool-Saturation merken davon nichts.
+
+Endpoint: `/api/internal/onboarding-smoke` (read-only Dry-Run, X-Agent-Key Auth).
+Wiederverwendet `internal_health_endpoint` aus config.yaml mit String-Replace.
+
+Sub-Checks:
+- **Schema-Validation:** Canonical valid Payload läuft durch onboardingSchema
+- **NextCustomerId:** `getNextCustomerId()` liefert FREI-ID (kein DB-Konflikt)
+- **DB-Reachable:** Customer-Tabelle queryable
+
+Bei `ready: false` → sofort HIGH-Alert in `🧪-ci-zerodox` mit failed-checks-Liste.
 
 ## Konfiguration
 
