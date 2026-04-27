@@ -37,6 +37,12 @@ HEALTH_CHECK_DEFAULTS: Dict[str, Any] = {
     # Phase 5c: App-Health-Checks (DB-Pool, Failed-Login)
     'db_pool_saturation_warn': 80,        # > 80% Pool-Sat -> Alert
     'failed_login_per_5min_warn': 100,    # > 100 Fehlversuche/5 Min -> Brute-Force-Verdacht
+    # Phase 5d: Functional-Health-Check (Onboarding-Submit-Pfad)
+    # Pollt /api/internal/onboarding-smoke. Bei `ready: false` -> sofort Alert.
+    # Hintergrund: Customer-ID-Kollision blockierte 100% der Buchungen (PR #294)
+    # ohne dass irgendein automatisierter Test/Monitor angeschlagen hat.
+    # Functional-Smoke schliesst die Luecke zwischen Frontend-Hydration (Phase 1-3)
+    # und DB-Insights (Phase 5c).
 }
 
 # Min-Intervall pro Check-Typ (Sekunden). Verhindert dass teure Checks
@@ -50,6 +56,8 @@ HEALTH_CHECK_MIN_INTERVAL_SECONDS: Dict[str, int] = {
     # Phase 5c: App-Health-Checks via /api/internal/health-stats
     'db_pool_saturation': 5 * 60,   # 5 Min (Pool-Sat ist Trend, nicht Spike)
     'failed_login_rate': 60,        # 60s (Brute-Force kann schnell hochlaufen)
+    # Phase 5d: Functional-Health via /api/internal/onboarding-smoke
+    'onboarding_smoke': 2 * 60,     # 2 Min (Customer-Loss-kritisch — schnell erkennen)
 }
 
 # Anti-Spam: pro Check-Typ wie lange ein bereits ausgeloester Alert
@@ -63,6 +71,9 @@ HEALTH_CHECK_ALERT_COOLDOWNS: Dict[str, timedelta] = {
     # Phase 5c
     'db_pool_saturation': timedelta(minutes=30),  # Sat-Trend braucht keine sofortige Re-Alarmierung
     'failed_login_rate': timedelta(minutes=15),   # Brute-Force-Burst kann mehrfach kommen
+    # Phase 5d: Functional-Smoke
+    'onboarding_smoke': timedelta(minutes=5),     # Customer-Loss-kritisch — kurzer Cooldown,
+                                                   # damit nach Recovery sofort wieder alarmierbar
 }
 
 
@@ -414,6 +425,10 @@ class ProjectMonitor:
                 # Phase 5c: App-Health-Checks via internal API (skip wenn nicht konfiguriert)
                 await self._check_db_pool_saturation(project)
                 await self._check_failed_login_rate(project)
+                # Phase 5d: Functional-Smoke (Onboarding-Submit-Pfad)
+                # Pollt /api/internal/onboarding-smoke. Bei ready:false -> sofort Alert.
+                # Faengt Customer-Loss-Bugs wie PR #294 binnen 2 Min statt User-Reports abwarten.
+                await self._check_onboarding_smoke(project)
 
                 await asyncio.sleep(project.check_interval)
 
@@ -2042,3 +2057,146 @@ class ProjectMonitor:
             )
         else:
             self._clear_health_alert_cooldown(project, 'failed_login_rate')
+
+    # === Phase 5d — Functional-Health-Check (Onboarding-Submit-Pfad) ===
+    # Faengt Customer-Loss-Bugs wie PR #294 (Customer-ID-Kollision):
+    # Frontend laedt sauber, aber API-Submit schlaegt mit 500 fehl.
+    # Frontend-Smoke und DB-Pool-Saturation merken davon nichts.
+    #
+    # Endpoint: /api/internal/onboarding-smoke (read-only Dry-Run, PR add)
+    # Severity: HIGH — Buchungen sind blockiert, Kunden gehen verloren.
+    # Channel:  ci_zerodox (#🧪-ci-zerodox), Fallback critical bei Auth/Network-Fehler.
+
+    async def _fetch_onboarding_smoke_status(
+        self, project: ProjectStatus
+    ) -> Optional[Dict[str, Any]]:
+        """HTTP-Call zur Onboarding-Smoke-API.
+
+        Endpoint wird aus dem konfigurierten `internal_health_endpoint` abgeleitet
+        durch String-Replace `/health-stats` -> `/onboarding-smoke`. Erlaubt einen
+        einzigen Config-Eintrag für beide Endpoints (sie liegen im selben Pfad-Tree).
+
+        Returnt None wenn:
+          - Kein internal_health_endpoint konfiguriert
+          - API-Key env-var fehlt
+          - HTTP-Fehler oder JSON-Fehler
+
+        Returnt das parsed Response-Body bei Erfolg ODER bei HTTP 503 (ready:false).
+        Beide Cases sind valide — die Caller-Funktion entscheidet anhand `ready`.
+        """
+        proj_cfg = self._get_project_config(project.name)
+        if not isinstance(proj_cfg, dict):
+            return None
+
+        monitor_cfg = proj_cfg.get('monitor', {})
+        if not isinstance(monitor_cfg, dict):
+            return None
+
+        base_endpoint = monitor_cfg.get('internal_health_endpoint')
+        if not base_endpoint:
+            return None
+
+        endpoint = str(base_endpoint).replace('/health-stats', '/onboarding-smoke')
+
+        api_key_env = monitor_cfg.get('health_api_key_env')
+        if not api_key_env:
+            return None
+        api_key = os.environ.get(str(api_key_env))
+        if not api_key:
+            self.logger.warning(
+                f"⚠️ Onboarding-Smoke {project.name}: env-var {api_key_env} nicht gesetzt"
+            )
+            return None
+
+        try:
+            timeout = aiohttp.ClientTimeout(total=15)
+            async with aiohttp.ClientSession(timeout=timeout) as session:
+                async with session.get(
+                    endpoint,
+                    headers={'X-Agent-Key': api_key, 'User-Agent': 'shadowops-bot/health'},
+                ) as resp:
+                    # 200 = ready, 503 = not ready (beide haben JSON-Body mit Details)
+                    if resp.status not in (200, 503):
+                        self.logger.warning(
+                            f"⚠️ Onboarding-Smoke {project.name}: HTTP {resp.status} von {endpoint}"
+                        )
+                        return None
+                    return await resp.json()
+        except asyncio.TimeoutError:
+            self.logger.warning(f"⚠️ Onboarding-Smoke {project.name}: Timeout nach 15s")
+            return None
+        except aiohttp.ClientError as exc:
+            self.logger.warning(f"⚠️ Onboarding-Smoke {project.name}: ClientError — {exc}")
+            return None
+        except (ValueError, KeyError) as exc:
+            self.logger.warning(f"⚠️ Onboarding-Smoke {project.name}: JSON-Fehler — {exc}")
+            return None
+
+    async def _check_onboarding_smoke(self, project: ProjectStatus) -> None:
+        """
+        Check 8 (Phase 5d): Functional-Smoke des Onboarding-Submit-Pfads.
+
+        Wenn ready=false → SOFORT Alert. Customer-Loss-kritisch.
+        Channel:  🧪-ci-zerodox (1463512208083521577), key='ci_zerodox'.
+        Severity: HIGH (Buchungen blockiert).
+        Cooldown: 5 Min (kurz — nach Recovery sofort wieder alarmierbar).
+        Frequenz: alle 2 Min.
+
+        Datenquelle: ZERODOX /api/internal/onboarding-smoke Response.checks.
+        """
+        if not self._should_run_health_check(project, 'onboarding_smoke'):
+            return
+        self._mark_health_check_ran(project, 'onboarding_smoke')
+
+        status = await self._fetch_onboarding_smoke_status(project)
+        if not status:
+            # Endpoint selbst nicht erreichbar — kein Alert (Health-Stats-Path
+            # wuerde uns das schon melden bei DB-Down). Logging only.
+            return
+
+        ready = bool(status.get('ready', False))
+        if ready:
+            self._clear_health_alert_cooldown(project, 'onboarding_smoke')
+            return
+
+        # ready:false — extrahiere fehlgeschlagene Checks
+        checks = status.get('checks', {}) or {}
+        failed_checks = []
+        for check_name, check_data in checks.items():
+            if isinstance(check_data, dict) and not check_data.get('ok', True):
+                failed_checks.append({
+                    'name': check_name,
+                    'error': str(check_data.get('error', 'unbekannt'))[:200],
+                    'detail': check_data.get('detail', {}),
+                })
+
+        failed_summary = ', '.join(c['name'] for c in failed_checks) or 'unbekannt'
+        error_lines = '\n'.join(
+            f"• **{c['name']}:** {c['error']}" for c in failed_checks[:3]
+        )
+
+        await self._send_health_alert(
+            project=project,
+            check_type='onboarding_smoke',
+            title=f"🚨 Onboarding-Submit blockiert — {project.name}",
+            description=(
+                f"Functional-Smoke meldet **ready: false**. "
+                f"User können aktuell wahrscheinlich keine Buchungen abschließen.\n\n"
+                f"**Fehlgeschlagene Checks:** `{failed_summary}`\n\n"
+                f"{error_lines}\n\n"
+                f"Sofort-Action: `curl /api/internal/onboarding-smoke` für volle Details. "
+                f"Referenz-Bug PR #294 (Customer-ID-Kollision)."
+            ),
+            severity=Severity.HIGH,
+            fields=[
+                {"name": "Status", "value": "🚨 NICHT BEREIT", "inline": True},
+                {"name": "Failed Checks", "value": str(len(failed_checks)), "inline": True},
+                {
+                    "name": "Endpoint",
+                    "value": "`/api/internal/onboarding-smoke`",
+                    "inline": False,
+                },
+            ],
+            channel_key='ci_zerodox',
+            fallback_channel_id=1463512208083521577,
+        )
