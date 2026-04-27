@@ -2,13 +2,44 @@
   "schema_version": 1,
   "repo": "Commandershadow9/shadowops-bot",
   "worker": "doku",
-  "last_run": null,
-  "last_drift_check": null,
-  "open_prs": [],
+  "last_run": "2026-04-26T00:00:00Z",
+  "last_drift_check": "2026-04-26T00:00:00Z",
+  "open_prs": [
+    {
+      "number": 178,
+      "branch": "claude/doku/drift-commands-api-config",
+      "title": "docs: fix slash-command list, permissions, project structure, API config",
+      "created_at": "2026-04-26T00:00:00Z",
+      "type": "drift"
+    },
+    {
+      "number": 179,
+      "branch": "claude/doku/gaps-claudemd-structure",
+      "title": "docs: update CLAUDE.md directory structure, remove stale highlights from README",
+      "created_at": "2026-04-26T00:00:00Z",
+      "type": "gaps"
+    }
+  ],
   "tracked_files": {
-    "README.md": { "last_synced_with_code_at": null },
-    "CLAUDE.md": { "last_synced_with_code_at": null },
-    "docs/reference/api.md": { "last_synced_with_code_at": null }
+    "README.md": { "last_synced_with_code_at": "2026-04-26T00:00:00Z" },
+    "CLAUDE.md": { "last_synced_with_code_at": "2026-04-26T00:00:00Z" },
+    "docs/reference/api.md": { "last_synced_with_code_at": "2026-04-26T00:00:00Z" },
+    ".claude/rules/discord-bot.md": { "last_synced_with_code_at": "2026-04-26T00:00:00Z" }
   },
-  "open_questions": []
+  "open_questions": [],
+  "drift_findings": {
+    "2026-04-26": [
+      "README: 7 slash commands missing (docker, agent-stats, security-engine, release-notes, pending-notes, mark-duplicate, setup-customer-server) — fixed in PR #178",
+      "README: /scan and /remediation-stats listed as permission-less, actually administrator=True — fixed in PR #178",
+      "README: duplicate config/ block in project structure — fixed in PR #178",
+      "README: github_integration.py shown as file, is a directory — fixed in PR #178",
+      "README: docs/API.md path wrong (should be docs/reference/api.md) — fixed in PR #178",
+      "api.md: Ollama config block still present (removed in v4.0) — fixed in PR #178",
+      "api.md: /get-ai-stats lists Ollama/OpenAI/Anthropic providers — fixed in PR #178",
+      "api.md: Knowledge Base documented as SQLite, is PostgreSQL — fixed in PR #178",
+      ".claude/rules/discord-bot.md: 5 commands missing from cog table — fixed in PR #178",
+      "CLAUDE.md: directory structure missing patch_notes/, fixers/, security_engine/, orchestrator/, ai_learning/, analyst/ — fixed in gaps PR",
+      "README: 170+ lines of Highlights v3.0-v3.4 (4 versions old) — moved to CHANGELOG reference in gaps PR"
+    ]
+  }
 }
