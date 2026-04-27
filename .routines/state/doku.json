@@ -2,13 +2,38 @@
   "schema_version": 1,
   "repo": "Commandershadow9/shadowops-bot",
   "worker": "doku",
-  "last_run": null,
-  "last_drift_check": null,
-  "open_prs": [],
+  "last_run": "2026-04-27",
+  "last_drift_check": "2026-04-27",
+  "open_prs": [
+    {
+      "number": 187,
+      "url": "https://github.com/Commandershadow9/shadowops-bot/pull/187",
+      "branch": "claude/doku/drift-readme-commands",
+      "title": "docs: fix slash command list, module paths and dead link",
+      "type": "drift",
+      "opened_at": "2026-04-27"
+    },
+    {
+      "number": 188,
+      "url": "https://github.com/Commandershadow9/shadowops-bot/pull/188",
+      "branch": "claude/doku/readme-bloat-v3x-highlights",
+      "title": "docs(readme): remove obsolete Highlights v3.1-v3.4 (anti-bloat)",
+      "type": "bloat",
+      "opened_at": "2026-04-27"
+    }
+  ],
   "tracked_files": {
-    "README.md": { "last_synced_with_code_at": null },
-    "CLAUDE.md": { "last_synced_with_code_at": null },
+    "README.md": { "last_synced_with_code_at": "2026-04-27" },
+    "CLAUDE.md": { "last_synced_with_code_at": "2026-04-27" },
     "docs/reference/api.md": { "last_synced_with_code_at": null }
   },
-  "open_questions": []
+  "open_questions": [],
+  "notes": {
+    "2026-04-27": [
+      "PR #187: 7 missing slash commands added, wrong module paths fixed (github_integration.py→dir, orchestrator.py→dir), dead link to non-existent plans file removed, duplicate config/ block in directory tree removed, missing cogs and integration modules documented in both README and CLAUDE.md.",
+      "PR #188: README shrunk from 773→634 lines by removing Highlights v3.1-v3.4 (all content already in CHANGELOG.md).",
+      "docs/reference/api.md not fully reviewed — last_synced_with_code_at stays null. Function signatures in api.md not compared with code this run; defer to next run.",
+      "Recent feat commits (Phase 5b/5c monitoring, GPG backup encryption, cron-heartbeat watcher) are mentioned in CHANGELOG.md but not yet in CLAUDE.md or README. Both PRs are merged first; follow-up if needed."
+    ]
+  }
 }
