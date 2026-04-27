@@ -9,6 +9,15 @@ python-dotenv>=1.0.1,<2.0.0
 
 # Database
 aiosqlite>=0.20.0,<1.0.0
+# Postgres-Treiber: asyncpg (async, primaer fuer security_engine + jules_state)
+# psycopg2-binary (sync, fuer knowledge_base.py)
+# Beide werden seit Phase 5c+ in mehreren Modulen genutzt — ohne sie schlaegt
+# pytest collection fehl mit ModuleNotFoundError (CI-Bug 2026-04-27 vor PR).
+asyncpg>=0.30.0,<1.0.0
+psycopg2-binary>=2.9.9,<3.0.0
+
+# JSON-Schema-Validierung (ai_engine.py, test_jules_review_schema.py)
+jsonschema>=4.20.0,<5.0.0
 
 # Utilities
 python-dateutil>=2.8.2,<3.0.0
