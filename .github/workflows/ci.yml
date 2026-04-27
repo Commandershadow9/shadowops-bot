@@ -36,7 +36,10 @@ jobs:
       - name: Set up Python
         uses: actions/setup-python@v5
         with:
-          python-version: "3.11"
+          # Python 3.12: erlaubt backslash in f-string expressions (PEP 701).
+          # Production-Bot laeuft lokal auf 3.12 — CI muss matchen damit
+          # f-string-Syntax in Tests nicht zur Compile-Zeit failt.
+          python-version: "3.12"
           cache: pip
 
       - name: Install

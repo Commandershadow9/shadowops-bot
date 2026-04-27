@@ -17,3 +17,4 @@ isort==5.13.2
 faker==20.1.0
 freezegun==1.4.0
 responses==0.24.1
+fakeredis>=2.20.0,<3.0.0  # Mock-Redis fuer test_jules_workflow_mixin/regression/gates
