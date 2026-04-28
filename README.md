@@ -242,27 +242,38 @@ projects:
 - **GitHub Events** - Detaillierte Patch-Notes für Push, PR und Release Events
 - **Deployment Status** - Real-time deployment progress
 
-### 🤖 Slash Commands
+### Slash Commands
 
 #### Security & Monitoring
 - `/status` - Gesamt-Sicherheitsstatus
-- `/scan` - Manuellen Docker-Scan triggern
-- `/threats` - Letzte erkannte Bedrohungen
-- `/bans` - Aktuell gebannte IPs (Fail2ban + CrowdSec)
+- `/scan` - Manuellen Docker-Scan triggern (Administrator)
+- `/threats [hours]` - Letzte erkannte Bedrohungen
+- `/bans [limit]` - Aktuell gebannte IPs (Fail2ban + CrowdSec)
 - `/aide` - AIDE Integrity Check Status
+- `/docker` - Letzte Docker Scan Ergebnisse
 
 #### Auto-Remediation
-- `/remediation-stats` - Auto-Remediation Statistiken
-- `/stop-all-fixes` - 🛑 EMERGENCY: Stoppt alle laufenden Fixes
-- `/set-approval-mode [mode]` - Ändere Approval Mode (paranoid/auto/dry-run)
+- `/remediation-stats` - Auto-Remediation Statistiken (Administrator)
+- `/stop-all-fixes` - EMERGENCY: Stoppt alle laufenden Fixes (Administrator)
+- `/set-approval-mode [mode]` - Ändere Approval Mode: paranoid/auto/dry-run (Administrator)
+- `/release-notes <project>` - Patch Notes fuer gesammelte Commits veröffentlichen (Administrator)
+- `/pending-notes` - Zeige ausstehende Commits die auf Release warten (Administrator)
+- `/mark-duplicate <parent_id> <child_id>` - Finding als Duplikat markieren
 
 #### AI & Learning System
 - `/get-ai-stats` - AI-Provider Status und Fallback-Chain
-- `/reload-context` - Lade Project-Context neu
+- `/agent-stats` - Agent-Learning Statistiken
+- `/reload-context` - Lade Project-Context neu (Administrator)
 
 #### Multi-Project Management
-- `/projekt-status [name]` - Status für spezifisches Projekt (Uptime, Response Time, Health)
+- `/projekt-status <name>` - Status fuer spezifisches Projekt (Uptime, Response Time, Health)
 - `/alle-projekte` - Übersicht aller überwachten Projekte
+
+#### Security Engine
+- `/security-engine` - Security Engine v6 Status und Statistiken
+
+#### Customer Setup
+- `/setup-customer-server` - Monitoring-Channels auf Kunden-Server einrichten (Administrator)
 
 ### 🎨 Features
 - **Rich Embeds** - Farbcodierte Alerts (🔴 CRITICAL, 🟠 HIGH, 🟢 OK)
@@ -438,23 +449,29 @@ deployment:
 ```
 Security Commands:
   /status              - Gesamt-Sicherheitsstatus
-  /scan                - Docker Security Scan
+  /scan                - Docker Security Scan (Admin)
   /threats [hours]     - Bedrohungen der letzten X Stunden
   /bans [limit]        - Gebannte IPs
   /aide                - AIDE Check-Status
+  /docker              - Letzte Docker Scan Ergebnisse
 
 Auto-Remediation:
-  /remediation-stats             - Statistiken
-  /stop-all-fixes                - Emergency Stop
-  /set-approval-mode [mode]      - Approval Mode ändern
+  /remediation-stats             - Statistiken (Admin)
+  /stop-all-fixes                - Emergency Stop (Admin)
+  /set-approval-mode [mode]      - Approval Mode aendern (Admin)
+  /release-notes <project>       - Patch Notes veroeffentlichen (Admin)
+  /pending-notes                 - Ausstehende Commits anzeigen (Admin)
+  /mark-duplicate <p> <c>        - Finding als Duplikat markieren
 
-AI System:
+AI & Security Engine:
   /get-ai-stats                  - AI Provider Status
-  /reload-context                - Context neu laden
+  /agent-stats                   - Agent-Learning Statistiken
+  /security-engine               - Security Engine v6 Status
+  /reload-context                - Context neu laden (Admin)
 
 Multi-Project:
-  /projekt-status [name]         - Detaillierter Projekt-Status
-  /alle-projekte                 - Übersicht aller Projekte
+  /projekt-status <name>         - Detaillierter Projekt-Status
+  /alle-projekte                 - Uebersicht aller Projekte
 ```
 
 ### GitHub Webhook Setup
@@ -472,15 +489,11 @@ Multi-Project:
 pip3 install -r requirements.txt
 pip3 install -r requirements-dev.txt
 
-# Tests ausführen
-pytest tests/ -v
+# Tests ausfuehren (immer einzeln mit -x; nie pytest tests/ ohne -x auf 8 GB VPS)
+pytest tests/unit/test_NAME.py -x -v
 
-# Mit Coverage
-pytest tests/ --cov=src --cov-report=html
-
-# Einzelne Test-Kategorie
-pytest tests/unit/ -v
-pytest tests/integration/ -v
+# Mit Coverage (einzelnes Modul)
+pytest tests/unit/test_NAME.py -x --cov=src --cov-report=html
 
 # Bot lokal testen
 python3 src/bot.py
@@ -492,87 +505,74 @@ tail -f logs/shadowops.log
 sudo systemctl restart shadowops-bot
 ```
 
-## 📁 Projekt-Struktur
+## Projekt-Struktur
 
 ```
 shadowops-bot/
 ├── src/
 │   ├── bot.py                          # Haupt-Bot-Logik
-│   ├── cogs/                           # NEU: Modulare Slash Commands
+│   ├── cogs/                           # Slash Commands (auto-geladen)
 │   │   ├── admin.py
 │   │   ├── inspector.py
-│   │   └── monitoring.py
+│   │   ├── monitoring.py
+│   │   ├── cron_heartbeat.py
+│   │   └── customer_setup_commands.py
+│   ├── commands/                       # Optionale Cogs (manuell laden)
+│   │   ├── ai_learning_admin.py
+│   │   └── knowledge_stats.py
 │   ├── integrations/
 │   │   ├── ai_engine.py                # Dual-Engine AI (Codex + Claude CLI)
 │   │   ├── smart_queue.py              # SmartQueue (Analyse-Pool + Fix-Lock)
 │   │   ├── verification.py             # Pre-Push Verification Pipeline
-│   │   ├── orchestrator.py             # Remediation Orchestrator
+│   │   ├── orchestrator/               # Remediation Orchestrator (Package)
 │   │   ├── event_watcher.py            # Security Event Watcher
 │   │   ├── knowledge_base.py           # SQL Learning System
 │   │   ├── code_analyzer.py            # Code Structure Analyzer
 │   │   ├── context_manager.py          # RAG Context Manager
-│   │   ├── github_integration.py       # GitHub Webhooks
+│   │   ├── github_integration/         # GitHub Webhooks + Jules Workflow (Package)
 │   │   ├── project_monitor.py          # Multi-Project Monitoring
 │   │   ├── deployment_manager.py       # Auto-Deployment
 │   │   ├── incident_manager.py         # Incident Tracking
 │   │   ├── customer_notifications.py   # Customer-Facing Alerts
+│   │   ├── security_engine/            # SecurityScanAgent v6 (Package)
+│   │   ├── fixers/                     # Fix-Adapter (fail2ban, crowdsec, aide, trivy, walg)
+│   │   ├── analyst/                    # Legacy Security Analyst (Referenz)
+│   │   ├── ai_learning/                # Continuous Learning Agent
 │   │   ├── fail2ban.py                 # Fail2ban Integration
 │   │   ├── crowdsec.py                 # CrowdSec Integration
 │   │   ├── aide.py                     # AIDE Integration
 │   │   └── docker.py                   # Docker Scan Integration
+│   ├── patch_notes/                    # Patch Notes Pipeline v6 (Package)
 │   └── utils/
 │       ├── config.py                   # Config-Loader
-│       ├── state_manager.py            # NEU: State-Management
+│       ├── state_manager.py            # State-Management
 │       ├── logger.py                   # Logging
 │       ├── embeds.py                   # Discord Embed-Builder
 │       └── discord_logger.py           # Discord Channel Logger
 ├── tests/
 │   ├── conftest.py                     # Test Fixtures
-│   ├── unit/                           # Unit Tests (161)
-│   │   ├── test_config.py
-│   │   ├── test_ai_engine.py           # 43 Tests (Router, Codex, Claude, AIEngine)
-│   │   ├── test_smart_queue.py         # 21 Tests (Pool, Lock, Circuit Breaker)
-│   │   ├── test_orchestrator.py
-│   │   ├── test_knowledge_base.py
-│   │   ├── test_event_watcher.py
-│   │   ├── test_github_integration.py
-│   │   ├── test_project_monitor.py
-│   │   └── test_incident_manager.py
-│   └── integration/
-│       └── test_learning_workflow.py   # End-to-End Tests
+│   ├── unit/                           # Unit Tests
+│   └── integration/                    # End-to-End Tests
 ├── config/
-│   ├── config.example.yaml             # Example Config
-│   ├── config.yaml                     # Your Config (gitignored)
+│   ├── config.example.yaml             # Template (committed)
+│   ├── config.yaml                     # Hauptconfig (gitignored)
 │   ├── DO-NOT-TOUCH.md                 # Safety Rules
 │   ├── INFRASTRUCTURE.md               # Infrastructure Knowledge
-│   └── PROJECT_*.md                    # Project Documentation
-├── config/                             # Konfiguration
-│   ├── config.yaml                     # Hauptconfig (gitignored)
-│   ├── config.example.yaml             # Template
-│   ├── config.recommended.yaml         # Empfehlungen
-│   ├── safe_upgrades.yaml              # Upgrade-Pfade
-│   └── logrotate.conf                  # Log-Rotation
-├── deploy/                             # Deployment
+│   └── PROJECT_*.md                    # Per-Projekt-Notizen
+├── deploy/
 │   └── shadowops-bot.service           # systemd Unit
-├── scripts/                            # Utility-Skripte
+├── scripts/
 │   ├── restart.sh                      # Bot neustarten (--pull, --logs)
-│   ├── diagnose-bot.sh                 # Diagnose
-│   ├── setup.sh                        # Erstinstallation
 │   └── ...
 ├── data/                               # Runtime-Daten (gitignored)
 ├── logs/                               # Log-Dateien (gitignored)
-├── docs/                               # Dokumentation
-│   ├── API.md                          # API-Referenz
-│   ├── guides/                         # Benutzer-Anleitungen
+├── docs/
+│   ├── reference/api.md                # API-Referenz
 │   ├── adr/                            # Architecture Decision Records
-│   ├── plans/                          # Design-Dokumente
-│   └── archive/                        # Historische Doku
+│   └── plans/                          # Design-Dokumente
 ├── .claude/                            # KI-Konfiguration
-│   ├── rules/                          # Pfad-gefilterte Rules
-│   ├── skills/                         # Workflow-Skills
-│   └── agents/                         # Spezialisierte Agents
-├── requirements.txt                    # Python Dependencies
-├── pyproject.toml                      # Projekt-Definition
+├── requirements.txt
+├── pyproject.toml
 ├── CLAUDE.md                           # KI-Projektinstruktionen
 ├── CHANGELOG.md                        # Version History
 └── README.md                           # This file

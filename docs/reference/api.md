@@ -1,11 +1,11 @@
 ---
-title: 🔧 ShadowOps API Documentation v5.1
+title: ShadowOps API Documentation
 status: active
-last_reviewed: 2026-04-15
+last_reviewed: 2026-04-28
 owner: CommanderShadow9
 ---
 
-# 🔧 ShadowOps API Documentation v5.1
+# ShadowOps API Documentation
 
 Complete API reference for ShadowOps Security Guardian.
 
@@ -164,10 +164,9 @@ Shows AI provider status, fallback chain, and usage statistics.
 **Permissions:** None
 **Parameters:** None
 **Returns:** Embed with:
-- Ollama status (enabled/disabled, model, URL)
-- Claude status (enabled/disabled, model)
-- OpenAI status (enabled/disabled, model)
-- Active fallback chain
+- Codex CLI status (primary engine, active model, quota)
+- Claude CLI status (fallback engine, active model)
+- Active routing rules (CRITICAL/HIGH/LOW → engine + model)
 - Request counts per provider
 
 **Example:**
@@ -268,23 +267,30 @@ channels:
 # AI CONFIGURATION
 # ========================================
 ai:
-  ollama:
-    enabled: true                           # Enable Ollama (local AI)
-    url: http://localhost:11434             # Ollama API URL
-    model: phi3:mini                        # Model for regular analysis
-    model_critical: llama3.1                # Model for CRITICAL events
-    hybrid_models: true                     # Use different models by severity
-    request_delay_seconds: 4.0              # Rate limiting (seconds between requests)
+  enabled: true
 
-  anthropic:
-    enabled: false                          # Enable Claude
-    api_key: null                           # Anthropic API key
-    model: claude-3-5-sonnet-20241022       # Claude model
+  primary:
+    engine: codex
+    models:
+      fast: gpt-4o
+      standard: gpt-5.3-codex
+      thinking: o3
+    timeout: 300
 
-  openai:
-    enabled: false                          # Enable OpenAI
-    api_key: null                           # OpenAI API key
-    model: gpt-4o                           # OpenAI model
+  fallback:
+    engine: claude
+    cli_path: /home/user/.local/bin/claude
+    models:
+      fast: claude-sonnet-4-6
+      standard: claude-sonnet-4-6
+      thinking: claude-opus-4-6
+    timeout: 300
+
+  routing:
+    critical_analysis: { engine: codex, model: thinking }
+    high_analysis:     { engine: codex, model: standard }
+    low_analysis:      { engine: codex, model: fast }
+    critical_verify:   { engine: claude, model: thinking }
 
 # ========================================
 # AUTO-REMEDIATION CONFIGURATION
@@ -582,8 +588,8 @@ Fallback auf das jeweils andere Modell bei Timeout oder leerer Response.
 ```python
 from src.integrations.knowledge_base import KnowledgeBase
 
-# Initialize
-kb = KnowledgeBase(db_path="data/knowledge_base.db")
+# Initialize (DSN from config or SECURITY_ANALYST_DB_URL env var)
+kb = KnowledgeBase(dsn="postgresql://user:pass@localhost/security_analyst")
 
 # Record a fix
 kb.record_fix(
@@ -791,29 +797,20 @@ event = SecurityEvent(
 
 ## Database Schema
 
-### Knowledge Base (SQLite)
+### Security Analyst DB (PostgreSQL — `security_analyst`)
 
-#### fixes table
-```sql
-CREATE TABLE fixes (
-    id INTEGER PRIMARY KEY AUTOINCREMENT,
-    timestamp TEXT NOT NULL,
-    event_signature TEXT NOT NULL,  -- Unique event identifier
-    event_type TEXT NOT NULL,  -- vulnerability, intrusion, etc.
-    severity TEXT,
-    event_details TEXT,  -- JSON
-    strategy TEXT NOT NULL,  -- JSON: Full fix strategy
-    result TEXT NOT NULL,  -- 'success' or 'failed'
-    duration_seconds REAL,
-    error_message TEXT,
-    retry_count INTEGER DEFAULT 0
-);
+The bot uses asyncpg with a connection pool (min 2, max 5).
+DSN from `config.security_analyst_dsn` or env `SECURITY_ANALYST_DB_URL`.
 
-CREATE INDEX idx_event_signature ON fixes(event_signature);
-CREATE INDEX idx_event_type ON fixes(event_type);
-CREATE INDEX idx_result ON fixes(result);
-CREATE INDEX idx_timestamp ON fixes(timestamp);
-```
+Key tables: `fix_attempts_v2`, `remediation_status`, `findings`,
+`jules_pr_reviews`, `jules_daily_stats` (view).
+
+### Agent Learning DB (PostgreSQL — `agent_learning`)
+
+DSN from `config.agent_learning_dsn` or env `AGENT_LEARNING_DB_URL`.
+
+Key tables: `agent_feedback`, `agent_quality_scores`, `agent_knowledge`,
+`pn_generations`, `pn_variants`, `pn_examples`, `jules_review_examples`.
 
 ### Project Monitor State (JSON)
 
@@ -873,9 +870,9 @@ CREATE INDEX idx_timestamp ON fixes(timestamp);
 - `Missing required field: discord.token` - Required config missing
 
 #### AI Service Errors
-- `No AI providers enabled` - All AI services disabled
-- `Ollama connection failed` - Cannot reach Ollama server
-- `AI request timeout` - AI provider took too long
+- `No AI providers enabled` - All AI services disabled (`ai.enabled: false`)
+- `Codex CLI not found` - `codex` binary missing from PATH
+- `AI request timeout` - AI provider exceeded configured timeout
 
 #### Deployment Errors
 - `Project not found in deployment config` - Unknown project
@@ -894,9 +891,8 @@ CREATE INDEX idx_timestamp ON fixes(timestamp);
 ## Rate Limiting
 
 ### AI Requests
-- **Ollama**: Configurable delay (`ai.ollama.request_delay_seconds`, default: 4.0s)
-- **Anthropic**: Built-in retry with exponential backoff (1s, 2s, 4s)
-- **OpenAI**: Built-in retry with exponential backoff (1s, 2s, 4s)
+- **Codex CLI (primary)**: Timeout configurable via `ai.primary.timeout` (default: 300s)
+- **Claude CLI (fallback)**: Timeout configurable via `ai.fallback.timeout` (default: 300s); automatic fallback on quota or timeout
 
 ### Discord Commands
 - **Global**: No built-in rate limiting (Discord handles this)
@@ -951,12 +947,12 @@ debug_mode: true
 
 ### Common API Issues
 
-**Knowledge Base locked:**
+**Knowledge Base connection issues:**
 ```bash
-# Check if database is locked
-sqlite3 data/knowledge_base.db "PRAGMA busy_timeout=5000;"
+# Check PostgreSQL connectivity
+psql "$SECURITY_ANALYST_DB_URL" -c "SELECT 1;"
 
-# If still locked, restart bot
+# Restart bot (pool will reconnect)
 sudo systemctl restart shadowops-bot
 ```
 
