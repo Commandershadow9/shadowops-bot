@@ -216,17 +216,16 @@ class InspectorCog(commands.Cog):
                 from integrations.patch_notes_learning import PatchNotesLearning
                 pn2 = PatchNotesLearning()
                 await pn2.connect()
-                impact_count = await pn2.pool.fetchval(
-                    "SELECT COUNT(*) FROM seo_fix_impact"
-                )
-                cross_knowledge = await pn2.pool.fetchval(
-                    "SELECT COUNT(*) FROM agent_knowledge"
-                )
+                row = await pn2.pool.fetchrow("""
+                    SELECT
+                        (SELECT COUNT(*) FROM seo_fix_impact) as impact_count,
+                        (SELECT COUNT(*) FROM agent_knowledge) as cross_knowledge
+                """)
                 await pn2.close()
 
                 seo_text = (
-                    f"**Fix-Impacts gemessen:** {impact_count}\n"
-                    f"**Cross-Agent Knowledge:** {cross_knowledge} Einträge"
+                    f"**Fix-Impacts gemessen:** {row['impact_count']}\n"
+                    f"**Cross-Agent Knowledge:** {row['cross_knowledge']} Einträge"
                 )
                 embed.add_field(name="🔍 SEO Agent", value=seo_text, inline=True)
             except Exception:
