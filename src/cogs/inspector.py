@@ -216,12 +216,16 @@ class InspectorCog(commands.Cog):
                 from integrations.patch_notes_learning import PatchNotesLearning
                 pn2 = PatchNotesLearning()
                 await pn2.connect()
-                impact_count = await pn2.pool.fetchval(
-                    "SELECT COUNT(*) FROM seo_fix_impact"
-                )
-                cross_knowledge = await pn2.pool.fetchval(
-                    "SELECT COUNT(*) FROM agent_knowledge"
-                )
+
+                # Optimized: Single query instead of two fetchval calls
+                seo_stats = await pn2.pool.fetchrow("""
+                    SELECT
+                        (SELECT COUNT(*) FROM seo_fix_impact) as impact_count,
+                        (SELECT COUNT(*) FROM agent_knowledge) as cross_knowledge
+                """)
+                impact_count = seo_stats['impact_count'] if seo_stats else 0
+                cross_knowledge = seo_stats['cross_knowledge'] if seo_stats else 0
+
                 await pn2.close()
 
                 seo_text = (
