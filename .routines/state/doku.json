@@ -2,13 +2,53 @@
   "schema_version": 1,
   "repo": "Commandershadow9/shadowops-bot",
   "worker": "doku",
-  "last_run": null,
-  "last_drift_check": null,
-  "open_prs": [],
+  "last_run": "2026-04-30T00:00:00Z",
+  "last_drift_check": "2026-04-30T00:00:00Z",
+  "open_prs": [
+    {
+      "number": 202,
+      "branch": "claude/doku/slash-command-drift",
+      "title": "docs: slash-command list und api.md Ollama-Drift",
+      "url": "https://github.com/Commandershadow9/shadowops-bot/pull/202",
+      "created_at": "2026-04-30T00:00:00Z",
+      "type": "drift"
+    },
+    {
+      "number": 203,
+      "branch": "claude/doku/claude-md-module-list",
+      "title": "docs: CLAUDE.md Modul-Tabelle aktualisieren",
+      "url": "https://github.com/Commandershadow9/shadowops-bot/pull/203",
+      "created_at": "2026-04-30T00:00:00Z",
+      "type": "gaps"
+    }
+  ],
   "tracked_files": {
-    "README.md": { "last_synced_with_code_at": null },
-    "CLAUDE.md": { "last_synced_with_code_at": null },
-    "docs/reference/api.md": { "last_synced_with_code_at": null }
+    "README.md": { "last_synced_with_code_at": "2026-04-30T00:00:00Z" },
+    "CLAUDE.md": { "last_synced_with_code_at": "2026-04-30T00:00:00Z" },
+    "docs/reference/api.md": { "last_synced_with_code_at": "2026-04-30T00:00:00Z" }
   },
-  "open_questions": []
+  "open_questions": [],
+  "last_run_findings": {
+    "drift": [
+      "api.md: Ollama-Referenzen in /get-ai-stats, Rate Limiting, Config Reference, Error Codes, Troubleshooting",
+      "api.md: KnowledgeBase(db_path=...) SQLite-Konstruktor statt PostgreSQL DSN",
+      "api.md: Database Schema zeigte SQLite-CREATE-TABLE statt PostgreSQL-Tabellen",
+      "README: 7 Slash-Commands fehlten: /docker, /agent-stats, /security-engine, /release-notes, /pending-notes, /mark-duplicate, /setup-customer-server"
+    ],
+    "gaps": [
+      "CLAUDE.md: orchestrator.py ist jetzt orchestrator/ (Verzeichnis)",
+      "CLAUDE.md: github_integration.py ist jetzt github_integration/ (Verzeichnis)",
+      "CLAUDE.md: security_engine/ fehlte komplett (18 Dateien, grosses Modul)",
+      "CLAUDE.md: fixers/ fehlte (walg_fixer.py u.a.)",
+      "CLAUDE.md: Statistik 15 Discord-Commands war veraltet (korrekt: 19)"
+    ],
+    "anti_bloat": [
+      "README.md: 773 Zeilen (Schwellwert 500). Highlights v3.1-v3.4 koennen in CHANGELOG migriert werden.",
+      "Wird als Issue geoeffnet wenn README-Umfang im naechsten Lauf bestaetigt wird."
+    ],
+    "ki_conformitaet": [
+      "CLAUDE.md < 800 Zeilen (197) — kein Split noetig",
+      "Alle Pflicht-Sektionen vorhanden"
+    ]
+  }
 }
