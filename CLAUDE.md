@@ -75,16 +75,18 @@ shadowops-bot/
 - `ai_engine.py` — Dual-Engine Router (Codex Primary, Claude Fallback)
 - `smart_queue.py` — Analyse-Pool (Semaphore=3) + serieller Fix-Lock + Circuit Breaker
 - `verification.py` — Pre-Push Pipeline (Confidence ≥85% → Tests → Claude-Verify → KB-Check)
-- `orchestrator.py` — Multi-Event-Batching (10s Fenster) + Approval-Flow
+- `orchestrator/` — Multi-Event-Batching (10s Fenster) + Approval-Flow (core.py, batch_mixin.py, recovery_mixin.py, u.a.)
 - `event_watcher.py` — Lauscht auf Fail2ban/CrowdSec/AIDE/Docker-Events
 - `knowledge_base.py` — SQL Learning (fix_attempts, fix_verifications, finding_quality, scan_coverage)
 - `code_analyzer.py` — Code Structure Analyzer (Git-History + AST)
 - `context_manager.py` — RAG: Project-Context + DO-NOT-TOUCH + Infra
-- `github_integration.py` — Webhooks mit HMAC-SHA256 Verification
+- `github_integration/` — Webhooks, Jules-Workflow-Mixins, Multi-Agent-Review-Pipeline (core.py, agent_review/, jules_*.py, u.a.)
 - `project_monitor.py` — Multi-Project Health-Checks
 - `deployment_manager.py` — Auto-Deploy mit Backup/Rollback
 - `incident_manager.py` — Incident Threads in Discord
 - `customer_notifications.py` — Customer-Facing Alerts (Multi-Guild)
+- `security_engine/` — Autonomer Security Scan Agent, Fix-Engine, Activity Monitor, CircuitBreaker, LearningBridge (scan_agent.py, engine.py, fixer_adapters.py, u.a.)
+- `fixers/` — Spezialisierte Fix-Implementierungen (z.B. walg_fixer.py fuer WAL-G-Updates)
 - `fail2ban.py` / `crowdsec.py` / `aide.py` / `docker.py` — Security-Integrationen
 
 ## Coding-Conventions
@@ -181,7 +183,7 @@ Worker-Konventionen:
 
 ## Statistik (Stand v5.1)
 
-20.000+ LoC, 150+ Tests, 3 PostgreSQL DBs (21+7+11 Tabellen), 4 Security-Integrationen, 15 Discord-Commands, 3 Monitored Projects (GuildScout, ZERODOX, AI Agents).
+20.000+ LoC, 150+ Tests, 3 PostgreSQL DBs (21+7+11 Tabellen), 4 Security-Integrationen, 19 Discord-Commands, 3 Monitored Projects (GuildScout, ZERODOX, AI Agents).
 
 ## Aktuelle Doku
 
@@ -194,4 +196,4 @@ Worker-Konventionen:
 
 ## Letztes Update dieser Datei
 
-2026-04-26 — initiales Setup, generiert aus Worker-Bundle.
+2026-04-30 — Modul-Tabelle aktualisiert: orchestrator/ und github_integration/ sind Verzeichnisse, security_engine/ und fixers/ ergaenzt. Statistik: 15 → 19 Discord-Commands.
