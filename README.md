@@ -242,27 +242,38 @@ projects:
 - **GitHub Events** - Detaillierte Patch-Notes für Push, PR und Release Events
 - **Deployment Status** - Real-time deployment progress
 
-### 🤖 Slash Commands
+### Slash Commands
 
 #### Security & Monitoring
 - `/status` - Gesamt-Sicherheitsstatus
-- `/scan` - Manuellen Docker-Scan triggern
-- `/threats` - Letzte erkannte Bedrohungen
-- `/bans` - Aktuell gebannte IPs (Fail2ban + CrowdSec)
+- `/scan` - Manuellen Docker-Scan triggern (Admin)
+- `/threats [hours]` - Letzte erkannte Bedrohungen
+- `/bans [limit]` - Aktuell gebannte IPs (Fail2ban + CrowdSec)
+- `/docker` - Letzte Docker Scan Ergebnisse anzeigen
 - `/aide` - AIDE Integrity Check Status
 
 #### Auto-Remediation
-- `/remediation-stats` - Auto-Remediation Statistiken
-- `/stop-all-fixes` - 🛑 EMERGENCY: Stoppt alle laufenden Fixes
-- `/set-approval-mode [mode]` - Ändere Approval Mode (paranoid/auto/dry-run)
+- `/remediation-stats` - Auto-Remediation Statistiken (Admin)
+- `/stop-all-fixes` - EMERGENCY: Stoppt alle laufenden Fixes (Admin)
+- `/set-approval-mode [mode]` - Approval Mode aendern: paranoid/auto/dry-run (Admin)
+- `/mark-duplicate` - Finding als Duplikat markieren, Learning-Feedback (Admin)
 
 #### AI & Learning System
-- `/get-ai-stats` - AI-Provider Status und Fallback-Chain
-- `/reload-context` - Lade Project-Context neu
+- `/get-ai-stats` - AI-Engine Status (Codex primary, Claude fallback)
+- `/agent-stats` - Agent-Learning Statistiken aus der agent_learning DB
+- `/reload-context` - Project-Context neu laden (Admin)
 
 #### Multi-Project Management
-- `/projekt-status [name]` - Status für spezifisches Projekt (Uptime, Response Time, Health)
-- `/alle-projekte` - Übersicht aller überwachten Projekte
+- `/projekt-status [name]` - Status fuer spezifisches Projekt (Uptime, Response Time, Health)
+- `/alle-projekte` - Uebersicht aller ueberwachten Projekte
+- `/security-engine` - Security Engine v6 Status und Statistiken (Admin)
+
+#### Patch Notes
+- `/release-notes` - Gesammelte Commits als Patch Notes veroeffentlichen (Admin)
+- `/pending-notes` - Zeige gesammelte Commits die auf Release warten (Admin)
+
+#### Setup
+- `/setup-customer-server` - Monitoring-Channels auf Kunden-Server einrichten (Admin)
 
 ### 🎨 Features
 - **Rich Embeds** - Farbcodierte Alerts (🔴 CRITICAL, 🟠 HIGH, 🟢 OK)
@@ -435,26 +446,39 @@ deployment:
 
 ### Commands in Discord
 
+Vollstaendige Liste: siehe [Slash Commands](#slash-commands) oben.
+
 ```
 Security Commands:
   /status              - Gesamt-Sicherheitsstatus
-  /scan                - Docker Security Scan
+  /scan                - Docker Security Scan (Admin)
   /threats [hours]     - Bedrohungen der letzten X Stunden
   /bans [limit]        - Gebannte IPs
+  /docker              - Letzte Docker Scan Ergebnisse
   /aide                - AIDE Check-Status
 
 Auto-Remediation:
-  /remediation-stats             - Statistiken
-  /stop-all-fixes                - Emergency Stop
-  /set-approval-mode [mode]      - Approval Mode ändern
+  /remediation-stats             - Statistiken (Admin)
+  /stop-all-fixes                - Emergency Stop (Admin)
+  /set-approval-mode [mode]      - Approval Mode aendern (Admin)
+  /mark-duplicate                - Finding als Duplikat markieren (Admin)
 
 AI System:
-  /get-ai-stats                  - AI Provider Status
-  /reload-context                - Context neu laden
+  /get-ai-stats                  - AI Engine Status (Codex/Claude)
+  /agent-stats                   - Agent-Learning Statistiken
+  /reload-context                - Context neu laden (Admin)
 
 Multi-Project:
   /projekt-status [name]         - Detaillierter Projekt-Status
-  /alle-projekte                 - Übersicht aller Projekte
+  /alle-projekte                 - Uebersicht aller Projekte
+  /security-engine               - Security Engine v6 Status (Admin)
+
+Patch Notes:
+  /release-notes                 - Patch Notes veroeffentlichen (Admin)
+  /pending-notes                 - Ausstehende Commits anzeigen (Admin)
+
+Setup:
+  /setup-customer-server         - Kunden-Server einrichten (Admin)
 ```
 
 ### GitHub Webhook Setup
