@@ -42,8 +42,11 @@
 shadowops-bot/
 ├── src/
 │   ├── bot.py                    # Haupt-Bot
-│   ├── cogs/                     # Slash-Commands (admin, inspector, monitoring)
+│   ├── cogs/                     # Slash-Commands (admin, inspector, monitoring, customer_setup_commands, cron_heartbeat)
+│   ├── commands/                 # Standalone-Command-Handler (ai_learning_admin, knowledge_stats)
 │   ├── integrations/             # Externe Systeme (siehe unten)
+│   ├── patch_notes/              # Patch-Notes-Pipeline v6 (5-Stufen State Machine)
+│   ├── schemas/                  # JSON-Schemas fuer Structured Output (Codex)
 │   └── utils/                    # config, logging, embeds, state
 ├── tests/
 │   ├── unit/                     # 161+ Unit-Tests
@@ -72,20 +75,61 @@ shadowops-bot/
 
 ### Module unter `src/integrations/`
 
+**Kern-AI:**
 - `ai_engine.py` — Dual-Engine Router (Codex Primary, Claude Fallback)
 - `smart_queue.py` — Analyse-Pool (Semaphore=3) + serieller Fix-Lock + Circuit Breaker
 - `verification.py` — Pre-Push Pipeline (Confidence ≥85% → Tests → Claude-Verify → KB-Check)
-- `orchestrator.py` — Multi-Event-Batching (10s Fenster) + Approval-Flow
+- `approval_modes.py` — Approval-Mode-Logik (paranoid/auto/dry-run)
+
+**Orchestrierung:**
+- `orchestrator/` — Multi-Event-Batching (10s Fenster) + Approval-Flow (Paket mit Mixins)
 - `event_watcher.py` — Lauscht auf Fail2ban/CrowdSec/AIDE/Docker-Events
-- `knowledge_base.py` — SQL Learning (fix_attempts, fix_verifications, finding_quality, scan_coverage)
+- `auto_fix_manager.py` — Fix-Manager-Koordination
+- `backup_manager.py` — Backup vor destruktiven Aktionen
+- `self_healing.py` — Self-Healing-Koordinator
+- `service_manager.py` — Systemd-Service-Management
+- `command_executor.py` — Sichere Shell-Kommando-Ausfuehrung
+
+**Wissen & Lernen:**
+- `knowledge_base.py` — SQL Learning (PostgreSQL, security_analyst DB)
 - `code_analyzer.py` — Code Structure Analyzer (Git-History + AST)
+- `git_history_analyzer.py` — Git-Commit-Analyse
 - `context_manager.py` — RAG: Project-Context + DO-NOT-TOUCH + Infra
-- `github_integration.py` — Webhooks mit HMAC-SHA256 Verification
+- `log_analyzer.py` — Log-Pattern-Analyse
+- `learning_notifier.py` — Discord-Benachrichtigungen fuer Agent-Learning
+- `ai_learning/` — AI-Learning-Subsystem (separate Tabellen in agent_learning DB)
+- `llm_fine_tuning.py` — Fine-Tuning Export (JSONL/LoRA)
+- `prompt_ab_testing.py` — A/B-Testing fuer Prompts
+- `prompt_auto_tuner.py` — Auto-Tuning Engine
+
+**GitHub-Integration:**
+- `github_integration/` — Webhooks + Jules-Workflow + Multi-Agent-Review (Paket mit Mixins)
+
+**Sicherheits-Engine:**
+- `security_engine/` — SecurityScanAgent, CircuitBreaker, DB, Fixers, Prompts (siehe CLAUDE.md Safety)
+- `fixers/` — Einzelne Fixer-Adapter (aide, crowdsec, fail2ban, trivy, walg)
+
+**Multi-Projekt:**
 - `project_monitor.py` — Multi-Project Health-Checks
 - `deployment_manager.py` — Auto-Deploy mit Backup/Rollback
 - `incident_manager.py` — Incident Threads in Discord
 - `customer_notifications.py` — Customer-Facing Alerts (Multi-Guild)
+- `customer_server_setup.py` — Guild-Setup fuer Customer-Channels
+- `guildscout_alerts.py` — GuildScout-spezifische Alert-Logik
+- `impact_analyzer.py` — Projekt-Impact-Analyse vor Fix
+
+**Patch Notes:**
+- `patch_notes_batcher.py` / `patch_notes_feedback.py` / `patch_notes_learning.py` — Batch-System
+- `patch_notes_trainer.py` / `patch_notes_web_exporter.py` — Training + Web-Export
+- `changelog_db.py` — Changelog-Datenbank-Interface
+
+**Sonstiges:**
 - `fail2ban.py` / `crowdsec.py` / `aide.py` / `docker.py` — Security-Integrationen
+- `docker_image_analyzer.py` — Docker-Image-Analyse (Trivy-Output-Parsing)
+- `content_sanitizer.py` — Sanitierung von AI-Output (Pfade, IPs, Secrets)
+- `research_fetcher.py` — Externe CVE/Advisory-Recherche
+- `server_assistant.py` — Server-Assistent-Integration
+- `analyst/` — Alter Security-Analyst (deprecated, Referenz behalten)
 
 ## Coding-Conventions
 

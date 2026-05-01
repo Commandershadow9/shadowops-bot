@@ -247,22 +247,33 @@ projects:
 #### Security & Monitoring
 - `/status` - Gesamt-Sicherheitsstatus
 - `/scan` - Manuellen Docker-Scan triggern
-- `/threats` - Letzte erkannte Bedrohungen
-- `/bans` - Aktuell gebannte IPs (Fail2ban + CrowdSec)
+- `/threats [hours]` - Letzte erkannte Bedrohungen (Standard: 24h)
+- `/bans [limit]` - Aktuell gebannte IPs (Fail2ban + CrowdSec)
 - `/aide` - AIDE Integrity Check Status
+- `/docker` - Letzte Docker-Scan-Ergebnisse (Trivy)
 
 #### Auto-Remediation
 - `/remediation-stats` - Auto-Remediation Statistiken
-- `/stop-all-fixes` - 🛑 EMERGENCY: Stoppt alle laufenden Fixes
+- `/stop-all-fixes` - EMERGENCY: Stoppt alle laufenden Fixes
 - `/set-approval-mode [mode]` - Ändere Approval Mode (paranoid/auto/dry-run)
 
 #### AI & Learning System
 - `/get-ai-stats` - AI-Provider Status und Fallback-Chain
 - `/reload-context` - Lade Project-Context neu
+- `/agent-stats` - Agent-Learning Statistiken (DB-Metriken)
+- `/security-engine` - Security Engine v6 Status und Statistiken
+
+#### Patch Notes
+- `/release-notes [project]` - Manueller Batch-Release fuer ein Projekt (Admin)
+- `/pending-notes` - Uebersicht aller ausstehenden Batches
+- `/mark-duplicate [parent_id] [child_id]` - Markiert Eintrag als Duplikat (Admin)
 
 #### Multi-Project Management
 - `/projekt-status [name]` - Status für spezifisches Projekt (Uptime, Response Time, Health)
 - `/alle-projekte` - Übersicht aller überwachten Projekte
+
+#### Admin
+- `/setup-customer-server` - Richtet Monitoring-Channels für GuildScout ein (Admin)
 
 ### 🎨 Features
 - **Rich Embeds** - Farbcodierte Alerts (🔴 CRITICAL, 🟠 HIGH, 🟢 OK)
@@ -442,19 +453,30 @@ Security Commands:
   /threats [hours]     - Bedrohungen der letzten X Stunden
   /bans [limit]        - Gebannte IPs
   /aide                - AIDE Check-Status
+  /docker              - Letzte Docker-Scan-Ergebnisse (Trivy)
 
 Auto-Remediation:
   /remediation-stats             - Statistiken
   /stop-all-fixes                - Emergency Stop
-  /set-approval-mode [mode]      - Approval Mode ändern
+  /set-approval-mode [mode]      - Approval Mode aendern
 
 AI System:
   /get-ai-stats                  - AI Provider Status
   /reload-context                - Context neu laden
+  /agent-stats                   - Agent-Learning Statistiken
+  /security-engine               - Security Engine v6 Status
+
+Patch Notes:
+  /release-notes [project]       - Manueller Batch-Release
+  /pending-notes                 - Ausstehende Batches
+  /mark-duplicate [p] [c]        - Duplikat markieren
 
 Multi-Project:
   /projekt-status [name]         - Detaillierter Projekt-Status
   /alle-projekte                 - Übersicht aller Projekte
+
+Admin:
+  /setup-customer-server         - GuildScout Monitoring-Channels einrichten
 ```
 
 ### GitHub Webhook Setup
@@ -498,10 +520,12 @@ sudo systemctl restart shadowops-bot
 shadowops-bot/
 ├── src/
 │   ├── bot.py                          # Haupt-Bot-Logik
-│   ├── cogs/                           # NEU: Modulare Slash Commands
+│   ├── cogs/                           # Modulare Slash Commands
 │   │   ├── admin.py
 │   │   ├── inspector.py
-│   │   └── monitoring.py
+│   │   ├── monitoring.py
+│   │   ├── customer_setup_commands.py
+│   │   └── cron_heartbeat.py
 │   ├── integrations/
 │   │   ├── ai_engine.py                # Dual-Engine AI (Codex + Claude CLI)
 │   │   ├── smart_queue.py              # SmartQueue (Analyse-Pool + Fix-Lock)
@@ -541,17 +565,14 @@ shadowops-bot/
 │   └── integration/
 │       └── test_learning_workflow.py   # End-to-End Tests
 ├── config/
-│   ├── config.example.yaml             # Example Config
-│   ├── config.yaml                     # Your Config (gitignored)
-│   ├── DO-NOT-TOUCH.md                 # Safety Rules
-│   ├── INFRASTRUCTURE.md               # Infrastructure Knowledge
-│   └── PROJECT_*.md                    # Project Documentation
-├── config/                             # Konfiguration
-│   ├── config.yaml                     # Hauptconfig (gitignored)
-│   ├── config.example.yaml             # Template
+│   ├── config.example.yaml             # Template (committed)
+│   ├── config.yaml                     # Real Config (gitignored)
 │   ├── config.recommended.yaml         # Empfehlungen
 │   ├── safe_upgrades.yaml              # Upgrade-Pfade
-│   └── logrotate.conf                  # Log-Rotation
+│   ├── logrotate.conf                  # Log-Rotation
+│   ├── DO-NOT-TOUCH.md                 # Safety Rules
+│   ├── INFRASTRUCTURE.md               # Infrastructure Knowledge
+│   └── PROJECT_*.md                    # Per-Projekt-Notizen
 ├── deploy/                             # Deployment
 │   └── shadowops-bot.service           # systemd Unit
 ├── scripts/                            # Utility-Skripte
@@ -562,8 +583,9 @@ shadowops-bot/
 ├── data/                               # Runtime-Daten (gitignored)
 ├── logs/                               # Log-Dateien (gitignored)
 ├── docs/                               # Dokumentation
-│   ├── API.md                          # API-Referenz
-│   ├── guides/                         # Benutzer-Anleitungen
+│   ├── reference/api.md                # API-Referenz
+│   ├── SECURITY_ANALYST.md             # Security Analyst Doku
+│   ├── SETUP_GUIDE.md                  # Setup-Anleitung
 │   ├── adr/                            # Architecture Decision Records
 │   ├── plans/                          # Design-Dokumente
 │   └── archive/                        # Historische Doku

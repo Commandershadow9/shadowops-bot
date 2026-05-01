@@ -2,13 +2,20 @@
   "schema_version": 1,
   "repo": "Commandershadow9/shadowops-bot",
   "worker": "doku",
-  "last_run": null,
-  "last_drift_check": null,
+  "last_run": "2026-05-01T00:00:00Z",
+  "last_drift_check": "2026-05-01T00:00:00Z",
   "open_prs": [],
   "tracked_files": {
-    "README.md": { "last_synced_with_code_at": null },
-    "CLAUDE.md": { "last_synced_with_code_at": null },
-    "docs/reference/api.md": { "last_synced_with_code_at": null }
+    "README.md": { "last_synced_with_code_at": "2026-05-01T00:00:00Z" },
+    "CLAUDE.md": { "last_synced_with_code_at": "2026-05-01T00:00:00Z" },
+    "docs/reference/api.md": { "last_synced_with_code_at": "2026-05-01T00:00:00Z" }
   },
-  "open_questions": []
+  "open_questions": [
+    {
+      "id": "antibloom-readme-highlights",
+      "file": "README.md",
+      "created": "2026-05-01",
+      "note": "README ist 773+ Zeilen (Schwelle: 500). Highlights v3.1–v3.4 sind veraltet (aktuell v5.1). Vorschlag: in CHANGELOG.md auslagern und Sektion aus README entfernen. Warten auf Bestaetigung durch Maintainer."
+    }
+  ]
 }

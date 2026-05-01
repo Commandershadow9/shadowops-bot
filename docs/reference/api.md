@@ -164,11 +164,11 @@ Shows AI provider status, fallback chain, and usage statistics.
 **Permissions:** None
 **Parameters:** None
 **Returns:** Embed with:
-- Ollama status (enabled/disabled, model, URL)
-- Claude status (enabled/disabled, model)
-- OpenAI status (enabled/disabled, model)
+- Codex CLI status (primary engine, model, quota)
+- Claude CLI status (fallback engine, model)
 - Active fallback chain
 - Request counts per provider
+- Last failure reason (if any)
 
 **Example:**
 ```
@@ -268,23 +268,30 @@ channels:
 # AI CONFIGURATION
 # ========================================
 ai:
-  ollama:
-    enabled: true                           # Enable Ollama (local AI)
-    url: http://localhost:11434             # Ollama API URL
-    model: phi3:mini                        # Model for regular analysis
-    model_critical: llama3.1                # Model for CRITICAL events
-    hybrid_models: true                     # Use different models by severity
-    request_delay_seconds: 4.0              # Rate limiting (seconds between requests)
+  enabled: true
 
-  anthropic:
-    enabled: false                          # Enable Claude
-    api_key: null                           # Anthropic API key
-    model: claude-3-5-sonnet-20241022       # Claude model
+  primary:
+    engine: codex
+    models:
+      fast: gpt-4o
+      standard: gpt-5.3-codex
+      thinking: o3
+    timeout: 300
 
-  openai:
-    enabled: false                          # Enable OpenAI
-    api_key: null                           # OpenAI API key
-    model: gpt-4o                           # OpenAI model
+  fallback:
+    engine: claude
+    cli_path: /home/user/.local/bin/claude  # Path to Claude CLI binary
+    models:
+      fast: claude-sonnet-4-6
+      standard: claude-sonnet-4-6
+      thinking: claude-opus-4-6
+    timeout: 300
+
+  routing:
+    critical_analysis: { engine: codex, model: thinking }
+    high_analysis: { engine: codex, model: standard }
+    low_analysis: { engine: codex, model: fast }
+    critical_verify: { engine: claude, model: thinking }
 
 # ========================================
 # AUTO-REMEDIATION CONFIGURATION
@@ -582,8 +589,8 @@ Fallback auf das jeweils andere Modell bei Timeout oder leerer Response.
 ```python
 from src.integrations.knowledge_base import KnowledgeBase
 
-# Initialize
-kb = KnowledgeBase(db_path="data/knowledge_base.db")
+# Initialize (DSN comes from config.security_analyst_dsn or SECURITY_ANALYST_DB_URL env var)
+kb = KnowledgeBase(dsn="postgresql://user:pass@localhost:5433/security_analyst")
 
 # Record a fix
 kb.record_fix(
@@ -791,29 +798,13 @@ event = SecurityEvent(
 
 ## Database Schema
 
-### Knowledge Base (SQLite)
+### Knowledge Base (PostgreSQL — `security_analyst` DB, Port 5433)
 
-#### fixes table
-```sql
-CREATE TABLE fixes (
-    id INTEGER PRIMARY KEY AUTOINCREMENT,
-    timestamp TEXT NOT NULL,
-    event_signature TEXT NOT NULL,  -- Unique event identifier
-    event_type TEXT NOT NULL,  -- vulnerability, intrusion, etc.
-    severity TEXT,
-    event_details TEXT,  -- JSON
-    strategy TEXT NOT NULL,  -- JSON: Full fix strategy
-    result TEXT NOT NULL,  -- 'success' or 'failed'
-    duration_seconds REAL,
-    error_message TEXT,
-    retry_count INTEGER DEFAULT 0
-);
+Core tables (subset): `orchestrator_fixes`, `orchestrator_strategies`, `threat_patterns`,
+`orchestrator_plans`, `orchestrator_vulnerabilities`, `fix_attempts_v2`, `remediation_status`,
+`jules_pr_reviews`.
 
-CREATE INDEX idx_event_signature ON fixes(event_signature);
-CREATE INDEX idx_event_type ON fixes(event_type);
-CREATE INDEX idx_result ON fixes(result);
-CREATE INDEX idx_timestamp ON fixes(timestamp);
-```
+DSN: `config.security_analyst_dsn` or env var `SECURITY_ANALYST_DB_URL`.
 
 ### Project Monitor State (JSON)
 
@@ -894,9 +885,8 @@ CREATE INDEX idx_timestamp ON fixes(timestamp);
 ## Rate Limiting
 
 ### AI Requests
-- **Ollama**: Configurable delay (`ai.ollama.request_delay_seconds`, default: 4.0s)
-- **Anthropic**: Built-in retry with exponential backoff (1s, 2s, 4s)
-- **OpenAI**: Built-in retry with exponential backoff (1s, 2s, 4s)
+- **Codex CLI (primary)**: Quota-aware failover; CLI output parsed for limit markers.
+- **Claude CLI (fallback)**: Built-in retry with exponential backoff (1s, 2s, 4s). Timeout per routing rule (120s Sonnet, 180s Opus).
 
 ### Discord Commands
 - **Global**: No built-in rate limiting (Discord handles this)
@@ -951,12 +941,13 @@ debug_mode: true
 
 ### Common API Issues
 
-**Knowledge Base locked:**
+**Knowledge Base connection issues:**
 ```bash
-# Check if database is locked
-sqlite3 data/knowledge_base.db "PRAGMA busy_timeout=5000;"
+# Check PostgreSQL connectivity (security_analyst DB, Port 5433)
+psql "$SECURITY_ANALYST_DB_URL" -c "SELECT 1;"
 
-# If still locked, restart bot
+# If unreachable, check service
+sudo systemctl status postgresql
 sudo systemctl restart shadowops-bot
 ```
 
