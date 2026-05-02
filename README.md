@@ -247,22 +247,33 @@ projects:
 #### Security & Monitoring
 - `/status` - Gesamt-Sicherheitsstatus
 - `/scan` - Manuellen Docker-Scan triggern
-- `/threats` - Letzte erkannte Bedrohungen
-- `/bans` - Aktuell gebannte IPs (Fail2ban + CrowdSec)
+- `/threats [hours]` - Letzte erkannte Bedrohungen (Standard: 24h)
+- `/bans [limit]` - Aktuell gebannte IPs (Fail2ban + CrowdSec)
 - `/aide` - AIDE Integrity Check Status
+- `/docker` - Letzte Docker Scan Ergebnisse
 
 #### Auto-Remediation
 - `/remediation-stats` - Auto-Remediation Statistiken
-- `/stop-all-fixes` - 🛑 EMERGENCY: Stoppt alle laufenden Fixes
+- `/stop-all-fixes` - EMERGENCY: Stoppt alle laufenden Fixes
 - `/set-approval-mode [mode]` - Ändere Approval Mode (paranoid/auto/dry-run)
 
 #### AI & Learning System
 - `/get-ai-stats` - AI-Provider Status und Fallback-Chain
 - `/reload-context` - Lade Project-Context neu
+- `/agent-stats` - Agent-Learning Statistiken (Cross-Agent Feedback, Few-Shot, Qualitätsbewertungen)
+
+#### Security Engine
+- `/security-engine` - Security Engine v6 Status und Statistiken
+
+#### Patch Notes
+- `/release-notes <project>` - Gesammelte Commits als Patch Notes veröffentlichen (Admin)
+- `/pending-notes` - Ausstehende Commits anzeigen, die auf Release warten (Admin)
+- `/mark-duplicate <parent_id> <child_id>` - Finding als Duplikat markieren, Learning-Feedback (Admin)
 
 #### Multi-Project Management
-- `/projekt-status [name]` - Status für spezifisches Projekt (Uptime, Response Time, Health)
+- `/projekt-status <name>` - Status für spezifisches Projekt (Uptime, Response Time, Health)
 - `/alle-projekte` - Übersicht aller überwachten Projekte
+- `/setup-customer-server` - Customer-Discord-Server einrichten (Admin)
 
 ### 🎨 Features
 - **Rich Embeds** - Farbcodierte Alerts (🔴 CRITICAL, 🟠 HIGH, 🟢 OK)
@@ -442,19 +453,30 @@ Security Commands:
   /threats [hours]     - Bedrohungen der letzten X Stunden
   /bans [limit]        - Gebannte IPs
   /aide                - AIDE Check-Status
+  /docker              - Letzte Docker Scan Ergebnisse
 
 Auto-Remediation:
   /remediation-stats             - Statistiken
   /stop-all-fixes                - Emergency Stop
   /set-approval-mode [mode]      - Approval Mode ändern
 
-AI System:
+AI & Learning:
   /get-ai-stats                  - AI Provider Status
   /reload-context                - Context neu laden
+  /agent-stats                   - Agent-Learning Statistiken
+
+Security Engine:
+  /security-engine               - Security Engine v6 Status
+
+Patch Notes (Admin):
+  /release-notes <project>       - Patch Notes veröffentlichen
+  /pending-notes                 - Ausstehende Commits anzeigen
+  /mark-duplicate <id> <id>      - Finding als Duplikat markieren
 
 Multi-Project:
-  /projekt-status [name]         - Detaillierter Projekt-Status
+  /projekt-status <name>         - Detaillierter Projekt-Status
   /alle-projekte                 - Übersicht aller Projekte
+  /setup-customer-server         - Customer-Server einrichten (Admin)
 ```
 
 ### GitHub Webhook Setup
@@ -541,17 +563,14 @@ shadowops-bot/
 │   └── integration/
 │       └── test_learning_workflow.py   # End-to-End Tests
 ├── config/
-│   ├── config.example.yaml             # Example Config
-│   ├── config.yaml                     # Your Config (gitignored)
-│   ├── DO-NOT-TOUCH.md                 # Safety Rules
-│   ├── INFRASTRUCTURE.md               # Infrastructure Knowledge
-│   └── PROJECT_*.md                    # Project Documentation
-├── config/                             # Konfiguration
+│   ├── config.example.yaml             # Template (commited)
 │   ├── config.yaml                     # Hauptconfig (gitignored)
-│   ├── config.example.yaml             # Template
 │   ├── config.recommended.yaml         # Empfehlungen
 │   ├── safe_upgrades.yaml              # Upgrade-Pfade
-│   └── logrotate.conf                  # Log-Rotation
+│   ├── logrotate.conf                  # Log-Rotation
+│   ├── DO-NOT-TOUCH.md                 # Critical files protection
+│   ├── INFRASTRUCTURE.md               # Infrastructure Knowledge
+│   └── PROJECT_*.md                    # Per-projekt-Notizen
 ├── deploy/                             # Deployment
 │   └── shadowops-bot.service           # systemd Unit
 ├── scripts/                            # Utility-Skripte
@@ -692,7 +711,7 @@ See [CHANGELOG.md](./CHANGELOG.md) for detailed version history.
 - **PostgreSQL Databases**: 3 (security_analyst: 21 Tabellen, agent_learning: 7 Tabellen, seo_agent: 11 Tabellen)
 - **Learning Pipeline Tables**: 11 (Security: fix_attempts, fix_verifications, finding_quality, scan_coverage · Shared: agent_feedback, agent_quality_scores, agent_knowledge · Patch Notes: pn_generations, pn_variants, pn_examples · SEO: seo_fix_impact)
 - **Scan Areas**: 10 (firewall, ssh, docker, permissions, packages, services, logs, network, credentials, dependencies)
-- **Discord Commands**: 15 (inkl. /agent-stats)
+- **Discord Commands**: 19
 - **Monitored Projects**: 3 (GuildScout, ZERODOX, AI Agents)
 - **Auto Discord-Posts**: Session-Summaries, Feedback-Auswertungen, Weekly Summary, Meilensteine
 

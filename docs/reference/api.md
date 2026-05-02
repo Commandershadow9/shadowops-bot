@@ -164,9 +164,8 @@ Shows AI provider status, fallback chain, and usage statistics.
 **Permissions:** None
 **Parameters:** None
 **Returns:** Embed with:
-- Ollama status (enabled/disabled, model, URL)
-- Claude status (enabled/disabled, model)
-- OpenAI status (enabled/disabled, model)
+- Codex CLI status (primary engine, active model)
+- Claude CLI status (fallback engine, active model)
 - Active fallback chain
 - Request counts per provider
 
@@ -268,23 +267,29 @@ channels:
 # AI CONFIGURATION
 # ========================================
 ai:
-  ollama:
-    enabled: true                           # Enable Ollama (local AI)
-    url: http://localhost:11434             # Ollama API URL
-    model: phi3:mini                        # Model for regular analysis
-    model_critical: llama3.1                # Model for CRITICAL events
-    hybrid_models: true                     # Use different models by severity
-    request_delay_seconds: 4.0              # Rate limiting (seconds between requests)
+  enabled: true                             # Master switch for all AI features
 
-  anthropic:
-    enabled: false                          # Enable Claude
-    api_key: null                           # Anthropic API key
-    model: claude-3-5-sonnet-20241022       # Claude model
+  # === CODEX CLI (PRIMARY — OpenAI Codex via CLI) ===
+  codex:
+    cli_path: "codex"                       # Path to Codex CLI (default: in PATH)
+    models:
+      fast: "gpt-5.3-codex"                # Fast analyses
+      standard: "gpt-5.3-codex"            # Standard analyses + Structured Output
+      thinking: "o3"                       # Complex planning tasks
 
-  openai:
-    enabled: false                          # Enable OpenAI
-    api_key: null                           # OpenAI API key
-    model: gpt-4o                           # OpenAI model
+  # === CLAUDE CLI (FALLBACK + VERIFY) ===
+  claude:
+    cli_path: "/home/user/.local/bin/claude"
+    models:
+      fast: "claude-sonnet-4-6"
+      standard: "claude-sonnet-4-6"
+      thinking: "claude-opus-4-6"          # Security Analyst sessions
+
+  # === TIMEOUTS ===
+  timeouts:
+    codex_seconds: 300
+    claude_seconds: 300
+    analyst_seconds: 1800                   # 30 min for Security Analyst sessions
 
 # ========================================
 # AUTO-REMEDIATION CONFIGURATION
@@ -582,8 +587,8 @@ Fallback auf das jeweils andere Modell bei Timeout oder leerer Response.
 ```python
 from src.integrations.knowledge_base import KnowledgeBase
 
-# Initialize
-kb = KnowledgeBase(db_path="data/knowledge_base.db")
+# Initialize (dsn defaults to config.security_analyst_dsn / SECURITY_ANALYST_DB_URL)
+kb = KnowledgeBase(dsn="postgresql://user:pass@127.0.0.1:5433/security_analyst")
 
 # Record a fix
 kb.record_fix(
@@ -791,28 +796,39 @@ event = SecurityEvent(
 
 ## Database Schema
 
-### Knowledge Base (SQLite)
+### Knowledge Base (PostgreSQL — `security_analyst` DB)
 
-#### fixes table
+#### orchestrator_fixes
 ```sql
-CREATE TABLE fixes (
-    id INTEGER PRIMARY KEY AUTOINCREMENT,
-    timestamp TEXT NOT NULL,
-    event_signature TEXT NOT NULL,  -- Unique event identifier
-    event_type TEXT NOT NULL,  -- vulnerability, intrusion, etc.
-    severity TEXT,
-    event_details TEXT,  -- JSON
-    strategy TEXT NOT NULL,  -- JSON: Full fix strategy
-    result TEXT NOT NULL,  -- 'success' or 'failed'
-    duration_seconds REAL,
+CREATE TABLE orchestrator_fixes (
+    id SERIAL PRIMARY KEY,
+    event_type TEXT NOT NULL,
+    event_source TEXT NOT NULL,
+    fix_description TEXT,
+    fix_steps JSONB,
+    success BOOLEAN DEFAULT FALSE,
+    execution_time_ms INTEGER,
     error_message TEXT,
-    retry_count INTEGER DEFAULT 0
+    metadata JSONB,
+    created_at TIMESTAMPTZ DEFAULT NOW()
 );
+```
 
-CREATE INDEX idx_event_signature ON fixes(event_signature);
-CREATE INDEX idx_event_type ON fixes(event_type);
-CREATE INDEX idx_result ON fixes(result);
-CREATE INDEX idx_timestamp ON fixes(timestamp);
+#### orchestrator_strategies
+```sql
+CREATE TABLE orchestrator_strategies (
+    id SERIAL PRIMARY KEY,
+    strategy_name TEXT NOT NULL,
+    event_type TEXT NOT NULL,
+    approach TEXT,
+    success_rate REAL DEFAULT 0.0,
+    times_used INTEGER DEFAULT 0,
+    times_succeeded INTEGER DEFAULT 0,
+    avg_execution_time_ms INTEGER,
+    last_used_at TIMESTAMPTZ,
+    created_at TIMESTAMPTZ DEFAULT NOW(),
+    UNIQUE(strategy_name, event_type)
+);
 ```
 
 ### Project Monitor State (JSON)
@@ -873,9 +889,10 @@ CREATE INDEX idx_timestamp ON fixes(timestamp);
 - `Missing required field: discord.token` - Required config missing
 
 #### AI Service Errors
-- `No AI providers enabled` - All AI services disabled
-- `Ollama connection failed` - Cannot reach Ollama server
-- `AI request timeout` - AI provider took too long
+- `No AI providers enabled` - `ai.enabled: false` in config
+- `Codex CLI not found` - `ai.codex.cli_path` not in PATH
+- `Claude CLI not found` - `ai.claude.cli_path` does not exist
+- `AI request timeout` - CLI process exceeded configured timeout
 
 #### Deployment Errors
 - `Project not found in deployment config` - Unknown project
@@ -894,9 +911,8 @@ CREATE INDEX idx_timestamp ON fixes(timestamp);
 ## Rate Limiting
 
 ### AI Requests
-- **Ollama**: Configurable delay (`ai.ollama.request_delay_seconds`, default: 4.0s)
-- **Anthropic**: Built-in retry with exponential backoff (1s, 2s, 4s)
-- **OpenAI**: Built-in retry with exponential backoff (1s, 2s, 4s)
+- **Codex CLI**: Timeout configurable via `ai.timeouts.codex_seconds` (default: 300s)
+- **Claude CLI**: Timeout configurable via `ai.timeouts.claude_seconds` (default: 300s); built-in retry with exponential backoff on transient failures
 
 ### Discord Commands
 - **Global**: No built-in rate limiting (Discord handles this)
@@ -951,12 +967,12 @@ debug_mode: true
 
 ### Common API Issues
 
-**Knowledge Base locked:**
+**Knowledge Base connection issues (PostgreSQL):**
 ```bash
-# Check if database is locked
-sqlite3 data/knowledge_base.db "PRAGMA busy_timeout=5000;"
+# Check PostgreSQL connectivity
+psql "$SECURITY_ANALYST_DB_URL" -c "SELECT 1;"
 
-# If still locked, restart bot
+# If unreachable, restart bot
 sudo systemctl restart shadowops-bot
 ```
 
