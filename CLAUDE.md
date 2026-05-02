@@ -46,7 +46,13 @@ shadowops-bot/
 │   │   ├── admin.py              #   /scan, /stop-all-fixes, /release-notes, ...
 │   │   ├── inspector.py          #   /get-ai-stats, /agent-stats, /security-engine, ...
 │   │   ├── monitoring.py         #   /status, /bans, /threats, /docker, /aide
-│   │   └── customer_setup_commands.py  # /setup-customer-server
+│   │   ├── customer_setup_commands.py  # /setup-customer-server
+│   │   └── cron_heartbeat.py     #   Hintergrundtask: Cron-Job-Heartbeat-Monitoring via Log-Mtime
+│   ├── commands/                 # Standalone-Commands (kein Discord-Cog)
+│   │   ├── ai_learning_admin.py  #   AI-Learning Admin-Commands
+│   │   └── knowledge_stats.py    #   Knowledge-Base Statistiken
+│   ├── schemas/                  # JSON-Schemas fuer Codex Structured Output
+│   │   └── fix_strategy.json / patch_notes.json / incident_analysis.json / jules_review.json / ...
 │   ├── patch_notes/              # Patch-Notes Pipeline v6 (State Machine, ~2100 LOC)
 │   │   ├── pipeline.py           #   Hauptpipeline + asyncio Lock + Circuit Breaker
 │   │   ├── stages/               #   5 Stufen: collect, classify, generate, validate, distribute
@@ -58,7 +64,7 @@ shadowops-bot/
 │   │   ├── verification.py       #   Pre-Push Pipeline (Confidence ≥85%)
 │   │   ├── orchestrator/         #   Multi-Event-Batching (10s Fenster) + Approval-Flow
 │   │   ├── event_watcher.py      #   Lauscht auf Fail2ban/CrowdSec/AIDE/Docker-Events
-│   │   ├── knowledge_base.py     #   SQL Learning (fix_attempts, finding_quality, ...)
+│   │   ├── knowledge_base.py     #   PostgreSQL Learning (orchestrator_fixes, orchestrator_strategies, threat_patterns)
 │   │   ├── code_analyzer.py      #   Code Structure Analyzer (Git-History + AST)
 │   │   ├── context_manager.py    #   RAG: Project-Context + DO-NOT-TOUCH + Infra
 │   │   ├── github_integration/   #   Webhooks (HMAC-SHA256) + Jules SecOps + Agent-Review
@@ -105,7 +111,7 @@ shadowops-bot/
 - **Async-First:** discord.py + aiohttp — neue I/O ist `async`.
 - **Fehler-Handling:** Niemals leere `except:`. Mindestens loggen + re-raise oder klar entscheiden.
 - **Logging:** `from src.utils.logger import get_logger` — niemals `print()`.
-- **Secrets:** AUSSCHLIESSLICH via Env-Vars (DISCORD_BOT_TOKEN, OPENAI_API_KEY, ANTHROPIC_API_KEY). Niemals in Code, niemals in `config.yaml`.
+- **Secrets:** AUSSCHLIESSLICH via Env-Vars (DISCORD_BOT_TOKEN, OPENAI_API_KEY, ANTHROPIC_API_KEY, GITHUB_TOKEN, SECURITY_ANALYST_DB_URL, AGENT_LEARNING_DB_URL). Niemals in Code, niemals in `config.yaml`.
 - **Tests:** Neue Module brauchen Tests in `tests/unit/test_<module>.py`. Fixtures in `conftest.py` wiederverwenden.
 - **Conventional Commits:** `fix:`, `feat:`, `refactor:`, `perf:`, `docs:`, `chore:`.
 
