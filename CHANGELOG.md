@@ -1,5 +1,18 @@
 # ShadowOps Bot - Changelog
 
+## [Unreleased]
+
+### Fixed
+
+- **Phase 5e Health-Aggregator Cog**: 5-Min-Status-Embed im `📊-dashboard` Channel
+  postet seit dem discord.py 2.6+ Upgrade nicht mehr. Ursache: `TextChannel.pins()`
+  ist seit discord.py 2.6 ein `AsyncIterator` statt einer awaitable List —
+  `pins = await channel.pins()` warf damit `TypeError`, der vom
+  `with suppress(discord.HTTPException)` nicht gefangen wurde, den embed_loop
+  aber lautlos sterben liess (TypeError ist nicht in `tasks.Loop._valid_exception`).
+  Migriert auf `async for pin in channel.pins():` analog zu `bot.py:2063`.
+  Drift-Detection und Trend-Report waren nicht betroffen (closes #565).
+
 ## [5.0.0] - 2026-04-23
 
 ### Enterprise Level Cleanup & Security Hardening
