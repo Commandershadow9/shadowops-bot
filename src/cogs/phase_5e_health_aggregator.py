@@ -457,10 +457,9 @@ class Phase5eHealthAggregator(commands.Cog):
 
             # Editiere bestehendes Bot-Embed wenn moeglich, sonst sende neues
             if self._dashboard_message is None:
-                # 1. Pinned messages durchsuchen
-                with suppress(discord.HTTPException):
-                    pins = await channel.pins()
-                    for pin in pins:
+                # 1. Pinned messages durchsuchen (discord.py 2.6+: pins() ist AsyncIterator)
+                try:
+                    async for pin in channel.pins():
                         if (
                             pin.author.id == self.bot.user.id
                             and pin.embeds
@@ -469,9 +468,11 @@ class Phase5eHealthAggregator(commands.Cog):
                         ):
                             self._dashboard_message = pin
                             break
+                except (discord.HTTPException, discord.Forbidden) as exc:
+                    self.logger.debug("[5e] embed_loop: pins() nicht verfuegbar: %s", exc)
                 # 2. Letzte 20 Bot-Nachrichten durchsuchen
                 if self._dashboard_message is None:
-                    with suppress(discord.HTTPException):
+                    try:
                         async for msg in channel.history(limit=20):
                             if (
                                 msg.author.id == self.bot.user.id
@@ -481,6 +482,8 @@ class Phase5eHealthAggregator(commands.Cog):
                             ):
                                 self._dashboard_message = msg
                                 break
+                    except (discord.HTTPException, discord.Forbidden) as exc:
+                        self.logger.debug("[5e] embed_loop: history() nicht verfuegbar: %s", exc)
 
             if self._dashboard_message is not None:
                 try:
