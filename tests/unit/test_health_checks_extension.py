@@ -410,17 +410,36 @@ def _build_monitor_with_api(
     return monitor, project, channel
 
 
+def _schema_v1_body(*, pool_saturation: int | None = 5, status: str = "ok") -> dict:
+    """Baut einen minimalen Schema-v1-Health-Response (Issue #568)."""
+    database: dict = {"latency_ms": 8.4, "ok": True, "version": "16.4"}
+    if pool_saturation is not None:
+        database["pool_saturation_percent"] = pool_saturation
+    return {
+        "schema_version": "1.0",
+        "host": "zerodox-web-prod",
+        "role": "web-prod",
+        "timestamp": "2026-05-03T20:00:00Z",
+        "uptime_seconds": 3600,
+        "status": status,
+        "components": {
+            "database": database,
+            "disk": {"used_percent": 5, "free_gb": 220, "total_gb": 240},
+            "memory": {"used_percent": 12, "available_mb": 14000, "total_mb": 16000},
+            "load": {"1min": 0.5, "5min": 0.3, "15min": 0.2, "cpu_count": 4},
+        },
+        "alerts": [],
+    }
+
+
 @pytest.mark.asyncio
 async def test_db_pool_saturation_above_threshold_triggers_alert(tmp_path):
-    """DB-Pool > 80% → HIGH-Alert in ci-zerodox."""
+    """DB-Pool > 80% → HIGH-Alert in ci-zerodox (Schema v1, Issue #568)."""
     monitor, project, channel = _build_monitor_with_api()
 
-    fake_stats = {
-        "timestamp": "2026-04-26T20:00:00Z",
-        "dbPool": {"active": 85, "idle": 5, "total": 90, "max": 100, "saturationPercent": 90},
-        "failedLogins": {"count": 0, "windowMinutes": 5, "uniqueEmails": 0},
-    }
-    monitor._fetch_app_health_stats = AsyncMock(return_value=fake_stats)
+    monitor._fetch_health_schema_v1 = AsyncMock(
+        return_value=_schema_v1_body(pool_saturation=90, status="degraded")
+    )
 
     await monitor._check_db_pool_saturation(project)
 
@@ -432,14 +451,26 @@ async def test_db_pool_saturation_above_threshold_triggers_alert(tmp_path):
 
 @pytest.mark.asyncio
 async def test_db_pool_saturation_below_threshold_no_alert(tmp_path):
-    """DB-Pool <= 80% → kein Alert."""
+    """DB-Pool <= 80% → kein Alert (Schema v1, Issue #568)."""
     monitor, project, channel = _build_monitor_with_api()
 
-    fake_stats = {
-        "dbPool": {"active": 10, "idle": 5, "total": 15, "max": 100, "saturationPercent": 15},
-        "failedLogins": {"count": 0, "windowMinutes": 5, "uniqueEmails": 0},
-    }
-    monitor._fetch_app_health_stats = AsyncMock(return_value=fake_stats)
+    monitor._fetch_health_schema_v1 = AsyncMock(
+        return_value=_schema_v1_body(pool_saturation=15)
+    )
+
+    await monitor._check_db_pool_saturation(project)
+
+    channel.send.assert_not_called()
+
+
+@pytest.mark.asyncio
+async def test_db_pool_saturation_no_pool_field_no_alert(tmp_path):
+    """Schema v1 ohne pool_saturation_percent (optional) → kein Alert, kein Crash."""
+    monitor, project, channel = _build_monitor_with_api()
+
+    monitor._fetch_health_schema_v1 = AsyncMock(
+        return_value=_schema_v1_body(pool_saturation=None)
+    )
 
     await monitor._check_db_pool_saturation(project)
 
@@ -500,7 +531,7 @@ async def test_failed_login_rate_below_threshold_no_alert(tmp_path):
 
 @pytest.mark.asyncio
 async def test_app_health_check_skip_when_no_endpoint_configured(tmp_path):
-    """Kein internal_health_endpoint → graceful skip ohne Crash."""
+    """Kein internal_health_endpoint → graceful skip ohne Crash (beide Pfade)."""
     # _build_monitor (ohne _with_api) hat KEIN internal_health_endpoint
     monitor, project, channel = _build_monitor(project_path=str(tmp_path))
 
@@ -512,29 +543,28 @@ async def test_app_health_check_skip_when_no_endpoint_configured(tmp_path):
 
 @pytest.mark.asyncio
 async def test_app_health_check_skip_when_api_key_missing(tmp_path):
-    """Kein API-Key in env → graceful skip."""
+    """Kein API-Key → Failed-Login-Pfad skippt (Schema v1 ist auth-frei,
+    DB-Pool funktioniert daher unabhängig vom env-Key)."""
     monitor, project, channel = _build_monitor_with_api(api_key=None)
 
-    # _fetch_app_health_stats sollte None returnen wenn Key fehlt
+    # _fetch_app_health_stats (Legacy, Failed-Login) returnt None ohne Key
     result = await monitor._fetch_app_health_stats(project)
     assert result is None
 
-    # Folge: Checks senden nichts
-    await monitor._check_db_pool_saturation(project)
+    # Failed-Login-Check sendet nichts ohne Key
     await monitor._check_failed_login_rate(project)
     channel.send.assert_not_called()
 
 
 @pytest.mark.asyncio
 async def test_app_health_check_recovery_clears_cooldown(tmp_path):
-    """Nach Recovery (Wert wieder OK) sollte Cooldown geloescht werden."""
+    """Nach Recovery (Wert wieder OK) sollte Cooldown geloescht werden (Schema v1)."""
     monitor, project, channel = _build_monitor_with_api()
 
     # 1. Trigger: hohe Saturation → Alert + Cooldown
-    monitor._fetch_app_health_stats = AsyncMock(return_value={
-        "dbPool": {"saturationPercent": 95},
-        "failedLogins": {"count": 0, "windowMinutes": 5, "uniqueEmails": 0},
-    })
+    monitor._fetch_health_schema_v1 = AsyncMock(
+        return_value=_schema_v1_body(pool_saturation=95, status="degraded")
+    )
     await monitor._check_db_pool_saturation(project)
     assert channel.send.call_count == 1
     cooldown_key = f"{project.name}:db_pool_saturation"
@@ -545,11 +575,144 @@ async def test_app_health_check_recovery_clears_cooldown(tmp_path):
         del monitor._health_check_last_run[cooldown_key]
 
     # 2. Recovery: niedrige Saturation → kein Alert + Cooldown geloescht
-    monitor._fetch_app_health_stats = AsyncMock(return_value={
-        "dbPool": {"saturationPercent": 10},
-        "failedLogins": {"count": 0, "windowMinutes": 5, "uniqueEmails": 0},
-    })
+    monitor._fetch_health_schema_v1 = AsyncMock(
+        return_value=_schema_v1_body(pool_saturation=10)
+    )
     await monitor._check_db_pool_saturation(project)
     # Channel.send wurde nur 1x gerufen (initial), nicht 2x
     assert channel.send.call_count == 1
     assert cooldown_key not in monitor._health_check_alerts
+
+
+# ════════════════════════════════════════════════════════════════════════
+# Phase 5c — Schema v1 Endpoint-Helper (Issue #568)
+# ════════════════════════════════════════════════════════════════════════
+
+
+@pytest.mark.asyncio
+async def test_fetch_health_schema_v1_skip_when_no_endpoint(tmp_path):
+    """Ohne health_v1_endpoint UND ohne internal_health_endpoint → None."""
+    monitor, project, _ = _build_monitor(project_path=str(tmp_path))
+
+    result = await monitor._fetch_health_schema_v1(project)
+    assert result is None
+
+
+@pytest.mark.asyncio
+async def test_fetch_health_schema_v1_falls_back_via_string_replace(tmp_path):
+    """Ohne expliziten health_v1_endpoint wird er aus internal_health_endpoint
+    abgeleitet (string-replace 'health-stats' -> 'health'). HTTP-Call wird
+    gemockt; getestet wird hier nur die Endpoint-URL."""
+    monitor, project, _ = _build_monitor_with_api()
+
+    captured: dict = {}
+
+    class _FakeResp:
+        status = 200
+
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, *_args):
+            return None
+
+        async def json(self):
+            return _schema_v1_body(pool_saturation=10)
+
+    class _FakeSession:
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, *_args):
+            return None
+
+        def get(self, url, headers=None):
+            captured["url"] = url
+            captured["headers"] = headers or {}
+            return _FakeResp()
+
+    with patch("aiohttp.ClientSession", return_value=_FakeSession()):
+        body = await monitor._fetch_health_schema_v1(project)
+
+    assert body is not None
+    assert body["schema_version"] == "1.0"
+    # Replace hat den Endpoint-Pfad korrekt umgeschrieben
+    assert captured["url"].endswith("/api/internal/health"), captured["url"]
+    # Schema v1 ist auth-frei: KEIN X-Agent-Key-Header
+    assert "X-Agent-Key" not in captured["headers"]
+
+
+@pytest.mark.asyncio
+async def test_fetch_health_schema_v1_rejects_wrong_version(tmp_path):
+    """Schema-Version != '1.0' → None (forward-incompatible)."""
+    monitor, project, _ = _build_monitor_with_api()
+
+    class _FakeResp:
+        status = 200
+
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, *_args):
+            return None
+
+        async def json(self):
+            return {
+                "schema_version": "2.0",
+                "host": "x",
+                "role": "web-prod",
+                "timestamp": "2026-05-03T20:00:00Z",
+                "uptime_seconds": 1,
+                "status": "ok",
+                "components": {},
+                "alerts": [],
+            }
+
+    class _FakeSession:
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, *_args):
+            return None
+
+        def get(self, *_args, **_kwargs):
+            return _FakeResp()
+
+    with patch("aiohttp.ClientSession", return_value=_FakeSession()):
+        body = await monitor._fetch_health_schema_v1(project)
+
+    assert body is None
+
+
+@pytest.mark.asyncio
+async def test_fetch_health_schema_v1_accepts_503_for_critical(tmp_path):
+    """HTTP 503 (Schema v1 status='critical') liefert trotzdem den Body."""
+    monitor, project, _ = _build_monitor_with_api()
+
+    class _FakeResp:
+        status = 503
+
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, *_args):
+            return None
+
+        async def json(self):
+            return _schema_v1_body(pool_saturation=99, status="critical")
+
+    class _FakeSession:
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, *_args):
+            return None
+
+        def get(self, *_args, **_kwargs):
+            return _FakeResp()
+
+    with patch("aiohttp.ClientSession", return_value=_FakeSession()):
+        body = await monitor._fetch_health_schema_v1(project)
+
+    assert body is not None
+    assert body["status"] == "critical"
