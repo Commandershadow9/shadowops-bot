@@ -1317,6 +1317,11 @@ class ProjectMonitor:
     # ════════════════════════════════════════════════════════════════════════
     # Enterprise-Health-Check-Erweiterung (Phase 5b, Issue #278)
     # ════════════════════════════════════════════════════════════════════════
+    # Schema-v1-Migration (Issue #568, 2026-05-03): Phase-5b-Checks (Disk/
+    # Memory/Container-Restarts/SSL/Backup-Freshness) sind SSH- und Subprocess-
+    # basiert (shutil.disk_usage, docker stats, openssl s_client, file mtime)
+    # — sie pollen KEINEN HTTP-Health-Endpoint. Schema-v1-Migration ist
+    # nicht anwendbar. Bleibt unverändert.
 
     def _get_project_config(self, project_name: str) -> Dict[str, Any]:
         """Liefert die volle Projekt-Config (config.yaml -> projects.<name>)."""
@@ -1874,15 +1879,94 @@ class ProjectMonitor:
             self._clear_health_alert_cooldown(project, 'backup_freshness')
 
     # === Phase 5c — App-Health-Checks via internal API ===
-    # Diese Checks pollen einen ZERODOX-API-Endpoint der DB-Pool-Saturation und
-    # Failed-Login-Rate exposed. Nur Projekte mit `monitor.internal_health_endpoint`
-    # in config.yaml werden geprüft (graceful skip bei fehlender Konfiguration).
+    # Diese Checks pollen ZERODOX-API-Endpoints für DB-Pool-Saturation und
+    # Failed-Login-Rate. Nur Projekte mit `monitor.internal_health_endpoint`
+    # ODER `monitor.health_v1_endpoint` werden geprüft (graceful skip).
     #
-    # Auth: X-Agent-Key Header mit ZERODOX_AGENT_API_KEY (env-var).
-    # Endpoint: ZERODOX/api/internal/health-stats (Phase 5a, PR #279)
+    # Schema-v1-Migration (Issue #568, 2026-05-03):
+    #   - DB-Pool: liest aus `/api/internal/health` (Schema v1, auth-frei)
+    #     → components.database.pool_saturation_percent
+    #   - Failed-Login: bleibt auf altem `/api/internal/health-stats`
+    #     (Schema v1 hat noch keine failed-login-Komponente; Folge-Issue
+    #     in ZERODOX-Repo trackt die Erweiterung)
+    #
+    # Auth-Modi:
+    #   - Schema v1 (`/api/internal/health`): kein Header (rate-limited public)
+    #   - Legacy (`/api/internal/health-stats`): X-Agent-Key Header
+
+    async def _fetch_health_schema_v1(self, project: ProjectStatus) -> Optional[Dict[str, Any]]:
+        """HTTP-Call zum Schema-v1-Health-Endpoint des Projekts.
+
+        Endpoint wird aus `monitor.health_v1_endpoint` gelesen, mit Fallback
+        auf String-Replace `health-stats` -> `health` aus `internal_health_endpoint`,
+        damit bestehende Configs ohne Änderung weiter funktionieren.
+
+        Schema v1 ist auth-frei (Rate-Limit pro IP). Akzeptiert HTTP 200 (ok/degraded)
+        und HTTP 503 (critical) — beide haben validen Schema-v1-Body.
+
+        Returnt None wenn:
+          - Kein Endpoint konfiguriert oder ableitbar
+          - HTTP-Fehler (Timeout, andere Status als 200/503)
+          - JSON-Parse-Fehler
+          - Schema-Version != "1.0"
+        """
+        proj_cfg = self._get_project_config(project.name)
+        if not isinstance(proj_cfg, dict):
+            return None
+
+        monitor_cfg = proj_cfg.get('monitor', {})
+        if not isinstance(monitor_cfg, dict):
+            return None
+
+        endpoint = monitor_cfg.get('health_v1_endpoint')
+        if not endpoint:
+            base_endpoint = monitor_cfg.get('internal_health_endpoint')
+            if base_endpoint:
+                endpoint = str(base_endpoint).replace('/health-stats', '/health')
+        if not endpoint:
+            return None
+
+        timeout = aiohttp.ClientTimeout(total=10)
+        try:
+            async with aiohttp.ClientSession(timeout=timeout) as session:
+                async with session.get(
+                    endpoint,
+                    headers={'Accept': 'application/json', 'User-Agent': 'shadowops-bot/health'},
+                ) as resp:
+                    if resp.status not in (200, 503):
+                        self.logger.warning(
+                            f"⚠️ Health-v1 {project.name}: HTTP {resp.status} von {endpoint}"
+                        )
+                        return None
+                    body = await resp.json()
+        except asyncio.TimeoutError:
+            self.logger.warning(f"⚠️ Health-v1 {project.name}: Timeout nach 10s")
+            return None
+        except aiohttp.ClientError as exc:
+            self.logger.warning(f"⚠️ Health-v1 {project.name}: ClientError — {exc}")
+            return None
+        except (ValueError, KeyError) as exc:
+            self.logger.warning(f"⚠️ Health-v1 {project.name}: JSON-Fehler — {exc}")
+            return None
+
+        if not isinstance(body, dict):
+            self.logger.warning(f"⚠️ Health-v1 {project.name}: Body ist kein dict")
+            return None
+        if body.get('schema_version') != '1.0':
+            self.logger.warning(
+                f"⚠️ Health-v1 {project.name}: unerwartete schema_version "
+                f"{body.get('schema_version')!r} — erwarte '1.0'"
+            )
+            return None
+        return body
 
     async def _fetch_app_health_stats(self, project: ProjectStatus) -> Optional[Dict[str, Any]]:
         """HTTP-Call zur internal Health-Stats-API des Projekts.
+
+        DEPRECATED: ZERODOX Schema v1 hat noch keine failed-login-Komponente —
+        diese Methode wird ausschließlich von _check_failed_login_rate genutzt,
+        bis ZERODOX-Folge-Issue die Komponente ergänzt. NICHT entfernen ohne
+        Migration. Für DB-Pool-Saturation siehe _fetch_health_schema_v1.
 
         Returnt None wenn:
           - Kein internal_health_endpoint konfiguriert
@@ -1944,27 +2028,41 @@ class ProjectMonitor:
         Cooldown: 30 Min.
         Frequenz: alle 5 Min.
 
-        Datenquelle: ZERODOX /api/internal/health-stats Response.dbPool.saturationPercent.
+        Datenquelle (seit 2026-05-03 Issue #568): ZERODOX /api/internal/health
+        Schema v1 → components.database.pool_saturation_percent. Vorher pollte
+        diese Methode den deprecated /api/internal/health-stats Endpoint.
         """
         if not self._should_run_health_check(project, 'db_pool_saturation'):
             return
         self._mark_health_check_ran(project, 'db_pool_saturation')
 
-        stats = await self._fetch_app_health_stats(project)
-        if not stats:
+        body = await self._fetch_health_schema_v1(project)
+        if not body:
             return
 
-        db_pool = stats.get('dbPool')
-        if not isinstance(db_pool, dict):
+        components = body.get('components')
+        if not isinstance(components, dict):
+            return
+
+        database = components.get('database')
+        if not isinstance(database, dict):
             return
 
         threshold = float(self._get_health_threshold(project, 'db_pool_saturation_warn'))
+        sat_raw = database.get('pool_saturation_percent')
+        if sat_raw is None:
+            # Schema-v1-Endpoint exposed pool_saturation_percent als optional —
+            # ohne diesen Wert können wir keinen Saturation-Alert generieren.
+            return
         try:
-            saturation = float(db_pool.get('saturationPercent', 0))
+            saturation = float(sat_raw)
         except (TypeError, ValueError):
             return
 
         if saturation > threshold:
+            latency = database.get('latency_ms')
+            ok = database.get('ok')
+            version = database.get('version')
             await self._send_health_alert(
                 project=project,
                 check_type='db_pool_saturation',
@@ -1979,9 +2077,9 @@ class ProjectMonitor:
                 fields=[
                     {"name": "Saturation", "value": f"{saturation:.0f}%", "inline": True},
                     {"name": "Schwelle", "value": f"> {threshold:.0f}%", "inline": True},
-                    {"name": "Active", "value": str(db_pool.get('active', '?')), "inline": True},
-                    {"name": "Idle", "value": str(db_pool.get('idle', '?')), "inline": True},
-                    {"name": "Total / Max", "value": f"{db_pool.get('total', '?')} / {db_pool.get('max', '?')}", "inline": True},
+                    {"name": "Latency", "value": f"{latency} ms" if latency is not None else "?", "inline": True},
+                    {"name": "DB OK", "value": "✅" if ok else "❌" if ok is False else "?", "inline": True},
+                    {"name": "Version", "value": str(version) if version else "?", "inline": True},
                 ],
                 channel_key='ci_zerodox',
                 fallback_channel_id=1463512208083521577,
@@ -2001,10 +2099,26 @@ class ProjectMonitor:
 
         Datenquelle: ZERODOX /api/internal/health-stats Response.failedLogins.count.
         DSGVO-konform: nur Counts, keine Email-Adressen oder User-IDs.
+
+        DEPRECATED: ZERODOX Schema v1 hat noch keine failed-login-Komponente —
+        Folge-Issue im ZERODOX-Repo trackt die Erweiterung. Sobald Schema v1
+        `components.failed_logins` exposed, auf _fetch_health_schema_v1 migrieren.
+        NICHT entfernen ohne Migration — Failed-Login-Detection ist
+        Security-kritisch (Brute-Force, Credential-Stuffing).
         """
         if not self._should_run_health_check(project, 'failed_login_rate'):
             return
         self._mark_health_check_ran(project, 'failed_login_rate')
+
+        # Deprecation-Hinweis einmal pro Bot-Run (nicht pro Call), damit
+        # Operator weiß, dass dieser Pfad noch auf den alten Endpoint pollt.
+        if not getattr(self, '_failed_login_deprecation_logged', False):
+            self.logger.warning(
+                "[5c] Failed-Login pollt deprecated /api/internal/health-stats — "
+                "Schema v1 hat noch keine failed-login-Komponente. Folge-Issue im "
+                "ZERODOX-Repo trackt die Erweiterung."
+            )
+            self._failed_login_deprecation_logged = True
 
         stats = await self._fetch_app_health_stats(project)
         if not stats:
@@ -2066,6 +2180,14 @@ class ProjectMonitor:
     # Endpoint: /api/internal/onboarding-smoke (read-only Dry-Run, PR add)
     # Severity: HIGH — Buchungen sind blockiert, Kunden gehen verloren.
     # Channel:  ci_zerodox (#🧪-ci-zerodox), Fallback critical bei Auth/Network-Fehler.
+    #
+    # Schema-v1-Migration (Issue #568, 2026-05-03): Onboarding-Smoke ist ein
+    # eigenständiger Functional-Probe-Endpoint mit anderem Response-Format
+    # (`{ready: bool, checks: {...}}`), KEIN Schema-v1-Health. Migration auf
+    # Schema v1 würde Cross-Repo-Änderung in ZERODOX erfordern (z.B. neue
+    # `components.onboarding`-Komponente in /api/internal/health). Tracked in
+    # shadowops-bot Folge-Issue. NICHT entfernen ohne Migration —
+    # Customer-Loss-Detection ist Live-kritisch.
 
     async def _fetch_onboarding_smoke_status(
         self, project: ProjectStatus

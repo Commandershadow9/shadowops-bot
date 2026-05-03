@@ -13,6 +13,25 @@
   Migriert auf `async for pin in channel.pins():` analog zu `bot.py:2063`.
   Drift-Detection und Trend-Report waren nicht betroffen (closes #565).
 
+### Refactor — Phase 5c DB-Pool auf Health-Schema v1 migriert (Issue #568)
+
+**ProjectMonitor — partielle Schema-v1-Migration:**
+- Phase-5c **DB-Pool-Saturation-Check** liest jetzt `components.database.pool_saturation_percent` aus dem ZERODOX `/api/internal/health` Endpoint (Schema v1, auth-frei). Vorher pollte der Check den deprecated `/api/internal/health-stats` Endpoint mit X-Agent-Key.
+- Neue Helper-Methode `_fetch_health_schema_v1()` mit Schema-Version-Validation (`schema_version == "1.0"`) und HTTP-200/503-Handling.
+- Endpoint-URL wird aus `monitor.health_v1_endpoint` (neu, optional) ODER per String-Replace aus `internal_health_endpoint` abgeleitet — bestehende Configs funktionieren ohne Änderung weiter.
+- Phase-5c **Failed-Login-Rate-Check** bleibt bewusst auf altem `/api/internal/health-stats` (DEPRECATED, mit `logger.warning` einmal pro Bot-Run): Schema v1 hat noch keine `failed-login`-Komponente. Folge-Issue im ZERODOX-Repo trackt die Schema-Erweiterung, danach Bot-Folge-Issue für Migration. Failed-Login-Detection darf nicht ausfallen (Brute-Force-/Credential-Stuffing-Security).
+
+**Out-of-Scope dokumentiert:**
+- Phase 5a (`/api/internal/health-stats` Endpoint-Schaffung): war ZERODOX-seitig (PR #279). Bot-seitige Konsumenten sind die Phase-5c-Checks.
+- Phase 5b (Disk/Memory/Container/SSL/Backup-Freshness): nutzt SSH/Subprocess, KEIN HTTP-Health-Endpoint. Schema-v1-Migration nicht anwendbar.
+- Phase 5d (Onboarding-Submit-Functional-Smoke): nutzt eigenständigen Probe-Endpoint mit anderem Format (`{ready, checks}`). Migration auf Schema v1 erfordert Cross-Repo-Erweiterung in ZERODOX. Folge-Issue erstellt.
+
+**Tests:**
+- 4 neue Tests für `_fetch_health_schema_v1` (Skip ohne Endpoint, String-Replace-Fallback, Schema-Version-Reject, HTTP-503 für critical).
+- DB-Pool-Tests umgeschrieben auf Schema-v1-Format mit `components.database.pool_saturation_percent`.
+- Failed-Login-Tests unverändert (Legacy-Endpoint).
+- Helper `_schema_v1_body()` für Test-Fixtures.
+
 ## [5.0.0] - 2026-04-23
 
 ### Enterprise Level Cleanup & Security Hardening
