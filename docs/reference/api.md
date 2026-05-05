@@ -48,7 +48,7 @@ Shows overall security status across all systems.
 #### `/scan`
 Triggers a manual Docker security scan using Trivy.
 
-**Permissions:** None
+**Permissions:** Administrator
 **Parameters:** None
 **Returns:** Scan results with vulnerabilities by severity
 
@@ -104,7 +104,7 @@ Shows AIDE File Integrity Check status.
 #### `/remediation-stats`
 Shows auto-remediation statistics and performance metrics.
 
-**Permissions:** None
+**Permissions:** Administrator
 **Parameters:** None
 **Returns:** Embed with:
 - Total fixes executed
@@ -159,16 +159,14 @@ Changes the auto-remediation approval mode.
 ### AI & Learning System Commands
 
 #### `/get-ai-stats`
-Shows AI provider status, fallback chain, and usage statistics.
+Shows AI provider status and usage statistics.
 
-**Permissions:** None
+**Permissions:** Administrator
 **Parameters:** None
 **Returns:** Embed with:
-- Ollama status (enabled/disabled, model, URL)
-- Claude status (enabled/disabled, model)
-- OpenAI status (enabled/disabled, model)
-- Active fallback chain
-- Request counts per provider
+- Codex CLI status (primary engine, models, last used)
+- Claude CLI status (fallback engine, models, last used)
+- Engine stats (request counts, fallback rate)
 
 **Example:**
 ```
@@ -268,23 +266,30 @@ channels:
 # AI CONFIGURATION
 # ========================================
 ai:
-  ollama:
-    enabled: true                           # Enable Ollama (local AI)
-    url: http://localhost:11434             # Ollama API URL
-    model: phi3:mini                        # Model for regular analysis
-    model_critical: llama3.1                # Model for CRITICAL events
-    hybrid_models: true                     # Use different models by severity
-    request_delay_seconds: 4.0              # Rate limiting (seconds between requests)
+  enabled: true                             # AI-System aktivieren
 
-  anthropic:
-    enabled: false                          # Enable Claude
-    api_key: null                           # Anthropic API key
-    model: claude-3-5-sonnet-20241022       # Claude model
+  primary:
+    engine: codex                           # Primäre Engine
+    models:
+      fast: gpt-4o                          # Schnelle Analyse
+      standard: gpt-5.3-codex              # Standard-Analyse
+      thinking: o3                          # Tiefe Analyse (CRITICAL)
+    timeout: 300
 
-  openai:
-    enabled: false                          # Enable OpenAI
-    api_key: null                           # OpenAI API key
-    model: gpt-4o                           # OpenAI model
+  fallback:
+    engine: claude                          # Fallback-Engine bei Codex-Fehler
+    cli_path: /home/user/.local/bin/claude  # Pfad zur Claude CLI
+    models:
+      fast: claude-sonnet-4-6
+      standard: claude-sonnet-4-6
+      thinking: claude-opus-4-6
+    timeout: 300
+
+  routing:
+    critical_analysis: { engine: codex, model: thinking }
+    high_analysis:     { engine: codex, model: standard }
+    low_analysis:      { engine: codex, model: fast }
+    critical_verify:   { engine: claude, model: thinking }
 
 # ========================================
 # AUTO-REMEDIATION CONFIGURATION
@@ -791,29 +796,18 @@ event = SecurityEvent(
 
 ## Database Schema
 
-### Knowledge Base (SQLite)
+### Knowledge Base (PostgreSQL — security_analyst DB, Port 5433)
 
-#### fixes table
-```sql
-CREATE TABLE fixes (
-    id INTEGER PRIMARY KEY AUTOINCREMENT,
-    timestamp TEXT NOT NULL,
-    event_signature TEXT NOT NULL,  -- Unique event identifier
-    event_type TEXT NOT NULL,  -- vulnerability, intrusion, etc.
-    severity TEXT,
-    event_details TEXT,  -- JSON
-    strategy TEXT NOT NULL,  -- JSON: Full fix strategy
-    result TEXT NOT NULL,  -- 'success' or 'failed'
-    duration_seconds REAL,
-    error_message TEXT,
-    retry_count INTEGER DEFAULT 0
-);
+Die Knowledge Base nutzt PostgreSQL. Die relevanten Tabellen befinden sich in der `security_analyst`-Datenbank. DSN wird via `config.security_analyst_dsn` oder Env-Var `SECURITY_ANALYST_DB_URL` gesetzt.
 
-CREATE INDEX idx_event_signature ON fixes(event_signature);
-CREATE INDEX idx_event_type ON fixes(event_type);
-CREATE INDEX idx_result ON fixes(result);
-CREATE INDEX idx_timestamp ON fixes(timestamp);
-```
+Haupt-Tabellen (Präfix `orchestrator_`):
+- `orchestrator_fixes` — Fix-Versuche mit Outcome, Strategie, Dauer
+- `orchestrator_strategies` — Aggregierte Erfolgsraten pro Strategie
+- `orchestrator_plans` — Multi-Event-Batch-Pläne
+- `orchestrator_vulnerabilities` — Einzelne CVE-/Vuln-Findings
+- `orchestrator_code_changes` — Code-Änderungen aus AI-Fixes
+
+Tabellen für Security Engine v6 (Präfix `fix_attempts_v2`, `findings`, `remediation_status`): Siehe `src/integrations/security_engine/` für Schema-Migrationen.
 
 ### Project Monitor State (JSON)
 
@@ -894,9 +888,8 @@ CREATE INDEX idx_timestamp ON fixes(timestamp);
 ## Rate Limiting
 
 ### AI Requests
-- **Ollama**: Configurable delay (`ai.ollama.request_delay_seconds`, default: 4.0s)
-- **Anthropic**: Built-in retry with exponential backoff (1s, 2s, 4s)
-- **OpenAI**: Built-in retry with exponential backoff (1s, 2s, 4s)
+- **Codex CLI (Primary)**: Kein eigenes Rate Limiting; CLI-seitige Quota-Fehler werden erkannt und lösen Fallback auf Claude aus
+- **Claude CLI (Fallback)**: Kein eigenes Rate Limiting; Quota-Fehler werden erkannt und im SmartQueue Circuit Breaker protokolliert
 
 ### Discord Commands
 - **Global**: No built-in rate limiting (Discord handles this)

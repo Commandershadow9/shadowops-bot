@@ -246,23 +246,34 @@ projects:
 
 #### Security & Monitoring
 - `/status` - Gesamt-Sicherheitsstatus
-- `/scan` - Manuellen Docker-Scan triggern
-- `/threats` - Letzte erkannte Bedrohungen
-- `/bans` - Aktuell gebannte IPs (Fail2ban + CrowdSec)
+- `/threats [hours]` - Letzte erkannte Bedrohungen
+- `/bans [limit]` - Aktuell gebannte IPs (Fail2ban + CrowdSec)
+- `/docker` - Letzte Docker-Scan-Ergebnisse (Trivy)
 - `/aide` - AIDE Integrity Check Status
 
-#### Auto-Remediation
-- `/remediation-stats` - Auto-Remediation Statistiken
-- `/stop-all-fixes` - 🛑 EMERGENCY: Stoppt alle laufenden Fixes
-- `/set-approval-mode [mode]` - Ändere Approval Mode (paranoid/auto/dry-run)
+#### Security Engine
+- `/security-engine` - Security Engine v6 Status und Stats
 
-#### AI & Learning System
-- `/get-ai-stats` - AI-Provider Status und Fallback-Chain
-- `/reload-context` - Lade Project-Context neu
+#### Auto-Remediation (Administrator)
+- `/scan` - Manuellen Docker-Scan triggern
+- `/remediation-stats` - Auto-Remediation Statistiken
+- `/stop-all-fixes` - EMERGENCY: Stoppt alle laufenden Fixes
+- `/set-approval-mode [mode]` - Approval Mode ändern (paranoid/auto/dry-run)
+
+#### Patch Notes (Administrator)
+- `/release-notes [project]` - Gesammelte Commits als Patch Notes veröffentlichen
+- `/pending-notes` - Ausstehende Commits die auf Release warten
+
+#### AI & Learning System (Administrator)
+- `/get-ai-stats` - AI-Provider Status (Codex CLI + Claude CLI)
+- `/reload-context` - Project-Context neu laden
+- `/agent-stats` - Agent-Learning Statistiken
+- `/mark-duplicate` - Finding als Duplikat markieren (Learning-Feedback)
 
 #### Multi-Project Management
 - `/projekt-status [name]` - Status für spezifisches Projekt (Uptime, Response Time, Health)
 - `/alle-projekte` - Übersicht aller überwachten Projekte
+- `/setup-customer-server` - Kunden-Channels auf externem Server einrichten (Administrator)
 
 ### 🎨 Features
 - **Rich Embeds** - Farbcodierte Alerts (🔴 CRITICAL, 🟠 HIGH, 🟢 OK)
@@ -437,24 +448,33 @@ deployment:
 
 ```
 Security Commands:
-  /status              - Gesamt-Sicherheitsstatus
-  /scan                - Docker Security Scan
-  /threats [hours]     - Bedrohungen der letzten X Stunden
-  /bans [limit]        - Gebannte IPs
-  /aide                - AIDE Check-Status
+  /status                        - Gesamt-Sicherheitsstatus
+  /threats [hours]               - Bedrohungen der letzten X Stunden
+  /bans [limit]                  - Gebannte IPs
+  /docker                        - Letzte Docker-Scan-Ergebnisse
+  /aide                          - AIDE Check-Status
+  /security-engine               - Security Engine v6 Status
 
-Auto-Remediation:
+Auto-Remediation (Admin):
+  /scan                          - Docker Security Scan
   /remediation-stats             - Statistiken
   /stop-all-fixes                - Emergency Stop
   /set-approval-mode [mode]      - Approval Mode ändern
 
-AI System:
+Patch Notes (Admin):
+  /release-notes [project]       - Patch Notes für Projekt veröffentlichen
+  /pending-notes                 - Ausstehende Commits anzeigen
+
+AI & Learning (Admin):
   /get-ai-stats                  - AI Provider Status
   /reload-context                - Context neu laden
+  /agent-stats                   - Agent-Learning Statistiken
+  /mark-duplicate                - Finding als Duplikat markieren
 
 Multi-Project:
   /projekt-status [name]         - Detaillierter Projekt-Status
   /alle-projekte                 - Übersicht aller Projekte
+  /setup-customer-server         - Kunden-Server einrichten
 ```
 
 ### GitHub Webhook Setup
@@ -498,24 +518,30 @@ sudo systemctl restart shadowops-bot
 shadowops-bot/
 ├── src/
 │   ├── bot.py                          # Haupt-Bot-Logik
-│   ├── cogs/                           # NEU: Modulare Slash Commands
+│   ├── cogs/                           # Modulare Slash Commands
 │   │   ├── admin.py
 │   │   ├── inspector.py
-│   │   └── monitoring.py
+│   │   ├── monitoring.py
+│   │   ├── customer_setup_commands.py
+│   │   ├── phase_5e_health_aggregator.py
+│   │   └── cron_heartbeat.py
 │   ├── integrations/
 │   │   ├── ai_engine.py                # Dual-Engine AI (Codex + Claude CLI)
 │   │   ├── smart_queue.py              # SmartQueue (Analyse-Pool + Fix-Lock)
 │   │   ├── verification.py             # Pre-Push Verification Pipeline
-│   │   ├── orchestrator.py             # Remediation Orchestrator
+│   │   ├── orchestrator/               # Remediation Orchestrator (Package)
 │   │   ├── event_watcher.py            # Security Event Watcher
-│   │   ├── knowledge_base.py           # SQL Learning System
+│   │   ├── knowledge_base.py           # SQL Learning System (PostgreSQL)
 │   │   ├── code_analyzer.py            # Code Structure Analyzer
 │   │   ├── context_manager.py          # RAG Context Manager
-│   │   ├── github_integration.py       # GitHub Webhooks
+│   │   ├── github_integration/         # GitHub Webhooks (Package)
+│   │   ├── security_engine/            # Security Scan Agent (Package)
+│   │   ├── fixers/                     # Fix-Implementierungen (Package)
 │   │   ├── project_monitor.py          # Multi-Project Monitoring
 │   │   ├── deployment_manager.py       # Auto-Deployment
 │   │   ├── incident_manager.py         # Incident Tracking
 │   │   ├── customer_notifications.py   # Customer-Facing Alerts
+│   │   ├── backup_manager.py           # Backup + Restore
 │   │   ├── fail2ban.py                 # Fail2ban Integration
 │   │   ├── crowdsec.py                 # CrowdSec Integration
 │   │   ├── aide.py                     # AIDE Integration
@@ -541,17 +567,14 @@ shadowops-bot/
 │   └── integration/
 │       └── test_learning_workflow.py   # End-to-End Tests
 ├── config/
-│   ├── config.example.yaml             # Example Config
-│   ├── config.yaml                     # Your Config (gitignored)
+│   ├── config.example.yaml             # Template (committed)
+│   ├── config.yaml                     # Hauptconfig (gitignored)
+│   ├── config.recommended.yaml         # Empfehlungen
+│   ├── safe_upgrades.yaml              # Upgrade-Pfade
+│   ├── logrotate.conf                  # Log-Rotation
 │   ├── DO-NOT-TOUCH.md                 # Safety Rules
 │   ├── INFRASTRUCTURE.md               # Infrastructure Knowledge
 │   └── PROJECT_*.md                    # Project Documentation
-├── config/                             # Konfiguration
-│   ├── config.yaml                     # Hauptconfig (gitignored)
-│   ├── config.example.yaml             # Template
-│   ├── config.recommended.yaml         # Empfehlungen
-│   ├── safe_upgrades.yaml              # Upgrade-Pfade
-│   └── logrotate.conf                  # Log-Rotation
 ├── deploy/                             # Deployment
 │   └── shadowops-bot.service           # systemd Unit
 ├── scripts/                            # Utility-Skripte
@@ -562,10 +585,10 @@ shadowops-bot/
 ├── data/                               # Runtime-Daten (gitignored)
 ├── logs/                               # Log-Dateien (gitignored)
 ├── docs/                               # Dokumentation
-│   ├── API.md                          # API-Referenz
-│   ├── guides/                         # Benutzer-Anleitungen
+│   ├── reference/api.md                # API-Referenz
 │   ├── adr/                            # Architecture Decision Records
 │   ├── plans/                          # Design-Dokumente
+│   ├── runbooks/                       # Betriebshandbücher
 │   └── archive/                        # Historische Doku
 ├── .claude/                            # KI-Konfiguration
 │   ├── rules/                          # Pfad-gefilterte Rules
@@ -692,7 +715,7 @@ See [CHANGELOG.md](./CHANGELOG.md) for detailed version history.
 - **PostgreSQL Databases**: 3 (security_analyst: 21 Tabellen, agent_learning: 7 Tabellen, seo_agent: 11 Tabellen)
 - **Learning Pipeline Tables**: 11 (Security: fix_attempts, fix_verifications, finding_quality, scan_coverage · Shared: agent_feedback, agent_quality_scores, agent_knowledge · Patch Notes: pn_generations, pn_variants, pn_examples · SEO: seo_fix_impact)
 - **Scan Areas**: 10 (firewall, ssh, docker, permissions, packages, services, logs, network, credentials, dependencies)
-- **Discord Commands**: 15 (inkl. /agent-stats)
+- **Discord Commands**: 19
 - **Monitored Projects**: 3 (GuildScout, ZERODOX, AI Agents)
 - **Auto Discord-Posts**: Session-Summaries, Feedback-Auswertungen, Weekly Summary, Meilensteine
 
