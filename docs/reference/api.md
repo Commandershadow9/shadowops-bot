@@ -97,6 +97,18 @@ Shows AIDE File Integrity Check status.
 /aide
 ```
 
+#### `/docker`
+Shows last Docker security scan results (Trivy).
+
+**Permissions:** None
+**Parameters:** None
+**Returns:** Embed with last scan timestamp and vulnerability counts by severity
+
+**Example:**
+```
+/docker
+```
+
 ---
 
 ### Auto-Remediation Commands

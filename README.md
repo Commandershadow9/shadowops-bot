@@ -246,23 +246,34 @@ projects:
 
 #### Security & Monitoring
 - `/status` - Gesamt-Sicherheitsstatus
-- `/scan` - Manuellen Docker-Scan triggern
+- `/scan` - Manuellen Docker-Scan triggern (Admin)
 - `/threats` - Letzte erkannte Bedrohungen
 - `/bans` - Aktuell gebannte IPs (Fail2ban + CrowdSec)
 - `/aide` - AIDE Integrity Check Status
+- `/docker` - Letzte Docker-Scan-Ergebnisse
 
 #### Auto-Remediation
-- `/remediation-stats` - Auto-Remediation Statistiken
-- `/stop-all-fixes` - 🛑 EMERGENCY: Stoppt alle laufenden Fixes
-- `/set-approval-mode [mode]` - Ändere Approval Mode (paranoid/auto/dry-run)
+- `/remediation-stats` - Auto-Remediation Statistiken (Admin)
+- `/stop-all-fixes` - EMERGENCY: Stoppt alle laufenden Fixes (Admin)
+- `/set-approval-mode [mode]` - Ändere Approval Mode: paranoid/auto/dry-run (Admin)
 
 #### AI & Learning System
-- `/get-ai-stats` - AI-Provider Status und Fallback-Chain
-- `/reload-context` - Lade Project-Context neu
+- `/get-ai-stats` - AI-Provider Status (Codex/Claude Engine)
+- `/agent-stats` - Agent-Learning Statistiken (Security, Patch Notes, SEO)
+- `/security-engine` - Security Engine v6 Status und Statistiken
+- `/reload-context` - Lade Project-Context neu (Admin)
 
 #### Multi-Project Management
 - `/projekt-status [name]` - Status für spezifisches Projekt (Uptime, Response Time, Health)
 - `/alle-projekte` - Übersicht aller überwachten Projekte
+
+#### Patch Notes
+- `/release-notes [project]` - Gesammelte Commits als Patch Notes veröffentlichen (Admin)
+- `/pending-notes` - Zeige ausstehende Commits die auf Release warten (Admin)
+
+#### Admin
+- `/setup-customer-server` - Customer-Discord-Server mit Monitoring-Channels einrichten (Admin)
+- `/mark-duplicate <parent_id> <child_id>` - Finding als Duplikat markieren (Learning-Feedback)
 
 ### 🎨 Features
 - **Rich Embeds** - Farbcodierte Alerts (🔴 CRITICAL, 🟠 HIGH, 🟢 OK)
@@ -438,23 +449,34 @@ deployment:
 ```
 Security Commands:
   /status              - Gesamt-Sicherheitsstatus
-  /scan                - Docker Security Scan
+  /scan                - Docker Security Scan starten (Admin)
   /threats [hours]     - Bedrohungen der letzten X Stunden
   /bans [limit]        - Gebannte IPs
   /aide                - AIDE Check-Status
+  /docker              - Letzte Docker Scan Ergebnisse
 
 Auto-Remediation:
-  /remediation-stats             - Statistiken
-  /stop-all-fixes                - Emergency Stop
-  /set-approval-mode [mode]      - Approval Mode ändern
+  /remediation-stats             - Statistiken (Admin)
+  /stop-all-fixes                - Emergency Stop (Admin)
+  /set-approval-mode [mode]      - Approval Mode ändern (Admin)
 
 AI System:
-  /get-ai-stats                  - AI Provider Status
-  /reload-context                - Context neu laden
+  /get-ai-stats                  - AI Provider Status (Codex / Claude)
+  /agent-stats                   - Agent-Learning Statistiken
+  /security-engine               - Security Engine v6 Status
+  /reload-context                - Context neu laden (Admin)
 
 Multi-Project:
   /projekt-status [name]         - Detaillierter Projekt-Status
   /alle-projekte                 - Übersicht aller Projekte
+
+Patch Notes:
+  /release-notes [project]       - Patch Notes veröffentlichen (Admin)
+  /pending-notes                 - Ausstehende Commits anzeigen (Admin)
+
+Admin:
+  /setup-customer-server         - Customer-Server einrichten (Admin)
+  /mark-duplicate <pid> <cid>    - Finding als Duplikat markieren
 ```
 
 ### GitHub Webhook Setup

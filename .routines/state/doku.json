@@ -2,13 +2,37 @@
   "schema_version": 1,
   "repo": "Commandershadow9/shadowops-bot",
   "worker": "doku",
-  "last_run": null,
-  "last_drift_check": null,
-  "open_prs": [],
+  "last_run": "2026-05-06T00:00:00Z",
+  "last_drift_check": "2026-05-06T00:00:00Z",
+  "open_prs": [
+    {
+      "branch": "claude/jolly-hamilton-ADjL9",
+      "title": "docs: fix drift — Ollama config removed, permissions corrected, module paths updated",
+      "scope": "drift",
+      "files": ["docs/reference/api.md", "CLAUDE.md", "README.md"]
+    },
+    {
+      "branch": "claude/doku/command-gaps",
+      "title": "docs: add missing slash commands to README and api.md",
+      "scope": "gaps",
+      "files": ["README.md", "docs/reference/api.md"]
+    }
+  ],
   "tracked_files": {
-    "README.md": { "last_synced_with_code_at": null },
-    "CLAUDE.md": { "last_synced_with_code_at": null },
-    "docs/reference/api.md": { "last_synced_with_code_at": null }
+    "README.md": { "last_synced_with_code_at": "2026-05-06T00:00:00Z" },
+    "CLAUDE.md": { "last_synced_with_code_at": "2026-05-06T00:00:00Z" },
+    "docs/reference/api.md": { "last_synced_with_code_at": "2026-05-06T00:00:00Z" }
   },
-  "open_questions": []
+  "open_questions": [
+    {
+      "id": "anti-bloat-highlights",
+      "created": "2026-05-06",
+      "note": "README ist 773+ Zeilen. Highlights v3.1 bis v3.4 (ca. 170 Zeilen) koennen in CHANGELOG.md migriert werden gemaess Anti-Bloat-Regel. Ausserdem referenzieren Highlights v3.4 Slash-Commands (/ai-stats, /ai-variants, /ai-tune, /ai-export-finetune) die nicht mehr im Code existieren — sie wurden durch /agent-stats ersetzt. Separater PR empfohlen."
+    },
+    {
+      "id": "knowledge-base-sqlite-vs-postgres",
+      "created": "2026-05-06",
+      "note": "api.md Python API section zeigt KnowledgeBase mit SQLite (db_path='data/knowledge_base.db') und SQLite CREATE TABLE Syntax. Wenn KB auf PostgreSQL migriert wurde, muss dieses Beispiel angepasst werden. Bitte bestaetigen."
+    }
+  ]
 }
