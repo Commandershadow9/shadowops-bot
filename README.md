@@ -498,79 +498,67 @@ sudo systemctl restart shadowops-bot
 shadowops-bot/
 ├── src/
 │   ├── bot.py                          # Haupt-Bot-Logik
-│   ├── cogs/                           # NEU: Modulare Slash Commands
-│   │   ├── admin.py
-│   │   ├── inspector.py
-│   │   └── monitoring.py
+│   ├── cogs/                           # Slash-Commands
+│   │   ├── admin.py                    # Admin-Commands (scan, stop-all-fixes, ...)
+│   │   ├── inspector.py                # Inspect-Commands (get-ai-stats, projekt-status, ...)
+│   │   ├── monitoring.py               # Monitoring-Commands (status, bans, threats, ...)
+│   │   └── customer_setup_commands.py  # Customer-Server-Setup
 │   ├── integrations/
 │   │   ├── ai_engine.py                # Dual-Engine AI (Codex + Claude CLI)
 │   │   ├── smart_queue.py              # SmartQueue (Analyse-Pool + Fix-Lock)
 │   │   ├── verification.py             # Pre-Push Verification Pipeline
-│   │   ├── orchestrator.py             # Remediation Orchestrator
+│   │   ├── orchestrator/               # Remediation Orchestrator (Multi-Mixin)
 │   │   ├── event_watcher.py            # Security Event Watcher
 │   │   ├── knowledge_base.py           # SQL Learning System
 │   │   ├── code_analyzer.py            # Code Structure Analyzer
 │   │   ├── context_manager.py          # RAG Context Manager
-│   │   ├── github_integration.py       # GitHub Webhooks
+│   │   ├── github_integration/         # GitHub Webhooks + Jules SecOps + Multi-Agent Review
 │   │   ├── project_monitor.py          # Multi-Project Monitoring
 │   │   ├── deployment_manager.py       # Auto-Deployment
 │   │   ├── incident_manager.py         # Incident Tracking
 │   │   ├── customer_notifications.py   # Customer-Facing Alerts
+│   │   ├── security_engine/            # Security Engine v6 (ScanAgent, DB, Fixers)
+│   │   ├── fixers/                     # Security-Fixers (fail2ban, crowdsec, aide, trivy, walg)
 │   │   ├── fail2ban.py                 # Fail2ban Integration
 │   │   ├── crowdsec.py                 # CrowdSec Integration
 │   │   ├── aide.py                     # AIDE Integration
 │   │   └── docker.py                   # Docker Scan Integration
+│   ├── patch_notes/                    # Patch-Notes Pipeline v6 (5-Stufen State Machine)
+│   ├── schemas/                        # Codex Structured Output JSON-Schemas
 │   └── utils/
 │       ├── config.py                   # Config-Loader
-│       ├── state_manager.py            # NEU: State-Management
+│       ├── state_manager.py            # State-Management
 │       ├── logger.py                   # Logging
 │       ├── embeds.py                   # Discord Embed-Builder
 │       └── discord_logger.py           # Discord Channel Logger
 ├── tests/
 │   ├── conftest.py                     # Test Fixtures
-│   ├── unit/                           # Unit Tests (161)
-│   │   ├── test_config.py
-│   │   ├── test_ai_engine.py           # 43 Tests (Router, Codex, Claude, AIEngine)
-│   │   ├── test_smart_queue.py         # 21 Tests (Pool, Lock, Circuit Breaker)
-│   │   ├── test_orchestrator.py
-│   │   ├── test_knowledge_base.py
-│   │   ├── test_event_watcher.py
-│   │   ├── test_github_integration.py
-│   │   ├── test_project_monitor.py
-│   │   └── test_incident_manager.py
-│   └── integration/
-│       └── test_learning_workflow.py   # End-to-End Tests
+│   ├── unit/                           # Unit Tests
+│   └── integration/                    # End-to-End Tests
 ├── config/
-│   ├── config.example.yaml             # Example Config
-│   ├── config.yaml                     # Your Config (gitignored)
-│   ├── DO-NOT-TOUCH.md                 # Safety Rules
-│   ├── INFRASTRUCTURE.md               # Infrastructure Knowledge
-│   └── PROJECT_*.md                    # Project Documentation
-├── config/                             # Konfiguration
-│   ├── config.yaml                     # Hauptconfig (gitignored)
-│   ├── config.example.yaml             # Template
+│   ├── config.example.yaml             # Template (committed)
+│   ├── config.yaml                     # Real Config (gitignored)
 │   ├── config.recommended.yaml         # Empfehlungen
 │   ├── safe_upgrades.yaml              # Upgrade-Pfade
-│   └── logrotate.conf                  # Log-Rotation
-├── deploy/                             # Deployment
+│   ├── INFRASTRUCTURE.md               # Infrastructure Knowledge
+│   └── PROJECT_*.md                    # Per-Projekt-Notizen
+├── deploy/
 │   └── shadowops-bot.service           # systemd Unit
 ├── scripts/                            # Utility-Skripte
 │   ├── restart.sh                      # Bot neustarten (--pull, --logs)
 │   ├── diagnose-bot.sh                 # Diagnose
-│   ├── setup.sh                        # Erstinstallation
-│   └── ...
+│   └── setup.sh                        # Erstinstallation
 ├── data/                               # Runtime-Daten (gitignored)
 ├── logs/                               # Log-Dateien (gitignored)
-├── docs/                               # Dokumentation
-│   ├── API.md                          # API-Referenz
-│   ├── guides/                         # Benutzer-Anleitungen
+├── docs/
+│   ├── reference/api.md                # API-Referenz
+│   ├── SECURITY_ANALYST.md
+│   ├── SETUP_GUIDE.md
 │   ├── adr/                            # Architecture Decision Records
-│   ├── plans/                          # Design-Dokumente
-│   └── archive/                        # Historische Doku
+│   └── plans/                          # Design-Dokumente
 ├── .claude/                            # KI-Konfiguration
-│   ├── rules/                          # Pfad-gefilterte Rules
-│   ├── skills/                         # Workflow-Skills
-│   └── agents/                         # Spezialisierte Agents
+│   └── rules/                          # Pfad-gefilterte Rules
+├── .routines/                          # Worker State + Prompts
 ├── requirements.txt                    # Python Dependencies
 ├── pyproject.toml                      # Projekt-Definition
 ├── CLAUDE.md                           # KI-Projektinstruktionen

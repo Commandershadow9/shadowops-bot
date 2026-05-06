@@ -48,7 +48,7 @@ Shows overall security status across all systems.
 #### `/scan`
 Triggers a manual Docker security scan using Trivy.
 
-**Permissions:** None
+**Permissions:** Administrator
 **Parameters:** None
 **Returns:** Scan results with vulnerabilities by severity
 
@@ -104,7 +104,7 @@ Shows AIDE File Integrity Check status.
 #### `/remediation-stats`
 Shows auto-remediation statistics and performance metrics.
 
-**Permissions:** None
+**Permissions:** Administrator
 **Parameters:** None
 **Returns:** Embed with:
 - Total fixes executed
@@ -164,11 +164,10 @@ Shows AI provider status, fallback chain, and usage statistics.
 **Permissions:** None
 **Parameters:** None
 **Returns:** Embed with:
-- Ollama status (enabled/disabled, model, URL)
-- Claude status (enabled/disabled, model)
-- OpenAI status (enabled/disabled, model)
-- Active fallback chain
-- Request counts per provider
+- Codex CLI status (primary engine, models fast/standard/thinking)
+- Claude CLI status (fallback engine, models fast/standard/thinking)
+- Active engine routing table
+- Request counts per engine
 
 **Example:**
 ```
@@ -266,25 +265,34 @@ channels:
 
 # ========================================
 # AI CONFIGURATION
+# Dual-Engine: Codex CLI (Primary) + Claude CLI (Fallback)
+# Ollama wurde in v4.0 entfernt. Keine API-Keys nötig — beide Engines
+# laufen als CLI-Prozesse (codex / claude).
 # ========================================
 ai:
-  ollama:
-    enabled: true                           # Enable Ollama (local AI)
-    url: http://localhost:11434             # Ollama API URL
-    model: phi3:mini                        # Model for regular analysis
-    model_critical: llama3.1                # Model for CRITICAL events
-    hybrid_models: true                     # Use different models by severity
-    request_delay_seconds: 4.0              # Rate limiting (seconds between requests)
+  enabled: true
 
-  anthropic:
-    enabled: false                          # Enable Claude
-    api_key: null                           # Anthropic API key
-    model: claude-3-5-sonnet-20241022       # Claude model
+  # === CODEX CLI (PRIMARY) ===
+  codex:
+    cli_path: "codex"                       # Pfad zur Codex CLI (im PATH)
+    models:
+      fast: "gpt-5.3-codex"                 # Schnelle Analysen
+      standard: "gpt-5.3-codex"            # Standard-Analysen + Structured Output
+      thinking: "o3"                        # Komplexe Planungsaufgaben
 
-  openai:
-    enabled: false                          # Enable OpenAI
-    api_key: null                           # OpenAI API key
-    model: gpt-4o                           # OpenAI model
+  # === CLAUDE CLI (FALLBACK) ===
+  claude:
+    cli_path: "/home/user/.local/bin/claude"  # Pfad zur Claude CLI
+    models:
+      fast: "claude-sonnet-4-6"
+      standard: "claude-sonnet-4-6"
+      thinking: "claude-opus-4-6"           # Security Analyst Sessions
+
+  # === TIMEOUTS ===
+  timeouts:
+    codex_seconds: 300                      # 5 Min für Codex CLI
+    claude_seconds: 300                     # 5 Min für Claude CLI
+    analyst_seconds: 1800                   # 30 Min für Security Analyst Sessions
 
 # ========================================
 # AUTO-REMEDIATION CONFIGURATION

@@ -42,8 +42,10 @@
 shadowops-bot/
 ├── src/
 │   ├── bot.py                    # Haupt-Bot
-│   ├── cogs/                     # Slash-Commands (admin, inspector, monitoring)
+│   ├── cogs/                     # Slash-Commands (admin, inspector, monitoring, customer_setup_commands)
 │   ├── integrations/             # Externe Systeme (siehe unten)
+│   ├── patch_notes/              # Patch-Notes Pipeline v6 (5-Stufen State Machine)
+│   ├── schemas/                  # Codex Structured Output JSON-Schemas
 │   └── utils/                    # config, logging, embeds, state
 ├── tests/
 │   ├── unit/                     # 161+ Unit-Tests
@@ -52,7 +54,6 @@ shadowops-bot/
 ├── config/
 │   ├── config.example.yaml       # Template (commited)
 │   ├── config.yaml               # Real config (gitignored)
-│   ├── DO-NOT-TOUCH.md           # Critical files protection
 │   ├── INFRASTRUCTURE.md
 │   └── PROJECT_*.md              # Per-projekt-Notizen
 ├── deploy/
@@ -75,17 +76,19 @@ shadowops-bot/
 - `ai_engine.py` — Dual-Engine Router (Codex Primary, Claude Fallback)
 - `smart_queue.py` — Analyse-Pool (Semaphore=3) + serieller Fix-Lock + Circuit Breaker
 - `verification.py` — Pre-Push Pipeline (Confidence ≥85% → Tests → Claude-Verify → KB-Check)
-- `orchestrator.py` — Multi-Event-Batching (10s Fenster) + Approval-Flow
+- `orchestrator/` — Multi-Event-Batching (10s Fenster) + Approval-Flow (Untermodule: core, batch_mixin, planner_mixin, executor_mixin, recovery_mixin, discord_mixin, models)
 - `event_watcher.py` — Lauscht auf Fail2ban/CrowdSec/AIDE/Docker-Events
 - `knowledge_base.py` — SQL Learning (fix_attempts, fix_verifications, finding_quality, scan_coverage)
 - `code_analyzer.py` — Code Structure Analyzer (Git-History + AST)
 - `context_manager.py` — RAG: Project-Context + DO-NOT-TOUCH + Infra
-- `github_integration.py` — Webhooks mit HMAC-SHA256 Verification
+- `github_integration/` — Webhooks mit HMAC-SHA256 Verification + Jules SecOps Workflow + Multi-Agent Review Pipeline (Untermodule: core, webhook_mixin, jules_workflow_mixin, agent_review/, ...)
 - `project_monitor.py` — Multi-Project Health-Checks
 - `deployment_manager.py` — Auto-Deploy mit Backup/Rollback
 - `incident_manager.py` — Incident Threads in Discord
 - `customer_notifications.py` — Customer-Facing Alerts (Multi-Guild)
 - `fail2ban.py` / `crowdsec.py` / `aide.py` / `docker.py` — Security-Integrationen
+- `security_engine/` — Security Engine v6: ScanAgent (autonomer AI-Security-Engineer), CircuitBreaker, DB-Pool (asyncpg), Fixer-Adapters, LearningBridge
+- `fixers/` — Security-Fixers: fail2ban_fixer, crowdsec_fixer, aide_fixer, trivy_fixer, walg_fixer
 
 ## Coding-Conventions
 
