@@ -7,6 +7,7 @@ import asyncio
 import aiohttp
 import logging
 import json
+import os
 import shutil
 import ssl
 import time
@@ -1987,7 +1988,6 @@ class ProjectMonitor:
             return None
 
         api_key_env = monitor_cfg.get('health_api_key_env', 'ZERODOX_AGENT_API_KEY')
-        import os
         api_key = os.environ.get(api_key_env)
         if not api_key:
             self.logger.debug(
