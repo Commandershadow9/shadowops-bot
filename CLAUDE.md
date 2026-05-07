@@ -42,7 +42,9 @@
 shadowops-bot/
 ├── src/
 │   ├── bot.py                    # Haupt-Bot
-│   ├── cogs/                     # Slash-Commands (admin, inspector, monitoring)
+│   ├── cogs/                     # Slash-Commands (admin, inspector, monitoring, customer_setup, ...)
+│   ├── commands/                 # Zusaetzliche Command-Cogs (ai_learning_admin, knowledge_stats)
+│   ├── patch_notes/              # Patch Notes Pipeline v6 (5-Stufen State Machine)
 │   ├── integrations/             # Externe Systeme (siehe unten)
 │   └── utils/                    # config, logging, embeds, state
 ├── tests/
@@ -50,20 +52,20 @@ shadowops-bot/
 │   ├── integration/              # End-to-End-Workflows
 │   └── conftest.py
 ├── config/
-│   ├── config.example.yaml       # Template (commited)
+│   ├── config.example.yaml       # Template (committed)
 │   ├── config.yaml               # Real config (gitignored)
-│   ├── DO-NOT-TOUCH.md           # Critical files protection
-│   ├── INFRASTRUCTURE.md
-│   └── PROJECT_*.md              # Per-projekt-Notizen
+│   ├── config.recommended.yaml   # Empfehlungen
+│   ├── safe_upgrades.yaml        # Upgrade-Pfade
+│   └── logrotate.conf            # Log-Rotation
 ├── deploy/
 │   └── shadowops-bot.service     # systemd Unit
 ├── scripts/                      # Wartungs-Skripte
 ├── docs/
-│   ├── SECURITY_ANALYST.md
-│   ├── SETUP_GUIDE.md
-│   ├── reference/api.md
+│   ├── reference/api.md          # API-Referenz
 │   ├── adr/                      # Architecture Decision Records
-│   └── plans/                    # Design-Dokumente
+│   ├── design/                   # Design-Dokumente
+│   ├── operations/               # Runbooks und Setup-Anleitungen
+│   └── plans/                    # Design-Dokumente (aeltere)
 ├── data/                         # Runtime-Daten (gitignored)
 ├── logs/                         # Logs (gitignored)
 ├── .claude/                      # KI-spezifische Configs
@@ -75,17 +77,21 @@ shadowops-bot/
 - `ai_engine.py` — Dual-Engine Router (Codex Primary, Claude Fallback)
 - `smart_queue.py` — Analyse-Pool (Semaphore=3) + serieller Fix-Lock + Circuit Breaker
 - `verification.py` — Pre-Push Pipeline (Confidence ≥85% → Tests → Claude-Verify → KB-Check)
-- `orchestrator.py` — Multi-Event-Batching (10s Fenster) + Approval-Flow
+- `orchestrator/` — Multi-Event-Batching (10s Fenster) + Approval-Flow (Package: core, batch_mixin, executor_mixin, recovery_mixin, ...)
 - `event_watcher.py` — Lauscht auf Fail2ban/CrowdSec/AIDE/Docker-Events
 - `knowledge_base.py` — SQL Learning (fix_attempts, fix_verifications, finding_quality, scan_coverage)
 - `code_analyzer.py` — Code Structure Analyzer (Git-History + AST)
 - `context_manager.py` — RAG: Project-Context + DO-NOT-TOUCH + Infra
-- `github_integration.py` — Webhooks mit HMAC-SHA256 Verification
+- `github_integration/` — Webhooks + Jules SecOps Workflow + Agent-Review Pipeline (Package: core, jules_workflow_mixin, agent_review/, ...)
+- `security_engine/` — SecurityScanAgent v6: autonome taegl./woechentl. Scans, deterministische Pre-Checks, Fix-Phase mit Cross-Mode-Lock
+- `fixers/` — Fixer-Klassen fuer konkrete Systeme: fail2ban_fixer, crowdsec_fixer, aide_fixer, trivy_fixer, walg_fixer
+- `ai_learning/` — Kontinuierliches Lernsystem: ContinuousLearningAgent, KnowledgeDB, KnowledgeSynthesizer
+- `analyst/` — Legacy SecurityAnalyst (nicht mehr aktiv gestartet, bleibt als Referenz)
 - `project_monitor.py` — Multi-Project Health-Checks
 - `deployment_manager.py` — Auto-Deploy mit Backup/Rollback
 - `incident_manager.py` — Incident Threads in Discord
 - `customer_notifications.py` — Customer-Facing Alerts (Multi-Guild)
-- `fail2ban.py` / `crowdsec.py` / `aide.py` / `docker.py` — Security-Integrationen
+- `fail2ban.py` / `crowdsec.py` / `aide.py` / `docker.py` — Security-Integrationen (Event-Quellen)
 
 ## Coding-Conventions
 
@@ -157,7 +163,7 @@ sudo journalctl -u shadowops-bot -f
 2. Im `event_watcher.py` registrieren.
 3. Config-Key in `config.example.yaml` ergaenzen.
 4. Test mit Mock-Subprocess-Output.
-5. README + `docs/SECURITY_ANALYST.md` updaten.
+5. README + `docs/reference/api.md` updaten.
 
 ### Neuen AI-Provider als Engine
 1. Klasse in `ai_engine.py` analog zu `CodexEngine` / `ClaudeEngine`.
@@ -181,17 +187,15 @@ Worker-Konventionen:
 
 ## Statistik (Stand v5.1)
 
-20.000+ LoC, 150+ Tests, 3 PostgreSQL DBs (21+7+11 Tabellen), 4 Security-Integrationen, 15 Discord-Commands, 3 Monitored Projects (GuildScout, ZERODOX, AI Agents).
+20.000+ LoC, 150+ Tests, 3 PostgreSQL DBs (21+7+11 Tabellen), 4 Security-Integrationen, 20+ Discord-Commands, 3 Monitored Projects (GuildScout, ZERODOX, AI Agents).
 
 ## Aktuelle Doku
 
 - [README.md](./README.md)
-- [docs/SECURITY_ANALYST.md](./docs/SECURITY_ANALYST.md)
-- [docs/SETUP_GUIDE.md](./docs/SETUP_GUIDE.md)
 - [docs/reference/api.md](./docs/reference/api.md)
-- [DOCS_OVERVIEW.md](./DOCS_OVERVIEW.md)
-- [config/DO-NOT-TOUCH.md](./config/DO-NOT-TOUCH.md)
+- [docs/operations/setup.md](./docs/operations/setup.md)
+- [docs/operations/quickstart.md](./docs/operations/quickstart.md)
 
 ## Letztes Update dieser Datei
 
-2026-04-26 — initiales Setup, generiert aus Worker-Bundle.
+2026-05-07 — Doku-Kurator: Verzeichnisstruktur aktualisiert (orchestrator/, github_integration/ Packages; security_engine/, fixers/, ai_learning/ ergaenzt; src/commands/, src/patch_notes/ ergaenzt); Broken Links entfernt.
