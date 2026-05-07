@@ -97,6 +97,18 @@ Shows AIDE File Integrity Check status.
 /aide
 ```
 
+#### `/docker`
+Shows the results of the last Docker (Trivy) security scan.
+
+**Permissions:** None
+**Parameters:** None
+**Returns:** Embed with vulnerability counts by severity and affected images.
+
+**Example:**
+```
+/docker
+```
+
 ---
 
 ### Auto-Remediation Commands
@@ -154,6 +166,51 @@ Changes the auto-remediation approval mode.
 - **Auto**: Balanced, only critical fixes need approval
 - **Dry-Run**: Test mode, no actual execution
 
+#### `/mark-duplicate [parent_id] [child_id]`
+Marks a finding as a duplicate of another for Learning-Feedback.
+
+**Permissions:** None
+**Parameters:**
+- `parent_id` (required): ID of the finding to keep
+- `child_id` (required): ID of the finding to mark as duplicate
+
+**Returns:** Confirmation with finding titles.
+
+**Example:**
+```
+/mark-duplicate 42 57
+```
+
+---
+
+### Patch Notes Commands
+
+#### `/release-notes [project]`
+Publishes accumulated commits as patch notes for a project.
+
+**Permissions:** Administrator
+**Parameters:**
+- `project` (required): Project name (e.g., guildscout, zerodox)
+
+**Returns:** Status embed with release URL and Discord post confirmation.
+
+**Example:**
+```
+/release-notes guildscout
+```
+
+#### `/pending-notes`
+Shows all commits currently waiting for a patch notes release.
+
+**Permissions:** Administrator
+**Parameters:** None
+**Returns:** Embed listing pending commit counts and date range per project.
+
+**Example:**
+```
+/pending-notes
+```
+
 ---
 
 ### AI & Learning System Commands
@@ -164,15 +221,38 @@ Shows AI provider status, fallback chain, and usage statistics.
 **Permissions:** None
 **Parameters:** None
 **Returns:** Embed with:
-- Ollama status (enabled/disabled, model, URL)
-- Claude status (enabled/disabled, model)
-- OpenAI status (enabled/disabled, model)
-- Active fallback chain
+- Primary engine status (Codex CLI, model, timeout)
+- Fallback engine status (Claude CLI, model, timeout)
+- Active routing rules per severity
 - Request counts per provider
 
 **Example:**
 ```
 /get-ai-stats
+```
+
+#### `/agent-stats`
+Shows Agent Learning system statistics.
+
+**Permissions:** None
+**Parameters:** None
+**Returns:** Embed with session token usage, finding counts, DB connection status.
+
+**Example:**
+```
+/agent-stats
+```
+
+#### `/security-engine`
+Shows Security Engine v6 status and scan statistics.
+
+**Permissions:** None
+**Parameters:** None
+**Returns:** Embed with active findings, last scan time, circuit breaker state, fix phase stats.
+
+**Example:**
+```
+/security-engine
 ```
 
 #### `/reload-context`
@@ -232,6 +312,18 @@ Shows overview of all monitored projects.
 /alle-projekte
 ```
 
+#### `/setup-customer-server`
+Sets up monitoring channels on a customer Discord server.
+
+**Permissions:** Administrator
+**Parameters:** None
+**Returns:** Confirmation with created channel list.
+
+**Example:**
+```
+/setup-customer-server
+```
+
 ---
 
 ## Configuration Reference
@@ -243,7 +335,7 @@ Shows overview of all monitored projects.
 # DISCORD CONFIGURATION
 # ========================================
 discord:
-  token: "YOUR_BOT_TOKEN_HERE"  # Discord bot token (REQUIRED)
+  # token: ""  # NEVER set here — use env var DISCORD_BOT_TOKEN
   guild_id: 123456789            # Discord server ID (REQUIRED)
 
 # ========================================
@@ -268,23 +360,34 @@ channels:
 # AI CONFIGURATION
 # ========================================
 ai:
-  ollama:
-    enabled: true                           # Enable Ollama (local AI)
-    url: http://localhost:11434             # Ollama API URL
-    model: phi3:mini                        # Model for regular analysis
-    model_critical: llama3.1                # Model for CRITICAL events
-    hybrid_models: true                     # Use different models by severity
-    request_delay_seconds: 4.0              # Rate limiting (seconds between requests)
+  enabled: true                             # Master switch for AI features
 
-  anthropic:
-    enabled: false                          # Enable Claude
-    api_key: null                           # Anthropic API key
-    model: claude-3-5-sonnet-20241022       # Claude model
+  primary:
+    engine: codex                           # Primary engine: codex (Codex CLI)
+    models:
+      fast: gpt-4o                          # Used for LOW severity events
+      standard: gpt-5.3-codex              # Used for HIGH severity events
+      thinking: o3                          # Used for CRITICAL events
+    timeout: 300
 
-  openai:
-    enabled: false                          # Enable OpenAI
-    api_key: null                           # OpenAI API key
-    model: gpt-4o                           # OpenAI model
+  fallback:
+    engine: claude                          # Fallback engine: claude (Claude CLI)
+    cli_path: /home/user/.local/bin/claude
+    models:
+      fast: claude-sonnet-4-6
+      standard: claude-sonnet-4-6
+      thinking: claude-opus-4-6
+    timeout: 300
+
+  routing:
+    critical_analysis: { engine: codex, model: thinking }
+    high_analysis:     { engine: codex, model: standard }
+    low_analysis:      { engine: codex, model: fast }
+    critical_verify:   { engine: claude, model: thinking }
+
+  # Env vars (set in service EnvFile, never in config.yaml):
+  #   OPENAI_API_KEY  — required for Codex CLI
+  #   ANTHROPIC_API_KEY — required for Claude CLI
 
 # ========================================
 # AUTO-REMEDIATION CONFIGURATION
@@ -791,29 +894,36 @@ event = SecurityEvent(
 
 ## Database Schema
 
-### Knowledge Base (SQLite)
+### Databases
 
-#### fixes table
+The system uses three PostgreSQL databases (DSN via env vars or `config.yaml`):
+
+| Database | Env Var | Content |
+|----------|---------|---------|
+| `security_analyst` | `SECURITY_ANALYST_DB_URL` | Security findings, fix attempts, Jules PR reviews |
+| `agent_learning` | `AGENT_LEARNING_DB_URL` | Few-shot examples, quality scores, knowledge |
+| `seo_agent` | — | SEO-Agent-specific tables (separate service) |
+
+### Security Analyst DB — Key Tables
+
+#### fix_attempts_v2
+Records all fix outcomes (success, failed, no_op, skipped_duplicate).
+
 ```sql
-CREATE TABLE fixes (
-    id INTEGER PRIMARY KEY AUTOINCREMENT,
-    timestamp TEXT NOT NULL,
-    event_signature TEXT NOT NULL,  -- Unique event identifier
-    event_type TEXT NOT NULL,  -- vulnerability, intrusion, etc.
-    severity TEXT,
-    event_details TEXT,  -- JSON
-    strategy TEXT NOT NULL,  -- JSON: Full fix strategy
-    result TEXT NOT NULL,  -- 'success' or 'failed'
-    duration_seconds REAL,
-    error_message TEXT,
-    retry_count INTEGER DEFAULT 0
-);
-
-CREATE INDEX idx_event_signature ON fixes(event_signature);
-CREATE INDEX idx_event_type ON fixes(event_type);
-CREATE INDEX idx_result ON fixes(result);
-CREATE INDEX idx_timestamp ON fixes(timestamp);
+-- Key columns (simplified)
+id          SERIAL PRIMARY KEY,
+event_id    INTEGER REFERENCES findings(id),
+strategy    TEXT,
+result      TEXT,  -- 'success' | 'failed' | 'no_op' | 'skipped_duplicate'
+started_at  TIMESTAMPTZ,
+finished_at TIMESTAMPTZ
 ```
+
+#### remediation_status
+Cross-mode lock: `claim_event()` / `release_event()` before every fix phase.
+
+#### jules_pr_reviews
+PR-State for the Jules SecOps Workflow: lock claim, iteration counter, verdict.
 
 ### Project Monitor State (JSON)
 
@@ -894,9 +1004,8 @@ CREATE INDEX idx_timestamp ON fixes(timestamp);
 ## Rate Limiting
 
 ### AI Requests
-- **Ollama**: Configurable delay (`ai.ollama.request_delay_seconds`, default: 4.0s)
-- **Anthropic**: Built-in retry with exponential backoff (1s, 2s, 4s)
-- **OpenAI**: Built-in retry with exponential backoff (1s, 2s, 4s)
+- **Codex CLI (Primary)**: No built-in delay; subprocess timeout configurable via `ai.primary.timeout` (default: 300s)
+- **Claude CLI (Fallback)**: subprocess timeout configurable via `ai.fallback.timeout` (default: 300s); Opus fallback on Sonnet timeout
 
 ### Discord Commands
 - **Global**: No built-in rate limiting (Discord handles this)
@@ -951,12 +1060,12 @@ debug_mode: true
 
 ### Common API Issues
 
-**Knowledge Base locked:**
+**Knowledge Base connection issues:**
 ```bash
-# Check if database is locked
-sqlite3 data/knowledge_base.db "PRAGMA busy_timeout=5000;"
+# Check PostgreSQL connectivity
+psql "$SECURITY_ANALYST_DB_URL" -c "SELECT 1;"
 
-# If still locked, restart bot
+# If pool exhausted, restart bot
 sudo systemctl restart shadowops-bot
 ```
 
