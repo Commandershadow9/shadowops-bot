@@ -164,10 +164,9 @@ Shows AI provider status, fallback chain, and usage statistics.
 **Permissions:** None
 **Parameters:** None
 **Returns:** Embed with:
-- Ollama status (enabled/disabled, model, URL)
-- Claude status (enabled/disabled, model)
-- OpenAI status (enabled/disabled, model)
-- Active fallback chain
+- Codex CLI status (primary engine, configured models)
+- Claude CLI status (fallback engine, configured models)
+- Active routing configuration (critical/high/low/verify)
 - Request counts per provider
 
 **Example:**
@@ -268,23 +267,26 @@ channels:
 # AI CONFIGURATION
 # ========================================
 ai:
-  ollama:
-    enabled: true                           # Enable Ollama (local AI)
-    url: http://localhost:11434             # Ollama API URL
-    model: phi3:mini                        # Model for regular analysis
-    model_critical: llama3.1                # Model for CRITICAL events
-    hybrid_models: true                     # Use different models by severity
-    request_delay_seconds: 4.0              # Rate limiting (seconds between requests)
+  enabled: true                             # Global toggle (disables all AI features when false)
 
-  anthropic:
-    enabled: false                          # Enable Claude
-    api_key: null                           # Anthropic API key
-    model: claude-3-5-sonnet-20241022       # Claude model
+  codex:                                    # Primary engine — Codex CLI (OpenAI)
+    cli_path: "codex"                       # CLI path (must be in PATH)
+    models:
+      fast: "gpt-5.3-codex"               # Fast analyses
+      standard: "gpt-5.3-codex"           # Standard analyses + structured output
+      thinking: "o3"                       # Complex planning tasks
 
-  openai:
-    enabled: false                          # Enable OpenAI
-    api_key: null                           # OpenAI API key
-    model: gpt-4o                           # OpenAI model
+  claude:                                   # Fallback engine — Claude CLI (Anthropic)
+    cli_path: "/home/user/.local/bin/claude"
+    models:
+      fast: "claude-sonnet-4-6"
+      standard: "claude-sonnet-4-6"
+      thinking: "claude-opus-4-6"          # Security Analyst sessions
+
+  timeouts:
+    codex_seconds: 300                      # 5 min for Codex CLI
+    claude_seconds: 300                     # 5 min for Claude CLI
+    analyst_seconds: 1800                   # 30 min for Security Analyst sessions
 
 # ========================================
 # AUTO-REMEDIATION CONFIGURATION
@@ -582,8 +584,8 @@ Fallback auf das jeweils andere Modell bei Timeout oder leerer Response.
 ```python
 from src.integrations.knowledge_base import KnowledgeBase
 
-# Initialize
-kb = KnowledgeBase(db_path="data/knowledge_base.db")
+# Initialize (DSN from config.yaml: security_analyst.database_dsn or SECURITY_ANALYST_DB_URL env var)
+kb = KnowledgeBase(config=config)
 
 # Record a fix
 kb.record_fix(
@@ -791,29 +793,20 @@ event = SecurityEvent(
 
 ## Database Schema
 
-### Knowledge Base (SQLite)
+### Knowledge Base (PostgreSQL — `security_analyst` DB)
 
-#### fixes table
-```sql
-CREATE TABLE fixes (
-    id INTEGER PRIMARY KEY AUTOINCREMENT,
-    timestamp TEXT NOT NULL,
-    event_signature TEXT NOT NULL,  -- Unique event identifier
-    event_type TEXT NOT NULL,  -- vulnerability, intrusion, etc.
-    severity TEXT,
-    event_details TEXT,  -- JSON
-    strategy TEXT NOT NULL,  -- JSON: Full fix strategy
-    result TEXT NOT NULL,  -- 'success' or 'failed'
-    duration_seconds REAL,
-    error_message TEXT,
-    retry_count INTEGER DEFAULT 0
-);
+Key tables in the `security_analyst` database (asyncpg pool, min 2 / max 5 connections):
 
-CREATE INDEX idx_event_signature ON fixes(event_signature);
-CREATE INDEX idx_event_type ON fixes(event_type);
-CREATE INDEX idx_result ON fixes(result);
-CREATE INDEX idx_timestamp ON fixes(timestamp);
-```
+| Table | Purpose |
+|-------|---------|
+| `fix_attempts_v2` | All fix results (success, failed, no_op, skipped_duplicate) |
+| `fix_verifications` | Post-fix verification outcomes |
+| `finding_quality` | Per-finding confidence scores and false-positive tracking |
+| `scan_coverage` | Coverage gaps, hotspots, recheck schedules |
+| `remediation_status` | Cross-mode lock: claim_event / release_event |
+| `jules_pr_reviews` | Jules workflow PR state, iteration counter |
+
+Full schema: see `src/integrations/security_engine/db.py` and `src/integrations/analyst/analyst_db.py`.
 
 ### Project Monitor State (JSON)
 
@@ -894,9 +887,9 @@ CREATE INDEX idx_timestamp ON fixes(timestamp);
 ## Rate Limiting
 
 ### AI Requests
-- **Ollama**: Configurable delay (`ai.ollama.request_delay_seconds`, default: 4.0s)
-- **Anthropic**: Built-in retry with exponential backoff (1s, 2s, 4s)
-- **OpenAI**: Built-in retry with exponential backoff (1s, 2s, 4s)
+- **Codex CLI**: Timeout controlled by `ai.timeouts.codex_seconds` (default: 300s); no built-in request delay
+- **Claude CLI**: Timeout controlled by `ai.timeouts.claude_seconds` (default: 300s); no built-in request delay
+- Both engines use exponential backoff on subprocess failures (1s, 2s, 4s)
 
 ### Discord Commands
 - **Global**: No built-in rate limiting (Discord handles this)
@@ -951,12 +944,12 @@ debug_mode: true
 
 ### Common API Issues
 
-**Knowledge Base locked:**
+**Knowledge Base issues (PostgreSQL):**
 ```bash
-# Check if database is locked
-sqlite3 data/knowledge_base.db "PRAGMA busy_timeout=5000;"
+# Check DB connectivity
+python3 -c "from src.integrations.knowledge_base import KnowledgeBase; print('OK')"
 
-# If still locked, restart bot
+# Restart bot to reset connection pool
 sudo systemctl restart shadowops-bot
 ```
 

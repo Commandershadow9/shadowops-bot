@@ -42,9 +42,12 @@
 shadowops-bot/
 ├── src/
 │   ├── bot.py                    # Haupt-Bot
-│   ├── cogs/                     # Slash-Commands (admin, inspector, monitoring)
+│   ├── cogs/                     # Slash-Commands (admin, inspector, monitoring, customer_setup_commands, cron_heartbeat, phase_5e_health_aggregator)
 │   ├── integrations/             # Externe Systeme (siehe unten)
-│   └── utils/                    # config, logging, embeds, state
+│   ├── patch_notes/              # 5-Stufen Patch-Notes Pipeline (pipeline, grouping, versioning, stages/, templates/)
+│   ├── schemas/                  # JSON Schemas fuer Structured Output (fix_strategy, patch_notes, incident_analysis, jules_review, coordinated_plan)
+│   ├── commands/                 # Admin-Commands (ai_learning_admin, knowledge_stats)
+│   └── utils/                    # config, logging, embeds, state, health_server, process_lock
 ├── tests/
 │   ├── unit/                     # 161+ Unit-Tests
 │   ├── integration/              # End-to-End-Workflows
@@ -72,20 +75,27 @@ shadowops-bot/
 
 ### Module unter `src/integrations/`
 
+Flache Module:
 - `ai_engine.py` — Dual-Engine Router (Codex Primary, Claude Fallback)
 - `smart_queue.py` — Analyse-Pool (Semaphore=3) + serieller Fix-Lock + Circuit Breaker
 - `verification.py` — Pre-Push Pipeline (Confidence ≥85% → Tests → Claude-Verify → KB-Check)
-- `orchestrator.py` — Multi-Event-Batching (10s Fenster) + Approval-Flow
 - `event_watcher.py` — Lauscht auf Fail2ban/CrowdSec/AIDE/Docker-Events
 - `knowledge_base.py` — SQL Learning (fix_attempts, fix_verifications, finding_quality, scan_coverage)
 - `code_analyzer.py` — Code Structure Analyzer (Git-History + AST)
 - `context_manager.py` — RAG: Project-Context + DO-NOT-TOUCH + Infra
-- `github_integration.py` — Webhooks mit HMAC-SHA256 Verification
 - `project_monitor.py` — Multi-Project Health-Checks
 - `deployment_manager.py` — Auto-Deploy mit Backup/Rollback
 - `incident_manager.py` — Incident Threads in Discord
 - `customer_notifications.py` — Customer-Facing Alerts (Multi-Guild)
 - `fail2ban.py` / `crowdsec.py` / `aide.py` / `docker.py` — Security-Integrationen
+
+Pakete (Unterverzeichnisse):
+- `orchestrator/` — Multi-Event-Batching (10s Fenster) + Approval-Flow (core, batch_mixin, executor_mixin, planner_mixin, recovery_mixin, discord_mixin)
+- `github_integration/` — Webhooks mit HMAC-SHA256 Verification + Jules SecOps Workflow + Multi-Agent Review Pipeline (core, webhook_mixin, jules_workflow_mixin, event_handlers_mixin, agent_review/)
+- `security_engine/` — Autonomer SecurityScanAgent: taeglich + weekly-deep (scan_agent, engine, db, executor, fixer_adapters, learning_bridge, activity_monitor, prompts, providers, models)
+- `fixers/` — Spezialisierte Fixer-Klassen (aide_fixer, crowdsec_fixer, fail2ban_fixer, trivy_fixer, walg_fixer)
+- `analyst/` — Legacy Security Analyst (security_analyst, analyst_db, activity_monitor, prompts) — nicht mehr von Engine gestartet
+- `ai_learning/` — Cross-Agent Lernschicht (continuous_learning_agent, knowledge_db, knowledge_synthesizer)
 
 ## Coding-Conventions
 
