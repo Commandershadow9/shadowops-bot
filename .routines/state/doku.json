@@ -2,13 +2,31 @@
   "schema_version": 1,
   "repo": "Commandershadow9/shadowops-bot",
   "worker": "doku",
-  "last_run": null,
-  "last_drift_check": null,
+  "last_run": "2026-05-08T00:00:00Z",
+  "last_drift_check": "2026-05-08T00:00:00Z",
   "open_prs": [],
+  "open_issues": [
+    {
+      "number": 221,
+      "url": "https://github.com/Commandershadow9/shadowops-bot/issues/221",
+      "title": "docs: README anti-bloat — migrate v3.x Highlights sections to CHANGELOG.md",
+      "created_at": "2026-05-08T00:00:00Z"
+    }
+  ],
   "tracked_files": {
-    "README.md": { "last_synced_with_code_at": null },
-    "CLAUDE.md": { "last_synced_with_code_at": null },
-    "docs/reference/api.md": { "last_synced_with_code_at": null }
+    "README.md": {
+      "last_synced_with_code_at": "2026-05-08T00:00:00Z",
+      "notes": "Added /docker, /agent-stats, /security-engine commands; fixed project structure (packages vs flat files, removed duplicate config/ section, fixed docs/API.md -> docs/reference/api.md); added missing cogs"
+    },
+    "CLAUDE.md": {
+      "last_synced_with_code_at": "2026-05-08T00:00:00Z",
+      "notes": "Updated integrations list to reflect package structure (orchestrator/, github_integration/, security_engine/, fixers/, analyst/, ai_learning/); added patch_notes/, schemas/, commands/ to directory structure; updated cogs listing"
+    },
+    "docs/reference/api.md": {
+      "last_synced_with_code_at": "2026-05-08T00:00:00Z",
+      "notes": "Removed all Ollama references (ai.ollama config block, /get-ai-stats description, rate limiting); replaced with Codex/Claude CLI dual-engine config; fixed KnowledgeBase from SQLite to PostgreSQL; replaced DB schema section with correct PostgreSQL table listing"
+    }
   },
-  "open_questions": []
+  "open_questions": [],
+  "anti_bloat_notes": "README at 773 lines (threshold: 500). Issue #221 created for v3.x Highlights migration. CLAUDE.md at ~210 lines — within threshold."
 }
