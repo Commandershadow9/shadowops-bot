@@ -164,9 +164,8 @@ Shows AI provider status, fallback chain, and usage statistics.
 **Permissions:** None
 **Parameters:** None
 **Returns:** Embed with:
-- Ollama status (enabled/disabled, model, URL)
-- Claude status (enabled/disabled, model)
-- OpenAI status (enabled/disabled, model)
+- Codex CLI status (enabled/disabled, model, availability)
+- Claude CLI status (enabled/disabled, model, availability)
 - Active fallback chain
 - Request counts per provider
 
@@ -268,23 +267,36 @@ channels:
 # AI CONFIGURATION
 # ========================================
 ai:
-  ollama:
-    enabled: true                           # Enable Ollama (local AI)
-    url: http://localhost:11434             # Ollama API URL
-    model: phi3:mini                        # Model for regular analysis
-    model_critical: llama3.1                # Model for CRITICAL events
-    hybrid_models: true                     # Use different models by severity
-    request_delay_seconds: 4.0              # Rate limiting (seconds between requests)
+  enabled: true                             # Global AI toggle
 
-  anthropic:
-    enabled: false                          # Enable Claude
-    api_key: null                           # Anthropic API key
-    model: claude-3-5-sonnet-20241022       # Claude model
+  # === CODEX CLI (PRIMARY) ===
+  codex:
+    cli_path: "codex"                       # Path to Codex CLI binary
+    models:
+      fast: "gpt-5.3-codex"                # Fast analyses
+      standard: "gpt-5.3-codex"            # Standard analyses + Structured Output
+      thinking: "o3"                        # Complex planning tasks
 
-  openai:
-    enabled: false                          # Enable OpenAI
-    api_key: null                           # OpenAI API key
-    model: gpt-4o                           # OpenAI model
+  # === CLAUDE CLI (FALLBACK + VERIFY) ===
+  claude:
+    cli_path: "/home/user/.local/bin/claude"  # Path to Claude CLI binary
+    models:
+      fast: "claude-sonnet-4-6"            # Fast analyses
+      standard: "claude-sonnet-4-6"        # Standard analyses
+      thinking: "claude-opus-4-6"          # Security Analyst sessions
+
+  # === TIMEOUTS ===
+  timeouts:
+    codex_seconds: 300                      # 5 min for Codex CLI
+    claude_seconds: 300                     # 5 min for Claude CLI
+    analyst_seconds: 1800                   # 30 min for Security Analyst sessions
+
+  # === ROUTING (optional overrides) ===
+  routing:
+    critical_analysis: { engine: codex, model: thinking }
+    high_analysis: { engine: codex, model: standard }
+    low_analysis: { engine: codex, model: fast }
+    critical_verify: { engine: claude, model: thinking }
 
 # ========================================
 # AUTO-REMEDIATION CONFIGURATION
@@ -791,28 +803,31 @@ event = SecurityEvent(
 
 ## Database Schema
 
-### Knowledge Base (SQLite)
+### PostgreSQL Databases
 
-#### fixes table
+ShadowOps uses three PostgreSQL databases. Connection strings come from environment variables or `config.yaml` (never hardcoded):
+
+| Database | Env var | Config key | Purpose |
+|----------|---------|------------|---------|
+| `security_analyst` | `SECURITY_ANALYST_DB_URL` | `security_analyst.database_dsn` | Fix attempts, findings, Jules reviews |
+| `agent_learning` | `AGENT_LEARNING_DB_URL` | `agent_learning.database_dsn` | Few-shot examples, quality scores, knowledge |
+| `seo_agent` | — | — | SEO-specific tables (managed by seo-agent project) |
+
+#### fix_attempts_v2 table (security_analyst)
 ```sql
-CREATE TABLE fixes (
-    id INTEGER PRIMARY KEY AUTOINCREMENT,
-    timestamp TEXT NOT NULL,
-    event_signature TEXT NOT NULL,  -- Unique event identifier
-    event_type TEXT NOT NULL,  -- vulnerability, intrusion, etc.
+CREATE TABLE fix_attempts_v2 (
+    id SERIAL PRIMARY KEY,
+    created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    event_signature TEXT NOT NULL,
+    event_type TEXT NOT NULL,
     severity TEXT,
-    event_details TEXT,  -- JSON
-    strategy TEXT NOT NULL,  -- JSON: Full fix strategy
-    result TEXT NOT NULL,  -- 'success' or 'failed'
+    event_details JSONB,
+    strategy JSONB NOT NULL,
+    result TEXT NOT NULL,  -- 'success', 'failed', 'no_op', 'skipped_duplicate'
     duration_seconds REAL,
     error_message TEXT,
     retry_count INTEGER DEFAULT 0
 );
-
-CREATE INDEX idx_event_signature ON fixes(event_signature);
-CREATE INDEX idx_event_type ON fixes(event_type);
-CREATE INDEX idx_result ON fixes(result);
-CREATE INDEX idx_timestamp ON fixes(timestamp);
 ```
 
 ### Project Monitor State (JSON)
@@ -894,9 +909,8 @@ CREATE INDEX idx_timestamp ON fixes(timestamp);
 ## Rate Limiting
 
 ### AI Requests
-- **Ollama**: Configurable delay (`ai.ollama.request_delay_seconds`, default: 4.0s)
-- **Anthropic**: Built-in retry with exponential backoff (1s, 2s, 4s)
-- **OpenAI**: Built-in retry with exponential backoff (1s, 2s, 4s)
+- **Codex CLI**: Controlled by process-level concurrency (SmartQueue Semaphore=3)
+- **Claude CLI**: Controlled by process-level concurrency; falls back to Codex on timeout
 
 ### Discord Commands
 - **Global**: No built-in rate limiting (Discord handles this)
@@ -951,12 +965,15 @@ debug_mode: true
 
 ### Common API Issues
 
-**Knowledge Base locked:**
+**Knowledge Base issues:**
 ```bash
-# Check if database is locked
-sqlite3 data/knowledge_base.db "PRAGMA busy_timeout=5000;"
+# Check PostgreSQL connection
+psql "$SECURITY_ANALYST_DB_URL" -c "SELECT 1;"
 
-# If still locked, restart bot
+# Check asyncpg pool (bot logs)
+sudo journalctl -u shadowops-bot -f | grep -i "pool\|pg\|asyncpg"
+
+# If pool exhausted, restart bot
 sudo systemctl restart shadowops-bot
 ```
 
