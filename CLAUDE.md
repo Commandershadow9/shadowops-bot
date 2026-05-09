@@ -42,8 +42,9 @@
 shadowops-bot/
 ├── src/
 │   ├── bot.py                    # Haupt-Bot
-│   ├── cogs/                     # Slash-Commands (admin, inspector, monitoring)
+│   ├── cogs/                     # Slash-Commands (admin, inspector, monitoring, customer_setup, cron_heartbeat, phase_5e_health_aggregator)
 │   ├── integrations/             # Externe Systeme (siehe unten)
+│   ├── patch_notes/              # Patch Notes Pipeline v6 — 5-Stufen State Machine (pipeline, grouping, versioning, stages/, templates/)
 │   └── utils/                    # config, logging, embeds, state
 ├── tests/
 │   ├── unit/                     # 161+ Unit-Tests
@@ -72,20 +73,27 @@ shadowops-bot/
 
 ### Module unter `src/integrations/`
 
+**Flat-Module:**
 - `ai_engine.py` — Dual-Engine Router (Codex Primary, Claude Fallback)
 - `smart_queue.py` — Analyse-Pool (Semaphore=3) + serieller Fix-Lock + Circuit Breaker
 - `verification.py` — Pre-Push Pipeline (Confidence ≥85% → Tests → Claude-Verify → KB-Check)
-- `orchestrator.py` — Multi-Event-Batching (10s Fenster) + Approval-Flow
 - `event_watcher.py` — Lauscht auf Fail2ban/CrowdSec/AIDE/Docker-Events
 - `knowledge_base.py` — SQL Learning (fix_attempts, fix_verifications, finding_quality, scan_coverage)
 - `code_analyzer.py` — Code Structure Analyzer (Git-History + AST)
 - `context_manager.py` — RAG: Project-Context + DO-NOT-TOUCH + Infra
-- `github_integration.py` — Webhooks mit HMAC-SHA256 Verification
 - `project_monitor.py` — Multi-Project Health-Checks
 - `deployment_manager.py` — Auto-Deploy mit Backup/Rollback
 - `incident_manager.py` — Incident Threads in Discord
 - `customer_notifications.py` — Customer-Facing Alerts (Multi-Guild)
 - `fail2ban.py` / `crowdsec.py` / `aide.py` / `docker.py` — Security-Integrationen
+
+**Pakete (Sub-Directories):**
+- `orchestrator/` — Multi-Event-Batching (10s Fenster) + Approval-Flow + Recovery-Mixin
+- `github_integration/` — Webhooks mit HMAC-SHA256 Verification + Jules Workflow + Multi-Agent Review Pipeline
+- `security_engine/` — SecurityScanAgent v6: autonome tägliche/wöchentliche Scans, Fix-Executor, Cross-Mode-Lock, LearningBridge
+- `analyst/` — Legacy Security Analyst (nicht mehr von Engine gestartet, bleibt als Referenz)
+- `fixers/` — Fix-Adapter: `aide_fixer`, `crowdsec_fixer`, `fail2ban_fixer`, `trivy_fixer`, `walg_fixer`
+- `ai_learning/` — Continuous Learning Agent, Knowledge DB, Knowledge Synthesizer
 
 ## Coding-Conventions
 

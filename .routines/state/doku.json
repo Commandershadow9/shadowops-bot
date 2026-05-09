@@ -2,13 +2,20 @@
   "schema_version": 1,
   "repo": "Commandershadow9/shadowops-bot",
   "worker": "doku",
-  "last_run": null,
-  "last_drift_check": null,
-  "open_prs": [],
+  "last_run": "2026-05-09T00:00:00Z",
+  "last_drift_check": "2026-05-09T00:00:00Z",
+  "open_prs": [
+    {
+      "number": 223,
+      "branch": "claude/doku/drift-api-readme",
+      "title": "docs: korrigiere Drift in api.md und README (AI-Config, Commands, Struktur)",
+      "focus": "drift"
+    }
+  ],
   "tracked_files": {
-    "README.md": { "last_synced_with_code_at": null },
-    "CLAUDE.md": { "last_synced_with_code_at": null },
-    "docs/reference/api.md": { "last_synced_with_code_at": null }
+    "README.md": { "last_synced_with_code_at": "2026-05-09T00:00:00Z" },
+    "CLAUDE.md": { "last_synced_with_code_at": "2026-05-09T00:00:00Z" },
+    "docs/reference/api.md": { "last_synced_with_code_at": "2026-05-09T00:00:00Z" }
   },
   "open_questions": []
 }
