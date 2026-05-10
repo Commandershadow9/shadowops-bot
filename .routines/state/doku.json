@@ -2,13 +2,39 @@
   "schema_version": 1,
   "repo": "Commandershadow9/shadowops-bot",
   "worker": "doku",
-  "last_run": null,
-  "last_drift_check": null,
-  "open_prs": [],
+  "last_run": "2026-05-10",
+  "last_drift_check": "2026-05-10",
+  "open_prs": [
+    {
+      "branch": "claude/doku/readme-api-drift",
+      "pr": 226,
+      "title": "docs: README + api.md Drift-Korrekturen",
+      "opened": "2026-05-10",
+      "status": "open"
+    },
+    {
+      "branch": "claude/doku/claude-md-structure-gaps",
+      "title": "docs: CLAUDE.md Verzeichnisstruktur-Update",
+      "opened": "2026-05-10",
+      "status": "open"
+    }
+  ],
   "tracked_files": {
-    "README.md": { "last_synced_with_code_at": null },
-    "CLAUDE.md": { "last_synced_with_code_at": null },
-    "docs/reference/api.md": { "last_synced_with_code_at": null }
+    "README.md": { "last_synced_with_code_at": "2026-05-10" },
+    "CLAUDE.md": { "last_synced_with_code_at": "2026-05-10" },
+    "docs/reference/api.md": { "last_synced_with_code_at": "2026-05-10" }
   },
-  "open_questions": []
+  "open_questions": [
+    {
+      "issue": 225,
+      "file": "config/DO-NOT-TOUCH.md",
+      "question": "Datei fehlt im Repo — Maintainer muss Inhalt liefern",
+      "opened": "2026-05-10"
+    }
+  ],
+  "notes": [
+    "PR #226: README anti-bloat (174 Zeilen Highlights v3.1-v3.4 entfernt, README 773→617), 7 fehlende Slash Commands, Verzeichnisstruktur, Discord Commands 15→19, api.md Ollama-Drift behoben.",
+    "PR #227 (dieses PR): CLAUDE.md orchestrator.py→orchestrator/, github_integration.py→github_integration/, security_engine/ ergaenzt, patch_notes/ ergaenzt, Statistiken 150→161 Tests / 15→19 Commands, DO-NOT-TOUCH.md Broken-Link bereinigt (Issue #225).",
+    "Naechster Lauf: Pruefen ob Issue #225 beantwortet und config/DO-NOT-TOUCH.md erstellt wurde. Dann Link in CLAUDE.md wiederherstellen."
+  ]
 }

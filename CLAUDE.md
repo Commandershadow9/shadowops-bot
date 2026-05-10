@@ -24,7 +24,7 @@
 | AI Fallback | Claude CLI | claude-sonnet-4-6 / claude-opus-4-6 |
 | Container | Docker | mit Trivy fuer Scans |
 | Service | systemd | `/etc/systemd/system/shadowops-bot.service` |
-| Tests | pytest | 150+ Tests, unit + integration |
+| Tests | pytest | 161+ Tests, unit + integration |
 | Webhook | GitHub Webhooks | HMAC-SHA256 verifiziert |
 
 ## Architektur-Prinzipien
@@ -42,7 +42,8 @@
 shadowops-bot/
 ├── src/
 │   ├── bot.py                    # Haupt-Bot
-│   ├── cogs/                     # Slash-Commands (admin, inspector, monitoring)
+│   ├── cogs/                     # Slash-Commands (admin, inspector, monitoring, customer_setup, cron, health)
+│   ├── patch_notes/              # Patch Notes Pipeline v6 (5-Stufen State Machine)
 │   ├── integrations/             # Externe Systeme (siehe unten)
 │   └── utils/                    # config, logging, embeds, state
 ├── tests/
@@ -75,16 +76,17 @@ shadowops-bot/
 - `ai_engine.py` — Dual-Engine Router (Codex Primary, Claude Fallback)
 - `smart_queue.py` — Analyse-Pool (Semaphore=3) + serieller Fix-Lock + Circuit Breaker
 - `verification.py` — Pre-Push Pipeline (Confidence ≥85% → Tests → Claude-Verify → KB-Check)
-- `orchestrator.py` — Multi-Event-Batching (10s Fenster) + Approval-Flow
+- `orchestrator/` — Multi-Event-Batching (10s Fenster) + Approval-Flow (Package: core, planner, executor, discord, recovery, batch Mixins)
 - `event_watcher.py` — Lauscht auf Fail2ban/CrowdSec/AIDE/Docker-Events
 - `knowledge_base.py` — SQL Learning (fix_attempts, fix_verifications, finding_quality, scan_coverage)
 - `code_analyzer.py` — Code Structure Analyzer (Git-History + AST)
-- `context_manager.py` — RAG: Project-Context + DO-NOT-TOUCH + Infra
-- `github_integration.py` — Webhooks mit HMAC-SHA256 Verification
+- `context_manager.py` — RAG: Project-Context + Infra
+- `github_integration/` — Webhooks mit HMAC-SHA256 Verification + Multi-Agent Review Pipeline (Package: ci, ai_patch_notes, agent_review/)
 - `project_monitor.py` — Multi-Project Health-Checks
 - `deployment_manager.py` — Auto-Deploy mit Backup/Rollback
 - `incident_manager.py` — Incident Threads in Discord
 - `customer_notifications.py` — Customer-Facing Alerts (Multi-Guild)
+- `security_engine/` — SecurityScanAgent v6 (autonome Scans, Fixer-Adapters, Activity-Monitor, Prompts)
 - `fail2ban.py` / `crowdsec.py` / `aide.py` / `docker.py` — Security-Integrationen
 
 ## Coding-Conventions
@@ -181,7 +183,7 @@ Worker-Konventionen:
 
 ## Statistik (Stand v5.1)
 
-20.000+ LoC, 150+ Tests, 3 PostgreSQL DBs (21+7+11 Tabellen), 4 Security-Integrationen, 15 Discord-Commands, 3 Monitored Projects (GuildScout, ZERODOX, AI Agents).
+20.000+ LoC, 161+ Tests, 3 PostgreSQL DBs (21+7+11 Tabellen), 4 Security-Integrationen, 19 Discord-Commands, 3 Monitored Projects (GuildScout, ZERODOX, AI Agents).
 
 ## Aktuelle Doku
 
@@ -190,8 +192,9 @@ Worker-Konventionen:
 - [docs/SETUP_GUIDE.md](./docs/SETUP_GUIDE.md)
 - [docs/reference/api.md](./docs/reference/api.md)
 - [DOCS_OVERVIEW.md](./DOCS_OVERVIEW.md)
-- [config/DO-NOT-TOUCH.md](./config/DO-NOT-TOUCH.md)
+- `config/DO-NOT-TOUCH.md` — fehlt im Repo (Issue #225, Maintainer liefert Inhalt)
 
 ## Letztes Update dieser Datei
 
 2026-04-26 — initiales Setup, generiert aus Worker-Bundle.
+2026-05-10 — Doku-Kurator: Verzeichnisstruktur korrigiert (orchestrator/, github_integration/, security_engine/, patch_notes/), Statistiken aktualisiert.
