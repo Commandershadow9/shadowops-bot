@@ -2,13 +2,39 @@
   "schema_version": 1,
   "repo": "Commandershadow9/shadowops-bot",
   "worker": "doku",
-  "last_run": null,
-  "last_drift_check": null,
-  "open_prs": [],
+  "last_run": "2026-05-10",
+  "last_drift_check": "2026-05-10",
+  "open_prs": [
+    {
+      "branch": "claude/doku/readme-api-drift",
+      "title": "docs: README + api.md Drift-Korrekturen",
+      "opened": "2026-05-10",
+      "status": "open"
+    },
+    {
+      "branch": "claude/doku/claude-md-structure-gaps",
+      "title": "docs: CLAUDE.md Verzeichnisstruktur-Update",
+      "opened": "2026-05-10",
+      "status": "open"
+    }
+  ],
   "tracked_files": {
-    "README.md": { "last_synced_with_code_at": null },
-    "CLAUDE.md": { "last_synced_with_code_at": null },
-    "docs/reference/api.md": { "last_synced_with_code_at": null }
+    "README.md": { "last_synced_with_code_at": "2026-05-10" },
+    "CLAUDE.md": { "last_synced_with_code_at": "2026-05-10" },
+    "docs/reference/api.md": { "last_synced_with_code_at": "2026-05-10" }
   },
-  "open_questions": []
+  "open_questions": [
+    {
+      "issue": 225,
+      "file": "config/DO-NOT-TOUCH.md",
+      "question": "Datei fehlt im Repo — Maintainer muss Inhalt liefern",
+      "opened": "2026-05-10"
+    }
+  ],
+  "notes": [
+    "README anti-bloat: 174 Zeilen (Highlights v3.1-v3.4) entfernt. README jetzt 617 Zeilen (war 773). Weitere Reduktion moeglich durch Kuerzen der Quick-Start-Section, aber inhaltlich riskant ohne Maintainer-Input.",
+    "api.md: Ollama komplett entfernt aus Config-Reference, get-ai-stats, Rate Limiting, Error Codes. Codex+Claude CLI Struktur eingepflegt.",
+    "7 fehlende Slash Commands ergaenzt in README und api.md: /docker, /agent-stats, /security-engine, /release-notes, /pending-notes, /mark-duplicate, /setup-customer-server.",
+    "Verzeichnisstruktur in README: orchestrator/ und github_integration/ als Directories markiert, security_engine/ und patch_notes/ ergaenzt, cogs-Liste vervollstaendigt, doppelter config/-Block entfernt, docs/API.md -> docs/reference/api.md korrigiert."
+  ]
 }

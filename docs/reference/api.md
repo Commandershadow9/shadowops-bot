@@ -159,16 +159,16 @@ Changes the auto-remediation approval mode.
 ### AI & Learning System Commands
 
 #### `/get-ai-stats`
-Shows AI provider status, fallback chain, and usage statistics.
+Shows AI provider status, failover chain, and usage statistics.
 
 **Permissions:** None
 **Parameters:** None
 **Returns:** Embed with:
-- Ollama status (enabled/disabled, model, URL)
-- Claude status (enabled/disabled, model)
-- OpenAI status (enabled/disabled, model)
-- Active fallback chain
+- Codex CLI status (model, last response time)
+- Claude CLI status (model, last response time)
+- Active failover chain
 - Request counts per provider
+- Token usage (last session)
 
 **Example:**
 ```
@@ -176,7 +176,7 @@ Shows AI provider status, fallback chain, and usage statistics.
 ```
 
 #### `/reload-context`
-Reloads all project context files (DO-NOT-TOUCH, INFRASTRUCTURE, PROJECT_*.md).
+Reloads all project context files (INFRASTRUCTURE, PROJECT_*.md).
 
 **Permissions:** Administrator
 **Parameters:** None
@@ -187,10 +187,74 @@ Reloads all project context files (DO-NOT-TOUCH, INFRASTRUCTURE, PROJECT_*.md).
 /reload-context
 ```
 
-**Use Cases:**
-- After updating DO-NOT-TOUCH.md
-- After modifying project documentation
-- After adding new infrastructure knowledge
+#### `/agent-stats`
+Shows agent learning statistics from the `agent_learning` database.
+
+**Permissions:** None
+**Parameters:** None
+**Returns:** Embed with learning metrics, feedback counts, few-shot example counts
+
+**Example:**
+```
+/agent-stats
+```
+
+#### `/security-engine`
+Shows Security Engine v6 status and statistics.
+
+**Permissions:** None
+**Parameters:** None
+**Returns:** Embed with scan status, circuit breaker state, finding counts, last scan time
+
+**Example:**
+```
+/security-engine
+```
+
+---
+
+### Patch Notes Commands
+
+#### `/release-notes [project]`
+Generates and publishes patch notes for a monitored project via the Pipeline v6.
+
+**Permissions:** Administrator
+**Parameters:**
+- `project` (required): Project name (e.g., guildscout, shadowops-bot)
+
+**Returns:** Confirmation; patch notes posted to configured Discord channels
+
+**Example:**
+```
+/release-notes guildscout
+```
+
+#### `/pending-notes`
+Shows commits that have been accumulated but not yet released as patch notes.
+
+**Permissions:** None
+**Parameters:** None
+**Returns:** List of pending commits per project with counts
+
+**Example:**
+```
+/pending-notes
+```
+
+#### `/mark-duplicate [parent_id] [child_id]`
+Marks a security finding as a duplicate of another finding (learning feedback).
+
+**Permissions:** Administrator
+**Parameters:**
+- `parent_id` (required): ID of the original finding
+- `child_id` (required): ID of the duplicate finding
+
+**Returns:** Confirmation of learning update
+
+**Example:**
+```
+/mark-duplicate 42 87
+```
 
 ---
 
@@ -232,6 +296,34 @@ Shows overview of all monitored projects.
 /alle-projekte
 ```
 
+#### `/setup-customer-server`
+Sets up monitoring channels on the current customer Discord server. Admin-only.
+
+**Permissions:** Administrator
+**Parameters:** None
+**Returns:** Confirmation with created channel IDs
+
+**Example:**
+```
+/setup-customer-server
+```
+
+---
+
+### Docker Commands
+
+#### `/docker`
+Shows the latest Docker security scan results from Trivy.
+
+**Permissions:** None
+**Parameters:** None
+**Returns:** Embed with vulnerabilities by severity (CRITICAL / HIGH / MEDIUM / LOW) and scan timestamp
+
+**Example:**
+```
+/docker
+```
+
 ---
 
 ## Configuration Reference
@@ -268,23 +360,29 @@ channels:
 # AI CONFIGURATION
 # ========================================
 ai:
-  ollama:
-    enabled: true                           # Enable Ollama (local AI)
-    url: http://localhost:11434             # Ollama API URL
-    model: phi3:mini                        # Model for regular analysis
-    model_critical: llama3.1                # Model for CRITICAL events
-    hybrid_models: true                     # Use different models by severity
-    request_delay_seconds: 4.0              # Rate limiting (seconds between requests)
+  enabled: true                             # Global AI toggle
 
-  anthropic:
-    enabled: false                          # Enable Claude
-    api_key: null                           # Anthropic API key
-    model: claude-3-5-sonnet-20241022       # Claude model
+  # Codex CLI (Primary engine — requires OpenAI Codex access)
+  codex:
+    cli_path: "codex"                       # Path to Codex CLI binary
+    models:
+      fast: "gpt-5.3-codex"                 # Fast analyses
+      standard: "gpt-5.3-codex"            # Standard analyses + Structured Output
+      thinking: "o3"                        # Complex planning tasks
 
-  openai:
-    enabled: false                          # Enable OpenAI
-    api_key: null                           # OpenAI API key
-    model: gpt-4o                           # OpenAI model
+  # Claude CLI (Fallback + Verify — requires Anthropic Claude access)
+  claude:
+    cli_path: "/home/user/.local/bin/claude"
+    models:
+      fast: "claude-sonnet-4-6"             # Fast analyses
+      standard: "claude-sonnet-4-6"         # Standard analyses
+      thinking: "claude-opus-4-6"           # Security Analyst sessions
+
+  # Timeouts in seconds
+  timeouts:
+    codex_seconds: 300                      # 5 min per Codex request
+    claude_seconds: 300                     # 5 min per Claude request
+    analyst_seconds: 1800                   # 30 min for Security Analyst sessions
 
 # ========================================
 # AUTO-REMEDIATION CONFIGURATION
@@ -873,9 +971,10 @@ CREATE INDEX idx_timestamp ON fixes(timestamp);
 - `Missing required field: discord.token` - Required config missing
 
 #### AI Service Errors
-- `No AI providers enabled` - All AI services disabled
-- `Ollama connection failed` - Cannot reach Ollama server
-- `AI request timeout` - AI provider took too long
+- `No AI providers enabled` - All AI services disabled (`ai.enabled: false`)
+- `Codex CLI not found` - `codex` binary not in PATH or wrong `ai.codex.cli_path`
+- `Claude CLI not found` - `claude` binary not found at configured `ai.claude.cli_path`
+- `AI request timeout` - Provider CLI timed out; bot retries with the other engine
 
 #### Deployment Errors
 - `Project not found in deployment config` - Unknown project
@@ -894,9 +993,9 @@ CREATE INDEX idx_timestamp ON fixes(timestamp);
 ## Rate Limiting
 
 ### AI Requests
-- **Ollama**: Configurable delay (`ai.ollama.request_delay_seconds`, default: 4.0s)
-- **Anthropic**: Built-in retry with exponential backoff (1s, 2s, 4s)
-- **OpenAI**: Built-in retry with exponential backoff (1s, 2s, 4s)
+- **Codex CLI**: Timeout per request (`ai.timeouts.codex_seconds`, default: 300s)
+- **Claude CLI**: Timeout per request (`ai.timeouts.claude_seconds`, default: 300s)
+- Both engines: Automatic failover to the other engine on timeout or error
 
 ### Discord Commands
 - **Global**: No built-in rate limiting (Discord handles this)
