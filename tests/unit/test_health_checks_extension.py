@@ -716,3 +716,189 @@ async def test_fetch_health_schema_v1_accepts_503_for_critical(tmp_path):
 
     assert body is not None
     assert body["status"] == "critical"
+
+
+# ════════════════════════════════════════════════════════════════════════
+# Welle 9.15b — Critical-Endpoint 5xx-Rate-Watch (2026-05-11)
+# ════════════════════════════════════════════════════════════════════════
+
+
+def _critical_endpoint_stats(
+    pattern: str,
+    total: int,
+    errors_5xx: int,
+    last_error: str | None = None,
+) -> dict:
+    """Helper: baut einen single-Endpoint-Stats-Block fuer Tests."""
+    error_rate = round((errors_5xx / total) * 100, 1) if total > 0 else 0.0
+    return {
+        "pattern": pattern,
+        "total": total,
+        "errors5xx": errors_5xx,
+        "errorRate": error_rate,
+        "lastError": last_error,
+    }
+
+
+def _health_stats_with_critical(endpoints: list[dict]) -> dict:
+    """Helper: Voller health-stats-Response inkl. criticalEndpoints-Block."""
+    return {
+        "timestamp": "2026-05-11T20:00:00Z",
+        "dbPool": {"saturationPercent": 5},
+        "failedLogins": {"count": 0, "windowMinutes": 5, "uniqueEmails": 0},
+        "criticalEndpoints": {
+            "windowMinutes": 5,
+            "alertThresholdPercent": 5,
+            "endpoints": endpoints,
+        },
+    }
+
+
+@pytest.mark.asyncio
+async def test_critical_endpoint_5xx_first_poll_no_alert():
+    """Welle 9.15b: einzelner Spike (1 konsekutiver Poll) löst KEINEN Alert."""
+    monitor, project, channel = _build_monitor_with_api()
+
+    stats = _health_stats_with_critical([
+        _critical_endpoint_stats("/api/onboarding", total=100, errors_5xx=20, last_error="2026-05-11T20:00:00Z"),
+    ])
+    monitor._fetch_app_health_stats = AsyncMock(return_value=stats)
+
+    await monitor._check_critical_endpoint_5xx_rate(project)
+
+    # Konsekutive=1, required=2 -> noch kein Alert
+    channel.send.assert_not_called()
+
+
+@pytest.mark.asyncio
+async def test_critical_endpoint_5xx_consecutive_polls_trigger_alert():
+    """Welle 9.15b: 2 konsekutive Polls > Schwelle löst Alert in #🚨-critical aus."""
+    monitor, project, channel = _build_monitor_with_api()
+
+    stats = _health_stats_with_critical([
+        _critical_endpoint_stats("/api/onboarding", total=100, errors_5xx=20, last_error="2026-05-11T20:00:00Z"),
+    ])
+    monitor._fetch_app_health_stats = AsyncMock(return_value=stats)
+
+    # 1. Poll: noch kein Alert, aber Counter=1
+    await monitor._check_critical_endpoint_5xx_rate(project)
+    # Min-Intervall umgehen für 2. Poll
+    monitor._health_check_last_run[f"{project.name}:critical_endpoint_5xx"] = (
+        datetime.now(timezone.utc) - timedelta(minutes=2)
+    )
+    # 2. Poll: Counter=2 >= required=2 -> Alert
+    await monitor._check_critical_endpoint_5xx_rate(project)
+
+    channel.send.assert_called_once()
+    sent_embed = channel.send.call_args.kwargs["embed"]
+    assert "Critical-Endpoint 5xx-Rate-Alert" in sent_embed.title
+    # 20% > 50% Schwelle wäre CRITICAL, hier ist 20% < 50% -> HIGH
+    assert sent_embed.color.value == Severity.HIGH.color
+
+
+@pytest.mark.asyncio
+async def test_critical_endpoint_5xx_extreme_rate_critical_severity():
+    """Welle 9.15b: errorRate > 50% -> CRITICAL-Severity (nicht HIGH)."""
+    monitor, project, channel = _build_monitor_with_api()
+
+    stats = _health_stats_with_critical([
+        _critical_endpoint_stats("/api/onboarding", total=100, errors_5xx=80, last_error="2026-05-11T20:00:00Z"),
+    ])
+    monitor._fetch_app_health_stats = AsyncMock(return_value=stats)
+
+    # 2 konsekutive Polls
+    await monitor._check_critical_endpoint_5xx_rate(project)
+    monitor._health_check_last_run[f"{project.name}:critical_endpoint_5xx"] = (
+        datetime.now(timezone.utc) - timedelta(minutes=2)
+    )
+    await monitor._check_critical_endpoint_5xx_rate(project)
+
+    channel.send.assert_called_once()
+    sent_embed = channel.send.call_args.kwargs["embed"]
+    assert sent_embed.color.value == Severity.CRITICAL.color
+
+
+@pytest.mark.asyncio
+async def test_critical_endpoint_5xx_below_threshold_no_alert():
+    """Welle 9.15b: errorRate <= Schwelle löst KEINEN Alert + reset Counter."""
+    monitor, project, channel = _build_monitor_with_api()
+
+    stats = _health_stats_with_critical([
+        _critical_endpoint_stats("/api/onboarding", total=200, errors_5xx=3),  # 1.5% < 5%
+    ])
+    monitor._fetch_app_health_stats = AsyncMock(return_value=stats)
+
+    await monitor._check_critical_endpoint_5xx_rate(project)
+    monitor._health_check_last_run[f"{project.name}:critical_endpoint_5xx"] = (
+        datetime.now(timezone.utc) - timedelta(minutes=2)
+    )
+    await monitor._check_critical_endpoint_5xx_rate(project)
+
+    channel.send.assert_not_called()
+
+
+@pytest.mark.asyncio
+async def test_critical_endpoint_5xx_recovery_resets_counter():
+    """Welle 9.15b: Endpoint kehrt unter Schwelle zurück -> Counter reset."""
+    monitor, project, channel = _build_monitor_with_api()
+
+    # Poll 1: 20% 5xx -> Counter=1
+    stats_bad = _health_stats_with_critical([
+        _critical_endpoint_stats("/api/onboarding", total=100, errors_5xx=20),
+    ])
+    monitor._fetch_app_health_stats = AsyncMock(return_value=stats_bad)
+    await monitor._check_critical_endpoint_5xx_rate(project)
+    counter_key = f"{project.name}:/api/onboarding"
+    assert monitor._critical_endpoint_consecutive.get(counter_key, 0) == 1
+
+    # Poll 2: Recovery -> Counter sollte auf 0 resetten
+    stats_good = _health_stats_with_critical([
+        _critical_endpoint_stats("/api/onboarding", total=200, errors_5xx=2),  # 1% < 5%
+    ])
+    monitor._fetch_app_health_stats = AsyncMock(return_value=stats_good)
+    monitor._health_check_last_run[f"{project.name}:critical_endpoint_5xx"] = (
+        datetime.now(timezone.utc) - timedelta(minutes=2)
+    )
+    await monitor._check_critical_endpoint_5xx_rate(project)
+    assert monitor._critical_endpoint_consecutive.get(counter_key, 0) == 0
+
+    channel.send.assert_not_called()
+
+
+@pytest.mark.asyncio
+async def test_critical_endpoint_5xx_min_sample_size_protection():
+    """Welle 9.15b: < 10 Requests im Window -> KEIN Alert (Sample zu klein)."""
+    monitor, project, channel = _build_monitor_with_api()
+
+    # 1 von 1 = 100% Rate, aber Sample zu klein -> kein Alert
+    stats = _health_stats_with_critical([
+        _critical_endpoint_stats("/api/onboarding", total=1, errors_5xx=1),
+    ])
+    monitor._fetch_app_health_stats = AsyncMock(return_value=stats)
+
+    await monitor._check_critical_endpoint_5xx_rate(project)
+    monitor._health_check_last_run[f"{project.name}:critical_endpoint_5xx"] = (
+        datetime.now(timezone.utc) - timedelta(minutes=2)
+    )
+    await monitor._check_critical_endpoint_5xx_rate(project)
+
+    channel.send.assert_not_called()
+
+
+@pytest.mark.asyncio
+async def test_critical_endpoint_5xx_missing_block_no_crash():
+    """Welle 9.15b: Health-Stats ohne criticalEndpoints -> graceful skip."""
+    monitor, project, channel = _build_monitor_with_api()
+
+    # Stats ohne criticalEndpoints-Block (alter ZERODOX-Stand vor Welle 9.15b)
+    stats = {
+        "timestamp": "2026-05-11T20:00:00Z",
+        "dbPool": {"saturationPercent": 5},
+        "failedLogins": {"count": 0, "windowMinutes": 5, "uniqueEmails": 0},
+    }
+    monitor._fetch_app_health_stats = AsyncMock(return_value=stats)
+
+    # Darf nicht crashen
+    await monitor._check_critical_endpoint_5xx_rate(project)
+
+    channel.send.assert_not_called()
