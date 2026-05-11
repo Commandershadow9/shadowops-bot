@@ -38,6 +38,12 @@ HEALTH_CHECK_DEFAULTS: Dict[str, Any] = {
     # Phase 5c: App-Health-Checks (DB-Pool, Failed-Login)
     'db_pool_saturation_warn': 80,        # > 80% Pool-Sat -> Alert
     'failed_login_per_5min_warn': 100,    # > 100 Fehlversuche/5 Min -> Brute-Force-Verdacht
+    # Welle 9.15b (2026-05-11): Critical-Endpoint 5xx-Rate.
+    # Alert wenn errorRate > critical_endpoint_5xx_rate_warn (Prozent) auf
+    # >= critical_endpoint_5xx_consecutive konsekutiven Polls (Flake-Filter).
+    # 2 konsekutive Polls bei 60s-Intervall = ~2 Min Confirm-Window.
+    'critical_endpoint_5xx_rate_warn': 5,    # > 5% 5xx in 5-Min-Window -> Alert
+    'critical_endpoint_5xx_consecutive': 2,  # >= 2 konsekutive Polls -> Alert (Flake-Filter)
     # Phase 5d: Functional-Health-Check (Onboarding-Submit-Pfad)
     # Pollt /api/internal/onboarding-smoke. Bei `ready: false` -> sofort Alert.
     # Hintergrund: Customer-ID-Kollision blockierte 100% der Buchungen (PR #294)
@@ -57,6 +63,8 @@ HEALTH_CHECK_MIN_INTERVAL_SECONDS: Dict[str, int] = {
     # Phase 5c: App-Health-Checks via /api/internal/health-stats
     'db_pool_saturation': 5 * 60,   # 5 Min (Pool-Sat ist Trend, nicht Spike)
     'failed_login_rate': 60,        # 60s (Brute-Force kann schnell hochlaufen)
+    # Welle 9.15b: Critical-Endpoint 5xx-Rate via /api/internal/health-stats
+    'critical_endpoint_5xx': 60,    # 60s (Customer-Loss-kritisch, schnell erkennen)
     # Phase 5d: Functional-Health via /api/internal/onboarding-smoke
     'onboarding_smoke': 2 * 60,     # 2 Min (Customer-Loss-kritisch — schnell erkennen)
 }
@@ -72,6 +80,9 @@ HEALTH_CHECK_ALERT_COOLDOWNS: Dict[str, timedelta] = {
     # Phase 5c
     'db_pool_saturation': timedelta(minutes=30),  # Sat-Trend braucht keine sofortige Re-Alarmierung
     'failed_login_rate': timedelta(minutes=15),   # Brute-Force-Burst kann mehrfach kommen
+    # Welle 9.15b: Critical-Endpoint 5xx-Rate. Cooldown 15 Min — Production-Bug
+    # bleibt typischerweise > 15 Min, dann re-alarmieren falls noch nicht gefixt.
+    'critical_endpoint_5xx': timedelta(minutes=15),
     # Phase 5d: Functional-Smoke
     'onboarding_smoke': timedelta(minutes=5),     # Customer-Loss-kritisch — kurzer Cooldown,
                                                    # damit nach Recovery sofort wieder alarmierbar
@@ -430,6 +441,12 @@ class ProjectMonitor:
                 # Pollt /api/internal/onboarding-smoke. Bei ready:false -> sofort Alert.
                 # Faengt Customer-Loss-Bugs wie PR #294 binnen 2 Min statt User-Reports abwarten.
                 await self._check_onboarding_smoke(project)
+                # Welle 9.15b (2026-05-11): Critical-Endpoint 5xx-Rate-Watch.
+                # Pollt /api/internal/health-stats Response.criticalEndpoints. Wenn
+                # errorRate > critical_endpoint_5xx_rate_warn auf >= critical_endpoint_5xx_consecutive
+                # konsekutiven Polls -> Discord-Alert in #🚨-critical.
+                # Schliesst Luecke: Buchungs-Endpoint defekt, niemand merkt, Kunden verloren.
+                await self._check_critical_endpoint_5xx_rate(project)
 
                 await asyncio.sleep(project.check_interval)
 
@@ -2171,6 +2188,144 @@ class ProjectMonitor:
             )
         else:
             self._clear_health_alert_cooldown(project, 'failed_login_rate')
+
+    # === Welle 9.15b — Critical-Endpoint 5xx-Rate-Watch (2026-05-11) ===
+    # Pollt /api/internal/health-stats Response.criticalEndpoints.
+    # Loest Alert wenn ein Endpoint > critical_endpoint_5xx_rate_warn (default 5%)
+    # auf >= critical_endpoint_5xx_consecutive (default 2) konsekutiven Polls.
+    # Hintergrund: Buchungs-Endpoint war ueber Tage defekt, niemand merkte, Kunden
+    # verloren. Welle 9.15a (Synthetic-Monitor) faengt funktional broken Endpoints,
+    # Welle 9.15b faengt "Endpoint antwortet aber mit 500 fuer echte User".
+
+    async def _check_critical_endpoint_5xx_rate(self, project: ProjectStatus) -> None:
+        """
+        Critical-Endpoint 5xx-Rate-Watch (Welle 9.15b, Issue: User-Anforderung 2026-05-11).
+
+        Schwelle: errorRate > critical_endpoint_5xx_rate_warn (default 5%) auf
+                  >= critical_endpoint_5xx_consecutive (default 2) konsekutiven Polls.
+        Channel:  🚨-critical (1441655480840617994), key='critical'.
+        Severity: HIGH (CRITICAL bei errorRate > 50%).
+        Cooldown: 15 Min.
+        Frequenz: alle 60s.
+
+        Datenquelle: ZERODOX /api/internal/health-stats Response.criticalEndpoints.
+        Endpoints sind in web/src/lib/critical-endpoint-recorder.ts gepflegt:
+        /api/onboarding, /api/admin/customers, /api/portal/invoice, /api/auth/magic-link.
+
+        Flake-Filter: einzelner kurzer Spike (z.B. Deploy-Restart, 1 Bot-Hit auf
+        Maintenance) triggert KEINEN Alert. Erst bei 2 konsekutiven Polls > Schwelle
+        wird alarmiert. Bei errorRate <= Schwelle: Zaehler reset.
+        """
+        if not self._should_run_health_check(project, 'critical_endpoint_5xx'):
+            return
+        self._mark_health_check_ran(project, 'critical_endpoint_5xx')
+
+        stats = await self._fetch_app_health_stats(project)
+        if not stats:
+            return
+
+        block = stats.get('criticalEndpoints')
+        if not isinstance(block, dict):
+            # Health-Stats-Endpoint exposed (noch) keine criticalEndpoints —
+            # alter ZERODOX-Stand, ueberspringen ohne Fehler.
+            return
+
+        endpoints = block.get('endpoints')
+        if not isinstance(endpoints, list):
+            return
+
+        # Schwellen lesen — projekt-spezifisch oder default.
+        threshold_percent = float(
+            self._get_health_threshold(project, 'critical_endpoint_5xx_rate_warn')
+        )
+        required_consecutive = int(
+            self._get_health_threshold(project, 'critical_endpoint_5xx_consecutive')
+        )
+        window_minutes = block.get('windowMinutes', 5)
+
+        # Pro-Endpoint Konsekutive-Counter via per-Project-State.
+        # Key: f"{project.name}:{pattern}" damit Multi-Project-Setups sich nicht stoeren.
+        if not hasattr(self, '_critical_endpoint_consecutive'):
+            self._critical_endpoint_consecutive: Dict[str, int] = {}
+
+        for endpoint in endpoints:
+            if not isinstance(endpoint, dict):
+                continue
+            pattern = endpoint.get('pattern')
+            if not isinstance(pattern, str):
+                continue
+            try:
+                total = int(endpoint.get('total', 0))
+                errors_5xx = int(endpoint.get('errors5xx', 0))
+                error_rate = float(endpoint.get('errorRate', 0))
+            except (TypeError, ValueError):
+                continue
+            last_error = endpoint.get('lastError')
+
+            counter_key = f"{project.name}:{pattern}"
+
+            # Endpoints ohne Traffic koennen kein 5xx-Problem haben — Counter reset.
+            # Verhindert False-Positive nach langer Idle-Zeit + plotzlicher 1-Request-5xx.
+            # Minimum-Sample: 10 Requests im Window damit Statistik tragfaehig ist
+            # (1 von 1 = 100% Rate ist nicht aussagekraeftig).
+            MIN_SAMPLE_SIZE = 10
+            if total < MIN_SAMPLE_SIZE or error_rate <= threshold_percent:
+                if counter_key in self._critical_endpoint_consecutive:
+                    self._critical_endpoint_consecutive[counter_key] = 0
+                continue
+
+            # Schwelle ueberschritten -> Counter inkrementieren.
+            self._critical_endpoint_consecutive[counter_key] = (
+                self._critical_endpoint_consecutive.get(counter_key, 0) + 1
+            )
+            consecutive = self._critical_endpoint_consecutive[counter_key]
+
+            if consecutive < required_consecutive:
+                # Noch unter Confirm-Schwelle — nur loggen, kein Alert.
+                self.logger.info(
+                    f"[9.15b] {project.name} {pattern}: errorRate={error_rate}% "
+                    f"({errors_5xx}/{total}) > {threshold_percent}% Schwelle "
+                    f"({consecutive}/{required_consecutive} konsekutive Polls)"
+                )
+                continue
+
+            # >= Confirm-Schwelle erreicht -> Discord-Alert.
+            severity = Severity.CRITICAL if error_rate > 50 else Severity.HIGH
+            await self._send_health_alert(
+                project=project,
+                check_type='critical_endpoint_5xx',
+                title=f"🚨 Critical-Endpoint 5xx-Rate-Alert — {project.name}",
+                description=(
+                    f"**{pattern}** liefert **{error_rate}% 5xx** "
+                    f"({errors_5xx} von {total} Requests in {window_minutes} Min, "
+                    f"{consecutive} konsekutive Polls).\n\n"
+                    f"Production-Bug oder Outage. Sofort Logs pruefen + ggf. Rollback "
+                    f"via `bash scripts/deploy.sh --rollback`.\n\n"
+                    f"Frueh-Warnsystem (Welle 9.15b) — bevor Kunden klagen."
+                ),
+                severity=severity,
+                fields=[
+                    {"name": "Endpoint", "value": f"`{pattern}`", "inline": False},
+                    {"name": "5xx-Rate", "value": f"{error_rate}%", "inline": True},
+                    {"name": "Schwelle", "value": f"> {threshold_percent}%", "inline": True},
+                    {"name": "Window", "value": f"{window_minutes} Min", "inline": True},
+                    {"name": "Total / 5xx", "value": f"{total} / {errors_5xx}", "inline": True},
+                    {"name": "Konsekutive", "value": f"{consecutive}/{required_consecutive}", "inline": True},
+                    {"name": "Last Error", "value": str(last_error) if last_error else "—", "inline": True},
+                    {
+                        "name": "Action",
+                        "value": "Logs pruefen + ggf. Rollback via `deploy.sh --rollback`",
+                        "inline": False,
+                    },
+                ],
+                channel_key='critical',
+                fallback_channel_id=1441655480840617994,
+            )
+
+            # Nach erfolgreichem Alert: Counter reset damit Cooldown-Phase startet
+            # und nicht direkt beim naechsten Tick erneut alarmiert wird.
+            # (Cooldown selbst wird durch _send_health_alert verwaltet.)
+            self._critical_endpoint_consecutive[counter_key] = 0
 
     # === Phase 5d — Functional-Health-Check (Onboarding-Submit-Pfad) ===
     # Faengt Customer-Loss-Bugs wie PR #294 (Customer-ID-Kollision):
