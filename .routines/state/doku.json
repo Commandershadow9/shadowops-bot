@@ -2,13 +2,44 @@
   "schema_version": 1,
   "repo": "Commandershadow9/shadowops-bot",
   "worker": "doku",
-  "last_run": null,
-  "last_drift_check": null,
-  "open_prs": [],
+  "last_run": "2026-05-11T00:00:00Z",
+  "last_drift_check": "2026-05-11T00:00:00Z",
+  "open_prs": [
+    {
+      "branch": "claude/jolly-hamilton-Sqi4b",
+      "title": "docs: Drift-Korrekturen — Slash Commands, Verzeichnisstruktur, Integrationen",
+      "topics": ["slash-commands", "directory-structure", "integrations-table"],
+      "created_at": "2026-05-11T00:00:00Z"
+    }
+  ],
   "tracked_files": {
-    "README.md": { "last_synced_with_code_at": null },
-    "CLAUDE.md": { "last_synced_with_code_at": null },
-    "docs/reference/api.md": { "last_synced_with_code_at": null }
+    "README.md": {
+      "last_synced_with_code_at": "2026-05-11T00:00:00Z",
+      "changes": [
+        "Added missing slash commands: /docker, /agent-stats, /security-engine, /release-notes, /pending-notes, /mark-duplicate, /setup-customer-server",
+        "Fixed directory structure: removed duplicate config/ block, fixed github_integration and orchestrator as package dirs, added missing cogs",
+        "Updated Discord Commands count: 15 -> 19"
+      ]
+    },
+    "CLAUDE.md": {
+      "last_synced_with_code_at": "2026-05-11T00:00:00Z",
+      "changes": [
+        "Fixed orchestrator.py -> orchestrator/ (package)",
+        "Fixed github_integration.py -> github_integration/ (package)",
+        "Added security_engine/ and fixers/ to integrations list"
+      ]
+    },
+    "docs/reference/api.md": {
+      "last_synced_with_code_at": null,
+      "notes": "Issue #228 filed: AI config section shows old Ollama format, KnowledgeBase API shows SQLite instead of PostgreSQL"
+    }
   },
-  "open_questions": []
+  "open_questions": [
+    {
+      "issue": 228,
+      "url": "https://github.com/Commandershadow9/shadowops-bot/issues/228",
+      "topic": "docs/reference/api.md veraltet — Ollama-Config + SQLite-Schema",
+      "filed_at": "2026-05-11T00:00:00Z"
+    }
+  ]
 }

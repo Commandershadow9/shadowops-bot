@@ -75,12 +75,14 @@ shadowops-bot/
 - `ai_engine.py` — Dual-Engine Router (Codex Primary, Claude Fallback)
 - `smart_queue.py` — Analyse-Pool (Semaphore=3) + serieller Fix-Lock + Circuit Breaker
 - `verification.py` — Pre-Push Pipeline (Confidence ≥85% → Tests → Claude-Verify → KB-Check)
-- `orchestrator.py` — Multi-Event-Batching (10s Fenster) + Approval-Flow
+- `orchestrator/` — Multi-Event-Batching (10s Fenster) + Approval-Flow (Paket)
 - `event_watcher.py` — Lauscht auf Fail2ban/CrowdSec/AIDE/Docker-Events
 - `knowledge_base.py` — SQL Learning (fix_attempts, fix_verifications, finding_quality, scan_coverage)
 - `code_analyzer.py` — Code Structure Analyzer (Git-History + AST)
 - `context_manager.py` — RAG: Project-Context + DO-NOT-TOUCH + Infra
-- `github_integration.py` — Webhooks mit HMAC-SHA256 Verification
+- `github_integration/` — Webhooks mit HMAC-SHA256 Verification + Jules SecOps Workflow (Paket)
+- `security_engine/` — SecurityScanAgent v6: autonome Scans, Fix-Execution, Learning-Bridge (Paket)
+- `fixers/` — Fix-Adapter (WAL-G, Fail2ban, ...)
 - `project_monitor.py` — Multi-Project Health-Checks
 - `deployment_manager.py` — Auto-Deploy mit Backup/Rollback
 - `incident_manager.py` — Incident Threads in Discord
