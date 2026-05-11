@@ -200,6 +200,275 @@ class TestPullRequestHandling:
         await integration.handle_pull_request_event(payload)
 
         integration._trigger_deployment.assert_called_once()
+        # Welle 9.10 (2026-05-11): _trigger_deployment muss repo_full_name + full_sha bekommen
+        call_kwargs = integration._trigger_deployment.call_args.kwargs
+        assert call_kwargs.get('repo_full_name') is None or 'full_name' not in payload['repository']
+        assert call_kwargs.get('full_sha') == 'abc123def456'
+
+    @pytest.mark.asyncio
+    async def test_handle_pr_merged_passes_full_name_and_sha(self, mock_bot, enabled_config):
+        """Welle 9.10: handle_pr_event muss repo_full_name + full_sha durchreichen."""
+        integration = GitHubIntegration(mock_bot, enabled_config)
+        integration._send_pr_notification = AsyncMock()
+        integration._trigger_deployment = AsyncMock()
+
+        payload = {
+            'action': 'closed',
+            'repository': {
+                'name': 'ZERODOX',
+                'full_name': 'Commandershadow9/ZERODOX',
+            },
+            'pull_request': {
+                'number': 42,
+                'title': 'Feature PR',
+                'user': {'login': 'developer'},
+                'html_url': 'https://github.com/Commandershadow9/ZERODOX/pull/42',
+                'head': {'ref': 'feat/x'},
+                'base': {'ref': 'main'},
+                'merged': True,
+                'merge_commit_sha': 'a' * 40,
+            }
+        }
+
+        await integration.handle_pull_request_event(payload)
+
+        integration._trigger_deployment.assert_called_once()
+        kwargs = integration._trigger_deployment.call_args.kwargs
+        assert kwargs['repo_full_name'] == 'Commandershadow9/ZERODOX'
+        assert kwargs['full_sha'] == 'a' * 40
+
+
+class TestWelle910WaitForCI:
+    """Welle 9.10 (2026-05-11): _wait_for_ci_completion + _trigger_deployment Wait-Logic."""
+
+    @pytest.fixture
+    def cfg_with_projects(self, mock_bot):
+        cfg = MagicMock(spec=Config)
+        cfg.github = {
+            'enabled': True,
+            'webhook_secret': 'secret',
+            'auto_deploy': True,
+            'deploy_branches': ['main'],
+        }
+        cfg.channels = {'deployment_log': 99999, 'code_fixes': 99998}
+        cfg.projects = {
+            'zerodox': {
+                'enabled': True,
+                'ci_workflows': ['Web Quality'],
+                'ci_channel_id': 88888,
+            },
+        }
+        return cfg
+
+    @pytest.mark.asyncio
+    async def test_wait_returns_no_workflows_when_empty(self, mock_bot, cfg_with_projects):
+        integration = GitHubIntegration(mock_bot, cfg_with_projects)
+        result = await integration._wait_for_ci_completion(
+            repo_full_name='Commandershadow9/ZERODOX',
+            merged_sha='a' * 40,
+            workflow_names=[],
+            max_wait_min=1,
+        )
+        assert result == 'no_workflows'
+
+    @pytest.mark.asyncio
+    async def test_wait_returns_success_when_all_completed(self, mock_bot, cfg_with_projects):
+        integration = GitHubIntegration(mock_bot, cfg_with_projects)
+        integration._fetch_workflow_runs_for_sha = AsyncMock(return_value={
+            'workflow_runs': [
+                {
+                    'name': 'Web Quality',
+                    'status': 'completed',
+                    'conclusion': 'success',
+                    'created_at': '2026-05-11T18:00:00Z',
+                    'path': '.github/workflows/web-quality.yml',
+                },
+            ],
+        })
+        result = await integration._wait_for_ci_completion(
+            repo_full_name='Commandershadow9/ZERODOX',
+            merged_sha='a' * 40,
+            workflow_names=['Web Quality'],
+            max_wait_min=1,
+        )
+        assert result == 'success'
+
+    @pytest.mark.asyncio
+    async def test_wait_returns_failure_on_failed_workflow(self, mock_bot, cfg_with_projects):
+        integration = GitHubIntegration(mock_bot, cfg_with_projects)
+        integration._fetch_workflow_runs_for_sha = AsyncMock(return_value={
+            'workflow_runs': [
+                {
+                    'name': 'Web Quality',
+                    'status': 'completed',
+                    'conclusion': 'failure',
+                    'created_at': '2026-05-11T18:00:00Z',
+                    'path': '.github/workflows/web-quality.yml',
+                },
+            ],
+        })
+        result = await integration._wait_for_ci_completion(
+            repo_full_name='Commandershadow9/ZERODOX',
+            merged_sha='a' * 40,
+            workflow_names=['Web Quality'],
+            max_wait_min=1,
+        )
+        assert result == 'failure'
+
+    @pytest.mark.asyncio
+    async def test_wait_uses_latest_run_per_workflow(self, mock_bot, cfg_with_projects):
+        """Re-run scenario: ein failed Run + ein successful Re-Run → success."""
+        integration = GitHubIntegration(mock_bot, cfg_with_projects)
+        integration._fetch_workflow_runs_for_sha = AsyncMock(return_value={
+            'workflow_runs': [
+                {
+                    'name': 'Web Quality',
+                    'status': 'completed',
+                    'conclusion': 'failure',
+                    'created_at': '2026-05-11T18:00:00Z',
+                    'path': '.github/workflows/web-quality.yml',
+                },
+                {
+                    'name': 'Web Quality',
+                    'status': 'completed',
+                    'conclusion': 'success',
+                    'created_at': '2026-05-11T18:10:00Z',  # later
+                    'path': '.github/workflows/web-quality.yml',
+                },
+            ],
+        })
+        result = await integration._wait_for_ci_completion(
+            repo_full_name='Commandershadow9/ZERODOX',
+            merged_sha='a' * 40,
+            workflow_names=['Web Quality'],
+            max_wait_min=1,
+        )
+        assert result == 'success'
+
+    @pytest.mark.asyncio
+    async def test_wait_returns_timeout_when_pending_too_long(self, mock_bot, cfg_with_projects, monkeypatch):
+        """Timeout-Pfad: API liefert immer pending → timeout zurueck."""
+        integration = GitHubIntegration(mock_bot, cfg_with_projects)
+        integration._fetch_workflow_runs_for_sha = AsyncMock(return_value={
+            'workflow_runs': [
+                {
+                    'name': 'Web Quality',
+                    'status': 'in_progress',
+                    'conclusion': None,
+                    'created_at': '2026-05-11T18:00:00Z',
+                    'path': '.github/workflows/web-quality.yml',
+                },
+            ],
+        })
+
+        # asyncio.sleep stubben damit Test schnell laeuft
+        sleep_calls = []
+
+        async def fast_sleep(seconds):
+            sleep_calls.append(seconds)
+
+        monkeypatch.setattr('integrations.github_integration.ci_mixin.asyncio.sleep', fast_sleep)
+
+        # time.monotonic stubben damit Schleife nach 2 Iterationen abbricht
+        # Sequence: 0 (deadline calc), 0 (loop entry), then advance past deadline
+        times = iter([0.0, 0.0, 1000.0, 1000.0])
+
+        def fake_monotonic():
+            try:
+                return next(times)
+            except StopIteration:
+                return 1000.0
+
+        monkeypatch.setattr('integrations.github_integration.ci_mixin.time.monotonic', fake_monotonic)
+
+        result = await integration._wait_for_ci_completion(
+            repo_full_name='Commandershadow9/ZERODOX',
+            merged_sha='a' * 40,
+            workflow_names=['Web Quality'],
+            max_wait_min=1,
+        )
+        assert result == 'timeout'
+
+    @pytest.mark.asyncio
+    async def test_trigger_deployment_blocks_on_failure(self, mock_bot, cfg_with_projects):
+        """deploy.sh darf NICHT laufen wenn CI failed."""
+        integration = GitHubIntegration(mock_bot, cfg_with_projects)
+        integration.deployment_manager = MagicMock()
+        integration.deployment_manager.deploy_project = AsyncMock(return_value={'success': True})
+        integration._wait_for_ci_completion = AsyncMock(return_value='failure')
+        integration._send_ci_wait_alert = AsyncMock()
+
+        await integration._trigger_deployment(
+            repo_name='zerodox',
+            branch='main',
+            commit_sha='abc1234',
+            repo_full_name='Commandershadow9/ZERODOX',
+            full_sha='a' * 40,
+        )
+
+        integration.deployment_manager.deploy_project.assert_not_called()
+        integration._send_ci_wait_alert.assert_called_once()
+        kwargs = integration._send_ci_wait_alert.call_args.kwargs
+        assert kwargs['outcome'] == 'failure'
+
+    @pytest.mark.asyncio
+    async def test_trigger_deployment_blocks_on_timeout(self, mock_bot, cfg_with_projects):
+        """deploy.sh darf NICHT laufen wenn CI Timeout."""
+        integration = GitHubIntegration(mock_bot, cfg_with_projects)
+        integration.deployment_manager = MagicMock()
+        integration.deployment_manager.deploy_project = AsyncMock(return_value={'success': True})
+        integration._wait_for_ci_completion = AsyncMock(return_value='timeout')
+        integration._send_ci_wait_alert = AsyncMock()
+
+        await integration._trigger_deployment(
+            repo_name='zerodox',
+            branch='main',
+            commit_sha='abc1234',
+            repo_full_name='Commandershadow9/ZERODOX',
+            full_sha='a' * 40,
+        )
+
+        integration.deployment_manager.deploy_project.assert_not_called()
+        integration._send_ci_wait_alert.assert_called_once()
+        kwargs = integration._send_ci_wait_alert.call_args.kwargs
+        assert kwargs['outcome'] == 'timeout'
+
+    @pytest.mark.asyncio
+    async def test_trigger_deployment_proceeds_on_success(self, mock_bot, cfg_with_projects):
+        """deploy.sh MUSS laufen wenn CI success."""
+        integration = GitHubIntegration(mock_bot, cfg_with_projects)
+        integration.deployment_manager = MagicMock()
+        integration.deployment_manager.deploy_project = AsyncMock(return_value={'success': True})
+        integration._wait_for_ci_completion = AsyncMock(return_value='success')
+        integration._send_ci_wait_alert = AsyncMock()
+
+        await integration._trigger_deployment(
+            repo_name='zerodox',
+            branch='main',
+            commit_sha='abc1234',
+            repo_full_name='Commandershadow9/ZERODOX',
+            full_sha='a' * 40,
+        )
+
+        integration.deployment_manager.deploy_project.assert_called_once_with('zerodox', 'main')
+        integration._send_ci_wait_alert.assert_not_called()
+
+    @pytest.mark.asyncio
+    async def test_trigger_deployment_skips_wait_when_no_full_args(self, mock_bot, cfg_with_projects):
+        """Backward-Compat: alte Caller ohne repo_full_name/full_sha → kein Wait."""
+        integration = GitHubIntegration(mock_bot, cfg_with_projects)
+        integration.deployment_manager = MagicMock()
+        integration.deployment_manager.deploy_project = AsyncMock(return_value={'success': True})
+        integration._wait_for_ci_completion = AsyncMock()
+
+        await integration._trigger_deployment(
+            repo_name='zerodox',
+            branch='main',
+            commit_sha='abc1234',
+        )
+
+        integration._wait_for_ci_completion.assert_not_called()
+        integration.deployment_manager.deploy_project.assert_called_once()
 
 
 class TestReleaseHandling:

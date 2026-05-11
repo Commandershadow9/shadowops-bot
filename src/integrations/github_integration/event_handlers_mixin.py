@@ -111,11 +111,22 @@ class EventHandlersMixin:
             # If PR was merged to deployment branch, trigger deploy
             if action == 'closed' and pr.get('merged', False):
                 if target_branch in self.deploy_branches and self.auto_deploy_enabled:
-                    merge_commit_sha = pr['merge_commit_sha'][:7]
+                    # Welle 9.10 (2026-05-11): Volle SHA + repo_full_name an
+                    # _trigger_deployment durchreichen, damit wait-for-CI funktioniert.
+                    full_merge_sha = pr.get('merge_commit_sha') or ''
+                    merge_commit_sha = full_merge_sha[:7] if full_merge_sha else ''
+                    repo_full_name = payload.get('repository', {}).get('full_name')
                     self.logger.info(
-                        f"🚀 PR merged to {target_branch}, triggering deployment"
+                        f"🚀 PR merged to {target_branch}, triggering deployment "
+                        f"(wait-for-CI: repo={repo_full_name}, sha={merge_commit_sha})"
                     )
-                    await self._trigger_deployment(repo_name, target_branch, merge_commit_sha)
+                    await self._trigger_deployment(
+                        repo_name,
+                        target_branch,
+                        merge_commit_sha,
+                        repo_full_name=repo_full_name,
+                        full_sha=full_merge_sha,
+                    )
 
         except Exception as e:
             self.logger.error(f"❌ Error handling PR event: {e}", exc_info=True)
