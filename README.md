@@ -424,6 +424,8 @@ deployment:
   health_check_timeout: 30
 ```
 
+> **Welle 9.10 (2026-05-11) — Wait-for-CI vor Auto-Deploy:** Sobald ein PR auf einen `deploy_branches`-Branch gemergt wird, wartet der Bot vor dem Trigger von `deploy.sh` auf den Abschluss der in `projects.<name>.ci_workflows` konfigurierten Workflows (z.B. `["Web Quality"]`). Bei `failure`/`timeout` wird `deploy.sh` NICHT aufgerufen — stattdessen erscheint ein Alert im projekt-`ci_channel_id` oder `deployment_log`. Hard-Timeout 30 min (überschreibbar via `projects.<name>.ci_wait_max_min`). Exponential backoff 60s → 120s → 240s → cap 300s.
+
 **AI komplett deaktivieren (Monitoring + Patch Notes ohne KI):**
 - `ai.enabled: false`
 - `ai_learning.enabled: false`

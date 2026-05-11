@@ -4,12 +4,22 @@ CI polling and deployment methods for GitHubIntegration.
 
 import asyncio
 import logging
-from typing import Dict, Optional
+import time
+from datetime import datetime, timezone
+from typing import Dict, List, Literal, Optional
 
 import aiohttp
 import discord
 
 logger = logging.getLogger('shadowops')
+
+# Welle 9.10 (2026-05-11): Welche Conclusions als "Failure" gelten und
+# _trigger_deployment abbrechen (kein deploy.sh-Call).
+_CI_FAILURE_CONCLUSIONS = frozenset({"failure", "cancelled", "timed_out", "action_required", "startup_failure"})
+
+# Stati, die als "running" gelten — alle anderen Werte fallen durch
+# `status != 'completed'` weiter in den Poll-Loop.
+_CI_RUNNING_STATI = frozenset({"queued", "in_progress", "requested", "waiting", "pending"})
 
 
 class CIMixin:
@@ -151,14 +161,295 @@ class CIMixin:
             self.logger.error(f"❌ Fehler beim Laden des Workflow Runs: {e}", exc_info=True)
             return None
 
-    async def _trigger_deployment(self, repo_name: str, branch: str, commit_sha: str):
+    async def _fetch_workflow_runs_for_sha(
+        self,
+        repo_full_name: str,
+        head_sha: str,
+    ) -> Optional[Dict]:
+        """
+        Fetch workflow runs filtered by head_sha via GitHub REST API.
+
+        Welle 9.10 (2026-05-11): Wird von _wait_for_ci_completion genutzt, um
+        zu erkennen ob CI fuer den gemergten Commit fertig ist, bevor deploy.sh
+        getriggert wird.
+
+        Args:
+            repo_full_name: e.g. "Commandershadow9/ZERODOX"
+            head_sha: Full 40-char commit SHA (NICHT die 7-char Variante).
+
+        Returns:
+            dict from GitHub API, oder None bei Fehler.
+        """
+        if not repo_full_name or not head_sha:
+            return None
+
+        url = f"https://api.github.com/repos/{repo_full_name}/actions/runs?head_sha={head_sha}&per_page=50"
+        headers = {"Accept": "application/vnd.github+json"}
+        token = self._get_github_token()
+        if token:
+            headers["Authorization"] = f"token {token}"
+
+        try:
+            async with aiohttp.ClientSession(headers=headers) as session:
+                async with session.get(url, timeout=20) as resp:
+                    if resp.status != 200:
+                        body = await resp.text()
+                        self.logger.warning(
+                            f"⚠️ Workflow Runs fuer {repo_full_name}@{head_sha[:7]} "
+                            f"konnten nicht geladen werden ({resp.status}): {body[:200]}"
+                        )
+                        return None
+                    return await resp.json()
+        except Exception as e:
+            self.logger.error(
+                f"❌ Fehler beim Laden der Workflow Runs fuer {repo_full_name}@{head_sha[:7]}: {e}",
+                exc_info=True,
+            )
+            return None
+
+    async def _wait_for_ci_completion(
+        self,
+        repo_full_name: str,
+        merged_sha: str,
+        workflow_names: List[str],
+        max_wait_min: int = 30,
+    ) -> Literal["success", "failure", "timeout", "no_workflows"]:
+        """
+        Wait for required CI workflows on a given commit to complete.
+
+        Welle 9.10 (2026-05-11): Verhindert den Race Condition aus dem
+        58h-Vorfall: Bot triggert deploy.sh sofort bei PR-merge → deploy.sh
+        Pre-Flight-Gate sieht pending CI auf dem neuen SHA → exit 1.
+
+        Exponential backoff: 60s → 120s → 240s → cap 300s.
+
+        Args:
+            repo_full_name: e.g. "Commandershadow9/ZERODOX"
+            merged_sha: FULL 40-char commit SHA des Merge-Commits.
+            workflow_names: Liste von erlaubten workflow-Names (z.B. ["Web Quality"]).
+                            Match ist case-insensitive substring.
+            max_wait_min: Hard-timeout in Minuten. Default 30.
+
+        Returns:
+            "success"      — alle required Workflows haben conclusion=success
+            "failure"      — mind. 1 Workflow ist failed/cancelled/timed_out
+            "timeout"      — nach max_wait_min noch nicht alle completed
+            "no_workflows" — kein workflow_names konfiguriert → caller entscheidet
+        """
+        if not workflow_names:
+            self.logger.info(
+                f"ℹ️ _wait_for_ci_completion: Keine ci_workflows fuer {repo_full_name} "
+                f"konfiguriert — skip wait."
+            )
+            return "no_workflows"
+
+        if not repo_full_name or not merged_sha or len(merged_sha) < 7:
+            self.logger.warning(
+                f"⚠️ _wait_for_ci_completion: Ungueltige Args "
+                f"repo={repo_full_name!r} sha={merged_sha!r} — skip wait."
+            )
+            return "no_workflows"
+
+        workflow_names_lower = [str(n).lower().strip() for n in workflow_names if n]
+        deadline = time.monotonic() + max_wait_min * 60
+        poll_interval_s = 60
+        max_poll_interval_s = 300  # 5 min cap
+
+        self.logger.info(
+            f"⏳ Welle 9.10: warte auf CI-Completion fuer {repo_full_name}@{merged_sha[:7]} "
+            f"(workflows={workflow_names}, timeout={max_wait_min}min)"
+        )
+
+        while time.monotonic() < deadline:
+            data = await self._fetch_workflow_runs_for_sha(repo_full_name, merged_sha)
+            if data is None:
+                # API-Fehler / Rate-Limit — weiter pollen
+                await asyncio.sleep(poll_interval_s)
+                poll_interval_s = min(poll_interval_s * 2, max_poll_interval_s)
+                continue
+
+            all_runs = data.get("workflow_runs") or []
+
+            # Filter auf relevant: name matched workflow_names (case-insensitive, substring)
+            relevant = []
+            for run in all_runs:
+                run_name = str(run.get("name") or "").lower()
+                run_path = str(run.get("path") or "").lower()
+                for wf_name in workflow_names_lower:
+                    if not wf_name:
+                        continue
+                    if (
+                        wf_name == run_name
+                        or f"/{wf_name}.yml" in run_path
+                        or f"/{wf_name}.yaml" in run_path
+                    ):
+                        relevant.append(run)
+                        break
+
+            if not relevant:
+                self.logger.info(
+                    f"⏳ _wait_for_ci_completion: noch keine relevanten Workflows "
+                    f"fuer {merged_sha[:7]} sichtbar — weiter pollen ({poll_interval_s}s)..."
+                )
+                await asyncio.sleep(poll_interval_s)
+                poll_interval_s = min(poll_interval_s * 2, max_poll_interval_s)
+                continue
+
+            # Bestimme Status pro workflow_name: den NEUESTEN Run zaehlen
+            # (re-runs koennen mehrere Eintraege liefern).
+            latest_per_workflow: Dict[str, Dict] = {}
+            for run in relevant:
+                rname = str(run.get("name") or "").lower()
+                # Welle 9.10 Vorsicht: created_at kann fehlen; default leerer string sortiert
+                # frueh -> der ECHTE neueste ueberschreibt das.
+                created = run.get("created_at") or ""
+                existing = latest_per_workflow.get(rname)
+                if existing is None or created > (existing.get("created_at") or ""):
+                    latest_per_workflow[rname] = run
+
+            # Alle latest_per_workflow durchgehen
+            all_completed = True
+            any_failed = False
+            failed_run = None
+            pending_names = []
+            for rname, run in latest_per_workflow.items():
+                status = str(run.get("status") or "").lower()
+                conclusion = str(run.get("conclusion") or "").lower()
+
+                if status != "completed":
+                    all_completed = False
+                    pending_names.append(rname)
+                    continue
+
+                if conclusion in _CI_FAILURE_CONCLUSIONS:
+                    any_failed = True
+                    failed_run = run
+                    break
+
+            if any_failed:
+                self.logger.warning(
+                    f"❌ _wait_for_ci_completion: CI FAILED fuer {merged_sha[:7]} "
+                    f"(workflow={failed_run.get('name')}, conclusion={failed_run.get('conclusion')})"
+                )
+                return "failure"
+
+            if all_completed:
+                self.logger.info(
+                    f"✅ _wait_for_ci_completion: alle CI-Workflows fuer {merged_sha[:7]} "
+                    f"erfolgreich ({list(latest_per_workflow.keys())})"
+                )
+                return "success"
+
+            self.logger.info(
+                f"⏳ _wait_for_ci_completion: warte weiter auf {pending_names} "
+                f"fuer {merged_sha[:7]} (next poll in {poll_interval_s}s)"
+            )
+            await asyncio.sleep(poll_interval_s)
+            poll_interval_s = min(poll_interval_s * 2, max_poll_interval_s)
+
+        self.logger.warning(
+            f"⏰ _wait_for_ci_completion: TIMEOUT nach {max_wait_min}min "
+            f"fuer {repo_full_name}@{merged_sha[:7]}"
+        )
+        return "timeout"
+
+    async def _send_ci_wait_alert(
+        self,
+        outcome: Literal["failure", "timeout"],
+        repo_name: str,
+        repo_full_name: str,
+        branch: str,
+        merged_sha: str,
+        workflow_names: List[str],
+        max_wait_min: int,
+    ) -> None:
+        """
+        Welle 9.10 (2026-05-11): Discord-Alert bei abgebrochenem Deploy.
+        Postet in den projekt-spezifischen ci_channel_id (falls vorhanden)
+        oder fallback deployment_log channel.
+        """
+        try:
+            # Project config lookup (case-insensitive)
+            project_config = {}
+            for key in self.config.projects.keys():
+                if key.lower() == repo_name.lower():
+                    project_config = self.config.projects[key]
+                    break
+
+            ci_channel_id = project_config.get('ci_channel_id') if project_config else None
+            target_channel = None
+            if ci_channel_id:
+                target_channel = self.bot.get_channel(ci_channel_id)
+            if not target_channel:
+                target_channel = self.bot.get_channel(self.deployment_channel_id)
+            if not target_channel:
+                self.logger.warning(
+                    f"⚠️ _send_ci_wait_alert: kein Discord-Channel verfuegbar fuer {repo_name}"
+                )
+                return
+
+            if outcome == "failure":
+                title = f"🛑 {repo_name}: Deploy ABGEBROCHEN — CI rot"
+                color = 0xE74C3C
+                description = (
+                    f"Welle-9.10-Schutz: Mindestens einer der required CI-Workflows "
+                    f"({', '.join(workflow_names) or '—'}) hat fuer Commit "
+                    f"`{merged_sha[:7]}` mit Failure/Cancelled/TimedOut abgeschlossen.\n\n"
+                    f"**deploy.sh wurde NICHT getriggert.** Manueller Check noetig."
+                )
+            else:  # timeout
+                title = f"⏰ {repo_name}: Deploy zurueckgestellt — CI nicht durch"
+                color = 0xF1C40F
+                description = (
+                    f"Welle-9.10-Schutz: CI-Workflows ({', '.join(workflow_names) or '—'}) "
+                    f"sind nach {max_wait_min} Minuten fuer Commit `{merged_sha[:7]}` "
+                    f"noch nicht alle completed.\n\n"
+                    f"**deploy.sh wurde NICHT getriggert.** Sobald CI gruen ist, "
+                    f"deploy.sh manuell triggern."
+                )
+
+            embed = discord.Embed(
+                title=title,
+                color=color,
+                description=description,
+                timestamp=datetime.now(timezone.utc),
+            )
+            embed.add_field(name="Repository", value=repo_name, inline=True)
+            embed.add_field(name="Branch", value=branch, inline=True)
+            embed.add_field(name="Commit", value=merged_sha[:7], inline=True)
+            if repo_full_name:
+                actions_url = f"https://github.com/{repo_full_name}/actions?query=branch%3A{branch}"
+                embed.add_field(name="Actions", value=f"[Workflow-Runs]({actions_url})", inline=False)
+            embed.set_footer(text="ShadowOps-Bot • Welle 9.10 wait-for-CI")
+
+            await target_channel.send(embed=embed)
+        except Exception as e:
+            self.logger.error(
+                f"❌ _send_ci_wait_alert: Fehler beim Posten: {e}",
+                exc_info=True,
+            )
+
+    async def _trigger_deployment(
+        self,
+        repo_name: str,
+        branch: str,
+        commit_sha: str,
+        repo_full_name: Optional[str] = None,
+        full_sha: Optional[str] = None,
+    ):
         """
         Trigger deployment for a repository
 
+        Welle 9.10 (2026-05-11): Wartet auf CI-Completion bevor deploy.sh
+        getriggert wird. Verhindert Race Condition aus dem 58h-Vorfall.
+
         Args:
-            repo_name: Name of the repository
+            repo_name: Name of the repository (e.g. "ZERODOX")
             branch: Branch to deploy
-            commit_sha: Commit SHA being deployed
+            commit_sha: Commit SHA being deployed (typischerweise 7-char Short-SHA fuers Log)
+            repo_full_name: e.g. "Commandershadow9/ZERODOX". Wenn None, wird Wait
+                            uebersprungen (Backward-Compat fuer alte Caller).
+            full_sha: 40-char SHA. Wenn None, wird Wait uebersprungen.
         """
         if not self.deployment_manager:
             self.logger.warning("⚠️ No deployment manager configured")
@@ -176,6 +467,52 @@ class CIMixin:
             if not deploy_config.get('enabled', True):
                 self.logger.info(f"⏭️ Deployment disabled for {repo_name} - handled by CI/CD pipeline")
                 return
+
+        # Welle 9.10: Wait-for-CI BEFORE deploy.sh-Call (falls Args vollstaendig).
+        # Caller (handle_pr_event) MUSS repo_full_name + full_sha mitgeben um zu profitieren.
+        if repo_full_name and full_sha and project_config:
+            workflow_names = project_config.get('ci_workflows') or []
+            if workflow_names:
+                max_wait_min = int(project_config.get('ci_wait_max_min', 30))
+                outcome = await self._wait_for_ci_completion(
+                    repo_full_name=repo_full_name,
+                    merged_sha=full_sha,
+                    workflow_names=workflow_names,
+                    max_wait_min=max_wait_min,
+                )
+                if outcome == "failure":
+                    await self._send_ci_wait_alert(
+                        outcome="failure",
+                        repo_name=repo_name,
+                        repo_full_name=repo_full_name,
+                        branch=branch,
+                        merged_sha=full_sha,
+                        workflow_names=workflow_names,
+                        max_wait_min=max_wait_min,
+                    )
+                    return
+                if outcome == "timeout":
+                    await self._send_ci_wait_alert(
+                        outcome="timeout",
+                        repo_name=repo_name,
+                        repo_full_name=repo_full_name,
+                        branch=branch,
+                        merged_sha=full_sha,
+                        workflow_names=workflow_names,
+                        max_wait_min=max_wait_min,
+                    )
+                    return
+                # outcome == "success" oder "no_workflows" → weiter unten deployen
+            else:
+                self.logger.info(
+                    f"ℹ️ _trigger_deployment: kein ci_workflows fuer {repo_name} "
+                    f"konfiguriert — kein Wait, direkt deployen."
+                )
+        else:
+            self.logger.info(
+                f"ℹ️ _trigger_deployment: repo_full_name/full_sha fehlt fuer {repo_name} "
+                f"— skip Welle-9.10-Wait (Backward-Compat-Pfad)."
+            )
 
         try:
             self.logger.info(f"🚀 Starting deployment: {repo_name}@{commit_sha}")
