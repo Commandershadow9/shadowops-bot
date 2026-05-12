@@ -42,9 +42,10 @@
 shadowops-bot/
 ├── src/
 │   ├── bot.py                    # Haupt-Bot
-│   ├── cogs/                     # Slash-Commands (admin, inspector, monitoring)
+│   ├── cogs/                     # Slash-Commands (admin, inspector, monitoring, customer_setup, cron_heartbeat, phase_5e_health_aggregator)
 │   ├── integrations/             # Externe Systeme (siehe unten)
-│   └── utils/                    # config, logging, embeds, state
+│   ├── patch_notes/              # Patch-Notes-Pipeline v6 (5-Stufen State Machine: collect, classify, generate, validate, distribute)
+│   └── utils/                    # config, logging, embeds, state, health_server, circuit_breaker
 ├── tests/
 │   ├── unit/                     # 161+ Unit-Tests
 │   ├── integration/              # End-to-End-Workflows
@@ -86,6 +87,10 @@ shadowops-bot/
 - `incident_manager.py` — Incident Threads in Discord
 - `customer_notifications.py` — Customer-Facing Alerts (Multi-Guild)
 - `fail2ban.py` / `crowdsec.py` / `aide.py` / `docker.py` — Security-Integrationen
+- `security_engine/` — SecurityScanAgent (autonomer Scan-Agent): scan_agent, engine, db, executor, fixer_adapters, learning_bridge, prompts, circuit_breaker, models
+- `fixers/` — Spezialisierte Fixer: aide_fixer, crowdsec_fixer, fail2ban_fixer, trivy_fixer, walg_fixer
+- `ai_learning/` — Kontinuierliches Lernen: continuous_learning_agent, knowledge_db, knowledge_synthesizer
+- `analyst/` — Legacy Security Analyst (wird nicht mehr von Engine gestartet, bleibt als Referenz)
 
 ## Coding-Conventions
 
@@ -194,4 +199,4 @@ Worker-Konventionen:
 
 ## Letztes Update dieser Datei
 
-2026-04-26 — initiales Setup, generiert aus Worker-Bundle.
+2026-05-12 — Doku-Kurator: patch_notes/, security_engine/, fixers/, ai_learning/ in Verzeichnisstruktur ergaenzt; cogs/ und utils/ vervollstaendigt.
