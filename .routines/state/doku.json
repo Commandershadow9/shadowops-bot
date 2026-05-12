@@ -2,13 +2,65 @@
   "schema_version": 1,
   "repo": "Commandershadow9/shadowops-bot",
   "worker": "doku",
-  "last_run": null,
-  "last_drift_check": null,
-  "open_prs": [],
+  "last_run": "2026-05-12T00:00:00Z",
+  "last_drift_check": "2026-05-12T00:00:00Z",
+  "open_prs": [
+    {
+      "number": 232,
+      "branch": "claude/doku/drift-fixes",
+      "title": "docs: fix slash command list, broken links, and api.md drift",
+      "url": "https://github.com/Commandershadow9/shadowops-bot/pull/232",
+      "type": "drift",
+      "opened_at": "2026-05-12T00:00:00Z"
+    },
+    {
+      "number": 233,
+      "branch": "claude/doku/module-structure",
+      "title": "docs: add missing module groups to CLAUDE.md, remove stale highlights",
+      "url": "https://github.com/Commandershadow9/shadowops-bot/pull/233",
+      "type": "gaps",
+      "opened_at": "2026-05-12T00:00:00Z"
+    }
+  ],
   "tracked_files": {
-    "README.md": { "last_synced_with_code_at": null },
-    "CLAUDE.md": { "last_synced_with_code_at": null },
-    "docs/reference/api.md": { "last_synced_with_code_at": null }
+    "README.md": {
+      "last_synced_with_code_at": "2026-05-12T00:00:00Z",
+      "notes": "Slash commands updated (7 added), broken links fixed, old v3.x highlights removed, project tree fixed"
+    },
+    "CLAUDE.md": {
+      "last_synced_with_code_at": "2026-05-12T00:00:00Z",
+      "notes": "orchestrator/ and github_integration/ package paths fixed; config/ dir corrected; docs/ tree corrected; patch_notes/, security_engine/, fixers/, ai_learning/ added to integrations list; command count 15->19"
+    },
+    "docs/reference/api.md": {
+      "last_synced_with_code_at": "2026-05-12T00:00:00Z",
+      "notes": "Ollama removed from /get-ai-stats, rate limiting, and AI config block; KB changed from SQLite to PostgreSQL; discord.token env-var noted"
+    }
   },
-  "open_questions": []
+  "open_questions": [
+    {
+      "file": "src/integrations/knowledge_base.py",
+      "question": "KnowledgeBase.__init__ signature: does it accept 'dsn' or another parameter name? api.md updated to dsn but not verified against source.",
+      "opened_at": "2026-05-12T00:00:00Z"
+    }
+  ],
+  "findings_this_run": {
+    "drift": [
+      "7 slash commands missing from README (docker, agent-stats, security-engine, release-notes, pending-notes, mark-duplicate, setup-customer-server)",
+      "4 broken links in README header and footer (DOCS_OVERVIEW.md, docs/SECURITY_ANALYST.md, docs/SETUP_GUIDE.md, docs/plans/2026-03-18-*)",
+      "README project tree: cog list showed 3/7 files; duplicate config/ block; github_integration wrong (file vs package); docs/ tree wrong",
+      "api.md: Ollama referenced in /get-ai-stats, rate limiting, AI config — removed in v4.0",
+      "api.md: Knowledge Base described as SQLite — is PostgreSQL",
+      "CLAUDE.md: orchestrator.py and github_integration.py listed as flat files — are packages",
+      "CLAUDE.md: config/ dir listed DO-NOT-TOUCH.md, INFRASTRUCTURE.md, PROJECT_*.md — none exist",
+      "CLAUDE.md: docs/ tree listed SECURITY_ANALYST.md, SETUP_GUIDE.md — neither exists"
+    ],
+    "gaps": [
+      "src/patch_notes/ (5-stage pipeline, ~2100 LOC) missing from CLAUDE.md directory tree",
+      "security_engine/, fixers/, ai_learning/, analyst/ packages missing from CLAUDE.md integrations list",
+      "3 cog files and 2 util files missing from CLAUDE.md src/ tree"
+    ],
+    "anti_bloat": [
+      "README was 775 lines; Highlights v3.1-v3.4 (~173 lines, 4+ major versions old) removed"
+    ]
+  }
 }
