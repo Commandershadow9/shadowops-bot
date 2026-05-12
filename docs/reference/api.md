@@ -164,10 +164,9 @@ Shows AI provider status, fallback chain, and usage statistics.
 **Permissions:** None
 **Parameters:** None
 **Returns:** Embed with:
-- Ollama status (enabled/disabled, model, URL)
-- Claude status (enabled/disabled, model)
-- OpenAI status (enabled/disabled, model)
-- Active fallback chain
+- Codex CLI status (primary engine: model, timeout)
+- Claude CLI status (fallback engine: model, timeout)
+- Active routing configuration
 - Request counts per provider
 
 **Example:**
@@ -243,7 +242,7 @@ Shows overview of all monitored projects.
 # DISCORD CONFIGURATION
 # ========================================
 discord:
-  token: "YOUR_BOT_TOKEN_HERE"  # Discord bot token (REQUIRED)
+  # token: set via DISCORD_BOT_TOKEN env var (REQUIRED, never in config.yaml)
   guild_id: 123456789            # Discord server ID (REQUIRED)
 
 # ========================================
@@ -268,23 +267,30 @@ channels:
 # AI CONFIGURATION
 # ========================================
 ai:
-  ollama:
-    enabled: true                           # Enable Ollama (local AI)
-    url: http://localhost:11434             # Ollama API URL
-    model: phi3:mini                        # Model for regular analysis
-    model_critical: llama3.1                # Model for CRITICAL events
-    hybrid_models: true                     # Use different models by severity
-    request_delay_seconds: 4.0              # Rate limiting (seconds between requests)
+  enabled: true
 
-  anthropic:
-    enabled: false                          # Enable Claude
-    api_key: null                           # Anthropic API key
-    model: claude-3-5-sonnet-20241022       # Claude model
+  primary:
+    engine: codex
+    models:
+      fast: gpt-4o
+      standard: gpt-5.3-codex
+      thinking: o3
+    timeout: 300
 
-  openai:
-    enabled: false                          # Enable OpenAI
-    api_key: null                           # OpenAI API key
-    model: gpt-4o                           # OpenAI model
+  fallback:
+    engine: claude
+    cli_path: /home/user/.local/bin/claude
+    models:
+      fast: claude-sonnet-4-6
+      standard: claude-sonnet-4-6
+      thinking: claude-opus-4-6
+    timeout: 300
+
+  routing:
+    critical_analysis: { engine: codex, model: thinking }
+    high_analysis: { engine: codex, model: standard }
+    low_analysis: { engine: codex, model: fast }
+    critical_verify: { engine: claude, model: thinking }
 
 # ========================================
 # AUTO-REMEDIATION CONFIGURATION
@@ -346,7 +352,7 @@ github:
   enabled: false                            # Enable GitHub webhooks
   webhook_secret: "your_webhook_secret_here"  # HMAC secret for verification
   webhook_port: 8080                        # Webhook server port
-  auto_deploy: false                        # Auto-deploy on push (RECOMENDED: false for security)
+  auto_deploy: false                        # Auto-deploy on push (false — direct-push blocked by event_handlers_mixin)
   deploy_branches:                          # Branches that trigger deployments
     - main
     - master
@@ -582,8 +588,8 @@ Fallback auf das jeweils andere Modell bei Timeout oder leerer Response.
 ```python
 from src.integrations.knowledge_base import KnowledgeBase
 
-# Initialize
-kb = KnowledgeBase(db_path="data/knowledge_base.db")
+# Initialize (DSN from config.security_analyst_dsn or SECURITY_ANALYST_DB_URL env var)
+kb = KnowledgeBase(dsn=config.security_analyst_dsn)
 
 # Record a fix
 kb.record_fix(
@@ -791,29 +797,17 @@ event = SecurityEvent(
 
 ## Database Schema
 
-### Knowledge Base (SQLite)
+### Datenbanken
 
-#### fixes table
-```sql
-CREATE TABLE fixes (
-    id INTEGER PRIMARY KEY AUTOINCREMENT,
-    timestamp TEXT NOT NULL,
-    event_signature TEXT NOT NULL,  -- Unique event identifier
-    event_type TEXT NOT NULL,  -- vulnerability, intrusion, etc.
-    severity TEXT,
-    event_details TEXT,  -- JSON
-    strategy TEXT NOT NULL,  -- JSON: Full fix strategy
-    result TEXT NOT NULL,  -- 'success' or 'failed'
-    duration_seconds REAL,
-    error_message TEXT,
-    retry_count INTEGER DEFAULT 0
-);
+Der Bot nutzt drei PostgreSQL-Datenbanken (kein SQLite):
 
-CREATE INDEX idx_event_signature ON fixes(event_signature);
-CREATE INDEX idx_event_type ON fixes(event_type);
-CREATE INDEX idx_result ON fixes(result);
-CREATE INDEX idx_timestamp ON fixes(timestamp);
-```
+| Datenbank | Env-Var / Config-Key | Zweck |
+|-----------|---------------------|-------|
+| `security_analyst` | `SECURITY_ANALYST_DB_URL` / `security_analyst.database_dsn` | Fix-Attempts, Security-Findings, Jules PR Reviews |
+| `agent_learning` | `AGENT_LEARNING_DB_URL` / `agent_learning.database_dsn` | Few-Shot Examples, Quality Scores, Patch-Notes Training |
+| `seo_agent` | — | SEO-Audit-Daten (extern verwaltet) |
+
+Die Tabellen sind in `src/integrations/security_engine/db.py`, `src/integrations/knowledge_base.py` und `src/integrations/github_integration/jules_state.py` definiert. Fuer das vollstaendige Schema siehe die jeweiligen Modul-Dateien.
 
 ### Project Monitor State (JSON)
 
@@ -894,9 +888,8 @@ CREATE INDEX idx_timestamp ON fixes(timestamp);
 ## Rate Limiting
 
 ### AI Requests
-- **Ollama**: Configurable delay (`ai.ollama.request_delay_seconds`, default: 4.0s)
-- **Anthropic**: Built-in retry with exponential backoff (1s, 2s, 4s)
-- **OpenAI**: Built-in retry with exponential backoff (1s, 2s, 4s)
+- **Codex CLI (primary)**: subprocess call with `ai.primary.timeout` (default: 300s); SmartQueue Semaphore limits to 3 concurrent analysis tasks
+- **Claude CLI (fallback)**: subprocess call with `ai.fallback.timeout` (default: 300s); Circuit Breaker (5 failures → 1h pause)
 
 ### Discord Commands
 - **Global**: No built-in rate limiting (Discord handles this)
@@ -951,12 +944,12 @@ debug_mode: true
 
 ### Common API Issues
 
-**Knowledge Base locked:**
+**Knowledge Base not connecting:**
 ```bash
-# Check if database is locked
-sqlite3 data/knowledge_base.db "PRAGMA busy_timeout=5000;"
+# Check PostgreSQL connection
+psql $SECURITY_ANALYST_DB_URL -c "SELECT 1"
 
-# If still locked, restart bot
+# Restart bot
 sudo systemctl restart shadowops-bot
 ```
 

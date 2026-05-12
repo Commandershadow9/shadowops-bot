@@ -4,11 +4,10 @@
 
 **ShadowOps** ist ein **vollständig autonomer Security Guardian** mit lernfähigem AI Security Analyst, KI-gesteuerter Auto-Remediation, adaptiver Session-Steuerung und wachsender Knowledge-DB — kein statischer Scanner, sondern ein **System das aus seinen Erfahrungen lernt und immer besser wird**.
 
-> 📖 **Security Analyst Doku:** [docs/SECURITY_ANALYST.md](./docs/SECURITY_ANALYST.md)
-> 📚 **Dokumentations-Übersicht:** [DOCS_OVERVIEW.md](./DOCS_OVERVIEW.md)
-> 🔧 **API Dokumentation:** [docs/reference/api.md](./docs/reference/api.md)
-> 🚀 **Setup Guide:** [docs/SETUP_GUIDE.md](./docs/SETUP_GUIDE.md)
-> 📐 **Learning Pipeline Design:** [docs/plans/2026-03-18-analyst-learning-pipeline-design.md](./docs/plans/2026-03-18-analyst-learning-pipeline-design.md)
+> **API Dokumentation:** [docs/reference/api.md](./docs/reference/api.md)
+> **Setup Guide:** [docs/operations/setup.md](./docs/operations/setup.md)
+> **Architecture Decisions:** [docs/adr/](./docs/adr/)
+> **Runbooks:** [docs/runbooks/](./docs/runbooks/)
 
 ## ⚡ Highlights v5.1
 
@@ -250,19 +249,30 @@ projects:
 - `/threats` - Letzte erkannte Bedrohungen
 - `/bans` - Aktuell gebannte IPs (Fail2ban + CrowdSec)
 - `/aide` - AIDE Integrity Check Status
+- `/docker` - Letzte Docker-Scan-Ergebnisse (Trivy)
 
 #### Auto-Remediation
 - `/remediation-stats` - Auto-Remediation Statistiken
-- `/stop-all-fixes` - 🛑 EMERGENCY: Stoppt alle laufenden Fixes
-- `/set-approval-mode [mode]` - Ändere Approval Mode (paranoid/auto/dry-run)
+- `/stop-all-fixes` - EMERGENCY: Stoppt alle laufenden Fixes
+- `/set-approval-mode [mode]` - Approval Mode aendern (paranoid/auto/dry-run)
 
 #### AI & Learning System
 - `/get-ai-stats` - AI-Provider Status und Fallback-Chain
-- `/reload-context` - Lade Project-Context neu
+- `/reload-context` - Project-Context neu laden
+- `/agent-stats` - Agent-Learning Statistiken (agent_learning DB)
+- `/security-engine` - Security Engine v6 Status und Statistiken
 
 #### Multi-Project Management
-- `/projekt-status [name]` - Status für spezifisches Projekt (Uptime, Response Time, Health)
-- `/alle-projekte` - Übersicht aller überwachten Projekte
+- `/projekt-status [name]` - Status fuer spezifisches Projekt (Uptime, Response Time, Health)
+- `/alle-projekte` - Uebersicht aller ueberwachten Projekte
+
+#### Patch Notes
+- `/release-notes [project]` - Gesammelte Commits als Patch Notes veroeffentlichen (Admin)
+- `/pending-notes` - Ausstehende Commits anzeigen, die auf Release warten (Admin)
+
+#### Administration
+- `/setup-customer-server` - Customer-Server einrichten (Channels + Rollen)
+- `/mark-duplicate` - Finding als Duplikat markieren (Learning-Feedback)
 
 ### 🎨 Features
 - **Rich Embeds** - Farbcodierte Alerts (🔴 CRITICAL, 🟠 HIGH, 🟢 OK)
@@ -444,19 +454,30 @@ Security Commands:
   /threats [hours]     - Bedrohungen der letzten X Stunden
   /bans [limit]        - Gebannte IPs
   /aide                - AIDE Check-Status
+  /docker              - Letzte Docker-Scan-Ergebnisse
 
 Auto-Remediation:
   /remediation-stats             - Statistiken
   /stop-all-fixes                - Emergency Stop
-  /set-approval-mode [mode]      - Approval Mode ändern
+  /set-approval-mode [mode]      - Approval Mode aendern
 
 AI System:
   /get-ai-stats                  - AI Provider Status
   /reload-context                - Context neu laden
+  /agent-stats                   - Agent-Learning Statistiken
+  /security-engine               - Security Engine v6 Status
 
 Multi-Project:
   /projekt-status [name]         - Detaillierter Projekt-Status
-  /alle-projekte                 - Übersicht aller Projekte
+  /alle-projekte                 - Uebersicht aller Projekte
+
+Patch Notes:
+  /release-notes [project]       - Patch Notes veroeffentlichen (Admin)
+  /pending-notes                 - Ausstehende Commits anzeigen (Admin)
+
+Administration:
+  /setup-customer-server         - Customer-Server einrichten
+  /mark-duplicate                - Finding als Duplikat markieren
 ```
 
 ### GitHub Webhook Setup
@@ -500,10 +521,13 @@ sudo systemctl restart shadowops-bot
 shadowops-bot/
 ├── src/
 │   ├── bot.py                          # Haupt-Bot-Logik
-│   ├── cogs/                           # NEU: Modulare Slash Commands
+│   ├── cogs/                           # Modulare Slash Commands
 │   │   ├── admin.py
 │   │   ├── inspector.py
-│   │   └── monitoring.py
+│   │   ├── monitoring.py
+│   │   ├── customer_setup_commands.py
+│   │   ├── cron_heartbeat.py
+│   │   └── phase_5e_health_aggregator.py
 │   ├── integrations/
 │   │   ├── ai_engine.py                # Dual-Engine AI (Codex + Claude CLI)
 │   │   ├── smart_queue.py              # SmartQueue (Analyse-Pool + Fix-Lock)
@@ -513,7 +537,7 @@ shadowops-bot/
 │   │   ├── knowledge_base.py           # SQL Learning System
 │   │   ├── code_analyzer.py            # Code Structure Analyzer
 │   │   ├── context_manager.py          # RAG Context Manager
-│   │   ├── github_integration.py       # GitHub Webhooks
+│   │   ├── github_integration/         # GitHub Webhooks + Jules + Multi-Agent Review
 │   │   ├── project_monitor.py          # Multi-Project Monitoring
 │   │   ├── deployment_manager.py       # Auto-Deployment
 │   │   ├── incident_manager.py         # Incident Tracking
@@ -543,14 +567,8 @@ shadowops-bot/
 │   └── integration/
 │       └── test_learning_workflow.py   # End-to-End Tests
 ├── config/
-│   ├── config.example.yaml             # Example Config
-│   ├── config.yaml                     # Your Config (gitignored)
-│   ├── DO-NOT-TOUCH.md                 # Safety Rules
-│   ├── INFRASTRUCTURE.md               # Infrastructure Knowledge
-│   └── PROJECT_*.md                    # Project Documentation
-├── config/                             # Konfiguration
+│   ├── config.example.yaml             # Template (commited)
 │   ├── config.yaml                     # Hauptconfig (gitignored)
-│   ├── config.example.yaml             # Template
 │   ├── config.recommended.yaml         # Empfehlungen
 │   ├── safe_upgrades.yaml              # Upgrade-Pfade
 │   └── logrotate.conf                  # Log-Rotation
@@ -564,11 +582,12 @@ shadowops-bot/
 ├── data/                               # Runtime-Daten (gitignored)
 ├── logs/                               # Log-Dateien (gitignored)
 ├── docs/                               # Dokumentation
-│   ├── API.md                          # API-Referenz
-│   ├── guides/                         # Benutzer-Anleitungen
+│   ├── reference/api.md                # API-Referenz
 │   ├── adr/                            # Architecture Decision Records
-│   ├── plans/                          # Design-Dokumente
-│   └── archive/                        # Historische Doku
+│   ├── design/                         # Design-Dokumente
+│   ├── operations/                     # Setup + Runbooks
+│   ├── plans/                          # Design-Plaene
+│   └── runbooks/                       # Betriebs-Handbuecher
 ├── .claude/                            # KI-Konfiguration
 │   ├── rules/                          # Pfad-gefilterte Rules
 │   ├── skills/                         # Workflow-Skills
@@ -756,9 +775,9 @@ tail -f logs/shadowops.log | grep deployment
 
 ### Vollständige Dokumentation
 
-- 📖 [Setup Guide](./docs/SETUP_GUIDE.md) - Schritt-für-Schritt Installation
-- 🔧 [API Documentation](./docs/reference/api.md) - Vollständige API-Referenz
-- 📚 [Docs Overview](./DOCS_OVERVIEW.md) - Dokumentations-Index
+- [Setup Guide](./docs/operations/setup.md) - Schritt-fuer-Schritt Installation
+- [API Documentation](./docs/reference/api.md) - Vollstaendige API-Referenz
+- [Architecture Decisions](./docs/adr/) - ADR-Index
 
 ### Bei Problemen
 
