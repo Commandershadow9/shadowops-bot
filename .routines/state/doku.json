@@ -2,13 +2,54 @@
   "schema_version": 1,
   "repo": "Commandershadow9/shadowops-bot",
   "worker": "doku",
-  "last_run": null,
-  "last_drift_check": null,
-  "open_prs": [],
+  "last_run": "2026-05-13T00:00:00Z",
+  "last_drift_check": "2026-05-13T00:00:00Z",
+  "open_prs": [
+    {
+      "number": 234,
+      "url": "https://github.com/Commandershadow9/shadowops-bot/pull/234",
+      "branch": "claude/doku/drift-slash-commands-structure",
+      "title": "docs: fix slash command list and project structure drift",
+      "type": "drift",
+      "created": "2026-05-13T00:00:00Z"
+    },
+    {
+      "number": 235,
+      "url": "https://github.com/Commandershadow9/shadowops-bot/pull/235",
+      "branch": "claude/doku/gaps-anti-bloat",
+      "title": "docs: remove Ollama references from api.md and prune README highlights",
+      "type": "gaps+anti-bloat",
+      "created": "2026-05-13T00:00:00Z"
+    }
+  ],
   "tracked_files": {
-    "README.md": { "last_synced_with_code_at": null },
+    "README.md": { "last_synced_with_code_at": "2026-05-13T00:00:00Z" },
     "CLAUDE.md": { "last_synced_with_code_at": null },
-    "docs/reference/api.md": { "last_synced_with_code_at": null }
+    "docs/reference/api.md": { "last_synced_with_code_at": "2026-05-13T00:00:00Z" },
+    ".claude/rules/discord-bot.md": { "last_synced_with_code_at": "2026-05-13T00:00:00Z" }
   },
-  "open_questions": []
+  "open_questions": [],
+  "notes": {
+    "readme_line_count": 603,
+    "drift_pr_234_items": [
+      "11 missing slash commands added to README feature list and usage block",
+      "src/integrations/ structure fixed: orchestrator/, github_integration/ are packages",
+      "Added security_engine/, fixers/, ai_learning/, patch_notes/, commands/, schemas/ to tree",
+      "Removed duplicate config/ section",
+      "Fixed docs/ tree path (docs/API.md -> docs/reference/api.md)",
+      ".claude/rules/discord-bot.md Cogs table updated with 7 missing commands + 2 new cog files"
+    ],
+    "gaps_pr_235_items": [
+      "api.md /get-ai-stats: Ollama/OpenAI fields replaced with Codex CLI/Claude CLI",
+      "api.md AI config: old ollama/anthropic/openai yaml replaced with primary/fallback/routing",
+      "api.md errors: Ollama error replaced with Codex/Claude CLI not found errors",
+      "api.md rate limiting: Ollama/Anthropic/OpenAI replaced with CLI timeout config",
+      "api.md DB schema: SQLite -> PostgreSQL, correct table names from knowledge_base.py",
+      "README: Highlights v3.1-v3.4 removed (173 lines), reference to CHANGELOG.md added"
+    ],
+    "known_remaining_gaps": [
+      "CLAUDE.md has not been checked for sync with code yet (last_synced_with_code_at=null)",
+      "api.md knowledge base section: full schema still lives only in knowledge_base.py, not documented"
+    ]
+  }
 }
