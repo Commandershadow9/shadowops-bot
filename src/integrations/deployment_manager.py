@@ -616,9 +616,18 @@ class DeploymentManager:
             # Restore from backup using rsync
             # --no-perms --no-group --no-owner: Avoid chgrp/chown errors when
             # files were originally owned by Docker container user
+            #
             # WICHTIG: Gleiche Excludes wie beim Backup + .env/.venv!
             # Ohne --exclude=.git würde --delete das Git-Repo löschen,
             # weil .git NICHT im Backup enthalten ist (Vorfall 2026-03-20).
+            #
+            # 2026-05-14 (ZERODOX #236): --exclude=logs, --exclude=uploads
+            # ergänzt. Vorher: ZERODOX-Backup hat logs/uploads exclude-d
+            # (Backup-rsync line 372-373), Rollback aber NICHT → --delete
+            # versuchte logs/contact-requests/*.jsonl + uploads/invoices/*.pdf
+            # zu unlink-en. Diese Dateien gehören Docker-Container-User (UID
+            # 1001), Bot läuft als cmdshadow (UID 1000) → Permission denied.
+            # 2-Tage-Auto-Deploy-Blockade nach ZERODOX-PRs #705, #707, #708.
             cmd = [
                 'rsync', '-rlptD', '--delete',
                 '--exclude=.git',
@@ -627,6 +636,8 @@ class DeploymentManager:
                 '--exclude=node_modules',
                 '--exclude=__pycache__',
                 '--exclude=backups',
+                '--exclude=logs',
+                '--exclude=uploads',
                 '--no-perms', '--no-group', '--no-owner',
                 str(backup_path) + '/',
                 str(project['path']) + '/'
