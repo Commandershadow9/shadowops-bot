@@ -17,10 +17,12 @@ paths:
 ## Cogs
 | Datei | Cog | Commands |
 |-------|-----|----------|
-| `monitoring.py` | MonitoringCog | `/status`, `/bans`, `/threats`, `/docker`, `/aide` |
-| `admin.py` | AdminCog | `/scan`, `/stop-all-fixes`, `/remediation-stats`, `/set-approval-mode`, `/reload-context` |
-| `inspector.py` | InspectorCog | `/get-ai-stats`, `/projekt-status`, `/alle-projekte` |
-| `customer_setup_commands.py` | CustomerSetupCommands | `/setup-customer-server` |
+| `cogs/monitoring.py` | MonitoringCog | `/status`, `/bans`, `/threats`, `/docker`, `/aide` |
+| `cogs/admin.py` | AdminCog | `/scan`, `/stop-all-fixes`, `/remediation-stats`, `/set-approval-mode`, `/reload-context`, `/release-notes`, `/pending-notes`, `/mark-duplicate` |
+| `cogs/inspector.py` | InspectorCog | `/get-ai-stats`, `/projekt-status`, `/alle-projekte`, `/agent-stats`, `/security-engine` |
+| `cogs/customer_setup_commands.py` | CustomerSetupCommands | `/setup-customer-server` |
+| `commands/ai_learning_admin.py` | AILearningAdminCog | `/ai-stats`, `/ai-variants`, `/ai-tune`, `/ai-export-finetune` |
+| `commands/knowledge_stats.py` | KnowledgeStatsCog | `/knowledge-stats` |
 
 ## Patterns
 - Alle async: `await` fuer Discord API Calls
