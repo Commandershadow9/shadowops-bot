@@ -164,9 +164,8 @@ Shows AI provider status, fallback chain, and usage statistics.
 **Permissions:** None
 **Parameters:** None
 **Returns:** Embed with:
-- Ollama status (enabled/disabled, model, URL)
-- Claude status (enabled/disabled, model)
-- OpenAI status (enabled/disabled, model)
+- Codex CLI status (model, timeout, last request)
+- Claude CLI status (model, timeout, last request)
 - Active fallback chain
 - Request counts per provider
 
@@ -268,23 +267,30 @@ channels:
 # AI CONFIGURATION
 # ========================================
 ai:
-  ollama:
-    enabled: true                           # Enable Ollama (local AI)
-    url: http://localhost:11434             # Ollama API URL
-    model: phi3:mini                        # Model for regular analysis
-    model_critical: llama3.1                # Model for CRITICAL events
-    hybrid_models: true                     # Use different models by severity
-    request_delay_seconds: 4.0              # Rate limiting (seconds between requests)
+  enabled: true
 
-  anthropic:
-    enabled: false                          # Enable Claude
-    api_key: null                           # Anthropic API key
-    model: claude-3-5-sonnet-20241022       # Claude model
+  primary:
+    engine: codex
+    models:
+      fast: gpt-4o                          # Low/INFO events
+      standard: gpt-5.3-codex               # HIGH events
+      thinking: o3                          # CRITICAL events
+    timeout: 300
 
-  openai:
-    enabled: false                          # Enable OpenAI
-    api_key: null                           # OpenAI API key
-    model: gpt-4o                           # OpenAI model
+  fallback:
+    engine: claude
+    cli_path: /home/user/.local/bin/claude  # Path to Claude CLI binary
+    models:
+      fast: claude-sonnet-4-6
+      standard: claude-sonnet-4-6
+      thinking: claude-opus-4-6             # Thinking-level tasks (review, verify)
+    timeout: 300
+
+  routing:
+    critical_analysis: { engine: codex, model: thinking }
+    high_analysis:     { engine: codex, model: standard }
+    low_analysis:      { engine: codex, model: fast }
+    critical_verify:   { engine: claude, model: thinking }
 
 # ========================================
 # AUTO-REMEDIATION CONFIGURATION
@@ -791,29 +797,14 @@ event = SecurityEvent(
 
 ## Database Schema
 
-### Knowledge Base (SQLite)
+### Knowledge Base (PostgreSQL — `security_analyst` DB, Port 5433)
 
-#### fixes table
-```sql
-CREATE TABLE fixes (
-    id INTEGER PRIMARY KEY AUTOINCREMENT,
-    timestamp TEXT NOT NULL,
-    event_signature TEXT NOT NULL,  -- Unique event identifier
-    event_type TEXT NOT NULL,  -- vulnerability, intrusion, etc.
-    severity TEXT,
-    event_details TEXT,  -- JSON
-    strategy TEXT NOT NULL,  -- JSON: Full fix strategy
-    result TEXT NOT NULL,  -- 'success' or 'failed'
-    duration_seconds REAL,
-    error_message TEXT,
-    retry_count INTEGER DEFAULT 0
-);
+Tables: `orchestrator_fixes`, `orchestrator_strategies`, `threat_patterns`,
+`orchestrator_plans`, `orchestrator_vulnerabilities`, `orchestrator_code_changes`,
+`orchestrator_log_patterns`.
 
-CREATE INDEX idx_event_signature ON fixes(event_signature);
-CREATE INDEX idx_event_type ON fixes(event_type);
-CREATE INDEX idx_result ON fixes(result);
-CREATE INDEX idx_timestamp ON fixes(timestamp);
-```
+DSN comes from `SECURITY_ANALYST_DB_URL` env var or `security_analyst.database_dsn`
+in `config.yaml`. See `src/integrations/knowledge_base.py` for the full schema.
 
 ### Project Monitor State (JSON)
 
@@ -874,8 +865,9 @@ CREATE INDEX idx_timestamp ON fixes(timestamp);
 
 #### AI Service Errors
 - `No AI providers enabled` - All AI services disabled
-- `Ollama connection failed` - Cannot reach Ollama server
-- `AI request timeout` - AI provider took too long
+- `AI request timeout` - AI CLI took too long (check `ai.primary.timeout`)
+- `Codex CLI not found` - `codex` binary not in PATH
+- `Claude CLI not found` - `claude` binary not at `ai.fallback.cli_path`
 
 #### Deployment Errors
 - `Project not found in deployment config` - Unknown project
@@ -894,9 +886,9 @@ CREATE INDEX idx_timestamp ON fixes(timestamp);
 ## Rate Limiting
 
 ### AI Requests
-- **Ollama**: Configurable delay (`ai.ollama.request_delay_seconds`, default: 4.0s)
-- **Anthropic**: Built-in retry with exponential backoff (1s, 2s, 4s)
-- **OpenAI**: Built-in retry with exponential backoff (1s, 2s, 4s)
+- **Codex CLI (Primary)**: Timeout via `ai.primary.timeout` (default: 300s)
+- **Claude CLI (Fallback)**: Timeout via `ai.fallback.timeout` (default: 300s)
+- Exponential backoff on CLI errors: 1s, 2s, 4s before giving up
 
 ### Discord Commands
 - **Global**: No built-in rate limiting (Discord handles this)
