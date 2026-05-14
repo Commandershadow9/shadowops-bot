@@ -587,8 +587,10 @@ Fallback auf das jeweils andere Modell bei Timeout oder leerer Response.
 ```python
 from src.integrations.knowledge_base import KnowledgeBase
 
-# Initialize
-kb = KnowledgeBase(db_path="data/knowledge_base.db")
+# Initialize (DSN aus config.yaml security_analyst.database_dsn oder SECURITY_ANALYST_DB_URL)
+kb = KnowledgeBase()
+# Oder explizit:
+# kb = KnowledgeBase(dsn="postgresql://user:pw@127.0.0.1:5433/security_analyst")
 
 # Record a fix
 kb.record_fix(
@@ -868,8 +870,8 @@ Tabellen für Security Engine v6 (Präfix `fix_attempts_v2`, `findings`, `remedi
 
 #### AI Service Errors
 - `No AI providers enabled` - All AI services disabled
-- `Ollama connection failed` - Cannot reach Ollama server
-- `AI request timeout` - AI provider took too long
+- `Codex CLI not found` - Codex CLI not in PATH or cli_path misconfigured
+- `AI request timeout` - AI provider exceeded configured timeout
 
 #### Deployment Errors
 - `Project not found in deployment config` - Unknown project
@@ -944,12 +946,12 @@ debug_mode: true
 
 ### Common API Issues
 
-**Knowledge Base locked:**
+**Knowledge Base issues (PostgreSQL):**
 ```bash
-# Check if database is locked
-sqlite3 data/knowledge_base.db "PRAGMA busy_timeout=5000;"
+# Verbindung prüfen
+psql -h 127.0.0.1 -p 5433 -U security_analyst -d security_analyst -c "\dt"
 
-# If still locked, restart bot
+# Neustart bei Connection-Problemen
 sudo systemctl restart shadowops-bot
 ```
 
