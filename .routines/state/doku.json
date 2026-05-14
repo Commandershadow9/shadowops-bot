@@ -2,13 +2,40 @@
   "schema_version": 1,
   "repo": "Commandershadow9/shadowops-bot",
   "worker": "doku",
-  "last_run": null,
-  "last_drift_check": null,
-  "open_prs": [],
+  "last_run": "2026-05-14T00:00:00Z",
+  "last_drift_check": "2026-05-14T00:00:00Z",
+  "open_prs": [
+    {
+      "number": 213,
+      "branch": "claude/doku/drift-corrections",
+      "title": "docs: korrigiere Slash-Command-Liste, Projektstruktur und API-Konfiguration",
+      "created_at": "2026-05-05",
+      "last_updated": "2026-05-14",
+      "notes": "Drift-Korrekturen: Slash-Commands, Projektstruktur, AI-Config (Ollama entfernt). Zweiter Commit 2026-05-14: CLAUDE.md Paketstruktur, api.md SQLite→PostgreSQL, Fehlermeldungen."
+    },
+    {
+      "number": 238,
+      "branch": "claude/doku/readme-antiblot",
+      "title": "docs: remove outdated v3.x highlights and inline version history from README",
+      "created_at": "2026-05-14",
+      "last_updated": "2026-05-14",
+      "notes": "Anti-Bloat: README 775→527 Zeilen. v3.1–v3.4 Highlights und Inline-Changelog entfernt (Inhalt in CHANGELOG.md vorhanden)."
+    }
+  ],
+  "open_issues": [
+    {
+      "number": 239,
+      "title": "src/commands/ existiert aber wird vom Bot nicht geladen — Status unklar",
+      "label": "status:needs-info",
+      "created_at": "2026-05-14"
+    }
+  ],
   "tracked_files": {
-    "README.md": { "last_synced_with_code_at": null },
-    "CLAUDE.md": { "last_synced_with_code_at": null },
-    "docs/reference/api.md": { "last_synced_with_code_at": null }
+    "README.md": { "last_synced_with_code_at": "2026-05-14" },
+    "CLAUDE.md": { "last_synced_with_code_at": "2026-05-14" },
+    "docs/reference/api.md": { "last_synced_with_code_at": "2026-05-14" }
   },
-  "open_questions": []
+  "open_questions": [
+    "src/commands/ (ai_learning_admin, knowledge_stats) kein Lademechanismus gefunden — Issue #239 eroeffnet"
+  ]
 }
