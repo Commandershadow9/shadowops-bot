@@ -534,7 +534,23 @@ class DeploymentManager:
         stdout, stderr = await process.communicate()
 
         if process.returncode != 0:
-            raise DeploymentError(f"Post-deploy command failed: {stderr.decode()}")
+            # Bash-Scripts (z.B. deploy.sh) schreiben Errors oft nach stdout
+            # (via echo/print_fail) statt stderr. Plus: `gh api ... 2>&1` in
+            # deploy.sh redirects stderr-zu-stdout — bei set -e ist stderr leer.
+            # Wenn wir nur stderr loggen, geht die Diagnose verloren.
+            # Vorfall 2026-05-14: "Post-deploy command failed: " ohne Reason.
+            stdout_text = stdout.decode(errors='replace').strip() if stdout else ''
+            stderr_text = stderr.decode(errors='replace').strip() if stderr else ''
+            parts = [
+                f"Post-deploy command failed (exit={process.returncode}):",
+            ]
+            if stdout_text:
+                parts.append(f"stdout: {stdout_text}")
+            if stderr_text:
+                parts.append(f"stderr: {stderr_text}")
+            if not stdout_text and not stderr_text:
+                parts.append("(both streams empty — subprocess silent fail)")
+            raise DeploymentError("\n".join(parts))
 
     async def _restart_service(self, project: Dict):
         """
