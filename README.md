@@ -249,20 +249,31 @@ projects:
 - `/scan` - Manuellen Docker-Scan triggern
 - `/threats` - Letzte erkannte Bedrohungen
 - `/bans` - Aktuell gebannte IPs (Fail2ban + CrowdSec)
+- `/docker` - Letzte Docker Scan Ergebnisse
 - `/aide` - AIDE Integrity Check Status
 
 #### Auto-Remediation
 - `/remediation-stats` - Auto-Remediation Statistiken
-- `/stop-all-fixes` - 🛑 EMERGENCY: Stoppt alle laufenden Fixes
+- `/stop-all-fixes` - EMERGENCY: Stoppt alle laufenden Fixes
 - `/set-approval-mode [mode]` - Ändere Approval Mode (paranoid/auto/dry-run)
 
 #### AI & Learning System
-- `/get-ai-stats` - AI-Provider Status und Fallback-Chain
+- `/get-ai-stats` - AI-Provider Status und Routing-Konfiguration
 - `/reload-context` - Lade Project-Context neu
+- `/agent-stats` - Agent-Learning Statistiken
 
 #### Multi-Project Management
 - `/projekt-status [name]` - Status für spezifisches Projekt (Uptime, Response Time, Health)
 - `/alle-projekte` - Übersicht aller überwachten Projekte
+- `/security-engine` - Security Engine v6 Status und Statistiken
+
+#### Patch Notes
+- `/release-notes [project]` - Gesammelte Commits als Patch Notes veröffentlichen
+- `/pending-notes` - Übersicht aller ausstehenden Commits die auf Release warten
+- `/mark-duplicate` - Finding als Duplikat markieren (Learning-Feedback)
+
+#### Setup
+- `/setup-customer-server` - Kunden-Server für Benachrichtigungen einrichten
 
 ### 🎨 Features
 - **Rich Embeds** - Farbcodierte Alerts (🔴 CRITICAL, 🟠 HIGH, 🟢 OK)
@@ -443,6 +454,7 @@ Security Commands:
   /scan                - Docker Security Scan
   /threats [hours]     - Bedrohungen der letzten X Stunden
   /bans [limit]        - Gebannte IPs
+  /docker              - Letzte Docker Scan Ergebnisse
   /aide                - AIDE Check-Status
 
 Auto-Remediation:
@@ -453,10 +465,20 @@ Auto-Remediation:
 AI System:
   /get-ai-stats                  - AI Provider Status
   /reload-context                - Context neu laden
+  /agent-stats                   - Agent-Learning Statistiken
 
 Multi-Project:
   /projekt-status [name]         - Detaillierter Projekt-Status
   /alle-projekte                 - Übersicht aller Projekte
+  /security-engine               - Security Engine v6 Status
+
+Patch Notes:
+  /release-notes [project]       - Patch Notes veröffentlichen
+  /pending-notes                 - Ausstehende Commits anzeigen
+  /mark-duplicate                - Finding als Duplikat markieren
+
+Setup:
+  /setup-customer-server         - Kunden-Server einrichten
 ```
 
 ### GitHub Webhook Setup
@@ -500,55 +522,44 @@ sudo systemctl restart shadowops-bot
 shadowops-bot/
 ├── src/
 │   ├── bot.py                          # Haupt-Bot-Logik
-│   ├── cogs/                           # NEU: Modulare Slash Commands
-│   │   ├── admin.py
-│   │   ├── inspector.py
-│   │   └── monitoring.py
-│   ├── integrations/
+│   ├── cogs/                           # Modulare Slash Commands
+│   │   ├── admin.py                    # AdminCog: /scan, /stop-all-fixes, /remediation-stats, ...
+│   │   ├── inspector.py                # InspectorCog: /get-ai-stats, /projekt-status, ...
+│   │   ├── monitoring.py               # MonitoringCog: /status, /bans, /threats, /docker, /aide
+│   │   ├── customer_setup_commands.py  # CustomerSetupCommands: /setup-customer-server
+│   │   ├── cron_heartbeat.py           # Geplante Heartbeat-Tasks
+│   │   └── phase_5e_health_aggregator.py # Health-Aggregation
+│   ├── integrations/                   # Externe Systeme (stark erweitert, Auswahl):
 │   │   ├── ai_engine.py                # Dual-Engine AI (Codex + Claude CLI)
 │   │   ├── smart_queue.py              # SmartQueue (Analyse-Pool + Fix-Lock)
 │   │   ├── verification.py             # Pre-Push Verification Pipeline
-│   │   ├── orchestrator.py             # Remediation Orchestrator
+│   │   ├── orchestrator/               # Remediation Orchestrator (Modul-Paket)
 │   │   ├── event_watcher.py            # Security Event Watcher
-│   │   ├── knowledge_base.py           # SQL Learning System
+│   │   ├── knowledge_base.py           # SQL Learning System (PostgreSQL)
 │   │   ├── code_analyzer.py            # Code Structure Analyzer
 │   │   ├── context_manager.py          # RAG Context Manager
-│   │   ├── github_integration.py       # GitHub Webhooks
+│   │   ├── github_integration/         # GitHub Webhooks + Jules Workflow (Modul-Paket)
 │   │   ├── project_monitor.py          # Multi-Project Monitoring
 │   │   ├── deployment_manager.py       # Auto-Deployment
 │   │   ├── incident_manager.py         # Incident Tracking
 │   │   ├── customer_notifications.py   # Customer-Facing Alerts
+│   │   ├── security_engine/            # SecurityScanAgent v6 (Modul-Paket)
+│   │   ├── fixers/                     # Fix-Implementierungen (Modul-Paket)
 │   │   ├── fail2ban.py                 # Fail2ban Integration
 │   │   ├── crowdsec.py                 # CrowdSec Integration
 │   │   ├── aide.py                     # AIDE Integration
 │   │   └── docker.py                   # Docker Scan Integration
 │   └── utils/
 │       ├── config.py                   # Config-Loader
-│       ├── state_manager.py            # NEU: State-Management
+│       ├── state_manager.py            # State-Management
 │       ├── logger.py                   # Logging
 │       ├── embeds.py                   # Discord Embed-Builder
 │       └── discord_logger.py           # Discord Channel Logger
 ├── tests/
 │   ├── conftest.py                     # Test Fixtures
-│   ├── unit/                           # Unit Tests (161)
-│   │   ├── test_config.py
-│   │   ├── test_ai_engine.py           # 43 Tests (Router, Codex, Claude, AIEngine)
-│   │   ├── test_smart_queue.py         # 21 Tests (Pool, Lock, Circuit Breaker)
-│   │   ├── test_orchestrator.py
-│   │   ├── test_knowledge_base.py
-│   │   ├── test_event_watcher.py
-│   │   ├── test_github_integration.py
-│   │   ├── test_project_monitor.py
-│   │   └── test_incident_manager.py
-│   └── integration/
-│       └── test_learning_workflow.py   # End-to-End Tests
+│   ├── unit/                           # Unit Tests
+│   └── integration/                    # End-to-End Tests
 ├── config/
-│   ├── config.example.yaml             # Example Config
-│   ├── config.yaml                     # Your Config (gitignored)
-│   ├── DO-NOT-TOUCH.md                 # Safety Rules
-│   ├── INFRASTRUCTURE.md               # Infrastructure Knowledge
-│   └── PROJECT_*.md                    # Project Documentation
-├── config/                             # Konfiguration
 │   ├── config.yaml                     # Hauptconfig (gitignored)
 │   ├── config.example.yaml             # Template
 │   ├── config.recommended.yaml         # Empfehlungen
@@ -559,20 +570,17 @@ shadowops-bot/
 ├── scripts/                            # Utility-Skripte
 │   ├── restart.sh                      # Bot neustarten (--pull, --logs)
 │   ├── diagnose-bot.sh                 # Diagnose
-│   ├── setup.sh                        # Erstinstallation
-│   └── ...
+│   └── setup.sh                        # Erstinstallation
 ├── data/                               # Runtime-Daten (gitignored)
 ├── logs/                               # Log-Dateien (gitignored)
 ├── docs/                               # Dokumentation
-│   ├── API.md                          # API-Referenz
-│   ├── guides/                         # Benutzer-Anleitungen
+│   ├── reference/api.md                # API-Referenz
 │   ├── adr/                            # Architecture Decision Records
 │   ├── plans/                          # Design-Dokumente
 │   └── archive/                        # Historische Doku
 ├── .claude/                            # KI-Konfiguration
 │   ├── rules/                          # Pfad-gefilterte Rules
-│   ├── skills/                         # Workflow-Skills
-│   └── agents/                         # Spezialisierte Agents
+│   └── skills/                         # Workflow-Skills
 ├── requirements.txt                    # Python Dependencies
 ├── pyproject.toml                      # Projekt-Definition
 ├── CLAUDE.md                           # KI-Projektinstruktionen

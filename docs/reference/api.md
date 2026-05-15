@@ -164,10 +164,9 @@ Shows AI provider status, fallback chain, and usage statistics.
 **Permissions:** None
 **Parameters:** None
 **Returns:** Embed with:
-- Ollama status (enabled/disabled, model, URL)
-- Claude status (enabled/disabled, model)
-- OpenAI status (enabled/disabled, model)
-- Active fallback chain
+- Codex CLI status (enabled/disabled, models)
+- Claude CLI status (enabled/disabled, models)
+- Active routing configuration
 - Request counts per provider
 
 **Example:**
@@ -268,23 +267,27 @@ channels:
 # AI CONFIGURATION
 # ========================================
 ai:
-  ollama:
-    enabled: true                           # Enable Ollama (local AI)
-    url: http://localhost:11434             # Ollama API URL
-    model: phi3:mini                        # Model for regular analysis
-    model_critical: llama3.1                # Model for CRITICAL events
-    hybrid_models: true                     # Use different models by severity
-    request_delay_seconds: 4.0              # Rate limiting (seconds between requests)
+  # Primary engine: Codex CLI (gpt-5.3-codex / o3)
+  codex:
+    enabled: true
+    cli_path: "codex"                       # Pfad zum Codex CLI Binary
+    models:
+      fast: "gpt-5.3-codex"               # Schnelle Analysen
+      standard: "gpt-5.3-codex"           # Standard-Analysen + Structured Output
+      thinking: "o3"                       # CRITICAL-Events und Deep Analysis
 
-  anthropic:
-    enabled: false                          # Enable Claude
-    api_key: null                           # Anthropic API key
-    model: claude-3-5-sonnet-20241022       # Claude model
+  # Fallback engine: Claude CLI (claude-sonnet-4-6 / claude-opus-4-6)
+  claude:
+    enabled: true
+    cli_path: "/home/cmdshadow/.local/bin/claude"
+    models:
+      fast: "claude-sonnet-4-6"           # Schnelle Analysen
+      standard: "claude-sonnet-4-6"       # Standard-Analysen
+      thinking: "claude-opus-4-6"         # Security Analyst Sessions
 
-  openai:
-    enabled: false                          # Enable OpenAI
-    api_key: null                           # OpenAI API key
-    model: gpt-4o                           # OpenAI model
+  timeout:
+    codex_seconds: 300                     # 5 Min fuer Codex CLI
+    claude_seconds: 300                    # 5 Min fuer Claude CLI
 
 # ========================================
 # AUTO-REMEDIATION CONFIGURATION
@@ -582,8 +585,10 @@ Fallback auf das jeweils andere Modell bei Timeout oder leerer Response.
 ```python
 from src.integrations.knowledge_base import KnowledgeBase
 
-# Initialize
-kb = KnowledgeBase(db_path="data/knowledge_base.db")
+# Initialize — DSN wird aus config.yaml / SECURITY_ANALYST_DB_URL geladen wenn None
+kb = KnowledgeBase()
+# oder explizit:
+# kb = KnowledgeBase(dsn="postgresql://user:pass@localhost:5433/security_analyst")
 
 # Record a fix
 kb.record_fix(
@@ -598,7 +603,6 @@ kb.record_fix(
 # Get best strategies for similar events
 strategies = kb.get_best_strategies(
     event_type='vulnerability',
-    severity='HIGH',
     limit=5
 )
 # Returns: [{'strategy': {...}, 'success_rate': 0.95, 'avg_confidence': 0.88, ...}, ...]
@@ -607,8 +611,8 @@ strategies = kb.get_best_strategies(
 stats = kb.get_success_rate(event_signature='CVE-2024-1234')
 # Returns: {'total_attempts': 5, 'successful': 4, 'failed': 1, 'success_rate': 0.8}
 
-# Get learning insights
-insights = kb.get_learning_insights(days=30)
+# Get learning summary
+summary = kb.get_learning_summary(days=30)
 # Returns: {'total_fixes': 150, 'success_rate': 0.87, 'avg_duration': 12.5, ...}
 ```
 
