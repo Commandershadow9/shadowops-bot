@@ -258,6 +258,13 @@ class EventHandlersMixin:
                 if jobs_response and isinstance(jobs_response, dict):
                     jobs = jobs_response.get('jobs') or []
 
+            # Defensives Default damit Line 532 (`if is_completed and deploy_success`)
+            # nicht crashed wenn `jobs` leer ist (z.B. workflow_run in_progress oder
+            # API-Hiccup). Bug 2026-05-15: 15× _trigger_deployment für admin-merged
+            # PRs hingen weil UnboundLocalError exception path verschluckt wurde.
+            deploy_success = False
+            deploy_job_name = None
+
             if jobs:
                 jobs_total = len(jobs)
                 counts = {
