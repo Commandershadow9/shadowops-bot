@@ -97,6 +97,63 @@ Shows AIDE File Integrity Check status.
 /aide
 ```
 
+#### `/docker`
+Shows results of the last Docker security scan (Trivy).
+
+**Permissions:** None
+**Parameters:** None
+**Returns:** Vulnerability summary by severity for scanned images
+
+**Example:**
+```
+/docker
+```
+
+---
+
+### Patch Notes Commands
+
+#### `/release-notes [project]`
+Publishes accumulated commits as patch notes for a project (v6 Pipeline or v5 Batcher).
+
+**Permissions:** Administrator
+**Parameters:**
+- `project` (required): Project name (case-insensitive, e.g., guildscout, zerodox)
+
+**Returns:** Confirmation with version, commit count, and group count; patch notes posted to update channel
+
+**Example:**
+```
+/release-notes guildscout
+```
+
+#### `/pending-notes`
+Shows all pending commit batches waiting for release.
+
+**Permissions:** Administrator
+**Parameters:** None
+**Returns:** Embed with per-project commit count and date range
+
+**Example:**
+```
+/pending-notes
+```
+
+#### `/mark-duplicate`
+Marks a security finding as a duplicate of another for Learning-Feedback.
+
+**Permissions:** None (Security Engine must be active)
+**Parameters:**
+- `parent_id` (required): ID of the finding to keep
+- `child_id` (required): ID of the finding to mark as duplicate
+
+**Returns:** Confirmation of the duplicate marking
+
+**Example:**
+```
+/mark-duplicate 42 57
+```
+
 ---
 
 ### Auto-Remediation Commands
@@ -191,6 +248,32 @@ Reloads all project context files (DO-NOT-TOUCH, INFRASTRUCTURE, PROJECT_*.md).
 - After updating DO-NOT-TOUCH.md
 - After modifying project documentation
 - After adding new infrastructure knowledge
+
+#### `/agent-stats`
+Shows Agent-Learning statistics from the `agent_learning` database.
+
+**Permissions:** None
+**Parameters:** None
+**Returns:** Embed with learning metrics, recent fix outcomes, and knowledge-base state
+
+**Example:**
+```
+/agent-stats
+```
+
+#### `/security-engine`
+Shows Security Engine v6 status and statistics.
+
+**Permissions:** None
+**Parameters:** None
+**Returns:** Embed with:
+- Circuit Breaker state (open/closed, which sources are tripped)
+- Events processed and skipped counts
+
+**Example:**
+```
+/security-engine
+```
 
 ---
 

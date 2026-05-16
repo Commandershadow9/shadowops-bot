@@ -18,9 +18,11 @@ paths:
 | Datei | Cog | Commands |
 |-------|-----|----------|
 | `monitoring.py` | MonitoringCog | `/status`, `/bans`, `/threats`, `/docker`, `/aide` |
-| `admin.py` | AdminCog | `/scan`, `/stop-all-fixes`, `/remediation-stats`, `/set-approval-mode`, `/reload-context` |
-| `inspector.py` | InspectorCog | `/get-ai-stats`, `/projekt-status`, `/alle-projekte` |
+| `admin.py` | AdminCog | `/scan`, `/stop-all-fixes`, `/remediation-stats`, `/set-approval-mode`, `/reload-context`, `/release-notes`, `/pending-notes`, `/mark-duplicate` |
+| `inspector.py` | InspectorCog | `/get-ai-stats`, `/projekt-status`, `/alle-projekte`, `/agent-stats`, `/security-engine` |
 | `customer_setup_commands.py` | CustomerSetupCommands | `/setup-customer-server` |
+| `cron_heartbeat.py` | CronHeartbeatCog | (intern, keine Slash Commands) |
+| `phase_5e_health_aggregator.py` | Phase5eHealthAggregator | (intern, kein Slash Command — pollt 3 Hosts) |
 
 ## Patterns
 - Alle async: `await` fuer Discord API Calls
