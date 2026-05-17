@@ -179,25 +179,23 @@ class InspectorCog(commands.Cog):
                 pn = PatchNotesLearning()
                 await pn.connect()
 
-                # Generierungen
-                gen_count = await pn.pool.fetchval(
-                    "SELECT COUNT(*) FROM pn_generations"
-                )
-                # Feedback
-                fb_count = await pn.pool.fetchval(
-                    "SELECT COUNT(*) FROM agent_feedback WHERE agent='patch_notes'"
-                )
+                # Generierungen, Feedback, Beispiele kombiniert
+                counts = await pn.pool.fetchrow("""
+                    SELECT
+                        (SELECT COUNT(*) FROM pn_generations) as gen_count,
+                        (SELECT COUNT(*) FROM agent_feedback WHERE agent='patch_notes') as fb_count,
+                        (SELECT COUNT(*) FROM pn_examples WHERE is_active=TRUE) as examples
+                """)
+                gen_count = counts['gen_count']
+                fb_count = counts['fb_count']
+                examples = counts['examples']
+
                 # Varianten
                 variants = await pn.get_variant_stats()
                 variant_text = ""
                 if variants:
                     top = variants[0]
                     variant_text = f"\n**Beste Variante:** `{top['variant_id']}` ({top['combined_weight']:.0f} Score)"
-
-                # Beispiele
-                examples = await pn.pool.fetchval(
-                    "SELECT COUNT(*) FROM pn_examples WHERE is_active=TRUE"
-                )
 
                 await pn.close()
 
@@ -216,12 +214,13 @@ class InspectorCog(commands.Cog):
                 from integrations.patch_notes_learning import PatchNotesLearning
                 pn2 = PatchNotesLearning()
                 await pn2.connect()
-                impact_count = await pn2.pool.fetchval(
-                    "SELECT COUNT(*) FROM seo_fix_impact"
-                )
-                cross_knowledge = await pn2.pool.fetchval(
-                    "SELECT COUNT(*) FROM agent_knowledge"
-                )
+                seo_counts = await pn2.pool.fetchrow("""
+                    SELECT
+                        (SELECT COUNT(*) FROM seo_fix_impact) as impact_count,
+                        (SELECT COUNT(*) FROM agent_knowledge) as cross_knowledge
+                """)
+                impact_count = seo_counts['impact_count']
+                cross_knowledge = seo_counts['cross_knowledge']
                 await pn2.close()
 
                 seo_text = (
