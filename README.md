@@ -246,19 +246,27 @@ projects:
 
 #### Security & Monitoring
 - `/status` - Gesamt-Sicherheitsstatus
-- `/scan` - Manuellen Docker-Scan triggern
+- `/scan` - Manuellen Docker-Scan triggern (Admin)
 - `/threats` - Letzte erkannte Bedrohungen
 - `/bans` - Aktuell gebannte IPs (Fail2ban + CrowdSec)
+- `/docker` - Letzte Docker Scan Ergebnisse
 - `/aide` - AIDE Integrity Check Status
 
 #### Auto-Remediation
-- `/remediation-stats` - Auto-Remediation Statistiken
-- `/stop-all-fixes` - 🛑 EMERGENCY: Stoppt alle laufenden Fixes
-- `/set-approval-mode [mode]` - Ändere Approval Mode (paranoid/auto/dry-run)
+- `/remediation-stats` - Auto-Remediation Statistiken (Admin)
+- `/stop-all-fixes` - EMERGENCY: Stoppt alle laufenden Fixes (Admin)
+- `/set-approval-mode [mode]` - Ändere Approval Mode (paranoid/auto/dry-run) (Admin)
+
+#### Patch Notes
+- `/release-notes [project]` - Commits als Patch Notes veröffentlichen (Admin)
+- `/pending-notes` - Übersicht ausstehender Commit-Batches (Admin)
+- `/mark-duplicate` - Finding als Duplikat markieren (Learning-Feedback)
 
 #### AI & Learning System
 - `/get-ai-stats` - AI-Provider Status und Fallback-Chain
-- `/reload-context` - Lade Project-Context neu
+- `/reload-context` - Lade Project-Context neu (Admin)
+- `/agent-stats` - Agent-Learning Statistiken
+- `/security-engine` - Security Engine v6 Status und Statistiken
 
 #### Multi-Project Management
 - `/projekt-status [name]` - Status für spezifisches Projekt (Uptime, Response Time, Health)
@@ -500,24 +508,30 @@ sudo systemctl restart shadowops-bot
 shadowops-bot/
 ├── src/
 │   ├── bot.py                          # Haupt-Bot-Logik
-│   ├── cogs/                           # NEU: Modulare Slash Commands
-│   │   ├── admin.py
-│   │   ├── inspector.py
-│   │   └── monitoring.py
+│   ├── cogs/                           # Modulare Slash Commands
+│   │   ├── admin.py                    # /scan, /stop-all-fixes, /remediation-stats, ...
+│   │   ├── inspector.py                # /get-ai-stats, /projekt-status, /agent-stats, ...
+│   │   ├── monitoring.py               # /status, /bans, /threats, /docker, /aide
+│   │   ├── customer_setup_commands.py  # /setup-customer-server
+│   │   ├── cron_heartbeat.py           # Cron-Heartbeat
+│   │   └── phase_5e_health_aggregator.py  # Health-Aggregation
 │   ├── integrations/
 │   │   ├── ai_engine.py                # Dual-Engine AI (Codex + Claude CLI)
 │   │   ├── smart_queue.py              # SmartQueue (Analyse-Pool + Fix-Lock)
 │   │   ├── verification.py             # Pre-Push Verification Pipeline
-│   │   ├── orchestrator.py             # Remediation Orchestrator
+│   │   ├── orchestrator/               # Remediation Orchestrator (Package)
 │   │   ├── event_watcher.py            # Security Event Watcher
 │   │   ├── knowledge_base.py           # SQL Learning System
 │   │   ├── code_analyzer.py            # Code Structure Analyzer
 │   │   ├── context_manager.py          # RAG Context Manager
-│   │   ├── github_integration.py       # GitHub Webhooks
+│   │   ├── github_integration/         # GitHub Webhooks + Jules Workflow (Package)
 │   │   ├── project_monitor.py          # Multi-Project Monitoring
 │   │   ├── deployment_manager.py       # Auto-Deployment
 │   │   ├── incident_manager.py         # Incident Tracking
 │   │   ├── customer_notifications.py   # Customer-Facing Alerts
+│   │   ├── fixers/                     # Security Fixers (fail2ban, crowdsec, aide, wal-g)
+│   │   ├── analyst/                    # Security Analyst (Legacy-Referenz)
+│   │   ├── ai_learning/                # Continuous Learning Agent
 │   │   ├── fail2ban.py                 # Fail2ban Integration
 │   │   ├── crowdsec.py                 # CrowdSec Integration
 │   │   ├── aide.py                     # AIDE Integration
@@ -543,14 +557,8 @@ shadowops-bot/
 │   └── integration/
 │       └── test_learning_workflow.py   # End-to-End Tests
 ├── config/
-│   ├── config.example.yaml             # Example Config
-│   ├── config.yaml                     # Your Config (gitignored)
-│   ├── DO-NOT-TOUCH.md                 # Safety Rules
-│   ├── INFRASTRUCTURE.md               # Infrastructure Knowledge
-│   └── PROJECT_*.md                    # Project Documentation
-├── config/                             # Konfiguration
-│   ├── config.yaml                     # Hauptconfig (gitignored)
-│   ├── config.example.yaml             # Template
+│   ├── config.example.yaml             # Template (commited)
+│   ├── config.yaml                     # Real Config (gitignored)
 │   ├── config.recommended.yaml         # Empfehlungen
 │   ├── safe_upgrades.yaml              # Upgrade-Pfade
 │   └── logrotate.conf                  # Log-Rotation
@@ -564,8 +572,7 @@ shadowops-bot/
 ├── data/                               # Runtime-Daten (gitignored)
 ├── logs/                               # Log-Dateien (gitignored)
 ├── docs/                               # Dokumentation
-│   ├── API.md                          # API-Referenz
-│   ├── guides/                         # Benutzer-Anleitungen
+│   ├── reference/api.md                # API-Referenz
 │   ├── adr/                            # Architecture Decision Records
 │   ├── plans/                          # Design-Dokumente
 │   └── archive/                        # Historische Doku
