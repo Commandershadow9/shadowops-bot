@@ -2,13 +2,70 @@
   "schema_version": 1,
   "repo": "Commandershadow9/shadowops-bot",
   "worker": "doku",
-  "last_run": null,
-  "last_drift_check": null,
-  "open_prs": [],
+  "last_run": "2026-05-17T00:00:00Z",
+  "last_drift_check": "2026-05-17T00:00:00Z",
+  "open_prs": [
+    {
+      "number": 246,
+      "title": "docs: fehlende Slash-Commands in api.md + discord-bot.md Cog-Tabelle",
+      "branch": "claude/doku/gaps-2026-05-16",
+      "covers": ["slash-commands", "gaps"]
+    },
+    {
+      "number": 245,
+      "title": "docs: drift-Korrekturen README, CLAUDE.md, api.md",
+      "branch": "claude/doku/drift-2026-05-16",
+      "covers": ["drift", "readme", "claude-md", "api-md"]
+    },
+    {
+      "number": 242,
+      "title": "docs: anti-bloat README and fix CLAUDE.md module list",
+      "branch": "claude/doku/anti-bloat-readme",
+      "covers": ["anti-bloat", "claude-md-modules"]
+    },
+    {
+      "number": 238,
+      "title": "docs: remove outdated v3.x highlights and inline version history from README",
+      "branch": "claude/doku/readme-antiblot",
+      "covers": ["anti-bloat", "highlights-v3x"]
+    },
+    {
+      "number": 235,
+      "title": "docs: remove Ollama references from api.md and prune README highlights",
+      "branch": "claude/doku/gaps-anti-bloat",
+      "covers": ["ollama-drift", "anti-bloat"]
+    },
+    {
+      "number": 232,
+      "title": "docs: fix slash command list, broken links, and api.md drift",
+      "branch": "claude/doku/drift-fixes",
+      "covers": ["slash-commands", "broken-links", "api-md-drift", "ollama-removal"]
+    }
+  ],
   "tracked_files": {
-    "README.md": { "last_synced_with_code_at": null },
-    "CLAUDE.md": { "last_synced_with_code_at": null },
-    "docs/reference/api.md": { "last_synced_with_code_at": null }
+    "README.md": {
+      "last_synced_with_code_at": null,
+      "known_issues": [
+        "Highlights v3.x (v3.1-v3.4) noch in Datei — covered by PRs #238, #235, #242",
+        "Slash-Command-Liste war unvollstaendig — covered by PRs #232, #246, #245"
+      ]
+    },
+    "CLAUDE.md": {
+      "last_synced_with_code_at": null,
+      "known_issues": [
+        "orchestrator.py vs orchestrator/ package — covered by PRs #245, #242",
+        "github_integration.py vs github_integration/ package — covered by PR #245"
+      ]
+    },
+    "docs/reference/api.md": {
+      "last_synced_with_code_at": null,
+      "known_issues": [
+        "Ollama-Referenzen entfernt in mehreren offenen PRs (#235, #232, #245)",
+        "KnowledgeBase SQLite→PostgreSQL — covered by PRs #232, #245",
+        "AI-Config-Block veraltet — covered by PRs #232, #245"
+      ]
+    }
   },
-  "open_questions": []
+  "open_questions": [],
+  "notes": "2026-05-17: Lauf ergab 30+ offene Docs-PRs die alle dieselben Drifts adressieren. Kein neuer PR erstellt um weitere Duplikate zu vermeiden. Empfehlung: neueste PRs #245/#246 mergen, aeltere (#188-#234) schliessen."
 }
