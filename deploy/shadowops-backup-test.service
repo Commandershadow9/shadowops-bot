@@ -1,0 +1,15 @@
+[Unit]
+Description=ShadowOps Backup-Restore-Test (monatlich)
+Documentation=https://github.com/Commandershadow9/shadowops-bot
+After=network-online.target
+
+[Service]
+Type=oneshot
+# Webhook-URL aus EnvironmentFile (gleiche Datei wie Bot-Watchdog)
+EnvironmentFile=-/home/cmdshadow/.config/shadowops-watchdog.env
+ExecStart=/home/cmdshadow/shadowops-bot/scripts/backup-restore-test.sh
+# Timeout 30min — backup-test prüft S3, WAL-G, mehrere DBs
+TimeoutStartSec=1800
+SuccessExitStatus=0 1
+StandardOutput=journal
+StandardError=journal

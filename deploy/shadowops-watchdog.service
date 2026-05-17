@@ -1,0 +1,16 @@
+[Unit]
+Description=ShadowOps Bot Watchdog — Health-Check + Discord-Alert
+Documentation=https://github.com/Commandershadow9/shadowops-bot
+After=network-online.target
+
+[Service]
+Type=oneshot
+# Webhook-URL aus EnvironmentFile (siehe deploy/shadowops-watchdog.env.example)
+EnvironmentFile=-/home/cmdshadow/.config/shadowops-watchdog.env
+ExecStart=/home/cmdshadow/shadowops-bot/scripts/bot-watchdog.sh
+# Bei Fail: weiter — Timer feuert wieder. Wir wollen NIE in einen failed-State
+# der die nächsten Läufe blockiert.
+SuccessExitStatus=0 1
+# Kein Restart — der Timer ist die Schedule, nicht systemd-Restart.
+StandardOutput=journal
+StandardError=journal

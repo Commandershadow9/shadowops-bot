@@ -1,0 +1,16 @@
+[Unit]
+Description=ShadowOps Bot Watchdog Timer — alle 5 Minuten
+Documentation=https://github.com/Commandershadow9/shadowops-bot
+
+[Timer]
+# Erster Lauf 2 Minuten nach Boot, danach alle 5 Minuten
+OnBootSec=2min
+OnUnitActiveSec=5min
+# Etwas Jitter damit alle Timer auf dem Server nicht gleichzeitig feuern
+RandomizedDelaySec=30s
+AccuracySec=15s
+# Bei systemd-Restart nicht das Schedule neu starten
+Persistent=false
+
+[Install]
+WantedBy=timers.target
