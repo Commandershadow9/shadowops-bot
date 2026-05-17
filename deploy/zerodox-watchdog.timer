@@ -1,0 +1,14 @@
+[Unit]
+Description=ZERODOX Watchdog Timer — alle 5 Minuten (mit Jitter)
+Documentation=https://github.com/Commandershadow9/shadowops-bot
+
+[Timer]
+# Erster Lauf 3 Minuten nach Boot (versetzt zum shadowops-Watchdog auf 2min)
+OnBootSec=3min
+OnUnitActiveSec=5min
+RandomizedDelaySec=45s
+AccuracySec=15s
+Persistent=false
+
+[Install]
+WantedBy=timers.target

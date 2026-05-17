@@ -1,26 +1,36 @@
 # ShadowOps Monitoring — Setup-Anleitung
 
-> Externer Watchdog für den Bot + monatlicher Backup-Restore-Test.
-> Beide alerten via Discord-Webhook **direkt** (nicht über den Bot selbst),
-> damit auch ein toter Bot Alarme schlagen kann.
+> Externe Watchdogs für ShadowOps-Bot, ZERODOX und GuildScout + monatlicher
+> Backup-Restore-Test. Alle Alerts gehen direkt via Discord-Webhook (nicht
+> über den shadowops-bot selbst), damit auch ein toter Bot Alarme schlagen kann.
 
 ## Architektur
 
 ```
-                ┌──────────────────────────┐
-                │ Discord (critical-Channel)│
-                └────────────▲─────────────┘
-                             │ Webhook (POST)
-                             │
-   ┌─────────────────┐       │       ┌──────────────────────┐
-   │ Bot-Watchdog    │───────┘       │ Backup-Restore-Test  │
-   │ alle 5 Minuten  │               │ am 1. jedes Monats   │
-   │ (systemd-Timer) │               │ (systemd-Timer)      │
-   └────────┬────────┘               └──────────────────────┘
-            │ pingt
-            ▼
-   http://127.0.0.1:8766/health
+                              ┌──────────────────────────┐
+                              │ Discord (critical-Channel)│
+                              └────────────▲─────────────┘
+                                           │ Webhook (POST)
+                                           │
+       ┌────────────────────┬──────────────┴──────────────┬──────────────────┐
+       │                    │                             │                  │
+ ┌─────┴──────┐    ┌────────┴────────┐         ┌──────────┴────────┐ ┌───────┴──────┐
+ │ shadowops- │    │ zerodox-        │         │ guildscout-       │ │ backup-test  │
+ │ watchdog   │    │ watchdog        │         │ watchdog          │ │ monatlich    │
+ │ alle 5 min │    │ alle 5 min      │         │ alle 5 min        │ │ 1. d. Monats │
+ └─────┬──────┘    └────────┬────────┘         └──────────┬────────┘ └──────────────┘
+       │ pingt              │ pingt                       │ pingt
+       ▼                    ▼                             ▼
+ :8766/health    https://zerodox.de/api/health    localhost:8765/health
 ```
+
+Alle drei Watchdogs nutzen `scripts/service-watchdog.sh` — ein generisches
+Script, parametrisiert via Env-Vars (`WATCHDOG_SERVICE_NAME`, `WATCHDOG_HEALTH_URL`).
+Das ursprüngliche `scripts/bot-watchdog.sh` bleibt als Backward-Compat-Variante
+für den shadowops-bot Watchdog erhalten.
+
+State-Files sind pro Service getrennt (`data/watchdog_state_<service>.json`),
+damit Failure-Counter und Alert-Status sich nicht beeinflussen.
 
 ## Erst-Einrichtung (einmalig)
 
@@ -52,6 +62,8 @@ chmod 600 ~/.config/shadowops-watchdog.env
 ```bash
 systemctl --user daemon-reload
 systemctl --user restart shadowops-watchdog.timer
+systemctl --user restart zerodox-watchdog.timer
+systemctl --user restart guildscout-watchdog.timer
 ```
 
 ### 4. Funktionstest
@@ -72,13 +84,22 @@ echo '{"last_status":"up","last_alert_at":"","consecutive_failures":0}' \
 
 ## Was wird wann alertiert?
 
-### Bot-Watchdog (alle 5 Minuten)
+### Watchdog-Familie (jeder alle 5 Minuten, gestaffelt)
 
-- **🔴 Bot DOWN** — nach 2 konsekutiven Failures (= ~10 Minuten Downtime).
-  Verhindert false-positives bei Bot-Restart oder kurzem Netzwerk-Hiccup.
-- **✅ Bot wieder UP** — sobald der Bot nach einem Down-Alert wieder antwortet.
-- **Keine Wiederholungs-Alerts** — wenn der Bot Stunden down ist, kommt nur EIN
-  Initial-Alert, kein Spam.
+| Service | Endpoint | Bot-Ready-Check |
+|---|---|---|
+| `shadowops-bot` | http://127.0.0.1:8766/health | ja (`bot_ready=true` Pflicht) |
+| `zerodox` | https://zerodox.de/api/health | nein (HTTP 200 reicht) |
+| `guildscout` | http://localhost:8765/health | nein (HTTP 200 reicht) |
+
+Pro Service:
+- **🔴 \<service\> DOWN** — nach 2 konsekutiven Failures (= ~10 Minuten Downtime).
+- **✅ \<service\> wieder UP** — sobald der Service nach einem Down-Alert wieder antwortet.
+- **Keine Wiederholungs-Alerts** — Stunden-langes Down führt zu EINEM Alert.
+- **State pro Service getrennt** — wenn shadowops-bot down ist, beeinflusst das nicht den ZERODOX-Counter.
+
+Die ZERODOX-URL `https://zerodox.de/api/health` läuft über das Internet → testet
+DNS-Auflösung + Traefik-Routing + TLS-Zertifikat + App-Health in einem.
 
 ### Backup-Restore-Test (1. jedes Monats, 04:50 lokal)
 
@@ -91,11 +112,20 @@ echo '{"last_status":"up","last_alert_at":"","consecutive_failures":0}' \
 ## Wartung / Inspektion
 
 ```bash
-# Beide Timer auf einen Blick
-systemctl --user list-timers shadowops-watchdog.timer shadowops-backup-test.timer
+# Alle 4 Timer auf einen Blick
+systemctl --user list-timers \
+  shadowops-watchdog.timer zerodox-watchdog.timer guildscout-watchdog.timer \
+  shadowops-backup-test.timer
 
-# Letzten 50 Watchdog-Läufe
+# Letzten 50 Läufe pro Service
 journalctl --user -u shadowops-watchdog.service --no-pager -n 50
+journalctl --user -u zerodox-watchdog.service --no-pager -n 50
+journalctl --user -u guildscout-watchdog.service --no-pager -n 50
+
+# State-Files pro Service inspizieren
+cat ~/shadowops-bot/data/watchdog_state.json
+cat ~/shadowops-bot/data/watchdog_state_zerodox.json
+cat ~/shadowops-bot/data/watchdog_state_guildscout.json
 
 # Backup-Test-Logs (lokal)
 ls -la ~/.local/state/shadowops-bot/backup-test/
