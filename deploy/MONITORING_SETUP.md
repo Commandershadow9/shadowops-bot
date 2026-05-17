@@ -26,13 +26,18 @@
             /api/health                                  (3 Core-Agents)
 ```
 
-Alle fünf Watchdogs nutzen `scripts/service-watchdog.sh` — ein generisches
-Script, parametrisiert via Env-Vars. Zwei Modi:
+Alle sechs Watchdogs nutzen `scripts/service-watchdog.sh` — ein generisches
+Script, parametrisiert via Env-Vars. Drei Modi:
 - `WATCHDOG_MODE=http` (Default): curl auf `WATCHDOG_HEALTH_URL`
 - `WATCHDOG_MODE=systemd`: prüft `systemctl is-active` für jede Unit in `WATCHDOG_SYSTEMD_UNITS` (Komma-separiert)
+- `WATCHDOG_MODE=systemd-result`: prüft Result + Alter (`ExecMainStartTimestamp`) des letzten Laufs für oneshot/Daily-Jobs. `WATCHDOG_MAX_AGE_HOURS` (Default 36h) — bei `stale_*h` → DOWN.
 
 Das ursprüngliche `scripts/bot-watchdog.sh` bleibt als Backward-Compat-Variante
 für den shadowops-bot Watchdog erhalten.
+
+### Sonderrolle: cmdshadow-design
+
+cmdshadow-design ist ein **Claude-Plugin (Multi-Skill Design-Tool), kein laufender Service**. Daher gibt's keinen kontinuierlich pingbaren Endpoint. Stattdessen läuft täglich um 06:00 `cmdshadow-design-healthcheck.service` (oneshot) mit 6 Stufen (Brand-Spec, Pre-Publish, Scripts, Vitest 26 Tests). Der Watchdog prüft alle 1h ob dieser Daily-Healthcheck **rechtzeitig erfolgreich gelaufen** ist. Wenn nicht (z.B. Timer broken, Service-Failure, Stale > 36h): Discord-Alert.
 
 State-Files sind pro Service getrennt (`data/watchdog_state_<service>.json`),
 damit Failure-Counter und Alert-Status sich nicht beeinflussen.
@@ -77,6 +82,7 @@ systemctl --user restart zerodox-watchdog.timer
 systemctl --user restart guildscout-watchdog.timer
 systemctl --user restart mayday-sim-watchdog.timer
 systemctl --user restart ai-agent-framework-watchdog.timer
+systemctl --user restart cmdshadow-design-watchdog.timer
 ```
 
 ### 4. Funktionstest
@@ -97,15 +103,16 @@ echo '{"last_status":"up","last_alert_at":"","consecutive_failures":0}' \
 
 ## Was wird wann alertiert?
 
-### Watchdog-Familie (jeder alle 5 Minuten, gestaffelt)
+### Watchdog-Familie (gestaffelt — meist alle 5 Min, Daily-Jobs alle 1h)
 
-| Service | Mode | Endpoint/Units | Boot-Offset |
-|---|---|---|---|
-| `shadowops-bot` | http | http://127.0.0.1:8766/health (bot_ready=true Pflicht) | 2 min |
-| `zerodox` | http | https://zerodox.de/api/health (testet via Internet DNS+Traefik+TLS+App) | 3 min |
-| `guildscout` | http | http://localhost:8765/health | 4 min |
-| `mayday-sim` | http | http://127.0.0.1:3200/api/health | 5 min |
-| `ai-agent-framework` | systemd | guildscout-feedback-agent, zerodox-support-agent, seo-agent | 6 min |
+| Service | Mode | Endpoint/Units | Cycle | Boot-Offset |
+|---|---|---|---|---|
+| `shadowops-bot` | http | http://127.0.0.1:8766/health (bot_ready=true Pflicht) | 5 min | 2 min |
+| `zerodox` | http | https://zerodox.de/api/health (testet via Internet DNS+Traefik+TLS+App) | 5 min | 3 min |
+| `guildscout` | http | http://localhost:8765/health | 5 min | 4 min |
+| `mayday-sim` | http | http://127.0.0.1:3200/api/health | 5 min | 5 min |
+| `ai-agent-framework` | systemd | guildscout-feedback-agent, zerodox-support-agent, seo-agent | 5 min | 6 min |
+| `cmdshadow-design` | systemd-result | cmdshadow-design-healthcheck.service (max_age=36h) | 1 h | 8 min |
 
 Pro Service:
 - **🔴 \<service\> DOWN** — nach 2 konsekutiven Failures (= ~10 Minuten Downtime).
@@ -127,10 +134,11 @@ DNS-Auflösung + Traefik-Routing + TLS-Zertifikat + App-Health in einem.
 ## Wartung / Inspektion
 
 ```bash
-# Alle 6 Timer auf einen Blick
+# Alle 7 Timer auf einen Blick
 systemctl --user list-timers \
   shadowops-watchdog.timer zerodox-watchdog.timer guildscout-watchdog.timer \
-  mayday-sim-watchdog.timer ai-agent-framework-watchdog.timer shadowops-backup-test.timer
+  mayday-sim-watchdog.timer ai-agent-framework-watchdog.timer \
+  cmdshadow-design-watchdog.timer shadowops-backup-test.timer
 
 # Letzten 50 Läufe pro Service
 journalctl --user -u shadowops-watchdog.service --no-pager -n 50

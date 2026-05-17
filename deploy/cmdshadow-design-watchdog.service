@@ -1,0 +1,20 @@
+[Unit]
+Description=cmdshadow-design Watchdog — Stale-Detection des Daily-Healthcheck
+Documentation=https://github.com/Commandershadow9/shadowops-bot
+After=network-online.target
+
+[Service]
+Type=oneshot
+EnvironmentFile=-/home/cmdshadow/.config/shadowops-watchdog.env
+Environment=WATCHDOG_SERVICE_NAME=cmdshadow-design
+# systemd-result-Mode: prueft das ERGEBNIS des letzten Healthcheck-Laufs
+# (oneshot-Service, laeuft nicht 24/7). Frische-Toleranz 36h — daily um 06:00
+# bedeutet bei normaler Funktion <24h, mit 12h Reserve gegen Fehlstart.
+Environment=WATCHDOG_MODE=systemd-result
+Environment=WATCHDOG_SYSTEMD_USER=1
+Environment=WATCHDOG_SYSTEMD_UNITS=cmdshadow-design-healthcheck.service
+Environment=WATCHDOG_MAX_AGE_HOURS=36
+ExecStart=/home/cmdshadow/shadowops-bot/scripts/service-watchdog.sh
+SuccessExitStatus=0 1
+StandardOutput=journal
+StandardError=journal

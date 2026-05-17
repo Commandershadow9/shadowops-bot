@@ -98,6 +98,7 @@ Zusätzlich zum internen `project_monitor.py` laufen 5 unabhängige user-systemd
 | `guildscout-watchdog` | http | http://localhost:8765/health |
 | `mayday-sim-watchdog` | http | http://127.0.0.1:3200/api/health |
 | `ai-agent-framework-watchdog` | systemd | guildscout-feedback-agent, zerodox-support-agent, seo-agent |
+| `cmdshadow-design-watchdog` | systemd-result | cmdshadow-design-healthcheck.service (max_age=36h, 1h-Cycle) |
 | `shadowops-backup-test` | — | monatlich 1. d. Monats, Wrapper um `~/ZERODOX/scripts/backup-test.sh` |
 
 **Script:** `scripts/service-watchdog.sh` (generisch, parametrisiert) und `scripts/bot-watchdog.sh` (Backward-Compat). **Service-Files:** `deploy/<name>-watchdog.{service,timer}`. **Webhook-Config:** `~/.config/shadowops-watchdog.env` (chmod 600). **Setup-Anleitung:** [`deploy/MONITORING_SETUP.md`](./deploy/MONITORING_SETUP.md).
