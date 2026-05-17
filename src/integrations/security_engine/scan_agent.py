@@ -2057,11 +2057,27 @@ class SecurityScanAgent:
             return False
         return True
 
+    @staticmethod
+    def _compute_finding_signature(
+        repo_name: str, category: str, affected_files: List[str],
+    ) -> str:
+        """Issue #249: stabile Signatur fuer Dedup-Check vor Jules-Enqueue.
+
+        Hash ueber (repo, category, sortierte affected_files). Identische
+        Findings (z.B. drei Re-Trigger fuer dieselbe N+1-Optimierung)
+        ergeben dieselbe Signatur.
+        """
+        import hashlib
+        files_norm = sorted(str(f).strip().lower() for f in (affected_files or []) if f)
+        raw = f"{repo_name.lower()}|{category.lower()}|{','.join(files_norm)}"
+        return hashlib.sha256(raw.encode("utf-8")).hexdigest()[:16]
+
     async def _enqueue_jules_fix(self, finding: Dict) -> Optional[int]:
         """Baut Jules-Prompt aus Finding und queued in agent_task_queue.
 
         Returns:
-            task_id bei Erfolg, None bei Fehler.
+            task_id bei Erfolg (auch wenn Dedup-Treffer, dann existing id),
+            None bei Fehler.
         """
         queue = getattr(self, 'agent_task_queue', None)
         if queue is None:
@@ -2084,6 +2100,30 @@ class SecurityScanAgent:
         if isinstance(affected_files, str):
             affected_files = [affected_files]
         files_list = "\n".join(f"- {f}" for f in affected_files[:10])
+
+        # Issue #249: Dedup-Check vor enqueue. Identische Findings (gleiche
+        # Repo + Category + Files) duerfen nicht erneut an Jules delegiert
+        # werden, sonst entstehen Doppel-PRs wie #195/#196/#197.
+        category = finding.get('category', '') or ''
+        finding_signature = self._compute_finding_signature(
+            repo_name=repo_name, category=category, affected_files=affected_files,
+        )
+        if hasattr(queue, "find_open_task_by_signature"):
+            try:
+                existing = await queue.find_open_task_by_signature(finding_signature)
+            except Exception as exc:
+                logger.warning(
+                    "[scan-agent] find_open_task_by_signature schlug fehl, "
+                    "fahre ohne Dedupe fort: %s", exc,
+                )
+                existing = None
+            if existing is not None:
+                logger.info(
+                    "[scan-agent] Dedupe-Treffer: Task %s ist bereits offen fuer "
+                    "Signature %s (repo=%s, category=%s) — kein neuer Enqueue.",
+                    existing.id, finding_signature, repo_name, category,
+                )
+                return int(existing.id)
 
         prompt = f"""Security-Fix fuer {project} ({severity} severity).
 
@@ -2117,6 +2157,8 @@ von der ShadowOps Review-Pipeline reviewt — halte den Scope eng."""
                     'branch': 'main',
                     'finding_category': finding.get('category', ''),
                     'finding_severity': severity,
+                    # Issue #249: Signatur fuer Dedup beim naechsten Enqueue
+                    'finding_signature': finding_signature,
                 },
                 project=project,
             )
