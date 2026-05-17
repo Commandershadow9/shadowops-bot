@@ -1,0 +1,15 @@
+[Unit]
+Description=mayday-sim Health Watchdog — Container-Stack-Health-Check + Discord-Alert
+Documentation=https://github.com/Commandershadow9/shadowops-bot
+After=network-online.target docker.service
+
+[Service]
+Type=oneshot
+EnvironmentFile=-/home/cmdshadow/.config/shadowops-watchdog.env
+Environment=WATCHDOG_SERVICE_NAME=mayday-sim
+Environment=WATCHDOG_HEALTH_URL=http://127.0.0.1:3200/api/health
+Environment=WATCHDOG_REQUIRE_BOT_READY=0
+ExecStart=/home/cmdshadow/shadowops-bot/scripts/service-watchdog.sh
+SuccessExitStatus=0 1
+StandardOutput=journal
+StandardError=journal
