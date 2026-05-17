@@ -3,6 +3,26 @@ Solo-Dev nutzt Claude Code + Codex. Doku muss aktuell sein, damit du selbst und 
 
 ZIEL: README, CLAUDE.md, docs/reference/api.md synchron mit Code halten. Nicht zu lang, nicht zu kurz, immer wahr.
 
+PHASE 0 — DEDUP-CHECK (PFLICHT, vor jeder anderen Phase):
+Beim Cleanup am 2026-05-17 wurden 27 offene Doku-Drift-PRs konsolidiert (Issue #249) — sie wurden taeglich neu erstellt, statt bestehende zu aktualisieren. Das passiert nicht nochmal:
+
+1. Bevor du PHASE 1+2 startest, pruefe deine offenen PRs:
+   ```bash
+   gh pr list --search "label:worker:doku state:open" --json number,title,headRefName
+   ```
+2. Falls bereits ein offener Drift-PR oder Gaps-PR existiert:
+   - Pruefe seinen Inhalt: deckt er bereits ab, was du jetzt findest?
+   - **JA, identische Diffs:** kein neuer PR, kein State-Update. Stattdessen Comment am bestehenden PR mit Zeitstempel "Drift-Lauf {DATE} bestaetigt: keine neuen Aenderungen noetig".
+   - **JA, aber Inhalt veraltet:** force-push die neuen Aenderungen auf den bestehenden Branch (`git push --force-with-lease`). PR-Beschreibung aktualisieren mit "Refreshed am {DATE}".
+   - **NEIN, dein neuer Befund ist disjoint:** neuen PR erstellen, aber State-File aktualisieren damit der naechste Lauf den Stand kennt.
+3. Stable Branch-Names verwenden: `claude/doku/drift` und `claude/doku/gaps` (nicht `claude/doku/drift-YYYY-MM-DD`). So genuegt `git push --force-with-lease` zum Update.
+4. State-File `.routines/state/doku.json` MUSS nach jedem Lauf gefuellt sein:
+   - `last_run`: ISO-Timestamp
+   - `last_drift_check`: ISO-Timestamp
+   - `open_prs`: aktuelle Liste {branch, title, scope (drift|gaps), created}
+   - `tracked_files`: pro Datei `last_synced_with_code_at`
+   - `open_questions`: alle Punkte, fuer die du KEINEN PR machst (zu unsicher), als Issue-Stub
+
 PHASE 1 — DRIFT-DETECTION:
 Vergleiche Code mit Doku, finde Diskrepanzen:
 - Slash-Commands in `src/cogs/*` vs. README "Slash Commands"-Sektion (Liste, Argumente).
@@ -40,12 +60,12 @@ PHASE 4 — ANTI-BLOAT:
 - Veraltete Sektionen die niemand mehr braucht (z.B. Highlights v3.x wenn aktuell v5.x stable) → in CHANGELOG.md migrieren.
 
 OUTPUT:
-Pro Lauf max 2 PRs:
-1. Drift-Korrekturen (Signaturen, Setup-Steps, Pfade, Slash-Command-Listen).
-2. Luecken-Fuellung (fehlende Docstrings, fehlende CLAUDE.md-Sektionen).
+Pro Lauf max 2 PRs (oder Force-Push-Updates auf bestehende — siehe PHASE 0):
+1. Drift-Korrekturen (Signaturen, Setup-Steps, Pfade, Slash-Command-Listen) — Branch: `claude/doku/drift`.
+2. Luecken-Fuellung (fehlende Docstrings, fehlende CLAUDE.md-Sektionen) — Branch: `claude/doku/gaps`.
 
 PR-Titel: `docs: <was wurde geaendert>`
-PR-Body: Liste der Aenderungen mit Begruendung pro Item.
+PR-Body: Liste der Aenderungen mit Begruendung pro Item. Bei Force-Push-Update: zusaetzlich Sektion "Refresh-Historie" am Ende mit Datum + Diff-Highlights pro Update.
 
 REGELN:
 - Doku-Stil minimalistisch: Aussagesaetze, Codeblocks mit Sprach-Tag, Mermaid fuer Diagramme.
