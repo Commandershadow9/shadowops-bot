@@ -1,0 +1,82 @@
+name: Worker Dedup Gate
+
+# Solo-Dev-Schutz (Issue #249): verhindert dass Routine-Worker
+# (Doku, Cleanup, Guardian) Duplikat-PRs öffnen während bereits ein
+# offener PR mit demselben Worker-Label existiert.
+#
+# Hintergrund: 17.05.2026-Cleanup — der Doku-Worker hat 3 Wochen lang
+# täglich neue Drift-PRs erzeugt, ohne bestehende offene zu erkennen.
+# 27 obsolete PRs mussten manuell geschlossen werden.
+#
+# Diese Action ist die strukturelle Absicherung des Prompt-Hinweises
+# aus PR #251 (PHASE 0 DEDUP-CHECK in .routines/prompts/doku.md).
+# Der Prompt allein ist nur eine Bitte — diese Action ist ein Gate.
+
+on:
+  pull_request:
+    types: [opened, reopened, labeled, synchronize]
+
+permissions:
+  pull-requests: read
+  contents: read
+
+jobs:
+  check-worker-duplicates:
+    runs-on: ubuntu-latest
+    # Nur prüfen wenn der PR ein worker:*-Label hat. Reduziert Noise:
+    # menschliche PRs laufen nie in den Check.
+    if: >
+      contains(github.event.pull_request.labels.*.name, 'worker:doku') ||
+      contains(github.event.pull_request.labels.*.name, 'worker:cleanup') ||
+      contains(github.event.pull_request.labels.*.name, 'worker:guardian')
+
+    steps:
+      - name: Identify worker label
+        id: identify
+        env:
+          PR_LABELS: ${{ toJson(github.event.pull_request.labels.*.name) }}
+        run: |
+          # Extrahiere das erste worker:*-Label aus dem PR
+          worker_label=$(echo "$PR_LABELS" | jq -r '.[] | select(startswith("worker:"))' | head -1)
+          if [ -z "$worker_label" ]; then
+            echo "Kein worker:*-Label — skip" >&2
+            exit 0
+          fi
+          echo "label=$worker_label" >> "$GITHUB_OUTPUT"
+          echo "Worker-Label dieses PRs: $worker_label"
+
+      - name: Check for other open PRs with same worker label
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          PR_NUMBER: ${{ github.event.pull_request.number }}
+          WORKER_LABEL: ${{ steps.identify.outputs.label }}
+          REPO: ${{ github.repository }}
+        run: |
+          if [ -z "$WORKER_LABEL" ]; then
+            echo "::notice::Kein worker-Label, skip"
+            exit 0
+          fi
+
+          echo "Suche andere offene PRs mit Label '$WORKER_LABEL' (außer #$PR_NUMBER)..."
+
+          # GitHub API: alle offenen PRs mit diesem Label
+          others=$(gh api -X GET "/repos/$REPO/pulls" \
+            -f state=open \
+            -f per_page=100 \
+            --jq ".[] | select(.number != $PR_NUMBER) | select(.labels[].name == \"$WORKER_LABEL\") | {number, title, url}")
+
+          if [ -z "$others" ]; then
+            echo "::notice::Keine anderen offenen PRs mit Label '$WORKER_LABEL' — OK"
+            exit 0
+          fi
+
+          echo "::error::Worker-Dedup-Gate: es existieren bereits offene PR(s) mit Label '$WORKER_LABEL'."
+          echo "$others" | jq -r '"  - #\(.number): \(.title) — \(.url)"'
+          echo ""
+          echo "Erwartetes Verhalten (siehe .routines/prompts/doku.md PHASE 0):"
+          echo "  1. Den bestehenden PR per force-push aktualisieren statt einen neuen zu öffnen"
+          echo "  2. Oder bestehenden PR mergen und dann neuen aufmachen"
+          echo "  3. Oder bestehenden PR schließen wenn obsolete, BEVOR neuer aufgemacht wird"
+          echo ""
+          echo "Issue #249 trackt diese Regel. Dieser PR muss geschlossen oder konsolidiert werden."
+          exit 1

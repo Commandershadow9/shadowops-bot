@@ -25,6 +25,7 @@ wheels/
 
 # Bot Secrets & Config
 config/config.yaml
+config/*.bak*
 .env
 *.token
 *.key
