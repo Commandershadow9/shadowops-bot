@@ -213,6 +213,7 @@ class CIMixin:
         merged_sha: str,
         workflow_names: List[str],
         max_wait_min: int = 30,
+        admin_merge_grace_min: int = 5,
     ) -> Literal["success", "failure", "timeout", "no_workflows"]:
         """
         Wait for required CI workflows on a given commit to complete.
@@ -220,6 +221,13 @@ class CIMixin:
         Welle 9.10 (2026-05-11): Verhindert den Race Condition aus dem
         58h-Vorfall: Bot triggert deploy.sh sofort bei PR-merge → deploy.sh
         Pre-Flight-Gate sieht pending CI auf dem neuen SHA → exit 1.
+
+        Welle 9.16 (Issue #243): Admin-merged PRs triggern oft keinen CI-Run
+        (Required-Checks bleiben leer). Wenn nach `admin_merge_grace_min`
+        Minuten KEIN relevanter Workflow fuer den SHA gesichtet wurde,
+        gilt das als "kein CI vorhanden" → return "no_workflows" (Caller
+        deployt direkt). Sobald aber EIN Workflow gesehen wurde, gilt der
+        normale Timeout-Pfad (max_wait_min).
 
         Exponential backoff: 60s → 120s → 240s → cap 300s.
 
@@ -229,12 +237,15 @@ class CIMixin:
             workflow_names: Liste von erlaubten workflow-Names (z.B. ["Web Quality"]).
                             Match ist case-insensitive substring.
             max_wait_min: Hard-timeout in Minuten. Default 30.
+            admin_merge_grace_min: Grace-Period in Minuten, in der NOCH KEIN
+                Workflow fuer den SHA erkannt sein muss. Default 5.
 
         Returns:
             "success"      — alle required Workflows haben conclusion=success
             "failure"      — mind. 1 Workflow ist failed/cancelled/timed_out
             "timeout"      — nach max_wait_min noch nicht alle completed
-            "no_workflows" — kein workflow_names konfiguriert → caller entscheidet
+            "no_workflows" — kein workflow_names konfiguriert ODER admin-merge
+                             ohne CI-Trigger erkannt → caller entscheidet
         """
         if not workflow_names:
             self.logger.info(
@@ -251,13 +262,17 @@ class CIMixin:
             return "no_workflows"
 
         workflow_names_lower = [str(n).lower().strip() for n in workflow_names if n]
-        deadline = time.monotonic() + max_wait_min * 60
+        started_at = time.monotonic()
+        deadline = started_at + max_wait_min * 60
+        admin_merge_deadline = started_at + max(0, admin_merge_grace_min) * 60
         poll_interval_s = 60
         max_poll_interval_s = 300  # 5 min cap
+        saw_any_relevant = False
 
         self.logger.info(
             f"⏳ Welle 9.10: warte auf CI-Completion fuer {repo_full_name}@{merged_sha[:7]} "
-            f"(workflows={workflow_names}, timeout={max_wait_min}min)"
+            f"(workflows={workflow_names}, timeout={max_wait_min}min, "
+            f"admin_merge_grace={admin_merge_grace_min}min)"
         )
 
         while time.monotonic() < deadline:
@@ -287,6 +302,17 @@ class CIMixin:
                         break
 
             if not relevant:
+                # Welle 9.16 (Issue #243): admin-merged Detection. Wenn nach
+                # admin_merge_grace_min weiter KEIN Workflow fuer den SHA gesichtet
+                # wurde, ist es vermutlich ein admin-merge ohne CI-Trigger →
+                # weiter deployen (Caller behandelt "no_workflows" als OK).
+                if not saw_any_relevant and time.monotonic() >= admin_merge_deadline:
+                    self.logger.info(
+                        f"ℹ️ _wait_for_ci_completion: nach {admin_merge_grace_min}min "
+                        f"keine relevanten Workflows fuer {merged_sha[:7]} sichtbar — "
+                        f"admin-merge ohne CI-Trigger vermutet, fahre fort."
+                    )
+                    return "no_workflows"
                 self.logger.info(
                     f"⏳ _wait_for_ci_completion: noch keine relevanten Workflows "
                     f"fuer {merged_sha[:7]} sichtbar — weiter pollen ({poll_interval_s}s)..."
@@ -294,6 +320,8 @@ class CIMixin:
                 await asyncio.sleep(poll_interval_s)
                 poll_interval_s = min(poll_interval_s * 2, max_poll_interval_s)
                 continue
+
+            saw_any_relevant = True
 
             # Bestimme Status pro workflow_name: den NEUESTEN Run zaehlen
             # (re-runs koennen mehrere Eintraege liefern).
@@ -474,11 +502,15 @@ class CIMixin:
             workflow_names = project_config.get('ci_workflows') or []
             if workflow_names:
                 max_wait_min = int(project_config.get('ci_wait_max_min', 30))
+                admin_merge_grace_min = int(
+                    project_config.get('ci_wait_admin_merge_grace_min', 5)
+                )
                 outcome = await self._wait_for_ci_completion(
                     repo_full_name=repo_full_name,
                     merged_sha=full_sha,
                     workflow_names=workflow_names,
                     max_wait_min=max_wait_min,
+                    admin_merge_grace_min=admin_merge_grace_min,
                 )
                 if outcome == "failure":
                     await self._send_ci_wait_alert(

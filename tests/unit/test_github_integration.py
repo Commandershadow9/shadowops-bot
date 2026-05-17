@@ -390,6 +390,113 @@ class TestWelle910WaitForCI:
         assert result == 'timeout'
 
     @pytest.mark.asyncio
+    async def test_wait_returns_no_workflows_after_admin_merge_grace(
+        self, mock_bot, cfg_with_projects, monkeypatch,
+    ):
+        """Welle 9.16 (Issue #243): wenn nach admin_merge_grace_min weiter KEIN
+        Workflow für den SHA gesichtet wurde, gilt es als admin-merge ohne CI
+        → "no_workflows" (Caller deployt direkt) statt 30min Timeout."""
+        integration = GitHubIntegration(mock_bot, cfg_with_projects)
+        # API liefert konstant einen Workflow-Run, der NICHT zum Filter passt
+        # (anderes Repo / anderer Name). Damit bleibt `relevant` immer leer.
+        integration._fetch_workflow_runs_for_sha = AsyncMock(return_value={
+            'workflow_runs': [
+                {
+                    'name': 'Unrelated Workflow',
+                    'status': 'completed',
+                    'conclusion': 'success',
+                    'created_at': '2026-05-15T18:00:00Z',
+                    'path': '.github/workflows/unrelated.yml',
+                },
+            ],
+        })
+
+        sleep_calls = []
+
+        async def fast_sleep(seconds):
+            sleep_calls.append(seconds)
+
+        monkeypatch.setattr('integrations.github_integration.ci_mixin.asyncio.sleep', fast_sleep)
+
+        # time.monotonic: 0 (started_at), 0 (Loop-Eintritt) ⇒ in Grace,
+        # dann 400 (>5*60=300) ⇒ Grace abgelaufen ⇒ no_workflows
+        times = iter([0.0, 0.0, 400.0])
+
+        def fake_monotonic():
+            try:
+                return next(times)
+            except StopIteration:
+                return 400.0
+
+        monkeypatch.setattr('integrations.github_integration.ci_mixin.time.monotonic', fake_monotonic)
+
+        result = await integration._wait_for_ci_completion(
+            repo_full_name='Commandershadow9/ZERODOX',
+            merged_sha='b' * 40,
+            workflow_names=['Web Quality'],
+            max_wait_min=30,
+            admin_merge_grace_min=5,
+        )
+        assert result == 'no_workflows'
+
+    @pytest.mark.asyncio
+    async def test_wait_does_not_short_circuit_when_workflow_was_seen(
+        self, mock_bot, cfg_with_projects, monkeypatch,
+    ):
+        """Negativtest: wenn schon mal ein relevanter Workflow gesehen wurde,
+        darf admin_merge_grace NICHT mehr greifen — dann gilt der normale
+        Timeout-Pfad."""
+        integration = GitHubIntegration(mock_bot, cfg_with_projects)
+        # Erst pending (relevant), dann verschwindet er aus dem Response
+        # (z.B. weil neuer Re-Run gestartet, aber API noch nicht aktuell).
+        call_count = {'n': 0}
+
+        async def fetch(*_args, **_kwargs):
+            call_count['n'] += 1
+            if call_count['n'] == 1:
+                return {
+                    'workflow_runs': [
+                        {
+                            'name': 'Web Quality',
+                            'status': 'in_progress',
+                            'conclusion': None,
+                            'created_at': '2026-05-15T18:00:00Z',
+                            'path': '.github/workflows/web-quality.yml',
+                        },
+                    ],
+                }
+            return {'workflow_runs': []}
+
+        integration._fetch_workflow_runs_for_sha = fetch
+
+        async def fast_sleep(_seconds):
+            return None
+
+        monkeypatch.setattr('integrations.github_integration.ci_mixin.asyncio.sleep', fast_sleep)
+
+        # Erste Iteration: in_progress → saw_any_relevant=True, weiter pollen
+        # Zweite Iteration: relevant leer, ABER saw_any_relevant=True → kein short-circuit
+        # Dritte Iteration: deadline überschritten → timeout
+        times = iter([0.0, 0.0, 100.0, 2000.0])
+
+        def fake_monotonic():
+            try:
+                return next(times)
+            except StopIteration:
+                return 2000.0
+
+        monkeypatch.setattr('integrations.github_integration.ci_mixin.time.monotonic', fake_monotonic)
+
+        result = await integration._wait_for_ci_completion(
+            repo_full_name='Commandershadow9/ZERODOX',
+            merged_sha='c' * 40,
+            workflow_names=['Web Quality'],
+            max_wait_min=30,
+            admin_merge_grace_min=1,
+        )
+        assert result == 'timeout'
+
+    @pytest.mark.asyncio
     async def test_trigger_deployment_blocks_on_failure(self, mock_bot, cfg_with_projects):
         """deploy.sh darf NICHT laufen wenn CI failed."""
         integration = GitHubIntegration(mock_bot, cfg_with_projects)
