@@ -16,13 +16,18 @@ from src.integrations.security_engine.scan_agent import SecurityScanAgent
 pytestmark = pytest.mark.asyncio
 
 
-def _make_agent(*, enabled=True, queue_enqueue=None):
-    """Fabrik: SecurityScanAgent mit gestubtem Bot + Queue."""
+def _make_agent(*, enabled=True, queue_enqueue=None, existing_task=None):
+    """Fabrik: SecurityScanAgent mit gestubtem Bot + Queue.
+
+    Issue #249: Dedupe-Lookup wird per Default auf None gestubbed → kein Dedup-Hit.
+    Mit `existing_task=<QueuedTask>` simuliert man einen Dedup-Hit.
+    """
     agent = SecurityScanAgent.__new__(SecurityScanAgent)
     agent.bot = SimpleNamespace()
 
     queue = MagicMock()
     queue.enqueue = queue_enqueue or AsyncMock(return_value=42)
+    queue.find_open_task_by_signature = AsyncMock(return_value=existing_task)
     agent.bot.github_integration = SimpleNamespace(
         agent_task_queue=queue,
         _agent_review_enabled=enabled,
@@ -166,6 +171,9 @@ class TestEnqueueJulesFix:
         assert 'web/src/auth.ts' in payload['prompt']
         assert payload['finding_category'] == 'code_security'
         assert payload['finding_severity'] == 'high'
+        # Issue #249: Signature ist im payload fuer naechsten Dedup-Lookup
+        assert 'finding_signature' in payload
+        assert len(payload['finding_signature']) == 16  # sha256[:16]
 
     async def test_no_queue_returns_none(self):
         agent = SecurityScanAgent.__new__(SecurityScanAgent)
@@ -197,6 +205,81 @@ class TestEnqueueJulesFix:
         await agent._enqueue_jules_fix(f)
         payload = queue.enqueue.await_args.kwargs['payload']
         assert 'single/file.py' in payload['prompt']
+
+    # ───── Issue #249: Dedup-Pfad ─────
+
+    async def test_dedupe_hit_returns_existing_task_id_no_enqueue(self):
+        """Wenn find_open_task_by_signature einen Treffer liefert, darf
+        queue.enqueue NICHT mehr gerufen werden — die existierende Task
+        wird zurueckgegeben."""
+        existing = SimpleNamespace(id=99, source='scan_agent', priority=1,
+                                   payload={}, project='zerodox', retry_count=0)
+        agent, queue = _make_agent(enabled=True, existing_task=existing)
+        agent._repo_for_finding = lambda f: 'Commandershadow9/ZERODOX'
+
+        result = await agent._enqueue_jules_fix(self._finding())
+
+        assert result == 99
+        queue.find_open_task_by_signature.assert_awaited_once()
+        queue.enqueue.assert_not_called()
+
+    async def test_dedupe_miss_proceeds_to_enqueue(self):
+        """Wenn find_open_task_by_signature None liefert (kein Treffer),
+        laeuft enqueue normal durch."""
+        agent, queue = _make_agent(enabled=True, existing_task=None)
+        agent._repo_for_finding = lambda f: 'Commandershadow9/ZERODOX'
+
+        result = await agent._enqueue_jules_fix(self._finding())
+
+        assert result == 42  # _make_agent default
+        queue.find_open_task_by_signature.assert_awaited_once()
+        queue.enqueue.assert_awaited_once()
+
+    async def test_dedupe_db_error_falls_back_to_enqueue(self):
+        """DB-Fehler in find_open_task_by_signature darf NICHT den Enqueue
+        blockieren — graceful Fallback auf alten Pfad."""
+        agent, queue = _make_agent(enabled=True)
+        queue.find_open_task_by_signature = AsyncMock(
+            side_effect=RuntimeError("connection lost")
+        )
+        agent._repo_for_finding = lambda f: 'Commandershadow9/ZERODOX'
+
+        result = await agent._enqueue_jules_fix(self._finding())
+
+        assert result == 42
+        queue.enqueue.assert_awaited_once()
+
+    async def test_signature_is_stable_for_same_inputs(self):
+        """Drei aufeinanderfolgende Calls fuer dieselbe Sache erzeugen
+        dieselbe Signature — das ist die Grundlage des Dedupes."""
+        sig1 = SecurityScanAgent._compute_finding_signature(
+            'ZERODOX', 'code_security', ['web/src/auth.ts'],
+        )
+        sig2 = SecurityScanAgent._compute_finding_signature(
+            'ZERODOX', 'code_security', ['web/src/auth.ts'],
+        )
+        assert sig1 == sig2
+        assert len(sig1) == 16
+
+    async def test_signature_changes_with_files(self):
+        """Andere Files → andere Signature → kein Dedupe-Treffer."""
+        sig1 = SecurityScanAgent._compute_finding_signature(
+            'ZERODOX', 'code_security', ['web/src/auth.ts'],
+        )
+        sig2 = SecurityScanAgent._compute_finding_signature(
+            'ZERODOX', 'code_security', ['web/src/login.tsx'],
+        )
+        assert sig1 != sig2
+
+    async def test_signature_normalizes_file_order(self):
+        """File-Reihenfolge darf nicht zu unterschiedlichen Signaturen fuehren."""
+        sig1 = SecurityScanAgent._compute_finding_signature(
+            'ZERODOX', 'code_security', ['a.ts', 'b.ts'],
+        )
+        sig2 = SecurityScanAgent._compute_finding_signature(
+            'ZERODOX', 'code_security', ['b.ts', 'a.ts'],
+        )
+        assert sig1 == sig2
 
 
 # ─────────── Constants ───────────

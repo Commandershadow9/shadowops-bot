@@ -101,6 +101,22 @@ PROJECT_REPO_MAP = {
 DEFAULT_REPO = 'Commandershadow9/shadowops-bot'
 SKIP_ISSUE_PROJECTS = {'openclaw', 'agents', 'blogger', 'content-pipeline'}
 
+# Issue #249 (PR-Cleanup 2026-05-17): Host-OS- und externe Container-Image-Findings
+# duerfen NICHT als GitHub-Issue im shadowops-bot Repo landen — sie betreffen
+# den Bot nicht, gehoeren in Server-Ops oder externes Repo. Stattdessen nur Log.
+# Kategorien sind lower-case und werden case-insensitiv gematcht.
+HOST_OS_CATEGORIES = {
+    'kernel_update', 'kernel_patch', 'kernel',
+    'system_package', 'apt_update', 'apt_security',
+    'imagemagick', 'chrome', 'google_chrome',
+    'aide_drift', 'aide_failure',
+    'ownership_drift', 'setuid_drift', 'root_ownership',
+    'env_perms', 'env_world_readable',
+    'claude_settings_perms', 'backup_perms',
+    'container_image_cve',  # externe Docker-Images (blogger-mcp, leitstelle-osrm)
+    'host_docker_update',
+}
+
 # === Jules SecOps Workflow — Fix-Mode-Klassifizierung ===
 # Siehe docs/plans/2026-04-11-jules-secops-workflow-design.md §9.1
 
@@ -2041,11 +2057,27 @@ class SecurityScanAgent:
             return False
         return True
 
+    @staticmethod
+    def _compute_finding_signature(
+        repo_name: str, category: str, affected_files: List[str],
+    ) -> str:
+        """Issue #249: stabile Signatur fuer Dedup-Check vor Jules-Enqueue.
+
+        Hash ueber (repo, category, sortierte affected_files). Identische
+        Findings (z.B. drei Re-Trigger fuer dieselbe N+1-Optimierung)
+        ergeben dieselbe Signatur.
+        """
+        import hashlib
+        files_norm = sorted(str(f).strip().lower() for f in (affected_files or []) if f)
+        raw = f"{repo_name.lower()}|{category.lower()}|{','.join(files_norm)}"
+        return hashlib.sha256(raw.encode("utf-8")).hexdigest()[:16]
+
     async def _enqueue_jules_fix(self, finding: Dict) -> Optional[int]:
         """Baut Jules-Prompt aus Finding und queued in agent_task_queue.
 
         Returns:
-            task_id bei Erfolg, None bei Fehler.
+            task_id bei Erfolg (auch wenn Dedup-Treffer, dann existing id),
+            None bei Fehler.
         """
         queue = getattr(self, 'agent_task_queue', None)
         if queue is None:
@@ -2068,6 +2100,30 @@ class SecurityScanAgent:
         if isinstance(affected_files, str):
             affected_files = [affected_files]
         files_list = "\n".join(f"- {f}" for f in affected_files[:10])
+
+        # Issue #249: Dedup-Check vor enqueue. Identische Findings (gleiche
+        # Repo + Category + Files) duerfen nicht erneut an Jules delegiert
+        # werden, sonst entstehen Doppel-PRs wie #195/#196/#197.
+        category = finding.get('category', '') or ''
+        finding_signature = self._compute_finding_signature(
+            repo_name=repo_name, category=category, affected_files=affected_files,
+        )
+        if hasattr(queue, "find_open_task_by_signature"):
+            try:
+                existing = await queue.find_open_task_by_signature(finding_signature)
+            except Exception as exc:
+                logger.warning(
+                    "[scan-agent] find_open_task_by_signature schlug fehl, "
+                    "fahre ohne Dedupe fort: %s", exc,
+                )
+                existing = None
+            if existing is not None:
+                logger.info(
+                    "[scan-agent] Dedupe-Treffer: Task %s ist bereits offen fuer "
+                    "Signature %s (repo=%s, category=%s) — kein neuer Enqueue.",
+                    existing.id, finding_signature, repo_name, category,
+                )
+                return int(existing.id)
 
         prompt = f"""Security-Fix fuer {project} ({severity} severity).
 
@@ -2101,6 +2157,8 @@ von der ShadowOps Review-Pipeline reviewt — halte den Scope eng."""
                     'branch': 'main',
                     'finding_category': finding.get('category', ''),
                     'finding_severity': severity,
+                    # Issue #249: Signatur fuer Dedup beim naechsten Enqueue
+                    'finding_signature': finding_signature,
                 },
                 project=project,
             )
@@ -2122,6 +2180,17 @@ von der ShadowOps Review-Pipeline reviewt — halte den Scope eng."""
         for skip in SKIP_ISSUE_PROJECTS:
             if skip in ap.lower():
                 return None
+
+        # Issue #249: Host-OS- und externe Container-Image-Findings nicht als
+        # GitHub-Issue ablegen (gehoeren nicht ins shadowops-bot Repo).
+        category = (finding.get('category') or '').lower().strip()
+        if category in HOST_OS_CATEGORIES:
+            logger.info(
+                "[scan-agent] Finding '%s' (category=%s) ist Host-OS-Thema — "
+                "kein GitHub-Issue (Routing via HOST_OS_CATEGORIES).",
+                title[:60], category,
+            )
+            return None
 
         repo = self._resolve_repo(ap)
         fp, existing = await self._find_similar_open_finding_by_fingerprint(

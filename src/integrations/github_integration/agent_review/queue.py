@@ -151,6 +151,43 @@ class TaskQueue:
             )
         return int(row["cnt"] or 0)
 
+    async def find_open_task_by_signature(
+        self, finding_signature: str,
+    ) -> Optional[QueuedTask]:
+        """Issue #249: Idempotenz fuer Jules-Tasks.
+
+        Sucht eine noch nicht abgeschlossene Task (status in {'queued',
+        'released'}) mit identischer `payload.finding_signature`. Wird
+        beim PR-Cleanup 2026-05-17 gefunden, weil drei aufeinanderfolgende
+        `_enqueue_jules_fix`-Aufrufe identische N+1-Optimierungs-Tasks
+        erzeugten → 3 PRs fuer dieselbe Sache (#195, #196, #197).
+
+        Returnt None wenn keine passende Task existiert oder wenn die
+        Signature leer ist. Bei DB-Fehler ebenfalls None (Caller faellt
+        auf den alten Pfad zurueck, kein Schaden).
+        """
+        if not finding_signature:
+            return None
+        assert self._pool is not None
+        try:
+            async with self._pool.acquire() as conn:
+                row = await conn.fetchrow(
+                    """SELECT id, source, priority, payload, project, retry_count
+                       FROM agent_task_queue
+                       WHERE status IN ('queued', 'released')
+                         AND payload->>'finding_signature' = $1
+                       ORDER BY created_at ASC
+                       LIMIT 1""",
+                    finding_signature,
+                )
+        except Exception as exc:
+            logger.warning(
+                "find_open_task_by_signature: DB-Fehler — fahre ohne Dedupe fort: %s",
+                exc,
+            )
+            return None
+        return self._row_to_task(row) if row else None
+
     async def cancel(self, task_id: int, reason: str = "") -> None:
         """Cancelt einen Task (z.B. weil bereits anders erledigt)."""
         assert self._pool is not None
