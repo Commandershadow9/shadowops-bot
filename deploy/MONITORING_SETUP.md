@@ -7,26 +7,30 @@
 ## Architektur
 
 ```
-                              ┌──────────────────────────┐
-                              │ Discord (critical-Channel)│
-                              └────────────▲─────────────┘
+                              ┌─────────────────────────────┐
+                              │ Discord #🩺-uptime-alerts   │
+                              │ (System & Projekte Kategorie)│
+                              └────────────▲────────────────┘
                                            │ Webhook (POST)
                                            │
-       ┌──────────────┬───────────────────┬─┴─────────────────┬──────────────┐
-       │              │                   │                   │              │
- ┌─────┴──────┐ ┌────┴────────┐ ┌─────────┴─────┐ ┌───────────┴────┐ ┌──────┴───────┐
- │ shadowops- │ │ zerodox-    │ │ guildscout-   │ │ mayday-sim-    │ │ backup-test  │
- │ watchdog   │ │ watchdog    │ │ watchdog      │ │ watchdog       │ │ monatlich    │
- │ alle 5 min │ │ alle 5 min  │ │ alle 5 min    │ │ alle 5 min     │ │ 1. d. Monats │
- └─────┬──────┘ └────┬────────┘ └────────┬──────┘ └──────────┬─────┘ └──────────────┘
-       │ pingt       │ pingt             │ pingt             │ pingt
-       ▼             ▼                   ▼                   ▼
- :8766/health    https://...   localhost:8765/health   127.0.0.1:3200/api/health
-                /api/health
+       ┌─────────┬───────────┬─────────────┴────┬────────────┬────────────┐
+       │         │           │                  │            │            │
+   shadowops- zerodox-   guildscout-       mayday-sim-  ai-agent-      backup-test
+   watchdog   watchdog   watchdog          watchdog     framework-     monatlich
+   alle 5min  alle 5min  alle 5min         alle 5min    watchdog       1. d. Monats
+                                                        alle 5min
+       │         │           │                  │            │
+       ▼         ▼           ▼                  ▼            ▼
+  :8766/    https://    localhost:8765   127.0.0.1:3200  systemctl --user
+  health    zerodox.de  /health          /api/health     is-active
+            /api/health                                  (3 Core-Agents)
 ```
 
-Alle vier Watchdogs nutzen `scripts/service-watchdog.sh` — ein generisches
-Script, parametrisiert via Env-Vars (`WATCHDOG_SERVICE_NAME`, `WATCHDOG_HEALTH_URL`).
+Alle fünf Watchdogs nutzen `scripts/service-watchdog.sh` — ein generisches
+Script, parametrisiert via Env-Vars. Zwei Modi:
+- `WATCHDOG_MODE=http` (Default): curl auf `WATCHDOG_HEALTH_URL`
+- `WATCHDOG_MODE=systemd`: prüft `systemctl is-active` für jede Unit in `WATCHDOG_SYSTEMD_UNITS` (Komma-separiert)
+
 Das ursprüngliche `scripts/bot-watchdog.sh` bleibt als Backward-Compat-Variante
 für den shadowops-bot Watchdog erhalten.
 
@@ -39,9 +43,15 @@ damit Failure-Counter und Alert-Status sich nicht beeinflussen.
 
 1. In Discord: **Server-Einstellungen → Integrationen → Webhooks**
 2. **"Neuer Webhook"** klicken
-3. Name: `ShadowOps Watchdog`, Channel: `critical` (oder ein anderer dedizierter Alert-Channel)
+3. Name: `ShadowOps Watchdog`, Channel: `🩺-uptime-alerts` (Kategorie `📦 System & Projekte`)
+   - **Wichtig:** NICHT in `🚨-critical` posten — das ist für Security-Alerts. Uptime-Down ist eine andere Klasse.
 4. **"Webhook-URL kopieren"** — die URL sieht aus wie
    `https://discord.com/api/webhooks/1234.../abcd...`
+
+Falls der Channel noch nicht existiert: er kann via Discord-Bot-MCP angelegt werden:
+- Name: `🩺-uptime-alerts`
+- Kategorie: `📦 System & Projekte` (ID `1441655479867805727`)
+- Topic: `Service-Watchdogs (shadowops-bot, zerodox, guildscout, mayday-sim, ai-agent-framework) — Down + Recovery Alerts`
 
 ### 2. Config-Datei anlegen
 
@@ -66,6 +76,7 @@ systemctl --user restart shadowops-watchdog.timer
 systemctl --user restart zerodox-watchdog.timer
 systemctl --user restart guildscout-watchdog.timer
 systemctl --user restart mayday-sim-watchdog.timer
+systemctl --user restart ai-agent-framework-watchdog.timer
 ```
 
 ### 4. Funktionstest
@@ -88,12 +99,13 @@ echo '{"last_status":"up","last_alert_at":"","consecutive_failures":0}' \
 
 ### Watchdog-Familie (jeder alle 5 Minuten, gestaffelt)
 
-| Service | Endpoint | Bot-Ready-Check | Boot-Offset |
+| Service | Mode | Endpoint/Units | Boot-Offset |
 |---|---|---|---|
-| `shadowops-bot` | http://127.0.0.1:8766/health | ja (`bot_ready=true` Pflicht) | 2 min |
-| `zerodox` | https://zerodox.de/api/health | nein (HTTP 200 reicht) | 3 min |
-| `guildscout` | http://localhost:8765/health | nein (HTTP 200 reicht) | 4 min |
-| `mayday-sim` | http://127.0.0.1:3200/api/health | nein (HTTP 200 reicht) | 5 min |
+| `shadowops-bot` | http | http://127.0.0.1:8766/health (bot_ready=true Pflicht) | 2 min |
+| `zerodox` | http | https://zerodox.de/api/health (testet via Internet DNS+Traefik+TLS+App) | 3 min |
+| `guildscout` | http | http://localhost:8765/health | 4 min |
+| `mayday-sim` | http | http://127.0.0.1:3200/api/health | 5 min |
+| `ai-agent-framework` | systemd | guildscout-feedback-agent, zerodox-support-agent, seo-agent | 6 min |
 
 Pro Service:
 - **🔴 \<service\> DOWN** — nach 2 konsekutiven Failures (= ~10 Minuten Downtime).
@@ -115,22 +127,24 @@ DNS-Auflösung + Traefik-Routing + TLS-Zertifikat + App-Health in einem.
 ## Wartung / Inspektion
 
 ```bash
-# Alle 5 Timer auf einen Blick
+# Alle 6 Timer auf einen Blick
 systemctl --user list-timers \
   shadowops-watchdog.timer zerodox-watchdog.timer guildscout-watchdog.timer \
-  mayday-sim-watchdog.timer shadowops-backup-test.timer
+  mayday-sim-watchdog.timer ai-agent-framework-watchdog.timer shadowops-backup-test.timer
 
 # Letzten 50 Läufe pro Service
 journalctl --user -u shadowops-watchdog.service --no-pager -n 50
 journalctl --user -u zerodox-watchdog.service --no-pager -n 50
 journalctl --user -u guildscout-watchdog.service --no-pager -n 50
 journalctl --user -u mayday-sim-watchdog.service --no-pager -n 50
+journalctl --user -u ai-agent-framework-watchdog.service --no-pager -n 50
 
 # State-Files pro Service inspizieren
 cat ~/shadowops-bot/data/watchdog_state.json
 cat ~/shadowops-bot/data/watchdog_state_zerodox.json
 cat ~/shadowops-bot/data/watchdog_state_guildscout.json
 cat ~/shadowops-bot/data/watchdog_state_mayday-sim.json
+cat ~/shadowops-bot/data/watchdog_state_ai-agent-framework.json
 
 # Backup-Test-Logs (lokal)
 ls -la ~/.local/state/shadowops-bot/backup-test/

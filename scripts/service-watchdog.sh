@@ -123,8 +123,8 @@ EOF
     fi
 }
 
-# ─── Health-Check ──────────────────────────────────────────────────────
-check_health() {
+# ─── Health-Check (HTTP-Mode) ──────────────────────────────────────────
+check_health_http() {
     local resp http_code body
 
     if ! resp=$(curl -s -m "$CURL_TIMEOUT_S" -w "\n%{http_code}" "$HEALTH_URL" 2>/dev/null); then
@@ -152,6 +152,52 @@ check_health() {
 
     echo "UP"
     return 0
+}
+
+# ─── Health-Check (systemd-Mode) ───────────────────────────────────────
+# Prueft jede Unit in $WATCHDOG_SYSTEMD_UNITS (Komma-separiert) ueber
+# `systemctl is-active`. Wenn auch nur EINE Unit nicht active → DOWN.
+# Nutzt --user wenn $WATCHDOG_SYSTEMD_USER=1 (Default 1), sonst System.
+check_health_systemd() {
+    if [[ -z "${WATCHDOG_SYSTEMD_UNITS:-}" ]]; then
+        echo "DOWN:no_units_configured"
+        return 1
+    fi
+
+    local user_flag=""
+    if [[ "${WATCHDOG_SYSTEMD_USER:-1}" == "1" ]]; then
+        user_flag="--user"
+    fi
+
+    local failed_units=""
+    IFS=',' read -ra units <<< "$WATCHDOG_SYSTEMD_UNITS"
+    for unit in "${units[@]}"; do
+        unit=$(echo "$unit" | xargs)  # trim whitespace
+        [[ -z "$unit" ]] && continue
+        local status
+        status=$(systemctl $user_flag is-active "$unit" 2>/dev/null || echo "unknown")
+        if [[ "$status" != "active" ]]; then
+            failed_units="${failed_units}${unit}=${status} "
+        fi
+    done
+
+    if [[ -n "$failed_units" ]]; then
+        echo "DOWN:$(echo $failed_units | tr ' ' ',' | sed 's/,$//')"
+        return 1
+    fi
+    echo "UP"
+    return 0
+}
+
+# ─── Health-Check Dispatcher ───────────────────────────────────────────
+check_health() {
+    case "${WATCHDOG_MODE:-http}" in
+        http)    check_health_http ;;
+        systemd) check_health_systemd ;;
+        *)       echo "DOWN:invalid_mode_${WATCHDOG_MODE}"
+                 return 1
+                 ;;
+    esac
 }
 
 # ─── Main ──────────────────────────────────────────────────────────────
