@@ -1,0 +1,16 @@
+[Unit]
+Description=AI Agent Framework Watchdog — systemd-Status-Check der 3 Core-Agents
+Documentation=https://github.com/Commandershadow9/shadowops-bot
+After=network-online.target
+
+[Service]
+Type=oneshot
+EnvironmentFile=-/home/cmdshadow/.config/shadowops-watchdog.env
+Environment=WATCHDOG_SERVICE_NAME=ai-agent-framework
+Environment=WATCHDOG_MODE=systemd
+Environment=WATCHDOG_SYSTEMD_USER=1
+Environment=WATCHDOG_SYSTEMD_UNITS=guildscout-feedback-agent,zerodox-support-agent,seo-agent
+ExecStart=/home/cmdshadow/shadowops-bot/scripts/service-watchdog.sh
+SuccessExitStatus=0 1
+StandardOutput=journal
+StandardError=journal

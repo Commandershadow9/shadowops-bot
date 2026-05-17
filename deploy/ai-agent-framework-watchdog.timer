@@ -1,0 +1,14 @@
+[Unit]
+Description=AI Agent Framework Watchdog Timer — alle 5 Minuten (mit Jitter)
+Documentation=https://github.com/Commandershadow9/shadowops-bot
+
+[Timer]
+# Erster Lauf 6 Minuten nach Boot (versetzt zu shadowops:2, zerodox:3, guildscout:4, mayday:5)
+OnBootSec=6min
+OnUnitActiveSec=5min
+RandomizedDelaySec=45s
+AccuracySec=15s
+Persistent=false
+
+[Install]
+WantedBy=timers.target

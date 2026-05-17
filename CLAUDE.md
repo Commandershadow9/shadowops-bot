@@ -87,6 +87,23 @@ shadowops-bot/
 - `customer_notifications.py` — Customer-Facing Alerts (Multi-Guild)
 - `fail2ban.py` / `crowdsec.py` / `aide.py` / `docker.py` — Security-Integrationen
 
+## Externes Monitoring (seit 2026-05-17 — Defense-in-Depth)
+
+Zusätzlich zum internen `project_monitor.py` laufen 5 unabhängige user-systemd Watchdogs, die alle 5 Minuten ihre Services prüfen und Down/Recovery direkt via Discord-Webhook in `#🩺-uptime-alerts` posten (NICHT über den Bot — funktioniert auch wenn shadowops-bot tot ist):
+
+| Watchdog | Mode | Target |
+|---|---|---|
+| `shadowops-watchdog` | http | http://127.0.0.1:8766/health |
+| `zerodox-watchdog` | http | https://zerodox.de/api/health |
+| `guildscout-watchdog` | http | http://localhost:8765/health |
+| `mayday-sim-watchdog` | http | http://127.0.0.1:3200/api/health |
+| `ai-agent-framework-watchdog` | systemd | guildscout-feedback-agent, zerodox-support-agent, seo-agent |
+| `shadowops-backup-test` | — | monatlich 1. d. Monats, Wrapper um `~/ZERODOX/scripts/backup-test.sh` |
+
+**Script:** `scripts/service-watchdog.sh` (generisch, parametrisiert) und `scripts/bot-watchdog.sh` (Backward-Compat). **Service-Files:** `deploy/<name>-watchdog.{service,timer}`. **Webhook-Config:** `~/.config/shadowops-watchdog.env` (chmod 600). **Setup-Anleitung:** [`deploy/MONITORING_SETUP.md`](./deploy/MONITORING_SETUP.md).
+
+**Regel beim Hinzufügen eines neuen kritischen Services:** Watchdog-Service-File aus `deploy/` kopieren, Env-Vars anpassen, Symlink in `~/.config/systemd/user/`, `daemon-reload + enable + start`, Recovery-Alert testen. Tabelle hier UND in `MONITORING_SETUP.md` erweitern.
+
 ## Coding-Conventions
 
 - **Naming:** `snake_case` fuer Funktionen/Variablen, `PascalCase` fuer Klassen, `UPPER_CASE` fuer Konstanten.

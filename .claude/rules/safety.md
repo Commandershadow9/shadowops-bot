@@ -6,6 +6,29 @@ Wenn Dateien hinzugefuegt, geloescht oder verschoben werden:
 - Neue Cogs/Integrationen in die entsprechende Tabelle eintragen
 - Geloeschte Dateien aus Tabellen entfernen
 
+## Monitoring-Pflicht bei neuen kritischen Services (seit 2026-05-17)
+Vorfall: 14.-17.05.2026 — shadowops-bot war 3 Tage down, niemand hat es bemerkt.
+Loesung: 5 externe Watchdogs alarmen jetzt direkt via Discord-Webhook (PR #253, #255, #256).
+
+**Regel:** Wenn ein neuer kritischer Service auf dem Server hinzukommt:
+1. Health-Endpoint definieren — entweder HTTP (Default) oder systemd-Unit-Status (fallback)
+2. Watchdog-Service-File in `deploy/<name>-watchdog.{service,timer}` anlegen (Template: bestehende kopieren)
+3. Symlink in `~/.config/systemd/user/`, `daemon-reload + enable + start`
+4. Mit Recovery-State (`{"last_status":"down",...}`) einmal triggern → Discord-Alert verifizieren
+5. `deploy/MONITORING_SETUP.md` Tabelle erweitern
+
+**Backward-Compat-Regel fuer Watchdog-Script:** `scripts/service-watchdog.sh` ist parametrisiert via `WATCHDOG_MODE=http|systemd`. Niemals das alte `scripts/bot-watchdog.sh` aendern — es bleibt Source-of-Truth fuer den shadowops-bot Watchdog (Backward-Compat-Wrapper).
+
+## Worker-PR-Dedup (seit 2026-05-17)
+Jeder kritische Worker (Doku, Cleanup, Guardian, SEO-Agent, AI-Agent) der GitHub-PRs erzeugt MUSS:
+1. **State-File pflegen** in `.routines/state/<worker>.json` (oder vergleichbarer Speicher) mit `open_prs: [...]`
+2. **Vor PR-Creation pruefen**: `gh pr list --search "label:worker:<name> state:open"`
+3. **Stable Branch-Names** wie `claude/doku/drift` statt `claude/doku/drift-YYYY-MM-DD` → `git push --force-with-lease` zum Update statt neuer PR
+
+**Hard-Gate:** Jedes Repo hat `.github/workflows/worker-dedup-gate.yml`. Diese Action lehnt PRs mit `worker:*`-Label automatisch ab wenn ein anderer offener PR mit demselben Label existiert. Bei Aenderung: zuerst Pre-Existing-Konflikte aufloesen.
+
+Vorfall-Historie: 17.05.2026 Cleanup — Doku-Worker hat 3 Wochen lang taeglich Drift-PRs erzeugt (27 Duplikate). Worker-Gate verhindert das jetzt strukturell.
+
 ## Code-Aenderungen
 - Vor Aenderungen an laufenden Services: `sudo systemctl status shadowops-bot` pruefen
 - Schema-Aenderungen: ALLE Properties muessen in `required` stehen (Codex Structured Output)
