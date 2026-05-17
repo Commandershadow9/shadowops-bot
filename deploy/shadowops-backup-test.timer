@@ -1,0 +1,14 @@
+[Unit]
+Description=ShadowOps Backup-Restore-Test Timer (1. jedes Monats)
+Documentation=https://github.com/Commandershadow9/shadowops-bot
+
+[Timer]
+# Erster Tag jedes Monats, 04:23 Uhr lokal (off-peak, Jitter 30min)
+OnCalendar=*-*-01 04:23:00
+RandomizedDelaySec=30min
+AccuracySec=5min
+# Bei verpasstem Lauf (Server war off) trotzdem nachholen
+Persistent=true
+
+[Install]
+WantedBy=timers.target
