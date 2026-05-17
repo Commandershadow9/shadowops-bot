@@ -189,14 +189,93 @@ check_health_systemd() {
     return 0
 }
 
+# ─── Health-Check (systemd-result-Mode) ────────────────────────────────
+# Fuer oneshot-Services (z.B. Daily-Healthcheck) die NICHT 24/7 laufen.
+# Prueft das ERGEBNIS des letzten Laufs:
+#   - Result=success (sonst → DOWN)
+#   - ExecMainStartTimestamp innerhalb $WATCHDOG_MAX_AGE_HOURS (Default 36h)
+# Wenn Service Result=success aber zu alt: DOWN:stale.
+# Wenn Service noch nie gelaufen ist: DOWN:never_ran.
+check_health_systemd_result() {
+    if [[ -z "${WATCHDOG_SYSTEMD_UNITS:-}" ]]; then
+        echo "DOWN:no_units_configured"
+        return 1
+    fi
+
+    local user_flag=""
+    if [[ "${WATCHDOG_SYSTEMD_USER:-1}" == "1" ]]; then
+        user_flag="--user"
+    fi
+
+    local max_age_hours="${WATCHDOG_MAX_AGE_HOURS:-36}"
+    local max_age_seconds=$((max_age_hours * 3600))
+    local now_epoch
+    now_epoch=$(date +%s)
+
+    local issues=""
+    IFS=',' read -ra units <<< "$WATCHDOG_SYSTEMD_UNITS"
+    for unit in "${units[@]}"; do
+        unit=$(echo "$unit" | xargs)
+        [[ -z "$unit" ]] && continue
+
+        # systemctl show liefert KEY=VALUE — robust parsen
+        local props
+        props=$(systemctl $user_flag show "$unit" \
+            --property=Result,ExecMainStartTimestamp,LoadState 2>/dev/null || echo "")
+        if [[ -z "$props" ]]; then
+            issues="${issues}${unit}=no_status "
+            continue
+        fi
+
+        local load_state result_state start_ts
+        load_state=$(echo "$props" | grep -oE '^LoadState=.*' | cut -d= -f2-)
+        result_state=$(echo "$props" | grep -oE '^Result=.*' | cut -d= -f2-)
+        start_ts=$(echo "$props" | grep -oE '^ExecMainStartTimestamp=.*' | cut -d= -f2-)
+
+        if [[ "$load_state" != "loaded" ]]; then
+            issues="${issues}${unit}=not_loaded "
+            continue
+        fi
+        if [[ -z "$start_ts" ]]; then
+            issues="${issues}${unit}=never_ran "
+            continue
+        fi
+        if [[ "$result_state" != "success" ]]; then
+            issues="${issues}${unit}=result_${result_state} "
+            continue
+        fi
+
+        # Alter pruefen: ExecMainStartTimestamp in epoch konvertieren
+        local start_epoch age
+        start_epoch=$(date -d "$start_ts" +%s 2>/dev/null || echo 0)
+        if [[ "$start_epoch" -eq 0 ]]; then
+            issues="${issues}${unit}=bad_timestamp "
+            continue
+        fi
+        age=$((now_epoch - start_epoch))
+        if [[ "$age" -gt "$max_age_seconds" ]]; then
+            local hours=$((age / 3600))
+            issues="${issues}${unit}=stale_${hours}h "
+        fi
+    done
+
+    if [[ -n "$issues" ]]; then
+        echo "DOWN:$(echo $issues | tr ' ' ',' | sed 's/,$//')"
+        return 1
+    fi
+    echo "UP"
+    return 0
+}
+
 # ─── Health-Check Dispatcher ───────────────────────────────────────────
 check_health() {
     case "${WATCHDOG_MODE:-http}" in
-        http)    check_health_http ;;
-        systemd) check_health_systemd ;;
-        *)       echo "DOWN:invalid_mode_${WATCHDOG_MODE}"
-                 return 1
-                 ;;
+        http)           check_health_http ;;
+        systemd)        check_health_systemd ;;
+        systemd-result) check_health_systemd_result ;;
+        *)              echo "DOWN:invalid_mode_${WATCHDOG_MODE}"
+                        return 1
+                        ;;
     esac
 }
 

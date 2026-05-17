@@ -1,0 +1,18 @@
+[Unit]
+Description=cmdshadow-design Watchdog Timer — stuendlich (Stale-Check, kein kontinuierliches Polling)
+Documentation=https://github.com/Commandershadow9/shadowops-bot
+
+[Timer]
+# Erster Lauf 8 Minuten nach Boot (versetzt: shadowops:2, zerodox:3, guildscout:4,
+# mayday:5, agents:6, cmdshadow-design:8 — Lücke bei 7 für zukünftige Services).
+# Intervall: 1h (vs. 5min bei klassischen Watchdogs) — wir checken einen Daily-Job,
+# keine 24/7-Service-Verfügbarkeit. Spart Ressourcen, immer noch früh genug
+# wenn der Healthcheck mal nicht läuft.
+OnBootSec=8min
+OnUnitActiveSec=1h
+RandomizedDelaySec=3min
+AccuracySec=1min
+Persistent=false
+
+[Install]
+WantedBy=timers.target
