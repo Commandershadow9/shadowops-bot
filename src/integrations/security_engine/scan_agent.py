@@ -101,6 +101,22 @@ PROJECT_REPO_MAP = {
 DEFAULT_REPO = 'Commandershadow9/shadowops-bot'
 SKIP_ISSUE_PROJECTS = {'openclaw', 'agents', 'blogger', 'content-pipeline'}
 
+# Issue #249 (PR-Cleanup 2026-05-17): Host-OS- und externe Container-Image-Findings
+# duerfen NICHT als GitHub-Issue im shadowops-bot Repo landen — sie betreffen
+# den Bot nicht, gehoeren in Server-Ops oder externes Repo. Stattdessen nur Log.
+# Kategorien sind lower-case und werden case-insensitiv gematcht.
+HOST_OS_CATEGORIES = {
+    'kernel_update', 'kernel_patch', 'kernel',
+    'system_package', 'apt_update', 'apt_security',
+    'imagemagick', 'chrome', 'google_chrome',
+    'aide_drift', 'aide_failure',
+    'ownership_drift', 'setuid_drift', 'root_ownership',
+    'env_perms', 'env_world_readable',
+    'claude_settings_perms', 'backup_perms',
+    'container_image_cve',  # externe Docker-Images (blogger-mcp, leitstelle-osrm)
+    'host_docker_update',
+}
+
 # === Jules SecOps Workflow — Fix-Mode-Klassifizierung ===
 # Siehe docs/plans/2026-04-11-jules-secops-workflow-design.md §9.1
 
@@ -2122,6 +2138,17 @@ von der ShadowOps Review-Pipeline reviewt — halte den Scope eng."""
         for skip in SKIP_ISSUE_PROJECTS:
             if skip in ap.lower():
                 return None
+
+        # Issue #249: Host-OS- und externe Container-Image-Findings nicht als
+        # GitHub-Issue ablegen (gehoeren nicht ins shadowops-bot Repo).
+        category = (finding.get('category') or '').lower().strip()
+        if category in HOST_OS_CATEGORIES:
+            logger.info(
+                "[scan-agent] Finding '%s' (category=%s) ist Host-OS-Thema — "
+                "kein GitHub-Issue (Routing via HOST_OS_CATEGORIES).",
+                title[:60], category,
+            )
+            return None
 
         repo = self._resolve_repo(ap)
         fp, existing = await self._find_similar_open_finding_by_fingerprint(
