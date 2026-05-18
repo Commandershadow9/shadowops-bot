@@ -1,6 +1,6 @@
 # 🗡️ ShadowOps - Active Security Guardian v5.1 🚀
 
-**Status:** AKTIV | **Version:** 5.1.0 | **Letzte Aktualisierung:** 12.04.2026
+**Status:** AKTIV | **Version:** 5.1.0 | **Letzte Aktualisierung:** 18.05.2026
 
 **ShadowOps** ist ein **vollständig autonomer Security Guardian** mit lernfähigem AI Security Analyst, KI-gesteuerter Auto-Remediation, adaptiver Session-Steuerung und wachsender Knowledge-DB — kein statischer Scanner, sondern ein **System das aus seinen Erfahrungen lernt und immer besser wird**.
 
@@ -562,8 +562,16 @@ shadowops-bot/
 │   ├── config.recommended.yaml         # Empfehlungen
 │   ├── safe_upgrades.yaml              # Upgrade-Pfade
 │   └── logrotate.conf                  # Log-Rotation
-├── deploy/                             # Deployment
-│   └── shadowops-bot.service           # systemd Unit
+├── deploy/                             # Deployment + Watchdogs
+│   ├── shadowops-bot.service           # systemd Bot-Service
+│   ├── *-watchdog.{service,timer}      # Externe Uptime-Watchdogs (6x HTTP/systemd + Backup-Test)
+│   ├── shadowops-watchdog.env.example  # Webhook-Env Template
+│   └── MONITORING_SETUP.md             # Setup-Anleitung Watchdogs
+├── .github/
+│   └── workflows/
+│       ├── ci.yml                      # Test-Pipeline
+│       ├── worker-dedup-gate.yml       # Worker-PR-Dedup-Gate
+│       └── auto-label-pr.yml           # Auto-Labeling
 ├── scripts/                            # Utility-Skripte
 │   ├── restart.sh                      # Bot neustarten (--pull, --logs)
 │   ├── diagnose-bot.sh                 # Diagnose

@@ -56,7 +56,15 @@ shadowops-bot/
 │   ├── INFRASTRUCTURE.md
 │   └── PROJECT_*.md              # Per-projekt-Notizen
 ├── deploy/
-│   └── shadowops-bot.service     # systemd Unit
+│   ├── shadowops-bot.service          # systemd Bot-Service
+│   ├── *-watchdog.{service,timer}     # Externe Uptime-Watchdogs (6x HTTP/systemd + Backup-Test)
+│   ├── shadowops-watchdog.env.example # Webhook-Env Template
+│   └── MONITORING_SETUP.md            # Setup-Anleitung Watchdogs
+├── .github/
+│   └── workflows/
+│       ├── ci.yml                     # Test-Pipeline (pytest)
+│       ├── worker-dedup-gate.yml      # Verhindert Duplikat-Worker-PRs
+│       └── auto-label-pr.yml          # Auto-Labeling nach Conventional Commits
 ├── scripts/                      # Wartungs-Skripte
 ├── docs/
 │   ├── SECURITY_ANALYST.md
@@ -212,4 +220,4 @@ Worker-Konventionen:
 
 ## Letztes Update dieser Datei
 
-2026-04-26 — initiales Setup, generiert aus Worker-Bundle.
+2026-05-18 — deploy/-Verzeichnis aktualisiert (Watchdog-Services), .github/workflows/ hinzugefuegt.
