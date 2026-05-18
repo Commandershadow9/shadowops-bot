@@ -4,6 +4,16 @@
 
 ### Fixed
 
+- **`ensure_project_webhooks()` ignorierte `enabled: false`**: Für deaktivierte
+  Projekte (z.B. `sicherheitsdiensttool`, AUF EIS) legte der Auto-Webhook-Setup
+  trotzdem einen GitHub-Hook zur ShadowOps-URL an, weil der Loop in
+  `webhook_mixin.py:128` kein `enabled`-Feld prüfte. Aufgefallen bei mayday-sim
+  Issue #391, als nach erstmaligem Aktivieren von `auto_create_webhooks: true`
+  ein ungewollter Hook für das ruhende Sicherheitsdienst-Repo entstand. Behoben
+  mit `if not project_config.get('enabled', True): continue` als erstem Filter
+  im Loop — verhindert künftige Neuanlagen für brache Projekte, ohne bestehende
+  aktive Hooks anzufassen.
+
 - **Phase 5e Health-Aggregator Cog**: 5-Min-Status-Embed im `📊-dashboard` Channel
   postet seit dem discord.py 2.6+ Upgrade nicht mehr. Ursache: `TextChannel.pins()`
   ist seit discord.py 2.6 ein `AsyncIterator` statt einer awaitable List —
