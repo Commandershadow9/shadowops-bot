@@ -83,6 +83,8 @@ systemctl --user restart guildscout-watchdog.timer
 systemctl --user restart mayday-sim-watchdog.timer
 systemctl --user restart ai-agent-framework-watchdog.timer
 systemctl --user restart cmdshadow-design-watchdog.timer
+# Seit #416: Build-Drift-Detection fuer mayday-sim
+systemctl --user restart mayday-sim-build-drift-watchdog.timer
 ```
 
 ### 4. Funktionstest

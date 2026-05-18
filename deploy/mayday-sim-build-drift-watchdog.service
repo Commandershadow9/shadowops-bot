@@ -1,0 +1,20 @@
+[Unit]
+Description=MayDay-Sim Build-Drift Watchdog — Alert bei deploy-Stillstand (#416)
+Documentation=https://github.com/Commandershadow9/mayday-sim/issues/416
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+EnvironmentFile=-%h/.config/shadowops-watchdog.env
+ExecStart=%h/shadowops-bot/scripts/build-drift-watchdog.sh
+StandardOutput=journal
+StandardError=journal
+SyslogIdentifier=mayday-sim-build-drift
+
+# Sicherheit
+NoNewPrivileges=true
+PrivateTmp=true
+
+[Install]
+WantedBy=default.target

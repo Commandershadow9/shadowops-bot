@@ -1,0 +1,14 @@
+[Unit]
+Description=Timer: MayDay-Sim Build-Drift Check alle 15 Min (#416)
+
+[Timer]
+# 2 Min nach Boot warten damit Bot+Web Container hochkommen
+OnBootSec=2min
+# Alle 15 Min — niedrigste Granularitaet die noch sinnvoll ist (Drift >30 Min
+# soll detektiert werden, 15 Min Check gibt 2 Polls bevor Alert)
+OnUnitActiveSec=15min
+Persistent=true
+Unit=mayday-sim-build-drift-watchdog.service
+
+[Install]
+WantedBy=timers.target
