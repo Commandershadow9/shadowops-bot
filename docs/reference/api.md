@@ -1,7 +1,7 @@
 ---
 title: 🔧 ShadowOps API Documentation v5.1
 status: active
-last_reviewed: 2026-04-15
+last_reviewed: 2026-05-18
 owner: CommanderShadow9
 ---
 
@@ -955,7 +955,6 @@ DSN kommt aus `config.security_analyst_dsn` (Env: `SECURITY_ANALYST_DB_URL`).
 
 #### AI Service Errors
 - `No AI providers enabled` - All AI services disabled
-- `Ollama connection failed` - Cannot reach Ollama server
 - `AI request timeout` - AI provider took too long
 
 #### Deployment Errors
@@ -1066,4 +1065,4 @@ sudo ufw status
 
 ---
 
-**API Documentation v5.1** | Last Updated: 2026-04-12
+**API Documentation v5.1** | Last Updated: 2026-05-18

@@ -2,34 +2,27 @@
   "schema_version": 1,
   "repo": "Commandershadow9/shadowops-bot",
   "worker": "doku",
-  "last_run": "2026-05-16T00:00:00Z",
-  "last_drift_check": "2026-05-16T00:00:00Z",
+  "last_run": "2026-05-18T00:00:00Z",
+  "last_drift_check": "2026-05-18T00:00:00Z",
   "open_prs": [
     {
-      "branch": "claude/doku/drift-2026-05-16",
-      "title": "docs: drift-Korrekturen README, CLAUDE.md, api.md",
+      "branch": "claude/doku/drift",
+      "title": "docs: Drift-Korrekturen deploy/-Struktur + staler Ollama-Fehler",
       "scope": "drift",
-      "created": "2026-05-16"
+      "created": "2026-05-18"
     },
     {
-      "branch": "claude/doku/gaps-2026-05-16",
-      "title": "docs: fehlende Slash-Commands in api.md + discord-bot.md Cog-Tabelle",
+      "branch": "claude/doku/gaps",
+      "title": "docs: README Anti-Bloat — Highlights v3.1-v3.4 in CHANGELOG.md auslagern",
       "scope": "gaps",
-      "created": "2026-05-16"
+      "created": "2026-05-18"
     }
   ],
   "tracked_files": {
-    "README.md": { "last_synced_with_code_at": "2026-05-16" },
-    "CLAUDE.md": { "last_synced_with_code_at": "2026-05-16" },
-    "docs/reference/api.md": { "last_synced_with_code_at": "2026-05-16" },
+    "README.md": { "last_synced_with_code_at": "2026-05-18" },
+    "CLAUDE.md": { "last_synced_with_code_at": "2026-05-18" },
+    "docs/reference/api.md": { "last_synced_with_code_at": "2026-05-18" },
     ".claude/rules/discord-bot.md": { "last_synced_with_code_at": "2026-05-16" }
   },
-  "open_questions": [
-    {
-      "id": "q1",
-      "created": "2026-05-16",
-      "file": "README.md",
-      "note": "README ist 775 Zeilen (Limit: 500). Highlights v3.1-v3.4 sind mehr als 2 Versionen alt und koennten in CHANGELOG.md migriert werden. Kein PR erstellt — Entscheidung beim Maintainer."
-    }
-  ]
+  "open_questions": []
 }
