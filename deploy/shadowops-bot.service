@@ -26,13 +26,27 @@ ExecStart=/home/cmdshadow/shadowops-bot/.venv/bin/python3 /home/cmdshadow/shadow
 # Security Engine allein braucht bis zu 20s, Discord-Close bis zu 15s
 KillMode=mixed
 TimeoutStopSec=120
-SuccessExitStatus=143 SIGTERM
 
-# Restart-Policy
-Restart=on-abnormal
-RestartSec=30
+# Restart-Policy (#416 — Fix für stillen Tod 2026-05-18)
+#
+# VORFALL: Bot war 14h `inactive (dead)` ohne Auto-Recovery, weil sich die
+# zweite Instanz nach Lock-Detection mit Exit-Code 0 ("ShadowOps laeuft
+# bereits") selbst beendet hat. Frühere Konfig hatte:
+#   - `Restart=on-abnormal` → restartet NUR bei Crash/SIGSEGV
+#   - `SuccessExitStatus=143 SIGTERM` → Exit 0 + 143 gelten als success
+#   → Lock-Conflict-Exit (Code 0) wurde als "alles ok" gewertet, kein
+#     Restart, Bot bleibt 14h tot, Auto-Deploy stand still.
+#
+# FIX: `Restart=always` restartet bei JEDEM exit. `systemctl stop` blockiert
+# restart weiterhin (systemd-eigene Logik unterscheidet stop-by-admin vom
+# process-exit). `SuccessExitStatus` ist mit `always` nicht mehr relevant.
+# `StartLimitBurst=5` (statt 3) gibt etwas mehr Puffer falls Lock-Cleanup
+# beim Restart-Loop minimal Zeit braucht — Safety-Net gegen echte
+# Crash-Loops bleibt erhalten (5 Restarts in 5 Min → Service deaktiviert).
+Restart=always
+RestartSec=10
 StartLimitIntervalSec=300
-StartLimitBurst=3
+StartLimitBurst=5
 
 # Limits
 LimitNOFILE=65536
