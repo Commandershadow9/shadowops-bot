@@ -16,7 +16,7 @@ def test_main_skips_second_instance(monkeypatch):
 
     monkeypatch.setattr(bot_module, "get_config", lambda: config)
     monkeypatch.setattr(bot_module, "setup_logger", lambda *args, **kwargs: logger)
-    monkeypatch.setattr(bot_module, "ProcessLock", lambda path: lock)
+    monkeypatch.setattr(bot_module, "ProcessLock", lambda *args, **kwargs: lock)
     shadowops_bot = Mock()
     monkeypatch.setattr(bot_module, "ShadowOpsBot", shadowops_bot)
 
@@ -36,7 +36,7 @@ def test_main_runs_bot_when_lock_is_free(monkeypatch):
 
     monkeypatch.setattr(bot_module, "get_config", lambda: config)
     monkeypatch.setattr(bot_module, "setup_logger", lambda *args, **kwargs: logger)
-    monkeypatch.setattr(bot_module, "ProcessLock", lambda path: lock)
+    monkeypatch.setattr(bot_module, "ProcessLock", lambda *args, **kwargs: lock)
     monkeypatch.setattr(bot_module, "ShadowOpsBot", shadowops_bot)
 
     assert bot_module.main() == 0

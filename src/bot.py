@@ -2287,7 +2287,16 @@ class ShadowOpsBot(commands.Bot):
 
 def main():
     """Hauptfunktion"""
-    lock = ProcessLock(Path(__file__).resolve().parent.parent / ".shadowops.lock")
+    # cmdline_match=src/bot.py: erkennt stale Lockfiles wenn die gespeicherte
+    # PID nicht (mehr) zu einem ShadowOps-Prozess gehört (Issue #259).
+    # atexit registriert ein Best-Effort-Cleanup für SIGKILL/Crash-Fälle wo
+    # das finally unten nicht greift.
+    import atexit
+    lock = ProcessLock(
+        Path(__file__).resolve().parent.parent / ".shadowops.lock",
+        cmdline_match="src/bot.py",
+    )
+    atexit.register(lock.release)
     try:
         config = get_config()
         logger = setup_logger("shadowops", config.debug_mode)

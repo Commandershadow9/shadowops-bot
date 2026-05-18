@@ -13,6 +13,12 @@ WorkingDirectory=/home/cmdshadow/shadowops-bot
 # Cleanup stale PID file and stop orphaned process (if any)
 ExecStartPre=/bin/bash -c 'PID_FILE=/home/cmdshadow/shadowops-bot/.bot.pid; if [ -f "$PID_FILE" ]; then pid=$(cat "$PID_FILE"); if [ -n "$pid" ] && kill -0 "$pid" 2>/dev/null; then kill "$pid"; sleep 2; if kill -0 "$pid" 2>/dev/null; then kill -9 "$pid"; fi; fi; rm -f "$PID_FILE"; fi'
 
+# Cleanup stale ProcessLock file (Issue #259): wenn die im Lockfile gespeicherte
+# PID nicht mehr zu einem ShadowOps-Prozess gehoert, ist das File stale und
+# verwirrt Diagnose-Tools. fcntl-Locks selbst sind PID-unabhaengig und werden
+# vom Kernel beim FD-Close freigegeben — wir cleanen nur die File.
+ExecStartPre=/bin/bash -c 'LOCK_FILE=/home/cmdshadow/shadowops-bot/.shadowops.lock; if [ -f "$LOCK_FILE" ]; then pid=$(head -n1 "$LOCK_FILE" 2>/dev/null | tr -d "[:space:]"); if [ -z "$pid" ] || ! grep -q "src/bot.py" "/proc/$pid/cmdline" 2>/dev/null; then rm -f "$LOCK_FILE"; fi; fi'
+
 # Python mit Bot-Script (uv Virtual Environment)
 ExecStart=/home/cmdshadow/shadowops-bot/.venv/bin/python3 /home/cmdshadow/shadowops-bot/src/bot.py
 
