@@ -461,3 +461,18 @@ agent_review:
 # ║ 3. Setze Secrets als Umgebungsvariablen (z.B. DISCORD_BOT_TOKEN)        ║
 # ║ 4. Starte Bot: python3 src/bot.py                                       ║
 # ╚═══════════════════════════════════════════════════════════════════════════╝
+
+# ╔═══════════════════════════════════════════════════════════════════════════╗
+# ║ ZERODOX WELLE 16 — AUTO-FIX PRE-MERGE-GATE                                ║
+# ║ Pollt alle 15 min PRs im ZERODOX-Repo mit Auto-Fix-Labels                 ║
+# ║ Spec: ZERODOX/docs/runbooks/2026-05-19-auto-fix-pipeline-architecture.md ║
+# ╚═══════════════════════════════════════════════════════════════════════════╝
+zerodox:
+  auto_fix_pipeline:
+    # Master-Switch — default DISABLED
+    # Aktivierung via Discord-Command /zerodox-auto-fix-toggle enabled:true
+    enabled: false
+    # Poll-Intervall in Minuten (default 15)
+    poll_interval_minutes: 15
+    # Daily Merge Rate-Limit (verhindert Bot-Loops)
+    daily_merge_rate_limit: 5
