@@ -98,6 +98,9 @@ Event → TaskRouter → Codex CLI (Primary)
 - `/projekt-status [name]` - Status für spezifisches Projekt (Uptime, Response Time, Health)
 - `/alle-projekte` - Übersicht aller überwachten Projekte
 
+#### Owner Tools
+- `/claude [prompt] [project] [model] [timeout]` - Headless Claude-Session auf dem Server starten (owner-only, Mobile-Workflow ohne SSH)
+
 ### 🎨 Features
 - **Rich Embeds** - Farbcodierte Alerts (🔴 CRITICAL, 🟠 HIGH, 🟢 OK)
 - **Multi-Channel Support** - Kategorisierte Channels (Security, AI Learning, Deployments, etc.)

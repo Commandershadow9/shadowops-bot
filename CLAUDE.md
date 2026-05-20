@@ -93,11 +93,12 @@ shadowops-bot/
 - `deployment_manager.py` — Auto-Deploy mit Backup/Rollback
 - `incident_manager.py` — Incident Threads in Discord
 - `customer_notifications.py` — Customer-Facing Alerts (Multi-Guild)
+- `zerodox_auto_fix_gate.py` — ZERODOX Auto-Fix Pre-Merge-Gate (LOC/Whitelist/Rate-Limit-Guards, pollt alle 15 min)
 - `fail2ban.py` / `crowdsec.py` / `aide.py` / `docker.py` — Security-Integrationen
 
 ## Externes Monitoring (seit 2026-05-17 — Defense-in-Depth)
 
-Zusätzlich zum internen `project_monitor.py` laufen 5 unabhängige user-systemd Watchdogs, die alle 5 Minuten ihre Services prüfen und Down/Recovery direkt via Discord-Webhook in `#🩺-uptime-alerts` posten (NICHT über den Bot — funktioniert auch wenn shadowops-bot tot ist):
+Zusätzlich zum internen `project_monitor.py` laufen 7 unabhängige user-systemd Watchdogs, die ihre Services prüfen und Down/Recovery direkt via Discord-Webhook in `#🩺-uptime-alerts` posten (NICHT über den Bot — funktioniert auch wenn shadowops-bot tot ist):
 
 | Watchdog | Mode | Target |
 |---|---|---|
@@ -107,6 +108,7 @@ Zusätzlich zum internen `project_monitor.py` laufen 5 unabhängige user-systemd
 | `mayday-sim-watchdog` | http | http://127.0.0.1:3200/api/health |
 | `ai-agent-framework-watchdog` | systemd | guildscout-feedback-agent, zerodox-support-agent, seo-agent |
 | `cmdshadow-design-watchdog` | systemd-result | cmdshadow-design-healthcheck.service (max_age=36h, 1h-Cycle) |
+| `mayday-sim-build-drift-watchdog` | build-drift | /api/build-id vs. origin/main HEAD-commit-date (15 min) |
 | `shadowops-backup-test` | — | monatlich 1. d. Monats, Wrapper um `~/ZERODOX/scripts/backup-test.sh` |
 
 **Script:** `scripts/service-watchdog.sh` (generisch, parametrisiert) und `scripts/bot-watchdog.sh` (Backward-Compat). **Service-Files:** `deploy/<name>-watchdog.{service,timer}`. **Webhook-Config:** `~/.config/shadowops-watchdog.env` (chmod 600). **Setup-Anleitung:** [`deploy/MONITORING_SETUP.md`](./deploy/MONITORING_SETUP.md).
@@ -207,7 +209,7 @@ Worker-Konventionen:
 
 ## Statistik (Stand v5.1)
 
-20.000+ LoC, 150+ Tests, 3 PostgreSQL DBs (21+7+11 Tabellen), 4 Security-Integrationen, 15 Discord-Commands, 3 Monitored Projects (GuildScout, ZERODOX, AI Agents).
+20.000+ LoC, 150+ Tests, 3 PostgreSQL DBs (21+7+11 Tabellen), 4 Security-Integrationen, 20 Discord-Commands, 3 Monitored Projects (GuildScout, ZERODOX, AI Agents).
 
 ## Aktuelle Doku
 
@@ -220,4 +222,4 @@ Worker-Konventionen:
 
 ## Letztes Update dieser Datei
 
-2026-05-18 — deploy/-Verzeichnis aktualisiert (Watchdog-Services), .github/workflows/ hinzugefuegt.
+2026-05-20 — Drift: 7 Watchdogs (mayday-sim-build-drift), 20 Discord-Commands (/claude), zerodox_auto_fix_gate.py in Modulliste, infrastructure.md Restart=always.

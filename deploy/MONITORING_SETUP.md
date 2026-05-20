@@ -115,6 +115,7 @@ echo '{"last_status":"up","last_alert_at":"","consecutive_failures":0}' \
 | `mayday-sim` | http | http://127.0.0.1:3200/api/health | 5 min | 5 min |
 | `ai-agent-framework` | systemd | guildscout-feedback-agent, zerodox-support-agent, seo-agent | 5 min | 6 min |
 | `cmdshadow-design` | systemd-result | cmdshadow-design-healthcheck.service (max_age=36h) | 1 h | 8 min |
+| `mayday-sim-build-drift` | build-drift | /api/build-id vs. origin/main HEAD-commit-date (Drift > 30 Min = Alert) | 15 min | — |
 
 Pro Service:
 - **🔴 \<service\> DOWN** — nach 2 konsekutiven Failures (= ~10 Minuten Downtime).
