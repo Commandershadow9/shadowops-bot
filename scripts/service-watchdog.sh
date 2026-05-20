@@ -21,6 +21,17 @@
 #   WATCHDOG_TIMEOUT_S    — Curl-Timeout (default 10)
 #   WATCHDOG_REQUIRE_BOT_READY — wenn "1": prüfe zusätzlich JSON-Feld
 #                                bot_ready=true (Default 1 für shadowops, sonst 0)
+#   WATCHDOG_HEALTH_JQ_FILTER — optional: jq-Boolean-Expression gegen Response-Body.
+#                                Wenn gesetzt: HTTP-Status wird IGNORIERT (außer
+#                                curl-Fehler), stattdessen Truth-Source = jq-Result.
+#                                Beispiele:
+#                                  .components.ci_runner.ok
+#                                    → true wenn Komponente sich selbst als ok meldet
+#                                  '[.alerts[] | select(.component == "ci_runner" and .severity == "critical")] | length == 0'
+#                                    → true wenn keine critical-alerts für component
+#                                Use-Case: Aggregierte Health-Endpoints filtern auf eine
+#                                Komponente (z.B. mayday-ci-Pool bei runner-health.service
+#                                der auch ZERODOX-Pool aggregiert).
 #
 # Backward-Compat: Falls SHADOWOPS_HEALTH_URL/SHADOWOPS_WATCHDOG_WEBHOOK/
 # SHADOWOPS_WATCHDOG_STATE/SHADOWOPS_WATCHDOG_TIMEOUT gesetzt sind, werden
@@ -135,6 +146,34 @@ check_health_http() {
     http_code=$(echo "$resp" | tail -n1)
     body=$(echo "$resp" | head -n -1)
 
+    # JQ-Filter-Mode: HTTP-Status wird ignoriert, jq-Boolean-Expression ist Truth-Source.
+    # Use-Case: aggregierte Health-Endpoints die status:critical melden weil EINE von
+    # vielen Komponenten down ist — Watchdog soll aber nur auf SEINE Komponente reagieren.
+    if [[ -n "${WATCHDOG_HEALTH_JQ_FILTER:-}" ]]; then
+        if ! command -v jq >/dev/null 2>&1; then
+            echo "DOWN:jq_not_installed"
+            return 1
+        fi
+        local jq_result
+        jq_result=$(echo "$body" | jq -r "$WATCHDOG_HEALTH_JQ_FILTER" 2>/dev/null || echo "ERROR")
+        case "$jq_result" in
+            true)
+                echo "UP"
+                return 0
+                ;;
+            false)
+                echo "DOWN:jq_filter_false"
+                return 1
+                ;;
+            *)
+                # Filter lieferte weder true noch false (Syntax-Error, null, missing key, …)
+                echo "DOWN:jq_filter_invalid:$jq_result"
+                return 1
+                ;;
+        esac
+    fi
+
+    # Default-Mode: HTTP-Status ist Truth-Source.
     if [[ "$http_code" != "200" ]]; then
         echo "DOWN:http_$http_code"
         return 1

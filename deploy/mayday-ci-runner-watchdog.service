@@ -1,0 +1,22 @@
+[Unit]
+Description=mayday-ci Runner Health Watchdog — Alert bei CI_RUNNER_DOWN (#425)
+Documentation=https://github.com/Commandershadow9/mayday-sim/issues/425
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+EnvironmentFile=-/home/cmdshadow/.config/mayday-ci-runner-watchdog.env
+Environment=WATCHDOG_SERVICE_NAME=mayday-ci-runner
+Environment=WATCHDOG_HEALTH_URL=http://10.8.0.10:9100/health
+Environment=WATCHDOG_MODE=http
+Environment=WATCHDOG_REQUIRE_BOT_READY=0
+ExecStart=/home/cmdshadow/shadowops-bot/scripts/service-watchdog.sh
+StandardOutput=journal
+StandardError=journal
+SyslogIdentifier=mayday-ci-runner-watchdog
+NoNewPrivileges=true
+PrivateTmp=true
+
+[Install]
+WantedBy=default.target
