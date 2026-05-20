@@ -107,11 +107,35 @@ Zusätzlich zum internen `project_monitor.py` laufen 5 unabhängige user-systemd
 | `mayday-sim-watchdog` | http | http://127.0.0.1:3200/api/health |
 | `ai-agent-framework-watchdog` | systemd | guildscout-feedback-agent, zerodox-support-agent, seo-agent |
 | `cmdshadow-design-watchdog` | systemd-result | cmdshadow-design-healthcheck.service (max_age=36h, 1h-Cycle) |
+| `mayday-ci-runner-watchdog` | http + jq-filter | http://10.8.0.10:9100/health, filter=`.components.ci_runner.ok` (#mayday-sim#425) |
 | `shadowops-backup-test` | — | monatlich 1. d. Monats, Wrapper um `~/ZERODOX/scripts/backup-test.sh` |
 
 **Script:** `scripts/service-watchdog.sh` (generisch, parametrisiert) und `scripts/bot-watchdog.sh` (Backward-Compat). **Service-Files:** `deploy/<name>-watchdog.{service,timer}`. **Webhook-Config:** `~/.config/shadowops-watchdog.env` (chmod 600). **Setup-Anleitung:** [`deploy/MONITORING_SETUP.md`](./deploy/MONITORING_SETUP.md).
 
 **Regel beim Hinzufügen eines neuen kritischen Services:** Watchdog-Service-File aus `deploy/` kopieren, Env-Vars anpassen, Symlink in `~/.config/systemd/user/`, `daemon-reload + enable + start`, Recovery-Alert testen. Tabelle hier UND in `MONITORING_SETUP.md` erweitern.
+
+### JSON-Path-Filter für aggregierte Health-Endpoints (seit 2026-05-20, mayday-sim#437)
+
+Wenn der Health-Endpoint mehrere Komponenten aggregiert (z.B. `runner-health.service` auf V-Server1 deckt `ci_runner` + `github_runners` + `load` ab) und HTTP 503 zurückgibt sobald **irgendeine** Komponente kaputt ist, würde der Standard-Watchdog False-Positives feuern. Lösung: `WATCHDOG_HEALTH_JQ_FILTER` in der ENV-Datei setzen.
+
+```env
+WATCHDOG_HEALTH_JQ_FILTER=.components.ci_runner.ok
+# Alternative: alerts[]-Filter
+WATCHDOG_HEALTH_JQ_FILTER='[.alerts[] | select(.component == "ci_runner" and .severity == "critical")] | length == 0'
+```
+
+Wenn gesetzt: HTTP-Status wird **ignoriert** (außer curl-Fehler), jq-Expression ist Truth-Source. Test-Coverage: `tests/unit/test_service_watchdog_jq_filter.py` (8 Tests, Stub-HTTP-Server).
+
+### Cross-Repo-Contribution-Pfad (seit 2026-05-20)
+
+**keydev (`@hamannmanfred90-lgtm`) hat write-Access** auf diesem Repo via GitHub Collaborator-Status. Pattern für Cross-Team-Beiträge an `service-watchdog.sh` und `deploy/*-watchdog.*`:
+
+1. keydev (oder anderer Cross-Team-Contributor) erstellt Branch `feat/<topic>` direkt im Repo, kein Fork nötig
+2. PR auf main, normales CI-Setup (`ci.yml` läuft pytest)
+3. cmdshadow reviewed + merged
+4. **Roll-out-Step bleibt bei cmdshadow** (ENV-File-Updates + `systemctl --user`-Restart sind cross-user-Operationen → nicht ohne Sudoers-Aufweichung delegierbar)
+
+Read-Only ACL auf `scripts/` und `deploy/` für `keydev` ist gesetzt (`getfacl` zeigt `user:keydev:r-x`) — er kann Files lokal lesen und Tests laufen lassen. ENV-Files (`~/.config/*.env`) bleiben chmod 600, kein Read-Access, weil sie Webhook-Secrets enthalten.
 
 ## Coding-Conventions
 
