@@ -1,0 +1,13 @@
+[Unit]
+Description=Timer: mayday-ci Runner Health Check alle 5 Min (#425)
+
+[Timer]
+OnBootSec=6min
+OnUnitActiveSec=5min
+RandomizedDelaySec=45s
+AccuracySec=15s
+Persistent=false
+Unit=mayday-ci-runner-watchdog.service
+
+[Install]
+WantedBy=timers.target
