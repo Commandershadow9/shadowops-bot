@@ -98,6 +98,9 @@ Event → TaskRouter → Codex CLI (Primary)
 - `/projekt-status [name]` - Status für spezifisches Projekt (Uptime, Response Time, Health)
 - `/alle-projekte` - Übersicht aller überwachten Projekte
 
+#### Mobile Workflow (Owner-only)
+- `/claude [prompt] [project] [model] [timeout]` - Headless Claude-Session auf dem Server starten und Antwort in Discord empfangen (owner-only)
+
 ### 🎨 Features
 - **Rich Embeds** - Farbcodierte Alerts (🔴 CRITICAL, 🟠 HIGH, 🟢 OK)
 - **Multi-Channel Support** - Kategorisierte Channels (Security, AI Learning, Deployments, etc.)
@@ -339,6 +342,7 @@ shadowops-bot/
 │   │   ├── inspector.py                # /get-ai-stats, /projekt-status, /agent-stats, ...
 │   │   ├── monitoring.py               # /status, /bans, /threats, /docker, /aide
 │   │   ├── customer_setup_commands.py  # /setup-customer-server
+│   │   ├── claude_cli.py               # /claude (owner-only Mobile-Trigger)
 │   │   ├── cron_heartbeat.py           # Cron-Heartbeat
 │   │   └── phase_5e_health_aggregator.py  # Health-Aggregation
 │   ├── integrations/
@@ -535,7 +539,7 @@ See [CHANGELOG.md](./CHANGELOG.md) for detailed version history.
 - **PostgreSQL Databases**: 3 (security_analyst: 21 Tabellen, agent_learning: 7 Tabellen, seo_agent: 11 Tabellen)
 - **Learning Pipeline Tables**: 11 (Security: fix_attempts, fix_verifications, finding_quality, scan_coverage · Shared: agent_feedback, agent_quality_scores, agent_knowledge · Patch Notes: pn_generations, pn_variants, pn_examples · SEO: seo_fix_impact)
 - **Scan Areas**: 10 (firewall, ssh, docker, permissions, packages, services, logs, network, credentials, dependencies)
-- **Discord Commands**: 15 (inkl. /agent-stats)
+- **Discord Commands**: 16 (inkl. /agent-stats, /claude)
 - **Monitored Projects**: 3 (GuildScout, ZERODOX, AI Agents)
 - **Auto Discord-Posts**: Session-Summaries, Feedback-Auswertungen, Weekly Summary, Meilensteine
 
