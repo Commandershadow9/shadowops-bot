@@ -115,6 +115,8 @@ echo '{"last_status":"up","last_alert_at":"","consecutive_failures":0}' \
 | `mayday-sim` | http | http://127.0.0.1:3200/api/health | 5 min | 5 min |
 | `ai-agent-framework` | systemd | guildscout-feedback-agent, zerodox-support-agent, seo-agent | 5 min | 6 min |
 | `cmdshadow-design` | systemd-result | cmdshadow-design-healthcheck.service (max_age=36h) | 1 h | 8 min |
+| `mayday-ci-runner` | http + jq-filter | http://10.8.0.10:9100/health, filter `.components.ci_runner.ok` (#mayday-sim#425) | 5 min | 7 min |
+| `mayday-sim-build-drift` | build-drift | http://127.0.0.1:3200/api/build-id vs. origin/main HEAD (max. 30 min Drift, #mayday-sim#416) | 15 min | 2 min |
 
 Pro Service:
 - **🔴 \<service\> DOWN** — nach 2 konsekutiven Failures (= ~10 Minuten Downtime).
@@ -136,11 +138,12 @@ DNS-Auflösung + Traefik-Routing + TLS-Zertifikat + App-Health in einem.
 ## Wartung / Inspektion
 
 ```bash
-# Alle 7 Timer auf einen Blick
+# Alle 9 Timer auf einen Blick
 systemctl --user list-timers \
   shadowops-watchdog.timer zerodox-watchdog.timer guildscout-watchdog.timer \
   mayday-sim-watchdog.timer ai-agent-framework-watchdog.timer \
-  cmdshadow-design-watchdog.timer shadowops-backup-test.timer
+  cmdshadow-design-watchdog.timer shadowops-backup-test.timer \
+  mayday-ci-runner-watchdog.timer mayday-sim-build-drift-watchdog.timer
 
 # Letzten 50 Läufe pro Service
 journalctl --user -u shadowops-watchdog.service --no-pager -n 50
