@@ -2,15 +2,15 @@
   "schema_version": 1,
   "repo": "Commandershadow9/shadowops-bot",
   "worker": "doku",
-  "last_run": "2026-05-22T00:00:00Z",
-  "last_drift_check": "2026-05-22T00:00:00Z",
+  "last_run": "2026-05-23T00:00:00Z",
+  "last_drift_check": "2026-05-23T00:00:00Z",
   "open_prs": [
     {
       "branch": "claude/doku/drift",
       "title": "docs: /claude Cog + Watchdog-Tabellen-Drift (mayday-ci-runner + build-drift)",
       "scope": "drift",
       "created": "2026-05-21",
-      "refreshed": "2026-05-22"
+      "refreshed": "2026-05-23"
     },
     {
       "branch": "claude/doku/gaps",
@@ -24,7 +24,7 @@
     "CLAUDE.md": { "last_synced_with_code_at": "2026-05-22" },
     "docs/reference/api.md": { "last_synced_with_code_at": "2026-05-21" },
     ".claude/rules/discord-bot.md": { "last_synced_with_code_at": "2026-05-21" },
-    "deploy/MONITORING_SETUP.md": { "last_synced_with_code_at": "2026-05-22" }
+    "deploy/MONITORING_SETUP.md": { "last_synced_with_code_at": "2026-05-23" }
   },
   "open_questions": [
     {

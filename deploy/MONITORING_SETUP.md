@@ -26,11 +26,13 @@
             /api/health                                  (3 Core-Agents)
 ```
 
-Alle sechs Watchdogs nutzen `scripts/service-watchdog.sh` — ein generisches
+Alle Watchdogs nutzen `scripts/service-watchdog.sh` — ein generisches
 Script, parametrisiert via Env-Vars. Drei Modi:
 - `WATCHDOG_MODE=http` (Default): curl auf `WATCHDOG_HEALTH_URL`
 - `WATCHDOG_MODE=systemd`: prüft `systemctl is-active` für jede Unit in `WATCHDOG_SYSTEMD_UNITS` (Komma-separiert)
 - `WATCHDOG_MODE=systemd-result`: prüft Result + Alter (`ExecMainStartTimestamp`) des letzten Laufs für oneshot/Daily-Jobs. `WATCHDOG_MAX_AGE_HOURS` (Default 36h) — bei `stale_*h` → DOWN.
+
+**Optionaler JSON-Pfad-Filter (http-Mode):** `WATCHDOG_HEALTH_JQ_FILTER` — wenn gesetzt, wird der HTTP-Statuscode ignoriert und stattdessen eine jq-Boolean-Expression gegen den Response-Body ausgewertet. Nützlich wenn ein Endpoint HTTP 503 zurückgibt sobald *irgendeine* Komponente kaputt ist, aber nur eine bestimmte Komponente überwacht werden soll. Beispiel: `WATCHDOG_HEALTH_JQ_FILTER=.components.ci_runner.ok`. Test-Coverage: `tests/unit/test_service_watchdog_jq_filter.py`.
 
 Das ursprüngliche `scripts/bot-watchdog.sh` bleibt als Backward-Compat-Variante
 für den shadowops-bot Watchdog erhalten.
@@ -85,6 +87,8 @@ systemctl --user restart ai-agent-framework-watchdog.timer
 systemctl --user restart cmdshadow-design-watchdog.timer
 # Seit #416: Build-Drift-Detection fuer mayday-sim
 systemctl --user restart mayday-sim-build-drift-watchdog.timer
+# Seit #273: CI-Runner-Health mit jq-Filter (mayday-sim#437)
+systemctl --user restart mayday-ci-runner-watchdog.timer
 ```
 
 ### 4. Funktionstest
