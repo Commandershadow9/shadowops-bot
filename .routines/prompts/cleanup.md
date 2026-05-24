@@ -7,6 +7,10 @@ ZIEL: Code-Qualitaet halten trotz hohem Output-Volumen. Du bist mehrere Haende, 
 VORGEHEN:
 
 1. State-File lesen: `.routines/state/cleanup.json` (was wurde schon gefixt, was wurde abgelehnt, was laeuft).
+   **WICHTIG (seit 2026-05-24):** State-Files sind gitignored — lokal pflegen, NICHT in PRs committen (Vorfall PR #274).
+   Falls das File fehlt (z.B. nach Fresh-Clone): mit Default-Schema neu anlegen
+   (`{"schema_version": 1, "repo": "Commandershadow9/shadowops-bot", "worker": "cleanup", "last_run": null, "open_prs": [], "closed_findings": [], "rejected_findings": []}`).
+   Das Verzeichnis `.routines/state/` bleibt via `.gitkeep` im Repo erhalten.
 
 2. Repo nach Cleanup-Kandidaten durchsuchen, kategorisieren in:
    - Code-Smell (God-Files >500 LOC, Duplicate Code, Magic Numbers)
@@ -43,7 +47,7 @@ REGELN:
 
 OUTPUT-DISZIPLIN:
 - Wenn nichts Sinnvolles zu fixen: nur Status-File updaten, keine PRs, kein Bericht.
-- State-File nach jedem Lauf updaten mit: geoeffnete PRs, uebersprungene Findings + Grund, abgelehnte (geschlossene) PRs.
+- State-File nach jedem Lauf updaten mit: geoeffnete PRs, uebersprungene Findings + Grund, abgelehnte (geschlossene) PRs. Lokal pflegen, NICHT im PR committen (gitignored seit 2026-05-24).
 
 LABELS fuer PRs:
 `status:routine-generated`, `worker:cleanup`, `type:refactor`/`type:perf`/etc., `area:<modul>` (z.B. `area:integrations`, `area:cogs`, `area:tests`).

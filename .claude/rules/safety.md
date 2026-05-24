@@ -21,13 +21,15 @@ Loesung: 5 externe Watchdogs alarmen jetzt direkt via Discord-Webhook (PR #253, 
 
 ## Worker-PR-Dedup (seit 2026-05-17)
 Jeder kritische Worker (Doku, Cleanup, Guardian, SEO-Agent, AI-Agent) der GitHub-PRs erzeugt MUSS:
-1. **State-File pflegen** in `.routines/state/<worker>.json` (oder vergleichbarer Speicher) mit `open_prs: [...]`
+1. **State-File pflegen** in `.routines/state/<worker>.json` (oder vergleichbarer Speicher) mit `open_prs: [...]`. **Seit 2026-05-24 sind diese Files gitignored** — lokal pflegen, NIEMALS im PR committen (Vorfall: PR #274 musste manuell mit Konflikt-Aufloesung gesquashed werden, weil das committed State-File bei jedem Worker-Refresh kollidierte). Das Verzeichnis `.routines/state/` bleibt via `.gitkeep` im Repo erhalten; Worker erstellt fehlende Files beim ersten Lauf neu.
 2. **Vor PR-Creation pruefen**: `gh pr list --search "label:worker:<name> state:open"`
 3. **Stable Branch-Names** wie `claude/doku/drift` statt `claude/doku/drift-YYYY-MM-DD` → `git push --force-with-lease` zum Update statt neuer PR
 
-**Hard-Gate:** Jedes Repo hat `.github/workflows/worker-dedup-gate.yml`. Diese Action lehnt PRs mit `worker:*`-Label automatisch ab wenn ein anderer offener PR mit demselben Label existiert. Bei Aenderung: zuerst Pre-Existing-Konflikte aufloesen.
+**Hard-Gate:** Jedes Repo hat `.github/workflows/worker-dedup-gate.yml`. Diese Action lehnt PRs mit `worker:*`-Label automatisch ab wenn ein anderer offener PR mit demselben Label existiert. Bei Aenderung: zuerst Pre-Existing-Konflikte aufloesen. Der Gate funktioniert unabhaengig vom State-File — er fragt direkt `gh api` fuer offene PRs ab.
 
-Vorfall-Historie: 17.05.2026 Cleanup — Doku-Worker hat 3 Wochen lang taeglich Drift-PRs erzeugt (27 Duplikate). Worker-Gate verhindert das jetzt strukturell.
+Vorfall-Historie:
+- 17.05.2026 Cleanup — Doku-Worker hat 3 Wochen lang taeglich Drift-PRs erzeugt (27 Duplikate). Worker-Gate verhindert das jetzt strukturell.
+- 24.05.2026 — PR #274 musste manuell mit Konflikt-Aufloesung gesquashed werden, weil das committed `.routines/state/doku.json` bei jedem Refresh kollidierte. Loesung: State-Files gitignored, Worker pflegen sie lokal.
 
 ## Code-Aenderungen
 - Vor Aenderungen an laufenden Services: `sudo systemctl status shadowops-bot` pruefen

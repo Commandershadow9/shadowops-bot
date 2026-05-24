@@ -23,6 +23,13 @@ Beim Cleanup am 2026-05-17 wurden 27 offene Doku-Drift-PRs konsolidiert (Issue #
    - `tracked_files`: pro Datei `last_synced_with_code_at`
    - `open_questions`: alle Punkte, fuer die du KEINEN PR machst (zu unsicher), als Issue-Stub
 
+   **WICHTIG (seit 2026-05-24):** State-Files sind gitignored (`.routines/state/*.json`).
+   NIEMALS das State-File in einen PR committen — das verursacht Rebase-Konflikte bei
+   Worker-Refreshes (Vorfall PR #274). Update das File lokal, lass es lokal liegen.
+   Falls das File fehlt (z.B. nach Server-Migration / Fresh-Clone): leg es mit dem
+   Default-Schema oben neu an. Das Verzeichnis `.routines/state/` bleibt via `.gitkeep`
+   im Repo erhalten.
+
 PHASE 1 — DRIFT-DETECTION:
 Vergleiche Code mit Doku, finde Diskrepanzen:
 - Slash-Commands in `src/cogs/*` vs. README "Slash Commands"-Sektion (Liste, Argumente).
@@ -71,7 +78,7 @@ REGELN:
 - Doku-Stil minimalistisch: Aussagesaetze, Codeblocks mit Sprach-Tag, Mermaid fuer Diagramme.
 - KEINE Emojis (auch wenn die bestehende README welche hat — neue Sektionen ohne, alte schrittweise migrieren in separatem PR), KEINE Marketing-Sprache, KEINE Disclaimer.
 - Bei Unsicherheit ueber Geschaeftslogik in der Doku: Issue mit Frage statt PR (Label `status:needs-info`).
-- State-File `.routines/state/doku.json`: was wurde wann aktualisiert.
+- State-File `.routines/state/doku.json`: was wurde wann aktualisiert. Lokal pflegen, NICHT im PR committen (gitignored seit 2026-05-24).
 
 ABSOLUTE GRENZE:
 Niemals Doku schreiben fuer Code, den du nicht verstehst. Lieber Issue: "Diese Funktion in `src/integrations/<X>` braucht Doku, aber ich verstehe ihren Zweck nicht — kannst du ihn in 2 Saetzen erklaeren?"

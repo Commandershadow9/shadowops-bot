@@ -65,3 +65,14 @@ node_modules/
 
 # Git-Worktrees (subagent-driven-development)
 .worktrees/
+
+# Routine-Worker State (lokal pro Host, nicht versionierbar)
+# Begruendung: State-Files (.routines/state/<worker>.json) werden vom jeweiligen
+# Worker bei jedem Lauf aktualisiert. Wenn sie ins Repo committed werden,
+# erzeugen sie Rebase-Konflikte bei Worker-Refreshes (`git push --force-with-lease`
+# gegen einen inzwischen weitergelaufenen main). Vorfall 2026-05-24: PR #274
+# musste manuell mit Konflikt-Aufloesung gesquashed werden.
+# Worker laufen seriell als single Cron-Job auf demselben Host — lokales State
+# reicht, kein Multi-Host-Sync noetig. Falls State-File fehlt: Worker erstellt
+# es beim ersten Lauf neu. Verzeichnis bleibt via .gitkeep erhalten.
+.routines/state/*.json

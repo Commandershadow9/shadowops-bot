@@ -1,0 +1,10 @@
+# Dieses Verzeichnis bleibt im Repo erhalten, damit Worker bei einem
+# frischen Clone sofort State-Files anlegen koennen.
+#
+# Die State-Files selbst (*.json) sind gitignored — sie sind Worker-lokal
+# (siehe .gitignore "Routine-Worker State"). Bei einem frischen Clone
+# erstellt der jeweilige Worker beim ersten Lauf sein State-File neu.
+#
+# Vorfall 2026-05-24 (PR #274): committed State-Files erzeugten Rebase-
+# Konflikte bei Worker-Refreshes. Loesung: State lokal halten, Verzeichnis
+# via .gitkeep erhalten.

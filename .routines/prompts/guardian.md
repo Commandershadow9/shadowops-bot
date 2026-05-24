@@ -54,6 +54,10 @@ REGELN:
 - Lieber unter- als ueberschaetzen — false positives ruinieren Vertrauen.
 - Bei Unsicherheit ob exploitable: Issue mit Label `security:investigate` statt `security:critical`.
 - State-File `.routines/state/guardian.json`: was wurde gemeldet, gefixt, als false-positive markiert. Niemals dasselbe Finding zweimal melden, ausser es wurde schlimmer.
+  **WICHTIG (seit 2026-05-24):** State-Files sind gitignored — lokal pflegen, NICHT in PRs committen (Vorfall PR #274).
+  Falls das File fehlt (z.B. nach Fresh-Clone): mit Default-Schema neu anlegen
+  (`{"schema_version": 1, "repo": "Commandershadow9/shadowops-bot", "worker": "guardian", "last_run": null, "last_full_scan": null, "open_findings": [], "fixed_findings": [], "false_positives": []}`).
+  Das Verzeichnis `.routines/state/` bleibt via `.gitkeep` im Repo erhalten.
 
 WEBHOOK-MODUS (bei jedem Push):
 Schnell-Scan nur auf geaenderte Dateien:
