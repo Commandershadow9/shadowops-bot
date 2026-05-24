@@ -1406,6 +1406,97 @@ class NotificationsMixin:
 
         await channel.send(embed=embed)
 
+    async def _send_direct_push_alert(
+        self,
+        repo: str,
+        branch: str,
+        sha: str,
+        commit_message: str,
+        pusher: str,
+    ):
+        """
+        Discord-Alert bei direct-push auf main (Auto-Deploy-Block-Notification).
+
+        Hintergrund: Seit PR #135 / Issue #131 (2026-04-17) ist Auto-Deploy auf
+        direct-Pushes geblockt. Ohne diese Notification entsteht silent
+        inconsistency — Code in main, aber nicht deployed.
+
+        Dedup pro Repo+SHA via Instanz-Cache (FIFO, max 100 Eintraege, TTL 1h).
+        Channel-Fehler werden geloggt aber nicht propagiert (best-effort).
+        """
+        import time as _t
+
+        cache_key = f"{repo}:{sha}"
+        now = _t.monotonic()
+        cache = self._direct_push_alert_cache
+        ttl = self._direct_push_alert_cache_ttl_seconds
+
+        # TTL-Cleanup (lazy, beim Schreibzugriff)
+        expired_keys = [k for k, ts in cache.items() if now - ts > ttl]
+        for k in expired_keys:
+            cache.pop(k, None)
+
+        # Dedup-Check
+        if cache_key in cache:
+            self.logger.debug(
+                f"⏭️ Direct-Push-Alert geskippt (dedup): {cache_key}"
+            )
+            return
+
+        # FIFO-Eviction wenn voll
+        if len(cache) >= self._direct_push_alert_cache_max:
+            # Aelteste rauswerfen (insert-order ist FIFO bei dict)
+            try:
+                oldest_key = next(iter(cache))
+                cache.pop(oldest_key, None)
+            except StopIteration:
+                pass
+
+        cache[cache_key] = now
+
+        channel = self.bot.get_channel(self.deployment_channel_id)
+        if not channel:
+            self.logger.warning(
+                f"⚠️ Direct-Push-Alert kann nicht gesendet werden: "
+                f"deployment_log channel ({self.deployment_channel_id}) nicht gefunden."
+            )
+            return
+
+        short_sha = sha[:7] if sha else '-'
+        # Erste Zeile der Commit-Message (Subject)
+        commit_subject = (commit_message or '').splitlines()[0][:200] if commit_message else '-'
+
+        embed = discord.Embed(
+            title="⚠️ Direct push detected — Auto-Deploy BLOCKIERT",
+            description=(
+                f"**{repo}** hat einen direct-push auf `{branch}` empfangen. "
+                f"Aus Security-Gruenden (PR #135 / Issue #131) wurde der "
+                f"Auto-Deploy NICHT ausgefuehrt — der Code ist in `{branch}`, "
+                f"aber **nicht auf dem Server**."
+            ),
+            color=discord.Color.orange(),
+            timestamp=datetime.now(timezone.utc),
+        )
+        embed.add_field(name="Repository", value=repo, inline=True)
+        embed.add_field(name="Branch", value=f"`{branch}`", inline=True)
+        embed.add_field(name="Commit", value=f"`{short_sha}`", inline=True)
+        embed.add_field(name="Pusher", value=pusher or '-', inline=True)
+        embed.add_field(name="Message", value=commit_subject, inline=False)
+        embed.add_field(
+            name="Aktion",
+            value="Run on server: `scripts/restart.sh --pull`",
+            inline=False,
+        )
+        embed.set_footer(text="Auto-Deploy-Block | PR #135 / Issue #131")
+
+        try:
+            await channel.send(embed=embed)
+        except Exception as e:
+            self.logger.error(
+                f"❌ Direct-Push-Alert konnte nicht gesendet werden: {e}",
+                exc_info=True,
+            )
+
     async def _send_release_notification(
         self, action: str, repo: str, tag: str, name: str,
         author: str, is_prerelease: bool, url: str

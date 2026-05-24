@@ -151,6 +151,195 @@ class TestPushEventHandling:
         integration._send_push_notification.assert_called_once()
 
 
+class TestDirectPushAlert:
+    """
+    Tests fuer den Discord-Alert beim direct-push auf main mit aktivem auto_deploy
+    (Auto-Deploy-Block-Notification — verhindert silent inconsistency).
+    Hintergrund: PR #135 / Issue #131 — Auto-Deploy auf direct-push ist GEBLOCKT.
+    Aber: Niemand wird informiert. Heute (2026-05-24) gab es 3 direct-pushes,
+    alle korrekt geblockt, aber kein Alert. Dieser Test fordert das Alert ein.
+    """
+
+    @pytest.mark.asyncio
+    async def test_direct_push_to_main_triggers_alert(self, mock_bot, enabled_config):
+        """Direct-Push auf main + auto_deploy=True → Discord-Alert wird gesendet."""
+        integration = GitHubIntegration(mock_bot, enabled_config)
+        integration._trigger_deployment = AsyncMock()
+        integration._send_push_notification = AsyncMock()
+        integration._send_direct_push_alert = AsyncMock()
+        integration._reserve_commit_processing = Mock(return_value=True)
+
+        payload = {
+            'repository': {
+                'name': 'shadowops-bot',
+                'full_name': 'Commandershadow9/shadowops-bot',
+                'html_url': 'https://github.com/Commandershadow9/shadowops-bot'
+            },
+            'ref': 'refs/heads/main',
+            'pusher': {'name': 'CommanderShadow'},
+            'head_commit': {'id': 'abc1234567890def'},
+            'commits': [
+                {
+                    'id': 'abc1234567890def',
+                    'message': 'fix: typo in docstring\n\nLonger body here',
+                    'author': {'name': 'CommanderShadow'}
+                }
+            ]
+        }
+
+        await integration.handle_push_event(payload)
+
+        integration._send_direct_push_alert.assert_called_once()
+        call_kwargs = integration._send_direct_push_alert.call_args.kwargs
+        assert call_kwargs['repo'] == 'shadowops-bot'
+        assert call_kwargs['branch'] == 'main'
+        assert call_kwargs['sha'] == 'abc1234567890def'
+        assert call_kwargs['pusher'] == 'CommanderShadow'
+        # Erste Zeile der Commit-Message kommt im Embed nochmal vor —
+        # hier reichen wir die volle message durch, der Builder splittet.
+        assert 'fix: typo in docstring' in call_kwargs['commit_message']
+
+    @pytest.mark.asyncio
+    async def test_direct_push_to_feature_branch_does_not_trigger_alert(
+        self, mock_bot, enabled_config
+    ):
+        """Push auf non-deploy-branch → KEIN Alert."""
+        integration = GitHubIntegration(mock_bot, enabled_config)
+        integration._trigger_deployment = AsyncMock()
+        integration._send_push_notification = AsyncMock()
+        integration._send_direct_push_alert = AsyncMock()
+        integration._reserve_commit_processing = Mock(return_value=True)
+
+        payload = {
+            'repository': {
+                'name': 'shadowops-bot',
+                'full_name': 'Commandershadow9/shadowops-bot',
+                'html_url': 'https://github.com/Commandershadow9/shadowops-bot'
+            },
+            'ref': 'refs/heads/feat/some-branch',
+            'pusher': {'name': 'CommanderShadow'},
+            'head_commit': {'id': 'feedface'},
+            'commits': [
+                {'id': 'feedface', 'message': 'wip', 'author': {'name': 'CommanderShadow'}}
+            ]
+        }
+
+        await integration.handle_push_event(payload)
+
+        integration._send_direct_push_alert.assert_not_called()
+
+    @pytest.mark.asyncio
+    async def test_direct_push_alert_is_deduped_per_sha(self, mock_bot, enabled_config):
+        """Selber SHA zweimal (force-push) → nur 1 Alert."""
+        integration = GitHubIntegration(mock_bot, enabled_config)
+        integration._trigger_deployment = AsyncMock()
+        integration._send_push_notification = AsyncMock()
+        integration._reserve_commit_processing = Mock(return_value=True)
+
+        # Wir verifizieren das Dedup-Verhalten via Channel.send Mock (echte Methode laufen lassen).
+        channel = mock_bot.get_channel.return_value
+        channel.send.reset_mock()
+
+        payload = {
+            'repository': {
+                'name': 'shadowops-bot',
+                'full_name': 'Commandershadow9/shadowops-bot',
+                'html_url': 'https://github.com/Commandershadow9/shadowops-bot'
+            },
+            'ref': 'refs/heads/main',
+            'pusher': {'name': 'CommanderShadow'},
+            'head_commit': {'id': 'deadbeef12345'},
+            'commits': [
+                {'id': 'deadbeef12345', 'message': 'fix: thing', 'author': {'name': 'CommanderShadow'}}
+            ]
+        }
+
+        # Erster Push → Alert
+        await integration.handle_push_event(payload)
+        first_call_count = channel.send.call_count
+        assert first_call_count >= 1, "Erster Direct-Push muss Alert senden"
+
+        # Reset reserve_commit_processing dedup (push handler-level dedup)
+        # damit handle_push_event nicht selbst dedupe-skipped — wir wollen den
+        # SHA-Dedup im Alert testen, nicht den push-event-Dedup.
+        integration._reserve_commit_processing = Mock(return_value=True)
+
+        # Zweiter Push mit gleichem SHA → KEIN zusaetzlicher Alert
+        await integration.handle_push_event(payload)
+        second_call_count = channel.send.call_count
+        assert second_call_count == first_call_count, (
+            f"Zweiter Push mit gleichem SHA darf KEINEN weiteren Alert senden "
+            f"(first={first_call_count}, second={second_call_count})"
+        )
+
+    @pytest.mark.asyncio
+    async def test_send_direct_push_alert_uses_deployment_channel(
+        self, mock_bot, enabled_config
+    ):
+        """_send_direct_push_alert resolved deployment_log Channel und sendet Embed."""
+        integration = GitHubIntegration(mock_bot, enabled_config)
+        channel = mock_bot.get_channel.return_value
+        channel.send.reset_mock()
+
+        await integration._send_direct_push_alert(
+            repo='shadowops-bot',
+            branch='main',
+            sha='abc1234567890',
+            commit_message='fix: typo',
+            pusher='CommanderShadow',
+        )
+
+        # Channel-Resolution muss deployment_log nutzen
+        mock_bot.get_channel.assert_any_call(enabled_config.channels['deployment_log'])
+        # Embed muss gesendet worden sein
+        assert channel.send.called
+        send_kwargs = channel.send.call_args.kwargs
+        assert 'embed' in send_kwargs
+        embed = send_kwargs['embed']
+        # Titel + Felder pruefen
+        assert 'Direct push' in embed.title or 'BLOCKIERT' in embed.title
+
+    @pytest.mark.asyncio
+    async def test_send_direct_push_alert_no_channel_logs_warning(
+        self, mock_bot, enabled_config
+    ):
+        """Kein Channel gefunden → Logger-Warnung, kein Crash."""
+        integration = GitHubIntegration(mock_bot, enabled_config)
+        # Channel-Lookup fehlschlagen lassen
+        mock_bot.get_channel = Mock(return_value=None)
+
+        # Darf NICHT crashen
+        await integration._send_direct_push_alert(
+            repo='shadowops-bot',
+            branch='main',
+            sha='abc1234567',
+            commit_message='fix: x',
+            pusher='Tester',
+        )
+        # Soft-Assertion: keine Exception ist der eigentliche Pass.
+
+    @pytest.mark.asyncio
+    async def test_direct_push_alert_cache_eviction(self, mock_bot, enabled_config):
+        """Cache evicted alte Eintraege wenn ueber MAX (100) — kein Memory-Leak."""
+        integration = GitHubIntegration(mock_bot, enabled_config)
+        channel = mock_bot.get_channel.return_value
+
+        # 101 unique SHAs senden — der erste soll evicted sein
+        for i in range(101):
+            channel.send.reset_mock()
+            await integration._send_direct_push_alert(
+                repo='shadowops-bot',
+                branch='main',
+                sha=f'sha{i:08d}',
+                commit_message=f'commit {i}',
+                pusher='Tester',
+            )
+
+        # Cache MUSS <= 100 Eintraege haben (FIFO-Eviction)
+        cache = integration._direct_push_alert_cache
+        assert len(cache) <= 100, f"Cache exceeded 100 entries: {len(cache)}"
+
+
 class TestPullRequestHandling:
     """Tests for pull request event handling."""
 

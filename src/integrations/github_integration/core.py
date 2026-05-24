@@ -110,6 +110,14 @@ class GitHubIntegration(JulesWorkflowMixin,
         self.runner = None
         self.site = None
 
+        # Direct-Push-Alert Dedup-Cache (FIFO, max 100 Eintraege, TTL 1h).
+        # Vermeidet Spam-Alerts bei force-pushes auf denselben SHA.
+        # Schluessel: f"{repo}:{sha}", Wert: monotonic-Timestamp (Sekunden).
+        # Siehe NotificationsMixin._send_direct_push_alert.
+        self._direct_push_alert_cache: Dict[str, float] = {}
+        self._direct_push_alert_cache_max = 100
+        self._direct_push_alert_cache_ttl_seconds = 3600
+
         # Jules SecOps Workflow — lazy init (async connect in _jules_startup)
         jules_raw = _get_section('jules_workflow', {})
         self._jules_enabled = bool(jules_raw.get('enabled', False))
