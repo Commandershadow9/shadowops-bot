@@ -2,6 +2,27 @@
 
 ## [Unreleased]
 
+### Security — Cross-Project Sweep (2026-05-24)
+
+Vom SecurityScanAgent gefundene Issues #265/#266/#268/#272 abgearbeitet (alle als Cross-Project-Koordination, je 1 PR/Commit in den jeweiligen Repos):
+
+- **#265 Fail2Ban/CrowdSec OOM-Schutz** (HIGH): Defense-in-Depth via systemd Drop-Ins (`/etc/systemd/system/{fail2ban,crowdsec}.service.d/oom-protect.conf` mit `OOMScoreAdjust=-500`). Vorher nur earlyoom `--avoid`-Regex (Userspace-Heuristik), jetzt zusätzlich Kernel-Level. 0 reale Kills in 7 Tagen — preventive Hardening. Reversibel via File-Delete + daemon-reload.
+- **#266 urllib3 in ai-agent-framework** (HIGH): 2.6.3 → 2.7.0 (`ai-agent-framework@0fc2a3b`). Behebt GHSA-mf9v-mfxr-j63j (Decompression-Bomb) + GHSA-qccp-gfcp-xxvc (Sensitive-Header-Leak in ProxyManager). Agents nutzen weder Streaming noch ProxyManager → CVEs nicht triggerbar, aber Update als Defense.
+- **#268 Traefik HIGH-CVE** (HIGH): v3.6.14 → v3.6.17 (`sicherheitsdienst-tool@c1f26ba`). CVE-2026-44774 gefixt (GHSA-96qj-4jj5-wcjc), Patch-only-Update, kein Breaking. Image-Tag explizit gepinnt statt moving `traefik:v3` (verhindert ungewollten Minor-Bump auf v3.7).
+- **#272 blogger-mcp CRITICAL CVEs** (CRITICAL): `apt-get upgrade -y` im Dockerfile + `npm audit fix` (`blogger-mcp-server@94f60a1`). Behebt CVE-2026-33845 (libgnutls30 DTLS DoS) sofort. Andere CRITICAL bleiben in Debian-stable als `will_not_fix` markiert → Node-Base-Bump als Follow-up-Sprint.
+- **#269 Sudo-Hostname-Auflösung** (MEDIUM): `/etc/hosts` mappt jetzt `vServer` korrekt auf 127.0.1.1 (vorher nur `venocix-8360` aus altem Cloud-Init-Template). Eliminiert ~245 "unable to resolve host" Warnings/Woche. Persistent über Reboots, weil `manage_etc_hosts: false` in cloud-init schon konfiguriert war.
+
+### Added — Drift-Detection-Watchdog (Vorfall 2026-05-20)
+
+- **`shadowops-drift-watchdog`** (`scripts/shadowops-drift-watchdog.sh` + systemd Service+Timer in `deploy/`): Schließt die Lücke aus dem 2026-05-20-Vorfall, in dem der HTTP-Watchdog den Bot als "healthy" meldete, während der System-Service 96 Minuten im Restart-Loop war (parallele User-Level-Instanz hielt den Health-Endpoint am Leben, Lock-File blockierte den System-Service). Neue Checks alle 5 Min: (a) User-Level-Unit-Drift → Auto-Rename + Alert, (b) `systemctl is-active != active` → Alert, (c) `NRestarts-Delta >= 3 pro 5-Min-Window` → Alert. Alerts via Discord-Webhook direkt (bot-unabhängig).
+
+### Docs
+
+- **Watchdog-Tabellen konsolidiert** (`CLAUDE.md` + `deploy/MONITORING_SETUP.md`): Listen jetzt alle 10 Watchdogs konsistent (vorher 5–8 je Datei). Neu eingetragen: `shadowops-drift-watchdog`, `zerodox-akquise-ai-watchdog`, `mayday-ci-runner-watchdog`, `mayday-sim-build-drift-watchdog`. Reihenfolge nach Projekt-Cluster gruppiert (shadowops → zerodox → mayday → agents → design).
+- **JSON-Path-Filter dokumentiert**: `WATCHDOG_HEALTH_JQ_FILTER`-Env-Var (PR #273) jetzt auch in `MONITORING_SETUP.md` erklärt, nicht nur in `CLAUDE.md`. Test-Coverage-Referenz: `tests/unit/test_service_watchdog_jq_filter.py`.
+- **README Anti-Bloat** (PR #275): Changelog v1.0–v3.2 Duplikate (77 Zeilen) aus README.md entfernt — alle Inhalte bleiben in `CHANGELOG.md` verfügbar. README jetzt 542 statt 617 Zeilen.
+- **Issue #276 Docstring-Drift**: `src/integrations/zerodox_auto_fix_gate.py` Docstring referenzierte einen nicht-existenten Slash-Command `/zerodox-auto-fix-toggle`. Korrigiert: Aktivierung ist config-only via `zerodox.auto_fix_pipeline.enabled` (default false). Dedizierter Toggle-Command kann später nachgezogen werden (Issue #270 Welle 16 Tracking).
+
 ### Fixed
 
 - **`ensure_project_webhooks()` ignorierte `enabled: false`**: Für deaktivierte

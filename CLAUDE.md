@@ -247,4 +247,4 @@ Worker-Konventionen:
 
 ## Letztes Update dieser Datei
 
-2026-05-18 — deploy/-Verzeichnis aktualisiert (Watchdog-Services), .github/workflows/ hinzugefuegt.
+2026-05-24 — Watchdog-Tabelle auf 10 erweitert (shadowops-drift, zerodox-akquise-ai, mayday-ci-runner, mayday-sim-build-drift), Security-Sweep #265/266/268/272 abgearbeitet (siehe CHANGELOG).
