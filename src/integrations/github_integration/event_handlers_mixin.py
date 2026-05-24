@@ -80,6 +80,28 @@ class EventHandlersMixin:
                     f"Use a Branch+PR workflow with mandatory review."
                 )
 
+                # Discord-Alert posten: ohne diese Notification entsteht silent
+                # inconsistency (Code in main, nicht deployed). Per-SHA Dedup
+                # verhindert Spam bei force-pushes. Siehe _send_direct_push_alert.
+                head_commit_obj = payload.get('head_commit') or {}
+                commit_msg = head_commit_obj.get('message') or ''
+                if not commit_msg and commits:
+                    commit_msg = commits[-1].get('message', '') or ''
+                try:
+                    await self._send_direct_push_alert(
+                        repo=normalized_repo,
+                        branch=branch,
+                        sha=head_commit or '',
+                        commit_message=commit_msg,
+                        pusher=pusher,
+                    )
+                except Exception as alert_err:
+                    # Alert-Fehler darf den Push-Handler nicht crashen
+                    self.logger.error(
+                        f"❌ Direct-Push-Alert fehlgeschlagen: {alert_err}",
+                        exc_info=True,
+                    )
+
         except Exception as e:
             self.logger.error(f"❌ Error handling push event: {e}", exc_info=True)
 
