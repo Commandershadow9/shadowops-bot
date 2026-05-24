@@ -98,6 +98,9 @@ Event → TaskRouter → Codex CLI (Primary)
 - `/projekt-status [name]` - Status für spezifisches Projekt (Uptime, Response Time, Health)
 - `/alle-projekte` - Übersicht aller überwachten Projekte
 
+#### Mobile Workflow (Owner-only)
+- `/claude [prompt] [project] [model] [timeout]` - Headless Claude-Session auf dem Server starten und Antwort in Discord empfangen (owner-only)
+
 ### 🎨 Features
 - **Rich Embeds** - Farbcodierte Alerts (🔴 CRITICAL, 🟠 HIGH, 🟢 OK)
 - **Multi-Channel Support** - Kategorisierte Channels (Security, AI Learning, Deployments, etc.)
@@ -339,6 +342,7 @@ shadowops-bot/
 │   │   ├── inspector.py                # /get-ai-stats, /projekt-status, /agent-stats, ...
 │   │   ├── monitoring.py               # /status, /bans, /threats, /docker, /aide
 │   │   ├── customer_setup_commands.py  # /setup-customer-server
+│   │   ├── claude_cli.py               # /claude (owner-only Mobile-Trigger)
 │   │   ├── cron_heartbeat.py           # Cron-Heartbeat
 │   │   └── phase_5e_health_aggregator.py  # Health-Aggregation
 │   ├── integrations/
@@ -444,87 +448,9 @@ shadowops-bot/
 - **Health Monitoring**: Continuous project uptime tracking
 - **Auto-Recovery**: Projects automatically resume after downtime
 
-## 📝 Changelog
+## Changelog
 
-See [CHANGELOG.md](./CHANGELOG.md) for detailed version history.
-
-### Version 3.2.0 (2025-11-25)
-**🌐 Multi-Guild Customer Notifications:**
-- Automatic channel setup on customer servers
-- AI-generated patch notes
-- Dual-channel system (internal technical + customer friendly)
-- Per-project language configuration (DE/EN)
-- Message splitting for long patch notes
-- Manual setup command `/setup-customer-server`
-
-**🔧 Security Integration Fixes:**
-- Fixed CrowdSec integration (JSON parsing)
-- Fixed Fail2ban integration (systemd restrictions)
-- Fixed GitHub webhook logging
-- Opened port 9090 with HMAC security
-
-**📚 Documentation:**
-- Complete multi-guild setup guide
-- Customer onboarding instructions
-- GitHub webhook configuration guide
-- Security integration fixes documentation
-
-### Version 3.1.0 (2025-11-21)
-**🧠 Persistent Learning System:**
-- SQL Knowledge Base for permanent learning
-- Git history analysis for codebase understanding
-- Code structure analyzer for architecture insights
-- Enhanced AI prompts with log-based learning
-- Success rate tracking and best strategy recommendations
-
-**🌐 Multi-Project Infrastructure:**
-- GitHub webhook integration with auto-deploy
-- Real-time project health monitoring
-- Automated deployment system with rollback
-- Incident management with Discord threads
-- Customer-facing notification system
-- Project status commands (`/projekt-status`, `/alle-projekte`)
-
-**🧪 Enterprise Test Suite:**
-- 150+ comprehensive tests (unit + integration)
-- AI learning workflow demonstrations
-- pytest configuration with fixtures
-- Full coverage for critical systems
-
-**🔧 Code Improvements:**
-- Before/after verification for fixes
-- Race condition protection
-- Retry logic with exponential backoff
-- Service validation
-- Memory leak prevention
-
-**🎮 New Commands:**
-- `/set-approval-mode` - Change remediation mode
-- `/get-ai-stats` - AI provider status
-- `/reload-context` - Reload project context
-- `/projekt-status` - Detailed project status
-- `/alle-projekte` - All projects overview
-
-### Version 3.0.0 (2025-11-20)
-- AI Learning System with event history tracking
-- Smart Docker image analysis
-- CVE-aware upgrade recommendations
-- Multi-project execution
-- Git history learning
-
-### Version 2.0.1 (2025-11-15)
-- AI Service fixes
-- HTTP client conflict resolution
-
-### Version 2.0.0 (2025-11-14)
-- Event-driven auto-remediation
-- AI-powered analysis
-- Live status updates
-
-### Version 1.0.0 (2025-11-12)
-- Initial Release
-- Basic security monitoring
-- Discord integration
+See [CHANGELOG.md](./CHANGELOG.md) for the full version history.
 
 ## 📊 Statistics (v5.1.0)
 
@@ -535,7 +461,7 @@ See [CHANGELOG.md](./CHANGELOG.md) for detailed version history.
 - **PostgreSQL Databases**: 3 (security_analyst: 21 Tabellen, agent_learning: 7 Tabellen, seo_agent: 11 Tabellen)
 - **Learning Pipeline Tables**: 11 (Security: fix_attempts, fix_verifications, finding_quality, scan_coverage · Shared: agent_feedback, agent_quality_scores, agent_knowledge · Patch Notes: pn_generations, pn_variants, pn_examples · SEO: seo_fix_impact)
 - **Scan Areas**: 10 (firewall, ssh, docker, permissions, packages, services, logs, network, credentials, dependencies)
-- **Discord Commands**: 15 (inkl. /agent-stats)
+- **Discord Commands**: 16 (inkl. /agent-stats, /claude)
 - **Monitored Projects**: 3 (GuildScout, ZERODOX, AI Agents)
 - **Auto Discord-Posts**: Session-Summaries, Feedback-Auswertungen, Weekly Summary, Meilensteine
 

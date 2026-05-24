@@ -315,6 +315,32 @@ Shows overview of all monitored projects.
 
 ---
 
+### Mobile Workflow Commands
+
+#### `/claude`
+Starts a headless Claude CLI session on the server and returns the output as Discord messages. Designed for the owner to trigger Claude tasks from mobile without SSH.
+
+**Permissions:** Owner-only (user ID check, not role-based)
+**Parameters:**
+- `prompt` (required): The task for Claude
+- `project` (optional): Working directory — one of `home`, `zerodox`, `guildscout`, `shadowops`, `agents`, `sharedui`, `design` (default: `home`)
+- `model` (optional): `sonnet` (default), `opus`, `haiku`
+- `timeout` (optional): Seconds until abort (default: 300, max: 600)
+
+**Returns:** Header embed (model, elapsed, exit code) followed by Claude's output in code-block chunks (≤1900 chars each)
+
+**Security notes:**
+- Project paths are a fixed whitelist — no path traversal possible
+- Any user other than the owner receives an ephemeral error
+- Requires `claude` CLI at `~/.local/bin/claude`
+
+**Example:**
+```
+/claude prompt:"run tests in shadowops" project:shadowops model:sonnet
+```
+
+---
+
 ## Configuration Reference
 
 ### Complete `config/config.yaml` Structure

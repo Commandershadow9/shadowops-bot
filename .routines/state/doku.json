@@ -2,27 +2,33 @@
   "schema_version": 1,
   "repo": "Commandershadow9/shadowops-bot",
   "worker": "doku",
-  "last_run": "2026-05-18T00:00:00Z",
-  "last_drift_check": "2026-05-18T00:00:00Z",
+  "last_run": "2026-05-21T00:00:00Z",
+  "last_drift_check": "2026-05-21T00:00:00Z",
   "open_prs": [
     {
       "branch": "claude/doku/drift",
-      "title": "docs: Drift-Korrekturen deploy/-Struktur + staler Ollama-Fehler",
+      "title": "docs: /claude Cog in README, api.md und discord-bot.md nachtragen",
       "scope": "drift",
-      "created": "2026-05-18"
+      "created": "2026-05-21"
     },
     {
       "branch": "claude/doku/gaps",
-      "title": "docs: README Anti-Bloat — Highlights v3.1-v3.4 in CHANGELOG.md auslagern",
+      "title": "docs: README Anti-Bloat — Changelog v1.0-v3.2 Duplikate entfernen",
       "scope": "gaps",
-      "created": "2026-05-18"
+      "created": "2026-05-21"
     }
   ],
   "tracked_files": {
-    "README.md": { "last_synced_with_code_at": "2026-05-18" },
+    "README.md": { "last_synced_with_code_at": "2026-05-21" },
     "CLAUDE.md": { "last_synced_with_code_at": "2026-05-18" },
-    "docs/reference/api.md": { "last_synced_with_code_at": "2026-05-18" },
-    ".claude/rules/discord-bot.md": { "last_synced_with_code_at": "2026-05-16" }
+    "docs/reference/api.md": { "last_synced_with_code_at": "2026-05-21" },
+    ".claude/rules/discord-bot.md": { "last_synced_with_code_at": "2026-05-21" }
   },
-  "open_questions": []
+  "open_questions": [
+    {
+      "file": "src/integrations/zerodox_auto_fix_gate.py",
+      "question": "Docstring erwähnt /zerodox-auto-fix-toggle als Activation-Command, aber kein entsprechendes app_commands.command() in src/cogs/. Ist der Command noch nicht implementiert oder in einem anderen Cog versteckt? Wenn implementiert: Doku in README + api.md nachtragen.",
+      "created": "2026-05-21"
+    }
+  ]
 }
