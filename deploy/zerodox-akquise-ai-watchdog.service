@@ -1,0 +1,21 @@
+[Unit]
+Description=ZERODOX Akquise-AI Watchdog — Health-Check + Discord-Alert bei OOM/Crash
+Documentation=https://github.com/Commandershadow9/shadowops-bot
+After=network-online.target
+
+[Service]
+Type=oneshot
+EnvironmentFile=-/home/cmdshadow/.config/shadowops-watchdog.env
+Environment=WATCHDOG_SERVICE_NAME=zerodox-akquise-ai
+# HTTP-Health gegen interne Bridge-Gateway-IP (Service bindet auf 172.19.0.1:9300
+# damit zerodox-web Container ihn erreicht, siehe Issue #712).
+Environment=WATCHDOG_HEALTH_URL=http://172.19.0.1:9300/health
+# Kein bot_ready-Check — Service hat eigenes status="ok"/"degraded"-Schema.
+Environment=WATCHDOG_REQUIRE_BOT_READY=0
+# Trigger-Vorfall 2026-05-24: Service wurde am 23.05. 3× OOM-killed (06:36,
+# 07:19, 18:55) ohne dass jemand es bemerkt hat — Welle-1-Pipeline silent
+# unterbrochen. Watchdog schließt diese Lücke.
+ExecStart=/home/cmdshadow/shadowops-bot/scripts/service-watchdog.sh
+SuccessExitStatus=0 1
+StandardOutput=journal
+StandardError=journal

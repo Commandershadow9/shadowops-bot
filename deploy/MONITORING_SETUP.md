@@ -82,6 +82,7 @@ systemctl --user restart zerodox-watchdog.timer
 systemctl --user restart guildscout-watchdog.timer
 systemctl --user restart mayday-sim-watchdog.timer
 systemctl --user restart ai-agent-framework-watchdog.timer
+systemctl --user restart zerodox-akquise-ai-watchdog.timer
 systemctl --user restart cmdshadow-design-watchdog.timer
 # Seit #416: Build-Drift-Detection fuer mayday-sim
 systemctl --user restart mayday-sim-build-drift-watchdog.timer
@@ -136,10 +137,11 @@ DNS-Auflösung + Traefik-Routing + TLS-Zertifikat + App-Health in einem.
 ## Wartung / Inspektion
 
 ```bash
-# Alle 7 Timer auf einen Blick
+# Alle 8 Timer auf einen Blick
 systemctl --user list-timers \
   shadowops-watchdog.timer zerodox-watchdog.timer guildscout-watchdog.timer \
   mayday-sim-watchdog.timer ai-agent-framework-watchdog.timer \
+  zerodox-akquise-ai-watchdog.timer \
   cmdshadow-design-watchdog.timer shadowops-backup-test.timer
 
 # Letzten 50 Läufe pro Service
@@ -148,6 +150,7 @@ journalctl --user -u zerodox-watchdog.service --no-pager -n 50
 journalctl --user -u guildscout-watchdog.service --no-pager -n 50
 journalctl --user -u mayday-sim-watchdog.service --no-pager -n 50
 journalctl --user -u ai-agent-framework-watchdog.service --no-pager -n 50
+journalctl --user -u zerodox-akquise-ai-watchdog.service --no-pager -n 50
 
 # State-Files pro Service inspizieren
 cat ~/shadowops-bot/data/watchdog_state.json

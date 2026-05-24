@@ -1,0 +1,16 @@
+[Unit]
+Description=ZERODOX Akquise-AI Watchdog Timer — alle 5min Health-Check
+Documentation=https://github.com/Commandershadow9/shadowops-bot
+
+[Timer]
+# Boot-Offset 7 min — versetzt zu anderen Watchdogs:
+#   shadowops:2, zerodox:3, guildscout:4, mayday-sim:5, agents:6, zerodox-akquise-ai:7,
+#   cmdshadow-design:8
+OnBootSec=7min
+OnUnitActiveSec=5min
+RandomizedDelaySec=30s
+AccuracySec=10s
+Persistent=true
+
+[Install]
+WantedBy=timers.target
