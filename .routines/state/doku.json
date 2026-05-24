@@ -2,8 +2,8 @@
   "schema_version": 1,
   "repo": "Commandershadow9/shadowops-bot",
   "worker": "doku",
-  "last_run": "2026-05-23T00:00:00Z",
-  "last_drift_check": "2026-05-23T00:00:00Z",
+  "last_run": "2026-05-24T00:00:00Z",
+  "last_drift_check": "2026-05-24T00:00:00Z",
   "open_prs": [
     {
       "branch": "claude/doku/drift",
