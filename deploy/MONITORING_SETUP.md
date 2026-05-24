@@ -90,6 +90,8 @@ systemctl --user restart cmdshadow-design-watchdog.timer
 systemctl --user restart mayday-sim-build-drift-watchdog.timer
 # Seit #273: CI-Runner-Health mit jq-Filter (mayday-sim#437)
 systemctl --user restart mayday-ci-runner-watchdog.timer
+# Seit 2026-05-20: Drift-Detection für shadowops-bot Service-State (Vorfall HTTP-healthy + System-Service Restart-Loop)
+systemctl --user restart shadowops-drift-watchdog.timer
 ```
 
 ### 4. Funktionstest
@@ -115,13 +117,15 @@ echo '{"last_status":"up","last_alert_at":"","consecutive_failures":0}' \
 | Service | Mode | Endpoint/Units | Cycle | Boot-Offset |
 |---|---|---|---|---|
 | `shadowops-bot` | http | http://127.0.0.1:8766/health (bot_ready=true Pflicht) | 5 min | 2 min |
+| `shadowops-drift` | systemd-state + drift | shadowops-bot Service-State + NRestarts-Loop + User-Unit-Drift (Vorfall 2026-05-20: HTTP-Watchdog meldete healthy während System-Service 96 min Restart-Loop hatte) | 5 min | 7 min |
 | `zerodox` | http | https://zerodox.de/api/health (testet via Internet DNS+Traefik+TLS+App) | 5 min | 3 min |
+| `zerodox-akquise-ai` | http | http://172.19.0.1:9300/health (Bridge-Gateway, kein bot_ready, Vorfall 2026-05-24 OOM-Kill) | 5 min | 7 min |
 | `guildscout` | http | http://localhost:8765/health | 5 min | 4 min |
 | `mayday-sim` | http | http://127.0.0.1:3200/api/health | 5 min | 5 min |
-| `ai-agent-framework` | systemd | guildscout-feedback-agent, zerodox-support-agent, seo-agent | 5 min | 6 min |
-| `cmdshadow-design` | systemd-result | cmdshadow-design-healthcheck.service (max_age=36h) | 1 h | 8 min |
 | `mayday-ci-runner` | http + jq-filter | http://10.8.0.10:9100/health, filter `.components.ci_runner.ok` (#mayday-sim#425) | 5 min | 7 min |
 | `mayday-sim-build-drift` | build-drift | http://127.0.0.1:3200/api/build-id vs. origin/main HEAD (max. 30 min Drift, #mayday-sim#416) | 15 min | 2 min |
+| `ai-agent-framework` | systemd | guildscout-feedback-agent, zerodox-support-agent, seo-agent | 5 min | 6 min |
+| `cmdshadow-design` | systemd-result | cmdshadow-design-healthcheck.service (max_age=36h) | 1 h | 8 min |
 
 Pro Service:
 - **🔴 \<service\> DOWN** — nach 2 konsekutiven Failures (= ~10 Minuten Downtime).

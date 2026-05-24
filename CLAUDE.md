@@ -57,7 +57,7 @@ shadowops-bot/
 │   └── PROJECT_*.md              # Per-projekt-Notizen
 ├── deploy/
 │   ├── shadowops-bot.service          # systemd Bot-Service
-│   ├── *-watchdog.{service,timer}     # Externe Uptime-Watchdogs (8 Watchdogs: HTTP/systemd/jq-filter/build-drift + Backup-Test)
+│   ├── *-watchdog.{service,timer}     # Externe Uptime-Watchdogs (10 Watchdogs: HTTP/systemd/jq-filter/build-drift/state-drift + Backup-Test)
 │   ├── shadowops-watchdog.env.example # Webhook-Env Template
 │   └── MONITORING_SETUP.md            # Setup-Anleitung Watchdogs
 ├── .github/
@@ -97,18 +97,20 @@ shadowops-bot/
 
 ## Externes Monitoring (seit 2026-05-17 — Defense-in-Depth)
 
-Zusätzlich zum internen `project_monitor.py` laufen 8 unabhängige user-systemd Watchdogs (Zyklen: 5–15 min je nach Watchdog, cmdshadow-design 1h, Backup-Test monatlich) und posten Down/Recovery direkt via Discord-Webhook in `#🩺-uptime-alerts` (NICHT über den Bot — funktioniert auch wenn shadowops-bot tot ist):
+Zusätzlich zum internen `project_monitor.py` laufen 10 unabhängige user-systemd Watchdogs (Zyklen: 5–15 min je nach Watchdog, cmdshadow-design 1h, Backup-Test monatlich) und posten Down/Recovery direkt via Discord-Webhook in `#🩺-uptime-alerts` (NICHT über den Bot — funktioniert auch wenn shadowops-bot tot ist):
 
 | Watchdog | Mode | Target |
 |---|---|---|
 | `shadowops-watchdog` | http | http://127.0.0.1:8766/health |
+| `shadowops-drift-watchdog` | systemd-state + drift | shadowops-bot Service-State + NRestarts-Loop + User-Unit-Drift (Vorfall 2026-05-20) |
 | `zerodox-watchdog` | http | https://zerodox.de/api/health |
+| `zerodox-akquise-ai-watchdog` | http | http://172.19.0.1:9300/health (Bridge-Gateway, kein bot_ready) |
 | `guildscout-watchdog` | http | http://localhost:8765/health |
 | `mayday-sim-watchdog` | http | http://127.0.0.1:3200/api/health |
-| `ai-agent-framework-watchdog` | systemd | guildscout-feedback-agent, zerodox-support-agent, seo-agent |
-| `cmdshadow-design-watchdog` | systemd-result | cmdshadow-design-healthcheck.service (max_age=36h, 1h-Cycle) |
 | `mayday-ci-runner-watchdog` | http + jq-filter | http://10.8.0.10:9100/health, filter=`.components.ci_runner.ok` (#mayday-sim#425) |
 | `mayday-sim-build-drift-watchdog` | build-drift | http://127.0.0.1:3200/api/build-id vs. origin/main HEAD — Alert bei >30 min Drift, Zyklus 15 min (#mayday-sim#416) |
+| `ai-agent-framework-watchdog` | systemd | guildscout-feedback-agent, zerodox-support-agent, seo-agent |
+| `cmdshadow-design-watchdog` | systemd-result | cmdshadow-design-healthcheck.service (max_age=36h, 1h-Cycle) |
 | `shadowops-backup-test` | — | monatlich 1. d. Monats, Wrapper um `~/ZERODOX/scripts/backup-test.sh` |
 
 **Script:** `scripts/service-watchdog.sh` (generisch, parametrisiert) und `scripts/bot-watchdog.sh` (Backward-Compat). **Service-Files:** `deploy/<name>-watchdog.{service,timer}`. **Webhook-Config:** `~/.config/shadowops-watchdog.env` (chmod 600). **Setup-Anleitung:** [`deploy/MONITORING_SETUP.md`](./deploy/MONITORING_SETUP.md).
