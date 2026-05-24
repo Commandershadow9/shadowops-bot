@@ -10,7 +10,9 @@ Pollt alle 15 min PRs im ZERODOX-Repo mit Auto-Fix-Labels und mergt sie wenn:
 
 Bei Verletzung einer Bedingung: Label `escalate-to-human` + Discord-DM an Christian.
 
-Aktivierung via Discord-Slash-Command `/zerodox-auto-fix-toggle enabled:true`.
+Aktivierung via Config-Flag `zerodox.auto_fix_pipeline.enabled` in `config/config.yaml`
+(Default: false). Geprüft durch die `enabled`-Property dieser Klasse — kein Slash-Command
+nötig. Ein dedizierter Toggle-Command kann später nachgezogen werden (siehe Issue #270).
 
 Memory-Lesson: ZERODOX/feedback_auto_fix_pre_merge_gate.md (post-Soak schreiben).
 """
