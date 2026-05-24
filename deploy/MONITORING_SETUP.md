@@ -26,11 +26,13 @@
             /api/health                                  (3 Core-Agents)
 ```
 
-Alle sechs Watchdogs nutzen `scripts/service-watchdog.sh` — ein generisches
+Alle Watchdogs nutzen `scripts/service-watchdog.sh` — ein generisches
 Script, parametrisiert via Env-Vars. Drei Modi:
 - `WATCHDOG_MODE=http` (Default): curl auf `WATCHDOG_HEALTH_URL`
 - `WATCHDOG_MODE=systemd`: prüft `systemctl is-active` für jede Unit in `WATCHDOG_SYSTEMD_UNITS` (Komma-separiert)
 - `WATCHDOG_MODE=systemd-result`: prüft Result + Alter (`ExecMainStartTimestamp`) des letzten Laufs für oneshot/Daily-Jobs. `WATCHDOG_MAX_AGE_HOURS` (Default 36h) — bei `stale_*h` → DOWN.
+
+**Optionaler JSON-Pfad-Filter (http-Mode):** `WATCHDOG_HEALTH_JQ_FILTER` — wenn gesetzt, wird der HTTP-Statuscode ignoriert und stattdessen eine jq-Boolean-Expression gegen den Response-Body ausgewertet. Nützlich wenn ein Endpoint HTTP 503 zurückgibt sobald *irgendeine* Komponente kaputt ist, aber nur eine bestimmte Komponente überwacht werden soll. Beispiel: `WATCHDOG_HEALTH_JQ_FILTER=.components.ci_runner.ok`. Test-Coverage: `tests/unit/test_service_watchdog_jq_filter.py`.
 
 Das ursprüngliche `scripts/bot-watchdog.sh` bleibt als Backward-Compat-Variante
 für den shadowops-bot Watchdog erhalten.
@@ -86,6 +88,8 @@ systemctl --user restart zerodox-akquise-ai-watchdog.timer
 systemctl --user restart cmdshadow-design-watchdog.timer
 # Seit #416: Build-Drift-Detection fuer mayday-sim
 systemctl --user restart mayday-sim-build-drift-watchdog.timer
+# Seit #273: CI-Runner-Health mit jq-Filter (mayday-sim#437)
+systemctl --user restart mayday-ci-runner-watchdog.timer
 ```
 
 ### 4. Funktionstest
@@ -116,6 +120,8 @@ echo '{"last_status":"up","last_alert_at":"","consecutive_failures":0}' \
 | `mayday-sim` | http | http://127.0.0.1:3200/api/health | 5 min | 5 min |
 | `ai-agent-framework` | systemd | guildscout-feedback-agent, zerodox-support-agent, seo-agent | 5 min | 6 min |
 | `cmdshadow-design` | systemd-result | cmdshadow-design-healthcheck.service (max_age=36h) | 1 h | 8 min |
+| `mayday-ci-runner` | http + jq-filter | http://10.8.0.10:9100/health, filter `.components.ci_runner.ok` (#mayday-sim#425) | 5 min | 7 min |
+| `mayday-sim-build-drift` | build-drift | http://127.0.0.1:3200/api/build-id vs. origin/main HEAD (max. 30 min Drift, #mayday-sim#416) | 15 min | 2 min |
 
 Pro Service:
 - **🔴 \<service\> DOWN** — nach 2 konsekutiven Failures (= ~10 Minuten Downtime).
@@ -137,12 +143,15 @@ DNS-Auflösung + Traefik-Routing + TLS-Zertifikat + App-Health in einem.
 ## Wartung / Inspektion
 
 ```bash
-# Alle 8 Timer auf einen Blick
+# Alle Watchdog-Timer auf einen Blick
 systemctl --user list-timers \
-  shadowops-watchdog.timer zerodox-watchdog.timer guildscout-watchdog.timer \
-  mayday-sim-watchdog.timer ai-agent-framework-watchdog.timer \
-  zerodox-akquise-ai-watchdog.timer \
-  cmdshadow-design-watchdog.timer shadowops-backup-test.timer
+  shadowops-watchdog.timer shadowops-drift-watchdog.timer \
+  zerodox-watchdog.timer zerodox-akquise-ai-watchdog.timer \
+  guildscout-watchdog.timer \
+  mayday-sim-watchdog.timer mayday-ci-runner-watchdog.timer mayday-sim-build-drift-watchdog.timer \
+  ai-agent-framework-watchdog.timer \
+  cmdshadow-design-watchdog.timer \
+  shadowops-backup-test.timer
 
 # Letzten 50 Läufe pro Service
 journalctl --user -u shadowops-watchdog.service --no-pager -n 50
