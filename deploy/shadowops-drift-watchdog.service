@@ -1,0 +1,10 @@
+[Unit]
+Description=ShadowOps Drift Watchdog — systemd-State + Dual-Service Drift Detection
+Documentation=https://github.com/Commandershadow9/shadowops-bot
+
+[Service]
+Type=oneshot
+EnvironmentFile=-%h/.config/shadowops-watchdog.env
+ExecStart=%h/shadowops-bot/scripts/shadowops-drift-watchdog.sh
+StandardOutput=journal
+StandardError=journal

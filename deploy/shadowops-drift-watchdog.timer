@@ -1,0 +1,13 @@
+[Unit]
+Description=ShadowOps Drift Watchdog Timer — alle 5 Min
+Documentation=https://github.com/Commandershadow9/shadowops-bot
+
+[Timer]
+OnBootSec=7min
+OnUnitActiveSec=5min
+AccuracySec=30s
+Persistent=true
+Unit=shadowops-drift-watchdog.service
+
+[Install]
+WantedBy=timers.target
