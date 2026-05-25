@@ -1,0 +1,16 @@
+[Unit]
+Description=Memory Watchdog — alarmt via Discord bei RAM/Swap-Druck (seit 2026-05-25)
+Documentation=https://github.com/Commandershadow9/shadowops-bot
+After=network.target
+
+[Service]
+Type=oneshot
+ExecStart=/home/cmdshadow/shadowops-bot/scripts/memory-watchdog.sh
+StandardOutput=journal
+StandardError=journal
+
+# Schwellen (überschreibbar via Drop-In):
+Environment="RAM_WARN_PCT=90"
+Environment="SWAP_WARN_PCT=80"
+# 60 Min Throttle zwischen Re-Alerts wenn Druck weiter besteht:
+Environment="ALERT_THROTTLE_S=3600"

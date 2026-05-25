@@ -97,7 +97,7 @@ shadowops-bot/
 
 ## Externes Monitoring (seit 2026-05-17 — Defense-in-Depth)
 
-Zusätzlich zum internen `project_monitor.py` laufen 10 unabhängige user-systemd Watchdogs (Zyklen: 5–15 min je nach Watchdog, cmdshadow-design 1h, Backup-Test monatlich) und posten Down/Recovery direkt via Discord-Webhook in `#🩺-uptime-alerts` (NICHT über den Bot — funktioniert auch wenn shadowops-bot tot ist):
+Zusätzlich zum internen `project_monitor.py` laufen 11 unabhängige user-systemd Watchdogs (Zyklen: 5–15 min je nach Watchdog, cmdshadow-design 1h, Backup-Test monatlich) und posten Down/Recovery direkt via Discord-Webhook in `#🩺-uptime-alerts` (NICHT über den Bot — funktioniert auch wenn shadowops-bot tot ist):
 
 | Watchdog | Mode | Target |
 |---|---|---|
@@ -111,6 +111,7 @@ Zusätzlich zum internen `project_monitor.py` laufen 10 unabhängige user-system
 | `mayday-sim-build-drift-watchdog` | build-drift | http://127.0.0.1:3200/api/build-id vs. origin/main HEAD — Alert bei >30 min Drift, Zyklus 15 min (#mayday-sim#416) |
 | `ai-agent-framework-watchdog` | systemd | guildscout-feedback-agent, zerodox-support-agent, seo-agent |
 | `cmdshadow-design-watchdog` | systemd-result | cmdshadow-design-healthcheck.service (max_age=36h, 1h-Cycle) |
+| `memory-watchdog` | meminfo | RAM ≥90% oder Swap ≥80% auf VPS, Frühwarnung vor OOM-Cascade (seit 2026-05-25, Vorfall logind-Kill durch earlyoom) |
 | `shadowops-backup-test` | — | monatlich 1. d. Monats, Wrapper um `~/ZERODOX/scripts/backup-test.sh` |
 
 **Script:** `scripts/service-watchdog.sh` (generisch, parametrisiert) und `scripts/bot-watchdog.sh` (Backward-Compat). **Service-Files:** `deploy/<name>-watchdog.{service,timer}`. **Webhook-Config:** `~/.config/shadowops-watchdog.env` (chmod 600). **Setup-Anleitung:** [`deploy/MONITORING_SETUP.md`](./deploy/MONITORING_SETUP.md).

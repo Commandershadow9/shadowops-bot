@@ -41,6 +41,17 @@ für den shadowops-bot Watchdog erhalten.
 
 cmdshadow-design ist ein **Claude-Plugin (Multi-Skill Design-Tool), kein laufender Service**. Daher gibt's keinen kontinuierlich pingbaren Endpoint. Stattdessen läuft täglich um 06:00 `cmdshadow-design-healthcheck.service` (oneshot) mit 6 Stufen (Brand-Spec, Pre-Publish, Scripts, Vitest 26 Tests). Der Watchdog prüft alle 1h ob dieser Daily-Healthcheck **rechtzeitig erfolgreich gelaufen** ist. Wenn nicht (z.B. Timer broken, Service-Failure, Stale > 36h): Discord-Alert.
 
+### Sonderrolle: memory-watchdog (seit 2026-05-25)
+
+Memory-Druck ist ein **System-Ressourcen-Watchdog**, kein Service-Endpoint. Nutzt eigenes Skript `scripts/memory-watchdog.sh` (nicht `service-watchdog.sh`), weil die Datenquelle `/proc/meminfo` ist statt HTTP/systemd. Anlass: OOM-Cascade-Vorfall 2026-05-25 (earlyoom killte `systemd-logind` → start-limit-hit → SSH-Lockout). Frühwarnung bei:
+
+- **RAM used ≥ `RAM_WARN_PCT`** (Default 90% — überschreibbar via Service Env)
+- **Swap used ≥ `SWAP_WARN_PCT`** (Default 80%)
+
+Beide Bedingungen sind ODER-verknüpft (Alarm wenn eine zutrifft). **Throttle:** dauerhafter Druck löst nur 1× pro `ALERT_THROTTLE_S` (Default 3600 = 60 min) einen Re-Alert aus. **Recovery-Alert** einmalig sobald beide Werte wieder unter Schwelle. State-File `data/watchdog_state_memory.json` enthält `last_state, last_alert_at, last_checked_at, last_ram_pct, last_swap_pct`.
+
+Discord-Embed mit 5 Feldern: RAM (used/total/%), Available, Swap (used/total/%), Load (1/5/15m), PSI Memory (avg10/60/300).
+
 State-Files sind pro Service getrennt (`data/watchdog_state_<service>.json`),
 damit Failure-Counter und Alert-Status sich nicht beeinflussen.
 
