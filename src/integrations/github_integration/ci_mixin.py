@@ -483,10 +483,14 @@ class CIMixin:
             self.logger.warning("⚠️ No deployment manager configured")
             return
 
-        # Check if deployment is enabled for this project (case-insensitive lookup)
+        # Check if deployment is enabled for this project (case-insensitive lookup,
+        # mit dash/underscore-Fallback fuer GitHub-Repos wie "mayday-sim" ↔ Config-Key
+        # "mayday_sim". Vorfall 2026-05-25.)
         project_config = None
+        normalized_repo = repo_name.lower().replace("-", "_")
         for key in self.config.projects.keys():
-            if key.lower() == repo_name.lower():
+            key_lower = key.lower()
+            if key_lower == repo_name.lower() or key_lower.replace("-", "_") == normalized_repo:
                 project_config = self.config.projects[key]
                 break
 

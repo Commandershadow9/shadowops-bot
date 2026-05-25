@@ -191,11 +191,28 @@ Bei Aenderungen an Shared-Services (Redis, PostgreSQL, Traefik) MUESSEN alle Kon
   4. GitHub-Issues mit jules-Label (Jules iteriert darauf)
 
 ## Auto-Deploy-Hardening (seit 2026-04-17, Finding #131 / PR #135)
-- **`github.auto_deploy` ist auf `false` gesetzt** in `config/config.yaml`. Direct-Push auf `main` loest kein Deploy mehr aus.
-- **Hardcoded Block in `event_handlers_mixin.py:72-81`:** Auch wenn `auto_deploy` wieder auf `true` gestellt wird, blockiert der Code den Deploy auf direct-push und loggt Warning. Fuer Deploys immer `scripts/restart.sh --pull` manuell oder ueber Merge-Hook.
+- **`github.auto_deploy` ist seit 2026-04-26 wieder auf `true`** (nach Phase-5-Abschluss). Aber: **Direct-Push** auf `main` triggert nach wie vor KEIN Deploy — das verhindert der hardcoded Block in `event_handlers_mixin.py:72-81`. Nur **PR-Merges** auf `main` triggern Auto-Deploy (durchlaufen die `deploy.sh`-Defense-in-Depth-Kette mit CI-Wait, Lint, Unit, Build, Health, Rollback).
+- **Hardcoded Block in `event_handlers_mixin.py:72-81`:** Wenn `auto_deploy` + branch in `deploy_branches` + direct-push → Warning + Discord-Alert in `🚀-deployment-log`, kein Deploy. Bleibt als letzte Verteidigungslinie gegen Bypass-Versuche.
 - **`recovery_mixin._deploy_after_fix()`** erstellt statt Direct-Push auf main einen `fix/security-auto-YYYYMMDD-HHMMSS` Branch und pusht dorthin. Security-Fixes landen nicht mehr blind auf Production-Branches.
 - NIEMALS den Block in `event_handlers_mixin.py` entfernen ohne Review. Er ist die letzte Verteidigungslinie gegen AI-Commits, die ohne Human-Gate deployed werden.
 - NIEMALS `_deploy_after_fix` wieder auf `git push` (ohne Branch-Check) umbauen — das wuerde PR #135 (#131) regressieren.
+
+## Auto-Deploy Project-Name-Lookup (seit 2026-05-25, Vorfall mayday-sim PR #449/#450)
+- **GitHub-Repo-Namen verwenden Bindestriche** (`mayday-sim`, `ai-agent-framework`), **Config-Keys teilweise Unterstriche** (`mayday_sim`). Beim PR-Merge-Webhook bekommt ShadowOps `repo_name="mayday-sim"`, der Lookup gegen `self.config.projects` muss daher dash↔underscore-tolerant sein.
+- **Zwei Code-Pfade** mit dieser Logik, BEIDE pflegen:
+  - `src/integrations/deployment_manager.py:117-128` (`deploy_project()` Eingangs-Lookup)
+  - `src/integrations/github_integration/ci_mixin.py:486-498` (`_trigger_deployment()` project_config-Lookup für deploy.enabled-Check)
+- **Pattern:** `normalized = name.lower().replace("-", "_")` + dann `key.lower() == name.lower() OR key.lower().replace("-", "_") == normalized`
+- NIEMALS einen der beiden Lookups auf reines `key in projects` zurücksetzen — der dash↔underscore-Mismatch ist heimtückisch (logs zeigen "Project 'mayday-sim' not found" obwohl der Key `mayday_sim` existiert).
+- NIEMALS bei neuen Projekten den dash↔underscore-Drift bewusst einführen — neuen Config-Key direkt mit Bindestrichen anlegen wenn das Repo Bindestriche hat. Lookup-Toleranz ist Fallback, nicht erste Wahl.
+- **Tests:** 35× grün in `tests/unit/test_deployment_manager_error_capture.py` + `tests/unit/test_github_integration.py` nach dem Fix. Bei künftigen Lookup-Änderungen beide Suites laufen lassen.
+
+## post_deploy_command für Prisma-Projekte (seit 2026-05-25)
+- **Prisma-basierte Projekte** (mayday-sim, ZERODOX) haben das Risiko dass `src/generated/client/` nach Schema-Migrationen stale ist. TSC bricht dann mit Dutzenden `Property X does not exist on type PrismaClient` ab.
+- **Pattern für post_deploy_command:** `cd <web> && sudo -u <repo-owner-user> ./node_modules/.bin/prisma generate && sudo bash <deploy.sh>`.
+  - `sudo -u <owner>` weil `generated/client/*` Files file-owner-restricted sind (cmdshadow kann sie nicht überschreiben, nur der Repo-Owner-User).
+  - `deploy.sh` sollte sein OWN `prisma generate` haben (Belt-and-suspenders) — Beispiel mayday-sim PR #457.
+- NIEMALS `post_deploy_command` auf direkten `docker compose build && up -d` setzen ohne `prisma generate` davor, wenn das Projekt Prisma nutzt UND häufig Schema-Migrationen hat. Sonst Auto-Deploy schlägt nach jeder Schema-Änderung fehl, bis manuell repariert.
 
 ## WAL-G-Fixer (seit 2026-04-17, Finding #120 / PR #127)
 - **Code:** `src/integrations/fixers/walg_fixer.py` + Adapter in `security_engine/fixer_adapters.py:WalGFixerAdapter`.

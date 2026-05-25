@@ -2,6 +2,11 @@
 
 ## [Unreleased]
 
+### Fixed — Auto-Deploy Project-Name-Lookup (Vorfall 2026-05-25)
+
+- **`deployment_manager.deploy_project()` + `ci_mixin._trigger_deployment()`**: Lookup um dash↔underscore-Fallback erweitert. GitHub-Webhooks senden `repo_name="mayday-sim"` (mit Bindestrich), Config-Keys benutzten teilweise `mayday_sim` (mit Unterstrich) → exact-Match scheiterte, ShadowOps loggte "Project 'mayday-sim' not found in deployment config" und brach Auto-Deploy ab. Vorfall: PR #449/#450 in mayday-sim wurden gemerged, aber Container lief 14h mit altem Code, bis keydev manuell pingte. Fix: zusätzlich `key.lower().replace("-", "_") == name.lower().replace("-", "_")` als Match-Stufe. Tests: 35× grün in deployment_manager + github_integration suites.
+- **`config.yaml` projects.mayday_sim.deploy.post_deploy_command**: Umgestellt von direktem `docker compose build && up -d` auf `cd web && sudo -u keydev prisma generate && sudo bash scripts/deploy.sh`. Gleicher Pfad wie manueller Deploy von keydev. Belt-and-suspenders prisma-generate-Call vor deploy.sh, weil keydev's `web/src/generated/client/` keydev-owned ist (cmdshadow kann nicht überschreiben). Sobald [mayday-sim#457](https://github.com/Commandershadow9/mayday-sim/pull/457) (`prisma generate` in deploy.sh) und [#459](https://github.com/Commandershadow9/mayday-sim/pull/459) (NODE_OPTIONS für tsc) live sind ist der prisma-Call hier redundant aber idempotent.
+
 ### Security — Cross-Project Sweep (2026-05-24)
 
 Vom SecurityScanAgent gefundene Issues #265/#266/#268/#272 abgearbeitet (alle als Cross-Project-Koordination, je 1 PR/Commit in den jeweiligen Repos):

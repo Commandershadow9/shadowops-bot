@@ -90,7 +90,7 @@ shadowops-bot/
 - `context_manager.py` — RAG: Project-Context + DO-NOT-TOUCH + Infra
 - `github_integration/` — Webhooks mit HMAC-SHA256 Verification + Jules Workflow (Package: core, webhook_mixin, event_handlers_mixin, jules_workflow_mixin, notifications_mixin, ci_mixin, agent_review/)
 - `project_monitor.py` — Multi-Project Health-Checks
-- `deployment_manager.py` — Auto-Deploy mit Backup/Rollback
+- `deployment_manager.py` — Auto-Deploy mit Backup/Rollback. **WICHTIG:** Project-Name-Lookup ist dash↔underscore-tolerant (`mayday-sim` ↔ `mayday_sim`, seit 2026-05-25 — siehe `.claude/rules/safety.md`). Gleiche Logik in `github_integration/ci_mixin.py:_trigger_deployment()`.
 - `incident_manager.py` — Incident Threads in Discord
 - `customer_notifications.py` — Customer-Facing Alerts (Multi-Guild)
 - `fail2ban.py` / `crowdsec.py` / `aide.py` / `docker.py` — Security-Integrationen
@@ -246,5 +246,7 @@ Worker-Konventionen:
 - [config/DO-NOT-TOUCH.md](./config/DO-NOT-TOUCH.md)
 
 ## Letztes Update dieser Datei
+
+2026-05-25 — Auto-Deploy Project-Name-Lookup-Fix (dash↔underscore-Toleranz für `mayday-sim` ↔ `mayday_sim`, neue Regel in `.claude/rules/safety.md`). Anlass: mayday-sim PR #449/#450 lagen 14h ohne Auto-Deploy.
 
 2026-05-24 — Watchdog-Tabelle auf 10 erweitert (shadowops-drift, zerodox-akquise-ai, mayday-ci-runner, mayday-sim-build-drift), Security-Sweep #265/266/268/272 abgearbeitet (siehe CHANGELOG).

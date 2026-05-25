@@ -114,11 +114,15 @@ class DeploymentManager:
         """
         start_time = time.time()
 
-        # Check if project exists (case-insensitive fallback)
+        # Check if project exists (case-insensitive + dash/underscore fallback).
+        # GitHub-Repo-Namen verwenden Bindestriche (z.B. "mayday-sim"), Config-Keys
+        # oft Underscores ("mayday_sim"). Vorfall 2026-05-25 (PR #449/#450):
+        # Auto-Deploy schlug fehl mit "Project 'mayday-sim' not found".
         project_key = project_name
         if project_key not in self.projects:
+            normalized = project_name.lower().replace("-", "_")
             for key in self.projects.keys():
-                if key.lower() == project_name.lower():
+                if key.lower() == project_name.lower() or key.lower().replace("-", "_") == normalized:
                     project_key = key
                     break
         if project_key not in self.projects:
