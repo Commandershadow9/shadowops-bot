@@ -209,10 +209,10 @@ Bei Aenderungen an Shared-Services (Redis, PostgreSQL, Traefik) MUESSEN alle Kon
 
 ## post_deploy_command für Prisma-Projekte (seit 2026-05-25)
 - **Prisma-basierte Projekte** (mayday-sim, ZERODOX) haben das Risiko dass `src/generated/client/` nach Schema-Migrationen stale ist. TSC bricht dann mit Dutzenden `Property X does not exist on type PrismaClient` ab.
-- **Pattern für post_deploy_command:** `cd <web> && sudo -u <repo-owner-user> ./node_modules/.bin/prisma generate && sudo bash <deploy.sh>`.
-  - `sudo -u <owner>` weil `generated/client/*` Files file-owner-restricted sind (cmdshadow kann sie nicht überschreiben, nur der Repo-Owner-User).
-  - `deploy.sh` sollte sein OWN `prisma generate` haben (Belt-and-suspenders) — Beispiel mayday-sim PR #457.
-- NIEMALS `post_deploy_command` auf direkten `docker compose build && up -d` setzen ohne `prisma generate` davor, wenn das Projekt Prisma nutzt UND häufig Schema-Migrationen hat. Sonst Auto-Deploy schlägt nach jeder Schema-Änderung fehl, bis manuell repariert.
+- **Pattern für post_deploy_command:** `sudo bash <deploy.sh>` (NICHTS sonst). Das Deploy-Skript läuft via sudo (= root) und macht intern: `prisma generate` → TSC → docker build → restart → health check. Beispiel-Skript: [mayday-sim/scripts/deploy.sh](https://github.com/Commandershadow9/mayday-sim/blob/main/scripts/deploy.sh).
+- **NIEMALS** einen zusätzlichen `sudo -u <user> prisma generate` davor in post_deploy_command setzen. Wenn deploy.sh als root läuft, erzeugt es root-owned Files in `generated/client/`. Ein nachfolgender keydev-Prisma-Call läuft dann mit EACCES wenn er root-owned Files überschreiben will. Vorfall 2026-05-25: PR #460 Auto-Deploy fail mit `EACCES: permission denied, unlink '/srv/leitstelle/app/web/src/generated/client/models/AccountProgress.ts'`.
+- **deploy.sh sollte sein OWN `prisma generate`** als root machen (Beispiel mayday-sim PR #457). Wenn das Skript das nicht hat → erst PR aufmachen für deploy.sh, dann post_deploy_command konfigurieren.
+- NIEMALS `post_deploy_command` auf direkten `docker compose build && up -d` setzen ohne `prisma generate` im Skript-Stack, wenn das Projekt Prisma nutzt UND häufig Schema-Migrationen hat. Sonst Auto-Deploy schlägt nach jeder Schema-Änderung fehl, bis manuell repariert.
 
 ## WAL-G-Fixer (seit 2026-04-17, Finding #120 / PR #127)
 - **Code:** `src/integrations/fixers/walg_fixer.py` + Adapter in `security_engine/fixer_adapters.py:WalGFixerAdapter`.
