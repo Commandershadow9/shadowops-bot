@@ -311,15 +311,18 @@ Multi-Project:
 pip3 install -r requirements.txt
 pip3 install -r requirements-dev.txt
 
-# Tests ausführen
-pytest tests/ -v
+# Tests ausfuehren (IMMER -x verwenden — stoppt bei erstem Fehler, verhindert OOM auf 8 GB VPS)
+pytest tests/unit/test_NAME.py -x
+
+# Gesamte Test-Suite (selten, nur lokal mit ausreichend RAM)
+pytest tests/ -x -v
 
 # Mit Coverage
-pytest tests/ --cov=src --cov-report=html
+pytest tests/ -x --cov=src --cov-report=html
 
 # Einzelne Test-Kategorie
-pytest tests/unit/ -v
-pytest tests/integration/ -v
+pytest tests/unit/ -x -v
+pytest tests/integration/ -x -v
 
 # Bot lokal testen
 python3 src/bot.py
@@ -355,26 +358,30 @@ shadowops-bot/
 │   │   ├── code_analyzer.py            # Code Structure Analyzer
 │   │   ├── context_manager.py          # RAG Context Manager
 │   │   ├── github_integration/         # GitHub Webhooks + Jules Workflow (Package)
+│   │   ├── security_engine/            # Autonomer SecurityScanAgent + CircuitBreaker + DB
 │   │   ├── project_monitor.py          # Multi-Project Monitoring
 │   │   ├── deployment_manager.py       # Auto-Deployment
 │   │   ├── incident_manager.py         # Incident Tracking
 │   │   ├── customer_notifications.py   # Customer-Facing Alerts
-│   │   ├── fixers/                     # Security Fixers (fail2ban, crowdsec, aide, wal-g)
+│   │   ├── fixers/                     # Security Fixers (fail2ban, crowdsec, aide, trivy, wal-g)
 │   │   ├── analyst/                    # Security Analyst (Legacy-Referenz)
 │   │   ├── ai_learning/                # Continuous Learning Agent
 │   │   ├── fail2ban.py                 # Fail2ban Integration
 │   │   ├── crowdsec.py                 # CrowdSec Integration
 │   │   ├── aide.py                     # AIDE Integration
 │   │   └── docker.py                   # Docker Scan Integration
+│   ├── patch_notes/                    # Patch Notes Pipeline v6 (5-Stufen State Machine)
+│   ├── schemas/                        # JSON-Schemas fuer Structured Output (Codex/Claude)
 │   └── utils/
 │       ├── config.py                   # Config-Loader
-│       ├── state_manager.py            # NEU: State-Management
+│       ├── state_manager.py            # State-Management
 │       ├── logger.py                   # Logging
 │       ├── embeds.py                   # Discord Embed-Builder
-│       └── discord_logger.py           # Discord Channel Logger
+│       ├── discord_logger.py           # Discord Channel Logger
+│       └── alert_humanizer.py          # Status-Telemetrie zu mensch-lesbarem Deutsch
 ├── tests/
 │   ├── conftest.py                     # Test Fixtures
-│   ├── unit/                           # Unit Tests (161)
+│   ├── unit/                           # Unit Tests (250+)
 │   │   ├── test_config.py
 │   │   ├── test_ai_engine.py           # 43 Tests (Router, Codex, Claude, AIEngine)
 │   │   ├── test_smart_queue.py         # 21 Tests (Pool, Lock, Circuit Breaker)
@@ -394,7 +401,7 @@ shadowops-bot/
 │   └── logrotate.conf                  # Log-Rotation
 ├── deploy/                             # Deployment + Watchdogs
 │   ├── shadowops-bot.service           # systemd Bot-Service
-│   ├── *-watchdog.{service,timer}      # Externe Uptime-Watchdogs (6x HTTP/systemd + Backup-Test)
+│   ├── *-watchdog.{service,timer}      # Externe Uptime-Watchdogs (11 Watchdogs: HTTP/systemd/jq-filter/build-drift/state-drift)
 │   ├── shadowops-watchdog.env.example  # Webhook-Env Template
 │   └── MONITORING_SETUP.md             # Setup-Anleitung Watchdogs
 ├── .github/
