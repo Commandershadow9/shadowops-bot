@@ -10,7 +10,7 @@ from __future__ import annotations
 
 import sys
 import tempfile
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from unittest.mock import AsyncMock, MagicMock, patch
 
@@ -297,3 +297,142 @@ class TestDriftHandling:
         await cog._handle_drifts([result])  # darf nicht raisen
 
         cog.logger.error.assert_called_once()
+
+
+# ────────────────────────────────────────────────────────────────────────
+# Incident-Grouping (Modul 2): aufeinanderfolgende Drifts = 1 Message
+# ────────────────────────────────────────────────────────────────────────
+
+
+def _make_incident_channel():
+    """Channel-Mock mit send() → Message(id=...) und edit-fähiger partial message."""
+    sent_message = MagicMock(spec=discord.Message)
+    sent_message.id = 555000111
+
+    edited = MagicMock(spec=discord.Message)
+    edited.edit = AsyncMock()
+
+    channel = MagicMock()
+    channel.send = AsyncMock(return_value=sent_message)
+    channel.get_partial_message = MagicMock(return_value=edited)
+    return channel, sent_message, edited
+
+
+class TestIncidentGrouping:
+    @pytest.mark.asyncio
+    async def test_three_drifts_one_message_then_edits(self, cog, cog_module):
+        """3 aufeinanderfolgende Drifts desselben Hosts → 1 send + N edits."""
+        cog._last_status_per_host = {"Runner-VM": "ok"}
+        channel, sent_msg, edited = _make_incident_channel()
+        cog.bot.get_channel = MagicMock(return_value=channel)
+
+        # Drift 1: ok → unreachable (öffnet Incident, postet Message)
+        await cog._handle_drifts([_make_poll_result(cog_module, name="Runner-VM", status="unreachable")])
+        # Drift 2: unreachable → critical (editiert bestehende Message)
+        await cog._handle_drifts([_make_poll_result(cog_module, name="Runner-VM", status="critical")])
+        # Drift 3: critical → degraded (editiert bestehende Message)
+        await cog._handle_drifts([_make_poll_result(cog_module, name="Runner-VM", status="degraded")])
+
+        # Genau EIN send, danach nur noch edits
+        channel.send.assert_called_once()
+        assert edited.edit.call_count == 2
+        channel.get_partial_message.assert_called_with(sent_msg.id)
+
+        incident = cog._open_incidents["Runner-VM"]
+        assert incident.message_id == sent_msg.id
+        assert len(incident.transitions) == 3
+        assert incident.worst_status == "unreachable"
+
+    @pytest.mark.asyncio
+    async def test_recovery_edit_shows_downtime_and_closes(self, cog, cog_module):
+        """Recovery → finale Edit mit Downtime, Incident wird geschlossen."""
+        cog._last_status_per_host = {"Runner-VM": "ok"}
+        channel, sent_msg, edited = _make_incident_channel()
+        cog.bot.get_channel = MagicMock(return_value=channel)
+
+        # Incident öffnen
+        await cog._handle_drifts([_make_poll_result(cog_module, name="Runner-VM", status="critical")])
+        # started_at manuell zurückdatieren für messbare Downtime
+        cog._open_incidents["Runner-VM"].started_at = datetime.now(timezone.utc) - timedelta(minutes=7)
+
+        # Recovery: critical → ok
+        await cog._handle_drifts([_make_poll_result(cog_module, name="Runner-VM", status="ok")])
+
+        # Recovery editiert die bestehende Message (kein zweiter send)
+        channel.send.assert_called_once()
+        edited.edit.assert_called_once()
+
+        # Finale Embed enthält Downtime-Klartext + Selbst-Erholung
+        final_embed = edited.edit.call_args.kwargs["embed"]
+        assert "Ausfall" in final_embed.description
+        assert "Min" in final_embed.description
+        assert "Selbst-erholt" in final_embed.description
+
+        # Incident geschlossen
+        assert "Runner-VM" not in cog._open_incidents
+
+    @pytest.mark.asyncio
+    async def test_two_hosts_two_incidents(self, cog, cog_module):
+        """Zwei verschiedene Hosts → zwei getrennte Incidents (2 sends)."""
+        cog._last_status_per_host = {"Runner-VM": "ok", "ZERODOX Production": "ok"}
+        channel, _sent, _edited = _make_incident_channel()
+        # jeder send liefert eine eigene Message-id
+        ids = iter([111, 222])
+
+        def _send(*args, **kwargs):
+            m = MagicMock(spec=discord.Message)
+            m.id = next(ids)
+            return m
+
+        channel.send = AsyncMock(side_effect=_send)
+        cog.bot.get_channel = MagicMock(return_value=channel)
+
+        await cog._handle_drifts([
+            _make_poll_result(cog_module, name="Runner-VM", status="critical"),
+            _make_poll_result(cog_module, name="ZERODOX Production", status="degraded"),
+        ])
+
+        assert channel.send.call_count == 2
+        assert set(cog._open_incidents.keys()) == {"Runner-VM", "ZERODOX Production"}
+        assert cog._open_incidents["Runner-VM"].message_id == 111
+        assert cog._open_incidents["ZERODOX Production"].message_id == 222
+
+    @pytest.mark.asyncio
+    async def test_edit_failure_falls_back_to_new_post(self, cog, cog_module):
+        """Wenn edit() 404 wirft (Message gelöscht), wird neu gepostet + id aktualisiert."""
+        cog._last_status_per_host = {"Runner-VM": "ok"}
+        cog.logger = MagicMock()
+
+        first_msg = MagicMock(spec=discord.Message)
+        first_msg.id = 100
+        repost_msg = MagicMock(spec=discord.Message)
+        repost_msg.id = 200
+
+        stale = MagicMock(spec=discord.Message)
+        stale.edit = AsyncMock(side_effect=discord.NotFound(MagicMock(status=404, reason="x"), "gone"))
+
+        channel = MagicMock()
+        channel.send = AsyncMock(side_effect=[first_msg, repost_msg])
+        channel.get_partial_message = MagicMock(return_value=stale)
+        cog.bot.get_channel = MagicMock(return_value=channel)
+
+        # Drift 1 öffnet Incident (send → id 100)
+        await cog._handle_drifts([_make_poll_result(cog_module, name="Runner-VM", status="critical")])
+        # Drift 2 versucht edit (404) → neu posten (send → id 200)
+        await cog._handle_drifts([_make_poll_result(cog_module, name="Runner-VM", status="unreachable")])
+
+        assert channel.send.call_count == 2
+        stale.edit.assert_called_once()
+        assert cog._open_incidents["Runner-VM"].message_id == 200
+
+    @pytest.mark.asyncio
+    async def test_recovery_without_open_incident_posts_simple(self, cog, cog_module):
+        """Recovery ohne offenen Incident (z.B. nach Bot-Restart) → einfacher Post, kein Crash."""
+        cog._last_status_per_host = {"Runner-VM": "critical"}
+        channel, sent_msg, _edited = _make_incident_channel()
+        cog.bot.get_channel = MagicMock(return_value=channel)
+
+        await cog._handle_drifts([_make_poll_result(cog_module, name="Runner-VM", status="ok")])
+
+        channel.send.assert_called_once()
+        assert "Runner-VM" not in cog._open_incidents

@@ -46,6 +46,15 @@ from integrations.health_schema_v1 import (
     HealthResponse,
     HealthSchemaError,
 )
+from utils.alert_humanizer import (
+    STATUS_COLOR,
+    STATUS_EMOJI,
+    Urgency,
+    humanize_alert,
+    humanize_transition,
+    runbook_for,
+    urgency_line,
+)
 
 
 logger = logging.getLogger(__name__)
@@ -63,20 +72,9 @@ RETENTION_DAYS = 90
 DASHBOARD_CHANNEL_ID = 1479615549356114124  # 📊-dashboard
 CRITICAL_CHANNEL_ID = 1441655480840617994   # 🚨-critical
 
-# Status → Discord-Color
-STATUS_COLOR = {
-    "ok": 0x2ECC71,        # grün
-    "degraded": 0xF39C12,  # gelb-orange
-    "critical": 0xE74C3C,  # rot
-    "unreachable": 0x7F8C8D,  # grau
-}
-
-STATUS_EMOJI = {
-    "ok": "🟢",
-    "degraded": "🟡",
-    "critical": "🔴",
-    "unreachable": "⚫",
-}
+# STATUS_COLOR / STATUS_EMOJI sind ab jetzt Single-Source in
+# utils.alert_humanizer (Konsistenz-Anker, siehe Design-Doc 2026-05-28).
+# Re-Import oben — Werte 1:1 identisch zu den frueheren lokalen Kopien.
 
 
 @dataclass(frozen=True)
@@ -119,6 +117,22 @@ class PollResult:
         if self.response is not None:
             return self.response.status
         return "unreachable"
+
+
+@dataclass
+class OpenIncident:
+    """Ein offener Vorfall pro Host — bündelt aufeinanderfolgende Drifts.
+
+    Solange ein Host nicht auf ``ok`` zurückkehrt, editieren weitere Drifts die
+    bestehende Discord-Message (statt neue Posts), Verlauf als Timeline.
+    """
+
+    host: str
+    started_at: datetime
+    message_id: Optional[int]
+    transitions: list[tuple[int, str, str]]  # [(ts, prev, new), ...]
+    worst_status: str
+    manual_action_seen: bool = False  # für "selbst-erholt"-Heuristik (YAGNI: bleibt False)
 
 
 # ---------- SQLite-Persistenz ----------
@@ -271,18 +285,24 @@ def _build_status_embed(results: list[PollResult]) -> discord.Embed:
     for r in results:
         emoji = STATUS_EMOJI.get(r.status, "⚪")
         if r.response is not None:
-            crit = len(r.response.critical_alerts)
-            warn = len(r.response.warning_alerts)
             host_line = f"`{r.response.host}` ({r.response.role})"
             uptime_line = f"Uptime: {_format_uptime(r.response.uptime_seconds)}"
-            comps = ", ".join(r.response.components.keys()) or "—"
-            alert_line = f"Alerts: {crit} critical · {warn} warning"
-            value = f"{host_line}\n{uptime_line}\nKomponenten: {comps}\n{alert_line}"
+            # Wichtigste Alerts als Klartext (Humanizer) statt blosser Zaehler
+            alert_lines: list[str] = []
+            for a in r.response.critical_alerts[:2]:
+                alert_lines.append(f"🔴 {humanize_alert(a)}")
+            for a in r.response.warning_alerts[:2]:
+                alert_lines.append(f"🟡 {humanize_alert(a)}")
+            if alert_lines:
+                body = "\n".join(alert_lines)
+            else:
+                body = "Keine aktiven Alerts"
+            value = f"{host_line}\n{uptime_line}\n{body}"
         else:
             value = f"❌ {r.error or 'unbekannter Fehler'}"
 
         field_name = f"{emoji} {r.target.name} — {r.status.upper()}"
-        embed.add_field(name=field_name, value=value, inline=False)
+        embed.add_field(name=field_name, value=value[:1024], inline=False)
 
     embed.set_footer(text=f"Aktualisiert alle {EMBED_INTERVAL_MINUTES} Min · Schema v1")
     return embed
@@ -301,35 +321,104 @@ def _format_uptime(seconds: int) -> str:
     return f"{days}d {h}h"
 
 
-def _build_drift_embed(target: HealthTarget, prev: str, new: str, response: Optional[HealthResponse], error: Optional[str]) -> discord.Embed:
-    """Embed für Drift-Detail-Alert (status-Wechsel)."""
-    is_recovery = (prev in {"critical", "degraded", "unreachable"}) and (new == "ok")
-    if is_recovery:
-        title = f"✅ {target.name}: RECOVERED ({prev} → {new})"
-        color = STATUS_COLOR["ok"]
+def _alert_components(response: Optional[HealthResponse]) -> list[str]:
+    """Sammelt die Komponenten aller Alerts (fuer Runbook-Auswahl)."""
+    if response is None:
+        return []
+    comps: list[str] = []
+    for a in response.alerts:
+        if a.component and a.component not in comps:
+            comps.append(a.component)
+    return comps
+
+
+def _format_downtime(seconds: float) -> str:
+    """Sekunden → kurzer deutscher Dauer-Klartext, z.B. '2 Min', '1 Std 5 Min'."""
+    seconds = int(max(0, seconds))
+    if seconds < 60:
+        return f"{seconds} Sek"
+    if seconds < 3600:
+        return f"{seconds // 60} Min"
+    if seconds < 86400:
+        h, rem = divmod(seconds, 3600)
+        m = rem // 60
+        return f"{h} Std {m} Min" if m else f"{h} Std"
+    days, rem = divmod(seconds, 86400)
+    h = rem // 3600
+    return f"{days} Tg {h} Std" if h else f"{days} Tg"
+
+
+def _build_drift_embed(
+    target: HealthTarget,
+    prev: str,
+    new: str,
+    response: Optional[HealthResponse],
+    error: Optional[str],
+    *,
+    timeline: Optional[list[tuple[int, str, str]]] = None,
+    downtime_seconds: Optional[float] = None,
+    self_recovered: bool = False,
+) -> discord.Embed:
+    """Embed für Drift-Detail-Alert (status-Wechsel) — mensch-lesbar via Humanizer.
+
+    ``timeline`` (optional) listet bisherige Übergänge eines offenen Incidents
+    als ``[(ts, prev, new), ...]`` und wird als Verlauf gerendert.
+    ``downtime_seconds``/``self_recovered`` werden beim Recovery-Abschluss
+    gesetzt (Gesamt-Downtime + Selbst-Erholung).
+    """
+    info = humanize_transition(prev, new)
+    title = f"{info.emoji} {target.name} {info.headline}"
+    color = STATUS_COLOR["ok"] if info.is_recovery else STATUS_COLOR.get(new, 0x95A5A6)
+
+    # Beschreibung: Klartext-Kontext zur Lage
+    if info.is_recovery:
+        desc_parts = [f"{target.name} ({target.url}) ist wieder im grünen Bereich."]
+        if downtime_seconds is not None:
+            desc_parts.append(f"Gesamt-Ausfall: **{_format_downtime(downtime_seconds)}**.")
+        if self_recovered:
+            desc_parts.append("Selbst-erholt (keine manuelle Aktion erkannt).")
+        description = " ".join(desc_parts)
+    elif error:
+        description = f"{target.name} ({target.url}) — {error[:300]}"
     else:
-        title = f"{STATUS_EMOJI.get(new, '⚠️')} {target.name}: DRIFT ({prev} → {new})"
-        color = STATUS_COLOR.get(new, 0x95A5A6)
+        description = f"{target.name} ({target.url})"
 
     embed = discord.Embed(
-        title=title,
+        title=title[:256],
+        description=description[:4096],
         color=color,
         timestamp=datetime.now(timezone.utc),
     )
-    embed.add_field(name="URL", value=f"`{target.url}`", inline=False)
-    embed.add_field(name="Vorher", value=f"`{prev}`", inline=True)
-    embed.add_field(name="Jetzt", value=f"`{new}`", inline=True)
 
     if response is not None:
         if response.critical_alerts:
-            lines = [f"• `{a.code}` ({a.component}) — {a.message}" for a in response.critical_alerts[:5]]
-            embed.add_field(name="🔴 Critical Alerts", value="\n".join(lines)[:1024], inline=False)
+            lines = [f"🔴 {humanize_alert(a)}" for a in response.critical_alerts[:5]]
+            embed.add_field(name="Kritisch", value="\n".join(lines)[:1024], inline=False)
         if response.warning_alerts:
-            lines = [f"• `{a.code}` ({a.component}) — {a.message}" for a in response.warning_alerts[:5]]
-            embed.add_field(name="🟡 Warning Alerts", value="\n".join(lines)[:1024], inline=False)
+            lines = [f"🟡 {humanize_alert(a)}" for a in response.warning_alerts[:5]]
+            embed.add_field(name="Warnungen", value="\n".join(lines)[:1024], inline=False)
     elif error:
         embed.add_field(name="Fehler", value=f"```{error[:1000]}```", inline=False)
 
+    # Dringlichkeit (leeren String abfangen — kein Feld bei Urgency.NONE)
+    u_line = urgency_line(info.urgency)
+    runbook = runbook_for(target.role_hint, _alert_components(response))
+    action_lines: list[str] = []
+    if u_line:
+        action_lines.append(u_line)
+    if runbook is not None and not info.is_recovery:
+        action_lines.append(f"→ Runbook: {runbook}")
+    if action_lines:
+        embed.add_field(name="​", value="\n".join(action_lines)[:1024], inline=False)
+
+    # Verlauf (Incident-Timeline)
+    if timeline:
+        tl_lines = []
+        for ts, p, n in timeline[-6:]:
+            tl_lines.append(f"{STATUS_EMOJI.get(n, '⚪')} {p} → {n} · <t:{ts}:R>")
+        embed.add_field(name="Verlauf", value="\n".join(tl_lines)[:1024], inline=False)
+
+    embed.set_footer(text="Phase 5e · Health-Aggregator")
     return embed
 
 
@@ -354,7 +443,8 @@ def _build_trend_embed(events: list[tuple[str, str, str, int]]) -> discord.Embed
         lines = []
         for host, prev, new, ts in ranked:
             when = f"<t:{ts}:R>"
-            lines.append(f"• {STATUS_EMOJI.get(new, '⚪')} `{host}`: {prev} → **{new}** {when}")
+            info = humanize_transition(prev, new)
+            lines.append(f"• {info.emoji} `{host}`: **{info.headline}** {when}")
         embed.add_field(name="Top-Events", value="\n".join(lines), inline=False)
 
         # Pro-Host-Statistik
@@ -381,6 +471,8 @@ class Phase5eHealthAggregator(commands.Cog):
         self._last_status_per_host: dict[str, str] = {}
         self._latest_results: list[PollResult] = []
         self._dashboard_message: Optional[discord.Message] = None
+        # Incident-Grouping: offene Vorfälle pro Host (in-memory; Restart = leer)
+        self._open_incidents: dict[str, OpenIncident] = {}
         _init_db()
 
     async def cog_load(self) -> None:
@@ -418,6 +510,8 @@ class Phase5eHealthAggregator(commands.Cog):
     async def _before_poll(self) -> None:
         await self.bot.wait_until_ready()
 
+    _STATUS_SEVERITY = {"ok": 0, "degraded": 1, "critical": 2, "unreachable": 3}
+
     async def _handle_drifts(self, results: list[PollResult]) -> None:
         critical_channel = self.bot.get_channel(CRITICAL_CHANNEL_ID)
         for r in results:
@@ -435,11 +529,88 @@ class Phase5eHealthAggregator(commands.Cog):
             self.logger.info("[5e] DRIFT %s: %s → %s", host, previous, current)
             if critical_channel is None:
                 continue
-            try:
+
+            await self._handle_incident_drift(critical_channel, r, previous, current)
+
+    async def _handle_incident_drift(
+        self, channel, r: PollResult, previous: str, current: str
+    ) -> None:
+        """Bündelt aufeinanderfolgende Drifts eines Hosts zu einem Incident.
+
+        - Erster Drift weg von ``ok`` → Incident öffnen, Message posten.
+        - Weitere Drifts (Incident offen) → bestehende Message editieren, Timeline anhängen.
+        - Drift zurück auf ``ok`` → Recovery, finale Edit mit Downtime, Incident schließen.
+        """
+        host = r.target.name
+        now = datetime.now(timezone.utc)
+        ts = int(now.timestamp())
+        incident = self._open_incidents.get(host)
+
+        if current == "ok":
+            # Recovery — schließt einen offenen Incident ab (falls vorhanden)
+            if incident is None:
+                # kein offener Incident (z.B. Bot-Restart) → einfacher Recovery-Post
                 embed = _build_drift_embed(r.target, previous, current, r.response, r.error)
-                await critical_channel.send(embed=embed)
+                await self._post_or_edit_incident(channel, None, embed)
+                return
+            incident.transitions.append((ts, previous, current))
+            downtime = (now - incident.started_at).total_seconds()
+            embed = _build_drift_embed(
+                r.target, previous, current, r.response, r.error,
+                timeline=incident.transitions,
+                downtime_seconds=downtime,
+                self_recovered=not incident.manual_action_seen,
+            )
+            await self._post_or_edit_incident(channel, incident, embed)
+            del self._open_incidents[host]
+            return
+
+        # Drift in einen Nicht-ok-Status
+        if incident is None:
+            # Neuer Incident
+            incident = OpenIncident(
+                host=host,
+                started_at=now,
+                message_id=None,
+                transitions=[(ts, previous, current)],
+                worst_status=current,
+            )
+            self._open_incidents[host] = incident
+        else:
+            incident.transitions.append((ts, previous, current))
+            if self._STATUS_SEVERITY.get(current, 0) > self._STATUS_SEVERITY.get(incident.worst_status, 0):
+                incident.worst_status = current
+
+        embed = _build_drift_embed(
+            r.target, previous, current, r.response, r.error,
+            timeline=incident.transitions,
+        )
+        await self._post_or_edit_incident(channel, incident, embed)
+
+    async def _post_or_edit_incident(self, channel, incident: Optional[OpenIncident], embed: discord.Embed) -> None:
+        """Postet eine neue Incident-Message oder editiert die bestehende.
+
+        Defensive: schlägt ``message.edit`` fehl (Message gelöscht/404), wird neu
+        gepostet und die ``message_id`` aktualisiert.
+        """
+        # Bestehende Message editieren wenn möglich
+        if incident is not None and incident.message_id is not None:
+            try:
+                msg = channel.get_partial_message(incident.message_id)
+                await msg.edit(embed=embed)
+                return
             except discord.HTTPException as exc:
-                self.logger.error("[5e] drift-embed senden fehlgeschlagen: %s", exc)
+                self.logger.warning("[5e] incident-edit fehlgeschlagen (%s) → neu posten", exc)
+                incident.message_id = None
+
+        # Neu posten
+        try:
+            new_msg = await channel.send(embed=embed)
+        except discord.HTTPException as exc:
+            self.logger.error("[5e] incident-embed senden fehlgeschlagen: %s", exc)
+            return
+        if incident is not None and new_msg is not None:
+            incident.message_id = getattr(new_msg, "id", None)
 
     # ---- 5-Min-Status-Embed ----
 
