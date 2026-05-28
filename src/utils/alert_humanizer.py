@@ -87,6 +87,26 @@ def urgency_line(urgency: Urgency) -> str:
     return _URGENCY_LINES.get(urgency, "")
 
 
+def format_downtime(seconds: float) -> str:
+    """Sekunden -> kurzer deutscher Dauer-Klartext, z.B. '2 Min', '1 Std 5 Min'.
+
+    Zentral hier, damit alle Builder (phase_5e, project_monitor, incident_manager)
+    dieselbe Formatierung nutzen statt zu duplizieren. Negative Werte -> '0 Sek'.
+    """
+    seconds = int(max(0, seconds))
+    if seconds < 60:
+        return f"{seconds} Sek"
+    if seconds < 3600:
+        return f"{seconds // 60} Min"
+    if seconds < 86400:
+        h, rem = divmod(seconds, 3600)
+        m = rem // 60
+        return f"{h} Std {m} Min" if m else f"{h} Std"
+    days, rem = divmod(seconds, 86400)
+    h = rem // 3600
+    return f"{days} Tg {h} Std" if h else f"{days} Tg"
+
+
 # ---------- Status-Uebergaenge ----------
 
 @dataclass

@@ -50,6 +50,7 @@ from utils.alert_humanizer import (
     STATUS_COLOR,
     STATUS_EMOJI,
     Urgency,
+    format_downtime,
     humanize_alert,
     humanize_transition,
     runbook_for,
@@ -332,22 +333,6 @@ def _alert_components(response: Optional[HealthResponse]) -> list[str]:
     return comps
 
 
-def _format_downtime(seconds: float) -> str:
-    """Sekunden → kurzer deutscher Dauer-Klartext, z.B. '2 Min', '1 Std 5 Min'."""
-    seconds = int(max(0, seconds))
-    if seconds < 60:
-        return f"{seconds} Sek"
-    if seconds < 3600:
-        return f"{seconds // 60} Min"
-    if seconds < 86400:
-        h, rem = divmod(seconds, 3600)
-        m = rem // 60
-        return f"{h} Std {m} Min" if m else f"{h} Std"
-    days, rem = divmod(seconds, 86400)
-    h = rem // 3600
-    return f"{days} Tg {h} Std" if h else f"{days} Tg"
-
-
 def _build_drift_embed(
     target: HealthTarget,
     prev: str,
@@ -374,7 +359,7 @@ def _build_drift_embed(
     if info.is_recovery:
         desc_parts = [f"{target.name} ({target.url}) ist wieder im grünen Bereich."]
         if downtime_seconds is not None:
-            desc_parts.append(f"Gesamt-Ausfall: **{_format_downtime(downtime_seconds)}**.")
+            desc_parts.append(f"Gesamt-Ausfall: **{format_downtime(downtime_seconds)}**.")
         if self_recovered:
             desc_parts.append("Selbst-erholt (keine manuelle Aktion erkannt).")
         description = " ".join(desc_parts)
