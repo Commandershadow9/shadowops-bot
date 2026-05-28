@@ -10,12 +10,48 @@ import subprocess
 import shutil
 import time
 import os
-from typing import Dict, Optional, List
+from typing import Dict, Optional, List, Tuple
 from datetime import datetime, timezone
 from pathlib import Path
 import discord
 
+try:  # pragma: no cover - Import-Pfad haengt von pythonpath ab
+    from utils.alert_humanizer import format_downtime
+except ImportError:  # pragma: no cover
+    from src.utils.alert_humanizer import format_downtime  # type: ignore[no-redef]
+
 logger = logging.getLogger(__name__)
+
+
+# Marker, an denen ein gesammelter Deploy-Step als fehlgeschlagen erkannt wird.
+_STEP_FAIL_MARKERS = ("❌", "fehlgeschlagen", "failed", "error", "fehler", "abort")
+
+
+def _summarize_steps(steps: List[str]) -> Tuple[int, int, Optional[str]]:
+    """Fasst gesammelte Deploy-Steps zusammen.
+
+    Returns: (anzahl_ok, anzahl_gesamt, erster_fehlgeschlagener_step_oder_None).
+    Ein Step gilt als fehlgeschlagen, wenn er einen der _STEP_FAIL_MARKERS
+    (case-insensitiv) enthält.
+    """
+    total = len(steps)
+    failed_step: Optional[str] = None
+    ok = 0
+    for step in steps:
+        low = step.lower()
+        if any(m in low for m in _STEP_FAIL_MARKERS):
+            if failed_step is None:
+                failed_step = step
+        else:
+            ok += 1
+    return ok, total, failed_step
+
+
+def _format_deploy_duration(duration: float) -> str:
+    """Deploy-Dauer mit Kontext: kurze Deploys in Sekunden, lange via Klartext."""
+    if duration < 90:
+        return f"{duration:.1f}s"
+    return format_downtime(duration)
 
 
 class DeploymentManager:
@@ -735,19 +771,27 @@ class DeploymentManager:
         if not channel:
             return
 
+        steps = getattr(self, '_deploy_steps', {}).get(project_name, [])
+        ok, total, _ = _summarize_steps(steps)
+
+        # Klartext-Zusammenfassung statt blosser Erfolgsmeldung
+        if total > 0:
+            summary = f"**{project_name}** erfolgreich deployt — alle {total} Schritte ok."
+        else:
+            summary = f"**{project_name}** erfolgreich deployt."
+
         embed = discord.Embed(
-            title="✅ Deployment Successful",
-            description=f"**{project_name}** deployed successfully",
+            title=f"✅ Deployment erfolgreich: {project_name}",
+            description=summary,
             color=discord.Color.green(),
             timestamp=datetime.now(timezone.utc)
         )
 
         embed.add_field(name="Projekt", value=f"`{project_name}`", inline=True)
         embed.add_field(name="Branch", value=f"`{branch}`", inline=True)
-        embed.add_field(name="Dauer", value=f"{duration:.1f}s", inline=True)
+        embed.add_field(name="Dauer", value=_format_deploy_duration(duration), inline=True)
 
-        # Gesammelte Deploy-Steps als Timeline
-        steps = getattr(self, '_deploy_steps', {}).get(project_name, [])
+        # Gesammelte Deploy-Steps als Timeline (Detail, unter der Zusammenfassung)
         if steps:
             embed.add_field(name="Verlauf", value="\n".join(steps[-10:])[:1024], inline=False)
             self._deploy_steps.pop(project_name, None)  # Cleanup
@@ -771,16 +815,35 @@ class DeploymentManager:
         error = result.get('error', 'Unknown error')
         rolled_back = result.get('rolled_back', False)
 
+        steps = getattr(self, '_deploy_steps', {}).get(project_name, [])
+        ok, total, failed_step = _summarize_steps(steps)
+
+        # Klartext-Zusammenfassung: wie weit kam das Deployment?
+        if total > 0:
+            summary = f"**{project_name}** abgebrochen — {ok}/{total} Schritten ok"
+            if failed_step is not None:
+                # Zeitstempel-Prefix `HH:MM:SS` für die Kurzfassung entfernen
+                short = failed_step.split('` ', 1)[-1].strip('`').strip()
+                summary += f", fehlgeschlagen bei: **{short}**."
+            else:
+                summary += "."
+        else:
+            summary = f"**{project_name}** Deployment fehlgeschlagen."
+
         embed = discord.Embed(
-            title="❌ Deployment Failed",
-            description=f"**{project_name}** deployment failed",
+            title=f"❌ Deployment fehlgeschlagen: {project_name}",
+            description=summary,
             color=discord.Color.red(),
             timestamp=datetime.now(timezone.utc)
         )
 
         embed.add_field(name="Projekt", value=f"`{project_name}`", inline=True)
         embed.add_field(name="Branch", value=f"`{branch}`", inline=True)
-        embed.add_field(name="Dauer", value=f"{duration:.1f}s", inline=True)
+        embed.add_field(name="Dauer", value=_format_deploy_duration(duration), inline=True)
+
+        # Fehlgeschlagener Schritt klar hervorgehoben (vor der Roh-Fehlermeldung)
+        if failed_step is not None:
+            embed.add_field(name="⛔ Fehlgeschlagen bei", value=failed_step[:1024], inline=False)
 
         if len(error) > 400:
             error = error[:397] + "..."
@@ -789,8 +852,7 @@ class DeploymentManager:
         rollback_msg = "✅ Rollback erfolgreich" if rolled_back else "❌ Kein Rollback"
         embed.add_field(name="Rollback", value=rollback_msg, inline=True)
 
-        # Gesammelte Deploy-Steps als Timeline
-        steps = getattr(self, '_deploy_steps', {}).get(project_name, [])
+        # Gesammelte Deploy-Steps als vollständiger Verlauf (Detail)
         if steps:
             embed.add_field(name="Verlauf", value="\n".join(steps[-10:])[:1024], inline=False)
             self._deploy_steps.pop(project_name, None)
