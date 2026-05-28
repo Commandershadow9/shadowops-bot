@@ -24,6 +24,23 @@ try:  # pragma: no cover - Import-Pfad haengt von pythonpath ab (src/ vs. shadow
 except ImportError:  # pragma: no cover
     from src.utils.embeds import EmbedBuilder, Severity  # type: ignore[no-redef]
 
+try:  # pragma: no cover - Import-Pfad haengt von pythonpath ab
+    from utils.alert_humanizer import (
+        STATUS_COLOR,
+        format_downtime,
+        humanize_transition,
+        runbook_for,
+        urgency_line,
+    )
+except ImportError:  # pragma: no cover
+    from src.utils.alert_humanizer import (  # type: ignore[no-redef]
+        STATUS_COLOR,
+        format_downtime,
+        humanize_transition,
+        runbook_for,
+        urgency_line,
+    )
+
 logger = logging.getLogger('shadowops.project_monitor')
 
 
@@ -820,52 +837,81 @@ class ProjectMonitor:
         await self._send_dm_alerts(project, "online")
 
     def _create_incident_embed(self, project: ProjectStatus, error: str) -> discord.Embed:
-        """Create embed for incident alert"""
+        """Incident-Embed (Dienst nicht erreichbar) — mensch-lesbar via Humanizer.
+
+        Down = Health-Check schlägt fehl → Dienst antwortet nicht. Wird als
+        Übergang ok → unreachable modelliert ("nicht mehr erreichbar", CRITICAL).
+        """
+        info = humanize_transition("ok", "unreachable")
         embed = discord.Embed(
-            title=f"🔴 {project.name} is DOWN",
-            description=f"Health check failed for **{project.name}**",
-            color=discord.Color.red(),
-            timestamp=datetime.now(timezone.utc)
+            title=f"{info.emoji} {project.name} {info.headline}",
+            description=f"**{project.name}** ({project.url}) antwortet nicht mehr auf den Health-Check.",
+            color=STATUS_COLOR.get("unreachable", discord.Color.red().value),
+            timestamp=datetime.now(timezone.utc),
         )
 
-        embed.add_field(name="Project", value=project.name, inline=True)
-        embed.add_field(name="Status", value="🔴 Offline", inline=True)
-        embed.add_field(name="Consecutive Failures", value=str(project.consecutive_failures), inline=True)
+        # Wiederholte Fehlschläge in Klartext statt roher Zahl
+        fails = project.consecutive_failures
+        if fails > 1:
+            fail_ctx = f"{fails}× in Folge fehlgeschlagen — anhaltender Ausfall"
+        else:
+            fail_ctx = "erstmals fehlgeschlagen"
+        embed.add_field(name="Lage", value=fail_ctx, inline=False)
 
         # Truncate error if too long
         if len(error) > 500:
             error = error[:497] + "..."
-        embed.add_field(name="Error", value=f"```{error}```", inline=False)
+        embed.add_field(name="Fehler", value=f"```{error}```", inline=False)
 
         embed.add_field(
-            name="Uptime (before incident)",
+            name="Uptime (vor Ausfall)",
             value=f"{project.uptime_percentage:.2f}%",
-            inline=True
+            inline=True,
         )
+
+        # Dringlichkeit + optionales Runbook
+        action_lines: list[str] = []
+        u_line = urgency_line(info.urgency)
+        if u_line:
+            action_lines.append(u_line)
+        runbook = runbook_for("web-prod", [])
+        if runbook is not None:
+            action_lines.append(f"→ Runbook: {runbook}")
+        if action_lines:
+            embed.add_field(name="​", value="\n".join(action_lines)[:1024], inline=False)
 
         return embed
 
     def _create_recovery_embed(self, project: ProjectStatus) -> discord.Embed:
-        """Create embed for recovery alert"""
+        """Recovery-Embed (Dienst wieder erreichbar) — Klartext + Downtime."""
+        info = humanize_transition("unreachable", "ok")
+
+        # Downtime in Klartext (last_offline_time ist bei Recovery noch gesetzt)
+        downtime_str = None
+        if project.last_offline_time:
+            secs = (datetime.now(timezone.utc) - project.last_offline_time).total_seconds()
+            downtime_str = format_downtime(secs)
+
+        desc = f"**{project.name}** ({project.url}) ist {info.headline}."
+        if downtime_str:
+            desc += f" Ausfall-Dauer: **{downtime_str}**."
+
         embed = discord.Embed(
-            title=f"✅ {project.name} is BACK ONLINE",
-            description=f"**{project.name}** has recovered",
-            color=discord.Color.green(),
-            timestamp=datetime.now(timezone.utc)
+            title=f"{info.emoji} {project.name} wieder online",
+            description=desc,
+            color=STATUS_COLOR.get("ok", discord.Color.green().value),
+            timestamp=datetime.now(timezone.utc),
         )
 
-        embed.add_field(name="Project", value=project.name, inline=True)
-        embed.add_field(name="Status", value="🟢 Online", inline=True)
         embed.add_field(
-            name="Response Time",
+            name="Antwortzeit",
             value=f"{project.average_response_time:.0f}ms",
-            inline=True
+            inline=True,
         )
-
         embed.add_field(
-            name="Current Uptime",
+            name="Aktuelle Uptime",
             value=f"{project.uptime_percentage:.2f}%",
-            inline=True
+            inline=True,
         )
 
         return embed

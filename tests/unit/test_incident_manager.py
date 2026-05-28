@@ -435,3 +435,48 @@ class TestAutoClose:
         assert incident.status == IncidentStatus.CLOSED
         manager._post_thread_update.assert_called_once()
         manager._update_incident_message.assert_called_once()
+
+
+class TestHumanizedIncidentEmbed:
+    """_create_incident_embed nutzt Dringlichkeits-Klartext + format_downtime."""
+
+    def _manager(self, tmp_path):
+        mock_config = _make_config(channels={'customer_alerts': 12345})
+        with patch('src.integrations.incident_manager.Path') as mock_path:
+            mock_path.return_value = tmp_path / 'incidents.json'
+            return IncidentManager(Mock(), mock_config)
+
+    def _incident(self, severity):
+        return Incident(
+            incident_id='inc-1',
+            title='ZERODOX nicht erreichbar',
+            description='Health-Check schlägt fehl',
+            severity=severity,
+            affected_projects=['ZERODOX'],
+            event_type='downtime',
+        )
+
+    def test_severity_becomes_urgency_klartext(self, tmp_path):
+        manager = self._manager(tmp_path)
+        embed = manager._create_incident_embed(self._incident(IncidentSeverity.CRITICAL))
+
+        # Feld heißt jetzt "Dringlichkeit", nicht "Schweregrad"
+        names = [f.name for f in embed.fields]
+        assert any('Dringlichkeit' in n for n in names)
+        # Rohwert "CRITICAL" ersetzt durch Klartext (kritisch + Handlungshinweis)
+        dring = next(f.value for f in embed.fields if 'Dringlichkeit' in f.name)
+        assert 'kritisch' in dring.lower()
+        assert 'CRITICAL' not in dring
+
+    def test_duration_uses_central_format(self, tmp_path):
+        manager = self._manager(tmp_path)
+        incident = self._incident(IncidentSeverity.HIGH)
+        # 90 Minuten Dauer erzwingen
+        incident.created_at = datetime.now(timezone.utc) - timedelta(minutes=90)
+        embed = manager._create_incident_embed(incident)
+
+        dauer = next((f.value for f in embed.fields if 'Dauer' in f.name), None)
+        assert dauer is not None
+        # format_downtime liefert deutschen Klartext "1 Std 30 Min", nicht "1h 30m"
+        assert 'Std' in dauer
+        assert 'h ' not in dauer

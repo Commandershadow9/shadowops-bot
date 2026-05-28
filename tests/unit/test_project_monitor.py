@@ -4,7 +4,7 @@ Unit Tests for Project Monitor
 
 import pytest
 from unittest.mock import Mock, AsyncMock, patch, MagicMock
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 import aiohttp
 
 from src.integrations.project_monitor import ProjectMonitor, ProjectStatus
@@ -386,3 +386,48 @@ class TestStatusRetrieval:
         assert len(all_statuses) == 2
         assert any(s['name'] == 'project1' and s['is_online'] for s in all_statuses)
         assert any(s['name'] == 'project2' and not s['is_online'] for s in all_statuses)
+
+
+class TestHumanizedEmbeds:
+    """Migrierte Incident-/Recovery-Embeds nutzen den Alert-Humanizer (Klartext)."""
+
+    def _monitor(self):
+        config = MagicMock()
+        config.projects = {}
+        config.customer_status_channel = 12345
+        return ProjectMonitor(Mock(), config)
+
+    def test_incident_embed_is_human_readable(self):
+        monitor = self._monitor()
+        status = ProjectStatus('ZERODOX', {'url': 'https://zerodox.de/health'})
+        status.update_online(100.0)
+        status.update_offline('Connection refused')
+        status.update_offline('Connection refused')  # 2x in Folge
+
+        embed = monitor._create_incident_embed(status, 'Connection refused')
+
+        # Kein Roh-Enum "DOWN" mehr, sondern Klartext-Headline
+        assert 'DOWN' not in embed.title
+        assert 'erreichbar' in embed.title.lower()
+        # Wiederholte Fehlschläge in Klartext statt nackter Zahl
+        field_text = "\n".join(f.value for f in embed.fields)
+        assert 'in Folge' in field_text
+        # Dringlichkeit vorhanden (unreachable -> CRITICAL)
+        assert 'Dringlichkeit' in field_text
+
+    def test_recovery_embed_shows_downtime_klartext(self):
+        monitor = self._monitor()
+        status = ProjectStatus('ZERODOX', {'url': 'https://zerodox.de/health'})
+        status.update_online(100.0)
+        status.update_offline('Error')
+        # Offline-Zeitpunkt 5 Min zurückdatieren für messbare Downtime
+        status.last_offline_time = datetime.now(timezone.utc) - timedelta(minutes=5)
+        status.update_online(120.0)
+
+        embed = monitor._create_recovery_embed(status)
+
+        assert 'BACK ONLINE' not in embed.title
+        assert 'online' in embed.title.lower()
+        # Downtime-Klartext in Beschreibung
+        assert 'Ausfall-Dauer' in embed.description
+        assert 'Min' in embed.description
