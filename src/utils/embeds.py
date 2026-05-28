@@ -8,6 +8,11 @@ from datetime import datetime, timezone
 from typing import Optional, Dict, Any, List
 from enum import Enum
 
+try:  # pragma: no cover - Import-Pfad haengt von pythonpath ab
+    from utils.alert_humanizer import Urgency, urgency_line
+except ImportError:  # pragma: no cover
+    from src.utils.alert_humanizer import Urgency, urgency_line  # type: ignore[no-redef]
+
 
 class Severity(Enum):
     """Alert Severity Levels"""
@@ -24,8 +29,25 @@ class Severity(Enum):
         self.label = label
 
 
+# Severity -> Urgency: gemeinsamer Handlungs-Ton (alert_humanizer.urgency_line).
+# INFO/SUCCESS/LOW haben keinen Handlungsbedarf (Urgency.NONE -> keine Zeile).
+_SEVERITY_TO_URGENCY = {
+    Severity.LOW: Urgency.NONE,
+    Severity.MEDIUM: Urgency.MEDIUM,
+    Severity.HIGH: Urgency.HIGH,
+    Severity.CRITICAL: Urgency.CRITICAL,
+    Severity.INFO: Urgency.NONE,
+    Severity.SUCCESS: Urgency.NONE,
+}
+
+
 class EmbedBuilder:
     """Helper-Klasse zum Erstellen von Discord Embeds"""
+
+    @staticmethod
+    def severity_to_urgency(severity: Severity) -> Urgency:
+        """Mappt eine Severity auf die gemeinsame Dringlichkeit (alert_humanizer)."""
+        return _SEVERITY_TO_URGENCY.get(severity, Urgency.MEDIUM)
 
     @staticmethod
     def create_alert(
@@ -36,6 +58,7 @@ class EmbedBuilder:
         footer: Optional[str] = None,
         project_tag: Optional[str] = None,
         project_color: Optional[int] = None,
+        add_urgency: bool = False,
     ) -> discord.Embed:
         """
         Erstellt ein Alert-Embed
@@ -48,6 +71,10 @@ class EmbedBuilder:
             footer: Footer-Text
             project_tag: Project-Tag (z.B. "[SECURITY]")
             project_color: Überschreibt severity-Farbe mit Project-Farbe
+            add_urgency: Hängt eine Dringlichkeits-Handlungszeile an (gemeinsamer
+                Ton via alert_humanizer.urgency_line). Default False — bestehende
+                Aufrufer bleiben unverändert. Bei Severity ohne Handlungsbedarf
+                (INFO/SUCCESS/LOW) wird keine Zeile angehängt.
 
         Returns:
             Discord Embed
@@ -60,9 +87,16 @@ class EmbedBuilder:
         # Farbe: Project-Color oder Severity-Color
         color = project_color if project_color else severity.color
 
+        # Dringlichkeits-Zeile (konsistenter Ton mit den Health-/Incident-Embeds)
+        full_description = description
+        if add_urgency:
+            u_line = urgency_line(EmbedBuilder.severity_to_urgency(severity))
+            if u_line:
+                full_description = f"{description}\n\n{u_line}" if description else u_line
+
         embed = discord.Embed(
             title=full_title,
-            description=description,
+            description=full_description,
             color=color,
             timestamp=datetime.now(timezone.utc)
         )
