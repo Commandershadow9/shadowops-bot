@@ -13,6 +13,15 @@ from pathlib import Path
 from enum import Enum
 import discord
 
+try:  # pragma: no cover - Import-Pfad haengt von pythonpath ab
+    from utils.alert_humanizer import Urgency, format_downtime, urgency_line
+except ImportError:  # pragma: no cover
+    from src.utils.alert_humanizer import (  # type: ignore[no-redef]
+        Urgency,
+        format_downtime,
+        urgency_line,
+    )
+
 logger = logging.getLogger(__name__)
 
 
@@ -30,6 +39,15 @@ class IncidentSeverity(Enum):
     MEDIUM = "medium"
     HIGH = "high"
     CRITICAL = "critical"
+
+
+# Severity-Enum -> Dringlichkeit (gemeinsamer Ton via alert_humanizer.urgency_line)
+_SEVERITY_URGENCY = {
+    IncidentSeverity.LOW: Urgency.LOW,
+    IncidentSeverity.MEDIUM: Urgency.MEDIUM,
+    IncidentSeverity.HIGH: Urgency.HIGH,
+    IncidentSeverity.CRITICAL: Urgency.CRITICAL,
+}
 
 
 class Incident:
@@ -363,9 +381,16 @@ class IncidentManager:
             inline=True
         )
 
+        # Schweregrad -> Dringlichkeits-Klartext (statt rohem Enum-Wert)
+        urgency = _SEVERITY_URGENCY.get(incident.severity, Urgency.MEDIUM)
+        u_line = urgency_line(urgency)
+        severity_value = incident.severity.value.upper()
+        if u_line:
+            # u_line hat die Form "→ Dringlichkeit: hoch · ..." — Prefix entfernen
+            severity_value = u_line.replace("→ Dringlichkeit: ", "").strip()
         embed.add_field(
-            name="⚠️ Schweregrad",
-            value=incident.severity.value.upper(),
+            name="⚠️ Dringlichkeit",
+            value=severity_value,
             inline=True
         )
 
@@ -383,20 +408,11 @@ class IncidentManager:
             inline=False
         )
 
-        # Duration
+        # Duration (Klartext via zentralem format_downtime)
         if incident.duration:
-            duration = incident.duration
-            hours = int(duration.total_seconds() // 3600)
-            minutes = int((duration.total_seconds() % 3600) // 60)
-
-            if hours > 0:
-                duration_str = f"{hours}h {minutes}m"
-            else:
-                duration_str = f"{minutes}m"
-
             embed.add_field(
                 name="⏱️ Dauer",
-                value=duration_str,
+                value=format_downtime(incident.duration.total_seconds()),
                 inline=True
             )
 
