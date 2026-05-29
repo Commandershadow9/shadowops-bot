@@ -5,7 +5,7 @@
 - Bot-Code-Findings (npm_audit, code_security, etc.) gehen weiter normal durch.
 """
 from types import SimpleNamespace
-from unittest.mock import AsyncMock, MagicMock
+from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
@@ -107,16 +107,13 @@ class TestNonHostOsContinuesNormally:
             'severity': 'high',
         }
         # _find_similar_open_finding_by_fingerprint MUSS gerufen werden
-        # (= wir sind ueber den Host-OS-Check hinaus). Wir mocken die
-        # naechste subprocess-Stufe weg, indem `gh issue list` einfach
-        # nichts findet → Funktion versucht gh issue create, aber der
-        # subprocess-Call ist nicht gemockt → Exception, return None.
-        # Der Test prueft: Fingerprint-Check WURDE gerufen.
-        try:
-            await agent._create_github_issue(finding)
-        except Exception:
-            pass  # subprocess-Calls sind nicht gemockt, das ist hier OK
+        # (= wir sind ueber den Host-OS-Check hinaus). Danach greift der
+        # PYTEST_CURRENT_TEST-Guard → return None ohne echten gh-Subprocess
+        # (Test-Isolation, Vorfall #1069/#1070). Der Test prueft beides:
+        # Fingerprint-Check wurde gerufen UND kein echtes Issue erstellt.
+        result = await agent._create_github_issue(finding)
         agent._find_similar_open_finding_by_fingerprint.assert_called_once()
+        assert result is None  # Guard verhindert echte Issue-Erstellung in Tests
 
     async def test_code_security_continues_past_routing(self):
         agent = _make_minimal_agent()
@@ -128,11 +125,33 @@ class TestNonHostOsContinuesNormally:
             'severity': 'high',
             'affected_files': ['web/src/auth.ts'],
         }
-        try:
-            await agent._create_github_issue(finding)
-        except Exception:
-            pass
+        result = await agent._create_github_issue(finding)
         agent._find_similar_open_finding_by_fingerprint.assert_called_once()
+        assert result is None  # Guard verhindert echte Issue-Erstellung in Tests
+
+
+class TestPytestIssueIsolation:
+    """Vorfall 2026-05-29: Test-Fixtures (z.B. 'Dependency XYZ hat
+    CVE-2026-1234.') erzeugten echte Production-Issues #1069/#1070 — weil
+    _create_github_issue den gh-Subprocess ungemockt aufrief und auf einer
+    Maschine mit authentifiziertem gh CLI lief. Der PYTEST_CURRENT_TEST-Guard
+    verhindert in Tests JEDEN echten gh-Subprocess."""
+
+    async def test_guard_skips_real_gh_subprocess_in_pytest(self):
+        agent = _make_minimal_agent()
+        finding = {
+            'category': 'code_security',
+            'affected_project': 'zerodox',
+            'title': 'SQL Injection in query builder',
+            'description': 'Nutzereingabe wird unescaped in SQL konkateniert.',
+            'severity': 'high',
+            'affected_files': ['web/src/db.ts'],
+        }
+        with patch('asyncio.create_subprocess_exec') as mock_exec:
+            result = await agent._create_github_issue(finding)
+        assert result is None
+        # KEIN gh-Subprocess (weder issue list noch issue create) in pytest.
+        mock_exec.assert_not_called()
 
 
 class TestHostOsCategoriesConstant:

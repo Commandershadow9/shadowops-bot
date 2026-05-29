@@ -205,10 +205,13 @@ def build_jules_issue_body(finding) -> str:
 
 1. **Scope strikt halten** — nur die in "Betroffene Dateien" genannten Dateien anfassen
 2. **Kein Refactoring** — auch wenn du "besseren" Code siehst
-3. **PR-Body muss `Fixes #N` enthalten** (mit diesem Issue-Number)
-4. **Reagiere NICHT mit "Acknowledged" auf Review-Kommentare** — das hat in der Vergangenheit zu Review-Loops geführt
-5. Du wirst automatisch von Claude Opus reviewt (strukturiert: Blockers/Suggestions/Nits)
-6. Bei Approval → Shadow merged manuell. Max 5 Review-Iterationen, sonst Human-Eskalation.
+3. **Keine Werkstatt-/Scratch-Dateien committen** — `find_deps.*`, `fix_*.py`, `audit*.json`, `debug_*` o.ä. gehören NICHT in den PR (werden vom CI-Scope-Guard abgelehnt)
+4. **Keine Test-Dateien ändern**, außer der Fix erfordert es zwingend — dann im PR-Body begründen. Tests nicht "grün tricksen"
+5. **Lock-Dateien nur mit echtem Install:** Falls `npm install`/`pip install` in deiner Sandbox fehlschlägt (z.B. private Dependency ohne Zugang), ändere `package-lock.json`/Lockfiles NICHT blind — markiere den PR stattdessen als `blocked` und beschreibe das Problem
+6. **PR-Body muss `Fixes #N` enthalten** (mit diesem Issue-Number)
+7. **Reagiere NICHT mit "Acknowledged" auf Review-Kommentare** — das hat in der Vergangenheit zu Review-Loops geführt
+8. Du wirst automatisch von Claude Opus reviewt (strukturiert: Blockers/Suggestions/Nits)
+9. Bei Approval → Shadow merged manuell. Max 5 Review-Iterationen, sonst Human-Eskalation.
 
 ---
 *Auto-created by ShadowOps SecOps Workflow · Finding ID: {finding_id}*
@@ -2201,6 +2204,18 @@ von der ShadowOps Review-Pipeline reviewt — halte den Scope eng."""
         )
         if existing:
             return existing.get('github_issue_url') or None
+
+        # Test-Isolation (Vorfall 2026-05-29): In Unit-Tests NIEMALS echte
+        # gh-Subprocesse. Sonst erzeugen Test-Fixtures (z.B. "Dependency XYZ
+        # hat CVE-2026-1234.") echte Production-Issues auf einer Maschine mit
+        # authentifiziertem gh CLI (VPS/Runner) — genau so entstanden #1069 +
+        # #1070 + der fehlgeleitete Jules-Task PR #1075. pytest setzt
+        # PYTEST_CURRENT_TEST bei jedem Test; in Production ist sie nie gesetzt.
+        if os.environ.get('PYTEST_CURRENT_TEST'):
+            logger.warning(
+                "[scan-agent] PYTEST-Umgebung erkannt — ueberspringe echte "
+                "GitHub-Issue-Erstellung fuer '%s' (Test-Isolation).", title[:60])
+            return None
 
         try:
             search = title[:60].replace('[', '').replace(']', '').replace('"', '')
