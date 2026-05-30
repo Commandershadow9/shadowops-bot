@@ -1,0 +1,19 @@
+[Unit]
+Description=KI-Kosten Watchdog — taeglicher Token/Kosten-Rollup (Claude Code + Codex) nach Discord
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+EnvironmentFile=-%h/.config/shadowops-watchdog.env
+ExecStart=%h/shadowops-bot/scripts/ki-cost-watchdog.py
+StandardOutput=journal
+StandardError=journal
+SyslogIdentifier=ki-cost-watchdog
+
+# Sicherheit
+NoNewPrivileges=true
+PrivateTmp=true
+
+[Install]
+WantedBy=default.target

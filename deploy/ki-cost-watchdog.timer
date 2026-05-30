@@ -1,0 +1,10 @@
+[Unit]
+Description=Timer: KI-Kosten Watchdog taeglich 07:15 (Token/Kosten-Rollup)
+
+[Timer]
+OnCalendar=*-*-* 07:15:00
+Persistent=true
+Unit=ki-cost-watchdog.service
+
+[Install]
+WantedBy=timers.target
