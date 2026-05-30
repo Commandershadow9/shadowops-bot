@@ -1,0 +1,11 @@
+[Unit]
+Description=Timer: Disk-Hygiene Watchdog stuendlich
+
+[Timer]
+OnBootSec=9min
+OnUnitActiveSec=1h
+Persistent=true
+Unit=disk-hygiene-watchdog.service
+
+[Install]
+WantedBy=timers.target

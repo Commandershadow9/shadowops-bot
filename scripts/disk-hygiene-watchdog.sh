@@ -77,7 +77,9 @@ fi
 
 new_alert_at="$last_alert_at"
 if [ "$should_alert" -eq 1 ]; then
-  top=$(du -xh "$MOUNT" 2>/dev/null | sort -rh | head -6 | awk '{printf "%s  %s\n",$1,$2}')
+  # || true: du liefert non-zero (Permission-Fehler + SIGPIPE durch head) — unter
+  # set -e+pipefail würde das sonst das Script killen BEVOR der Alarm gesendet wird.
+  top=$(du -xh "$MOUNT" 2>/dev/null | sort -rh | head -6 | awk '{printf "%s  %s\n",$1,$2}' || true)
   fields=$(jq -nc --arg p "${pct_after}% (Schwelle ${CRIT_PCT}%)" --arg pr "$freed_note" \
     --arg top "$top" \
     '[{name:"Disk nach Auto-Prune",value:$p,inline:false},
