@@ -1,0 +1,17 @@
+[Unit]
+Description=Doku-Drift Watchdog — Alarm bei Container/Port-Map- oder MEMORY.md-Drift
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+EnvironmentFile=-%h/.config/shadowops-watchdog.env
+ExecStart=%h/shadowops-bot/scripts/doku-drift-watchdog.sh
+StandardOutput=journal
+StandardError=journal
+SyslogIdentifier=doku-drift-watchdog
+NoNewPrivileges=true
+PrivateTmp=true
+
+[Install]
+WantedBy=default.target

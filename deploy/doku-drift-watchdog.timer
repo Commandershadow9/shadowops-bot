@@ -1,0 +1,10 @@
+[Unit]
+Description=Timer: Doku-Drift Watchdog taeglich 06:30
+
+[Timer]
+OnCalendar=*-*-* 06:30:00
+Persistent=true
+Unit=doku-drift-watchdog.service
+
+[Install]
+WantedBy=timers.target
