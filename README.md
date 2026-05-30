@@ -101,6 +101,9 @@ Event → TaskRouter → Codex CLI (Primary)
 #### Mobile Workflow (Owner-only)
 - `/claude [prompt] [project] [model] [timeout]` - Headless Claude-Session auf dem Server starten und Antwort in Discord empfangen (owner-only)
 
+#### Server Setup
+- `/setup-customer-server` - Monitoring-Channels für Customer-Server einrichten (Admin)
+
 ### 🎨 Features
 - **Rich Embeds** - Farbcodierte Alerts (🔴 CRITICAL, 🟠 HIGH, 🟢 OK)
 - **Multi-Channel Support** - Kategorisierte Channels (Security, AI Learning, Deployments, etc.)
