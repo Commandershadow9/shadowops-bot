@@ -97,7 +97,7 @@ shadowops-bot/
 
 ## Externes Monitoring (seit 2026-05-17 — Defense-in-Depth)
 
-Zusätzlich zum internen `project_monitor.py` laufen 11 unabhängige user-systemd Watchdogs (Zyklen: 5–15 min je nach Watchdog, cmdshadow-design 1h, Backup-Test monatlich) und posten Down/Recovery direkt via Discord-Webhook in `#🩺-uptime-alerts` (NICHT über den Bot — funktioniert auch wenn shadowops-bot tot ist):
+Zusätzlich zum internen `project_monitor.py` laufen 14 unabhängige user-systemd Watchdogs (Zyklen: 5–15 min je nach Watchdog, cmdshadow-design 1h, Selbstpflege-Watchdogs stündlich/täglich, Backup-Test monatlich) und posten Down/Recovery direkt via Discord-Webhook in `#🩺-uptime-alerts` (NICHT über den Bot — funktioniert auch wenn shadowops-bot tot ist):
 
 | Watchdog | Mode | Target |
 |---|---|---|
@@ -112,6 +112,9 @@ Zusätzlich zum internen `project_monitor.py` laufen 11 unabhängige user-system
 | `ai-agent-framework-watchdog` | systemd | guildscout-feedback-agent, zerodox-support-agent, seo-agent |
 | `cmdshadow-design-watchdog` | systemd-result | cmdshadow-design-healthcheck.service (max_age=36h, 1h-Cycle) |
 | `memory-watchdog` | meminfo | RAM ≥90% oder Swap ≥80% auf VPS, Frühwarnung vor OOM-Cascade (seit 2026-05-25, Vorfall logind-Kill durch earlyoom) |
+| `disk-hygiene-watchdog` | disk + auto-prune | Auto-Prune (docker builder/image + journald) bei Disk >85%, Alarm >90% (stündlich, Selbstpflege seit 2026-05-30) |
+| `doku-drift-watchdog` | doku-drift | Container-Ports vs. Port-Map + MEMORY.md-Limit (<200), nur Alarm (täglich 06:30, Selbstpflege seit 2026-05-30) |
+| `ki-cost-watchdog` | ki-cost | Token/Kosten-Rollup Claude+Codex aus JSONL + Anomalie-Alarm (täglich 07:15, Selbstpflege seit 2026-05-30) |
 | `shadowops-backup-test` | — | monatlich 1. d. Monats, Wrapper um `~/ZERODOX/scripts/backup-test.sh` |
 
 **Script:** `scripts/service-watchdog.sh` (generisch, parametrisiert) und `scripts/bot-watchdog.sh` (Backward-Compat). **Service-Files:** `deploy/<name>-watchdog.{service,timer}`. **Webhook-Config:** `~/.config/shadowops-watchdog.env` (chmod 600). **Setup-Anleitung:** [`deploy/MONITORING_SETUP.md`](./deploy/MONITORING_SETUP.md).

@@ -52,6 +52,14 @@ Beide Bedingungen sind ODER-verknüpft (Alarm wenn eine zutrifft). **Throttle:**
 
 Discord-Embed mit 5 Feldern: RAM (used/total/%), Available, Swap (used/total/%), Load (1/5/15m), PSI Memory (avg10/60/300).
 
+### Sonderrolle: Selbstpflege-Watchdogs (seit 2026-05-30)
+
+Drei System-Selbstpflege-Watchdogs ergänzen die Service-Watchdogs um automatische Hygiene und Drift-/Kosten-Erkennung. Nutzen eigene Skripte (nicht `service-watchdog.sh`), weil Datenquelle Disk/Doku/JSONL statt HTTP/systemd ist. Details auch in `~/.claude/rules/self-maintenance.md`.
+
+- **`disk-hygiene-watchdog`** (stündlich): Zweistufig — Stufe 1 macht Auto-Prune (`docker builder prune` + alte Images + `journalctl --vacuum`) bei Disk > 85 %, Stufe 2 alarmt bei Disk > 90 %. State: `data/watchdog_state_disk-hygiene.json`. (Bugfix: `du|head` unter `set -e+pipefail` → SIGPIPE 141 → `|| true`.)
+- **`doku-drift-watchdog`** (täglich 06:30): Vergleicht laufende Container-Ports gegen die Port-Maps in CLAUDE.md/infrastructure.md und prüft MEMORY.md-Zeilenlimit (<200). Nur Alarm, keine Auto-Korrektur. State: `data/watchdog_state_doku-drift.json`.
+- **`ki-cost-watchdog`** (täglich 07:15): Rollup von Token/Kosten aus Claude- + Codex-JSONL + Anomalie-Alarm bei Ausreißern. Postet bevorzugt in `#💰-ki-kosten` (Fallback: `SHADOWOPS_WATCHDOG_WEBHOOK`). State: `data/watchdog_state_ki-cost.json`.
+
 State-Files sind pro Service getrennt (`data/watchdog_state_<service>.json`),
 damit Failure-Counter und Alert-Status sich nicht beeinflussen.
 
@@ -137,6 +145,9 @@ echo '{"last_status":"up","last_alert_at":"","consecutive_failures":0}' \
 | `mayday-sim-build-drift` | build-drift | http://127.0.0.1:3200/api/build-id vs. origin/main HEAD (max. 30 min Drift, #mayday-sim#416) | 15 min | 2 min |
 | `ai-agent-framework` | systemd | guildscout-feedback-agent, zerodox-support-agent, seo-agent | 5 min | 6 min |
 | `cmdshadow-design` | systemd-result | cmdshadow-design-healthcheck.service (max_age=36h) | 1 h | 8 min |
+| `disk-hygiene` | disk + auto-prune | Auto-Prune (docker builder/image + journald) bei Disk >85%, Alarm >90% (Selbstpflege seit 2026-05-30) | 1 h | — |
+| `doku-drift` | doku-drift | Container-Ports vs. Port-Map + MEMORY.md-Limit (<200), nur Alarm (Selbstpflege seit 2026-05-30) | täglich 06:30 | — |
+| `ki-cost` | ki-cost | Token/Kosten-Rollup Claude+Codex aus JSONL + Anomalie-Alarm (Selbstpflege seit 2026-05-30) | täglich 07:15 | — |
 
 Pro Service:
 - **🔴 \<service\> DOWN** — nach 2 konsekutiven Failures (= ~10 Minuten Downtime).

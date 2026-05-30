@@ -58,6 +58,9 @@ paths:
 | `mayday-sim-watchdog.timer` | http | http://127.0.0.1:3200/api/health | 5 min |
 | `ai-agent-framework-watchdog.timer` | systemd | guildscout-feedback-agent, zerodox-support-agent, seo-agent | 6 min |
 | `memory-watchdog.timer` | meminfo | RAM ≥90% oder Swap ≥80% — Frühwarnung OOM (Throttle 60 min, seit Vorfall 2026-05-25) | 4 min |
+| `disk-hygiene-watchdog.timer` | disk + auto-prune | Auto-Prune (docker builder/image + journald) bei Disk >85%, Alarm >90% (stündlich, Selbstpflege seit 2026-05-30) | hourly |
+| `doku-drift-watchdog.timer` | doku-drift | Container-Ports vs. Port-Map + MEMORY.md-Limit (<200), nur Alarm (Selbstpflege seit 2026-05-30) | täglich 06:30 |
+| `ki-cost-watchdog.timer` | ki-cost | Token/Kosten-Rollup Claude+Codex aus JSONL + Anomalie-Alarm (Selbstpflege seit 2026-05-30) | täglich 07:15 |
 | `shadowops-backup-test.timer` | — | monatlich 1. d. Monats 04:50, Wrapper um ZERODOX backup-test.sh | OnCalendar |
 
 **State-Files pro Service:** `data/watchdog_state_<service>.json` (gitignored). Alert nach 2 konsekutiven Failures (~10 Min), Recovery-Alert wenn vorher down war. State-Files getrennt damit Counter sich nicht beeinflussen.
