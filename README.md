@@ -384,16 +384,18 @@ shadowops-bot/
 │       └── alert_humanizer.py          # Status-Telemetrie zu mensch-lesbarem Deutsch
 ├── tests/
 │   ├── conftest.py                     # Test Fixtures
-│   ├── unit/                           # Unit Tests (250+)
+│   ├── unit/                           # Unit Tests (700+, 67 Dateien)
 │   │   ├── test_config.py
-│   │   ├── test_ai_engine.py           # 43 Tests (Router, Codex, Claude, AIEngine)
-│   │   ├── test_smart_queue.py         # 21 Tests (Pool, Lock, Circuit Breaker)
+│   │   ├── test_ai_engine.py
+│   │   ├── test_smart_queue.py
 │   │   ├── test_orchestrator.py
 │   │   ├── test_knowledge_base.py
 │   │   ├── test_event_watcher.py
 │   │   ├── test_github_integration.py
 │   │   ├── test_project_monitor.py
-│   │   └── test_incident_manager.py
+│   │   ├── test_incident_manager.py
+│   │   ├── agent_review/               # Multi-Agent-Pipeline Tests
+│   │   └── security_engine/            # SecurityScanAgent Tests
 │   └── integration/
 │       └── test_learning_workflow.py   # End-to-End Tests
 ├── config/
@@ -404,7 +406,7 @@ shadowops-bot/
 │   └── logrotate.conf                  # Log-Rotation
 ├── deploy/                             # Deployment + Watchdogs
 │   ├── shadowops-bot.service           # systemd Bot-Service
-│   ├── *-watchdog.{service,timer}      # Externe Uptime-Watchdogs (11 Watchdogs: HTTP/systemd/jq-filter/build-drift/state-drift)
+│   ├── *-watchdog.{service,timer}      # Externe Uptime-Watchdogs (14 Watchdogs: HTTP/systemd/jq-filter/build-drift/state-drift)
 │   ├── shadowops-watchdog.env.example  # Webhook-Env Template
 │   └── MONITORING_SETUP.md             # Setup-Anleitung Watchdogs
 ├── .github/

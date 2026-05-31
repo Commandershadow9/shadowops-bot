@@ -24,7 +24,7 @@
 | AI Fallback | Claude CLI | claude-sonnet-4-6 / claude-opus-4-6 |
 | Container | Docker | mit Trivy fuer Scans |
 | Service | systemd | `/etc/systemd/system/shadowops-bot.service` |
-| Tests | pytest | 250+ Tests, unit + integration |
+| Tests | pytest | 700+ Tests, unit + integration |
 | Webhook | GitHub Webhooks | HMAC-SHA256 verifiziert |
 
 ## Architektur-Prinzipien
@@ -48,7 +48,7 @@ shadowops-bot/
 │   ├── schemas/                  # JSON-Schemas fuer Structured Output (fix_strategy, patch_notes, incident_analysis, jules_review)
 │   └── utils/                    # config, logging, embeds, state, alert_humanizer
 ├── tests/
-│   ├── unit/                     # 250+ Unit-Tests
+│   ├── unit/                     # 700+ Unit-Tests
 │   ├── integration/              # End-to-End-Workflows
 │   └── conftest.py
 ├── config/
@@ -59,7 +59,7 @@ shadowops-bot/
 │   └── PROJECT_*.md              # Per-projekt-Notizen
 ├── deploy/
 │   ├── shadowops-bot.service          # systemd Bot-Service
-│   ├── *-watchdog.{service,timer}     # Externe Uptime-Watchdogs (11 Watchdogs: HTTP/systemd/jq-filter/build-drift/state-drift + Backup-Test)
+│   ├── *-watchdog.{service,timer}     # Externe Uptime-Watchdogs (14 Watchdogs: HTTP/systemd/jq-filter/build-drift/state-drift + Backup-Test)
 │   ├── shadowops-watchdog.env.example # Webhook-Env Template
 │   └── MONITORING_SETUP.md            # Setup-Anleitung Watchdogs
 ├── .github/
@@ -243,7 +243,7 @@ Worker-Konventionen:
 
 ## Statistik (Stand v5.1)
 
-20.000+ LoC, 250+ Tests, 3 PostgreSQL DBs (21+7+11 Tabellen), 4 Security-Integrationen, 15 Discord-Commands, 3 Monitored Projects (GuildScout, ZERODOX, AI Agents).
+20.000+ LoC, 700+ Tests, 3 PostgreSQL DBs (21+7+11 Tabellen), 4 Security-Integrationen, 15 Discord-Commands, 3 Monitored Projects (GuildScout, ZERODOX, AI Agents).
 
 ## Aktuelle Doku
 
