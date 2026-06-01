@@ -153,6 +153,7 @@ export DISCORD_BOT_TOKEN="DEIN_BOT_TOKEN_HIER"
 # Optional:
 # export ANTHROPIC_API_KEY="DEIN_ANTHROPIC_KEY"
 # export OPENAI_API_KEY="DEIN_OPENAI_KEY"
+# export GITHUB_TOKEN="DEIN_GITHUB_TOKEN"   # Benoetigt fuer GitHub-Integration (Webhooks, Auto-Deploy)
 ```
 
 ### 3. Systemd Service aktivieren

@@ -221,6 +221,25 @@ jules_workflow:
   role_ping_on_escalation: "@Shadow"
 
 # ╔═══════════════════════════════════════════════════════════════════════════╗
+# ║ GITHUB INTEGRATION                                                        ║
+# ║ Empfaengt Push/PR/Release-Webhooks, triggert Auto-Deploy nach PR-Merge.  ║
+# ║ Token: Env-Var GITHUB_TOKEN oder github.token in dieser Datei.           ║
+# ╚═══════════════════════════════════════════════════════════════════════════╝
+github:
+  enabled: false                    # Master-Switch (Webhook-Server + Polling)
+  token: ""                         # Env: GITHUB_TOKEN — benoetigt fuer Webhook-Auto-Create + gh API
+  webhook_secret: ""                # HMAC-SHA256 Secret (in GitHub Webhook-Settings setzen)
+  webhook_port: 8080                # Port fuer eingehende GitHub-Webhooks
+  auto_deploy: false                # PR-Merge auf deploy_branches triggert Auto-Deploy
+  deploy_branches:
+    - main
+    - master
+  auto_create_webhooks: false       # Legt Webhooks in konfigurierten Repos automatisch an
+  webhook_public_url: ""            # Oeffentliche URL fuer Auto-Create (z.B. http://1.2.3.4:8080)
+  local_polling_enabled: true       # Pollt Repos lokal auf neue Commits (Fallback zu Webhooks)
+  local_polling_interval: 60        # Polling-Intervall in Sekunden
+
+# ╔═══════════════════════════════════════════════════════════════════════════╗
 # ║ PROJECTS (Überwachte Projekte)                                           ║
 # ╚═══════════════════════════════════════════════════════════════════════════╝
 projects:
