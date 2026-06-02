@@ -25,6 +25,14 @@ ENV-Overrides:
   PRICE_CLAUDE_OPUS_IN/OUT      USD pro 1M Token (default 15 / 75)
   PRICE_CLAUDE_SONNET_IN/OUT    USD pro 1M Token (default 3 / 15)
   PRICE_CODEX_IN/OUT            USD pro 1M Token (default 2.5 / 10)
+  PRICE_<BUCKET>_CACHE_READ     USD pro 1M Cache-Read-Token (default 0.1x Input)
+  PRICE_<BUCKET>_CACHE_WRITE    USD pro 1M Cache-Write-Token (default 1.25x Input)
+
+CACHE-PRICING (#292):
+  Anthropic berechnet Cache-Reads real ~0.1x und Cache-Writes ~1.25x des
+  Input-Preises. Frueher wurden alle drei Input-Kategorien voll gewertet, was die
+  notionalen Kosten ueberschaetzt hat. Die Token-ZAHL bleibt unveraendert (das
+  Anomalie-Signal ist davon unberuehrt) — nur die USD-Kosten sind jetzt korrekt.
 
 KRITISCH (Codex-Kumulativ-Falle):
   payload.info.total_token_usage ist KUMULATIV pro Session-Datei (waechst ueber
@@ -69,11 +77,49 @@ def _price(name, default):
         return float(default)
 
 
+# Cache-Multiplikatoren (Anthropic): Cache-Read ~0.1x, Cache-Write ~1.25x Input.
+CACHE_READ_FACTOR = 0.1
+CACHE_WRITE_FACTOR = 1.25
+
+
+def _bucket_prices(prefix, def_in, def_out):
+    """Preis-Bucket: Input/Output + abgeleitete Cache-Read/Write-Preise (USD/1M).
+
+    Cache-Preise leiten sich per Default aus dem (ggf. via ENV ueberschriebenen)
+    Input-Preis ab, lassen sich aber separat ueber PRICE_<prefix>_CACHE_READ /
+    PRICE_<prefix>_CACHE_WRITE setzen.
+    """
+    p_in = _price(f"PRICE_{prefix}_IN", def_in)
+    p_out = _price(f"PRICE_{prefix}_OUT", def_out)
+    return {
+        "in": p_in,
+        "out": p_out,
+        "cache_write": _price(f"PRICE_{prefix}_CACHE_WRITE", round(p_in * CACHE_WRITE_FACTOR, 6)),
+        "cache_read": _price(f"PRICE_{prefix}_CACHE_READ", round(p_in * CACHE_READ_FACTOR, 6)),
+    }
+
+
 PRICES = {
-    "claude_opus": (_price("PRICE_CLAUDE_OPUS_IN", 15.0), _price("PRICE_CLAUDE_OPUS_OUT", 75.0)),
-    "claude_sonnet": (_price("PRICE_CLAUDE_SONNET_IN", 3.0), _price("PRICE_CLAUDE_SONNET_OUT", 15.0)),
-    "codex": (_price("PRICE_CODEX_IN", 2.5), _price("PRICE_CODEX_OUT", 10.0)),
+    "claude_opus": _bucket_prices("CLAUDE_OPUS", 15.0, 75.0),
+    "claude_sonnet": _bucket_prices("CLAUDE_SONNET", 3.0, 15.0),
+    "codex": _bucket_prices("CODEX", 2.5, 10.0),
 }
+
+
+def compute_cost(bucket, input_tokens, cache_write_tokens, cache_read_tokens, output_tokens):
+    """USD-Kosten einer Token-Aufteilung in einem Preis-Bucket.
+
+    Input/Cache-Write/Cache-Read/Output werden je mit ihrem eigenen Preis
+    gewertet (Cache-Read ~0.1x, Cache-Write ~1.25x Input). Die Token-ZAHLEN beim
+    Aufrufer bleiben unveraendert — nur die Kosten spiegeln den Cache-Rabatt.
+    """
+    p = PRICES[bucket]
+    return (
+        int(input_tokens) * p["in"]
+        + int(cache_write_tokens) * p["cache_write"]
+        + int(cache_read_tokens) * p["cache_read"]
+        + int(output_tokens) * p["out"]
+    ) / 1_000_000
 
 
 def model_bucket(model: str) -> str:
@@ -189,15 +235,15 @@ def collect_claude(day: str):
 
                         model = (msg or {}).get("model") or obj.get("model") or ""
 
-                        in_tok = (
-                            int(usage.get("input_tokens") or 0)
-                            + int(usage.get("cache_creation_input_tokens") or 0)
-                            + int(usage.get("cache_read_input_tokens") or 0)
-                        )
+                        reg_in = int(usage.get("input_tokens") or 0)
+                        cache_write = int(usage.get("cache_creation_input_tokens") or 0)
+                        cache_read = int(usage.get("cache_read_input_tokens") or 0)
+                        # Token-ZAHL = volle Input-Summe (Anomalie-Signal bleibt korrekt)
+                        in_tok = reg_in + cache_write + cache_read
                         out_tok = int(usage.get("output_tokens") or 0)
                         bucket = model_bucket(model)
-                        p_in, p_out = PRICES[bucket]
-                        cost = in_tok / 1_000_000 * p_in + out_tok / 1_000_000 * p_out
+                        # Kosten: Cache-Read 0.1x, Cache-Write 1.25x Input (statt alles voll)
+                        cost = compute_cost(bucket, reg_in, cache_write, cache_read, out_tok)
 
                         agg["tokens_in"] += in_tok
                         agg["tokens_out"] += out_tok
@@ -223,7 +269,10 @@ def collect_codex(day: str):
     Tag-Zuordnung: timestamp des Max-Eintrags, Fallback Dateipfad YYYY/MM/DD.
     """
     agg = {"tokens_in": 0, "tokens_out": 0, "cost": 0.0, "sessions": 0}
-    p_in, p_out = PRICES["codex"]
+    # Codex-Cache (cached_input_tokens) bleibt vorerst zum Input-Preis gewertet
+    # (Issue #292 betrifft die Anthropic-Cache-Rabatte; Codex-Rabatt = Folge-Thema).
+    _cp = PRICES["codex"]
+    p_in, p_out = _cp["in"], _cp["out"]
 
     try:
         files = glob(os.path.join(CODEX_BASE, "*", "*", "*", "rollout-*.jsonl"))
