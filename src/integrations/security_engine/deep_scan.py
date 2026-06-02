@@ -407,26 +407,16 @@ Antworte NUR mit dem JSON Array."""
         return findings
 
     async def _store_finding(self, finding: Dict) -> Optional[int]:
-        """Speichert ein Finding in der DB"""
-        try:
-            if hasattr(self.db, 'pool') and self.db.pool:
-                row = await self.db.pool.fetchrow("""
-                    INSERT INTO findings (
-                        severity, category, title, description,
-                        affected_project, status, found_at
-                    ) VALUES ($1, $2, $3, $4, $5, 'open', NOW())
-                    RETURNING id
-                """,
-                    finding.get('severity', 'MEDIUM'),
-                    finding.get('category', 'general'),
-                    finding.get('title', 'Unknown'),
-                    finding.get('description', ''),
-                    finding.get('affected_project', 'server'),
-                )
-                return row['id'] if row else None
-        except Exception as e:
-            logger.debug(f"Finding-Insert fehlgeschlagen: {e}")
-        return None
+        """Speichert ein Finding via geteilten Helper (Verhalten 1:1)."""
+        if not hasattr(self.db, "store_finding"):
+            return None
+        return await self.db.store_finding(
+            severity=finding.get("severity", "MEDIUM"),
+            category=finding.get("category", "general"),
+            title=finding.get("title", "Unknown"),
+            description=finding.get("description", ""),
+            affected_project=finding.get("affected_project", "server"),
+        )
 
     async def _run_fix_phase(self, mode: str, config: Dict) -> Dict[str, int]:
         """

@@ -1200,17 +1200,19 @@ class SecurityScanAgent:
                         if github_issue_url:
                             issues_created += 1
 
-                # fp wurde oben beim Dedup-Lookup bereits berechnet — hier wiederverwenden,
-                # damit Lookup-FP und INSERT-FP garantiert identisch sind (DRY-Contract).
-                await self.db.pool.execute("""
-                    INSERT INTO findings (severity, category, title, description, session_id,
-                        affected_project, affected_files, fix_type, github_issue_url,
-                        finding_fingerprint)
-                    VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10)
-                """, finding.get('severity', 'info'), finding.get('category', 'unknown'),
-                    title, finding.get('description', ''), session_id,
-                    finding.get('affected_project'), finding.get('affected_files'),
-                    fix_type, github_issue_url, fp)
+                # fp wurde oben beim Dedup-Lookup berechnet — wiederverwenden.
+                await self.db.store_finding(
+                    severity=finding.get('severity', 'info'),
+                    category=finding.get('category', 'unknown'),
+                    title=title,
+                    description=finding.get('description', ''),
+                    session_id=session_id,
+                    affected_project=finding.get('affected_project'),
+                    affected_files=finding.get('affected_files'),
+                    fix_type=fix_type,
+                    github_issue_url=github_issue_url,
+                    finding_fingerprint=fp,
+                )
             except Exception as e:
                 logger.error("Finding-Verarbeitung fehlgeschlagen: %s", e)
 
