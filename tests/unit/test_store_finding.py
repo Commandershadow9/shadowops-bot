@@ -50,3 +50,10 @@ async def test_store_finding_db_error_returns_none():
         severity="LOW", category="x", title="t", description="d",
     )
     assert fid is None
+
+
+@pytest.mark.asyncio
+async def test_store_finding_before_init_returns_none():
+    db = SecurityDB("postgres://unused")  # pool ist noch None (kein initialize)
+    fid = await db.store_finding(severity="LOW", category="x", title="t", description="d")
+    assert fid is None

@@ -82,6 +82,7 @@ class SecurityDB:
                     status TEXT DEFAULT 'open',
                     fix_type TEXT,
                     github_issue_url TEXT,
+                    finding_fingerprint TEXT,
                     auto_fix_details TEXT,
                     rollback_command TEXT,
                     found_at TIMESTAMPTZ DEFAULT NOW(),
@@ -174,6 +175,14 @@ class SecurityDB:
                 );
             """)
 
+            # finding_fingerprint nachziehen (Migration 001 idempotent, fuer Bestands-DBs).
+            # KEIN CONCURRENTLY hier — laeuft ggf. in Transaktion; plain IF NOT EXISTS genuegt beim Init.
+            await conn.execute("""
+                ALTER TABLE findings ADD COLUMN IF NOT EXISTS finding_fingerprint TEXT;
+                CREATE INDEX IF NOT EXISTS idx_findings_fingerprint_open
+                    ON findings(finding_fingerprint) WHERE status = 'open';
+            """)
+
             # ── Neue v6-Tabellen (Reactive/Proactive Mode) ──────────
             await conn.execute("""
                 CREATE TABLE IF NOT EXISTS fix_attempts_v2 (
@@ -238,7 +247,7 @@ class SecurityDB:
         description: str,
         affected_project: Optional[str] = None,
         session_id: Optional[int] = None,
-        affected_files: Optional[list] = None,
+        affected_files: Optional[List[str]] = None,
         fix_type: Optional[str] = None,
         github_issue_url: Optional[str] = None,
         finding_fingerprint: Optional[str] = None,
