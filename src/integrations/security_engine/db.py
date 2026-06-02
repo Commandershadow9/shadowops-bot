@@ -82,6 +82,7 @@ class SecurityDB:
                     status TEXT DEFAULT 'open',
                     fix_type TEXT,
                     github_issue_url TEXT,
+                    finding_fingerprint TEXT,
                     auto_fix_details TEXT,
                     rollback_command TEXT,
                     found_at TIMESTAMPTZ DEFAULT NOW(),
@@ -174,6 +175,14 @@ class SecurityDB:
                 );
             """)
 
+            # finding_fingerprint nachziehen (Migration 001 idempotent, fuer Bestands-DBs).
+            # KEIN CONCURRENTLY hier — laeuft ggf. in Transaktion; plain IF NOT EXISTS genuegt beim Init.
+            await conn.execute("""
+                ALTER TABLE findings ADD COLUMN IF NOT EXISTS finding_fingerprint TEXT;
+                CREATE INDEX IF NOT EXISTS idx_findings_fingerprint_open
+                    ON findings(finding_fingerprint) WHERE status = 'open';
+            """)
+
             # ── Neue v6-Tabellen (Reactive/Proactive Mode) ──────────
             await conn.execute("""
                 CREATE TABLE IF NOT EXISTS fix_attempts_v2 (
@@ -226,6 +235,68 @@ class SecurityDB:
                 CREATE INDEX IF NOT EXISTS idx_phase_exec_batch ON phase_executions(batch_id);
                 CREATE INDEX IF NOT EXISTS idx_phase_exec_type ON phase_executions(phase_type);
             """)
+
+            # ── Security-Agent-Team Job-Lifecycle (#290 P1) ──────────
+            await conn.execute("""
+                CREATE TABLE IF NOT EXISTS sec_jobs (
+                    job_id        UUID PRIMARY KEY,
+                    worker_type   TEXT NOT NULL,
+                    project       TEXT NOT NULL,
+                    trigger       TEXT NOT NULL DEFAULT 'manual',
+                    status        TEXT NOT NULL DEFAULT 'queued',
+                    payload       JSONB NOT NULL DEFAULT '{}'::jsonb,
+                    result        JSONB,
+                    tokens_used   INTEGER NOT NULL DEFAULT 0,
+                    error_message TEXT,
+                    created_at    TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+                    started_at    TIMESTAMPTZ,
+                    completed_at  TIMESTAMPTZ
+                );
+                CREATE INDEX IF NOT EXISTS idx_sec_jobs_status  ON sec_jobs (status);
+                CREATE INDEX IF NOT EXISTS idx_sec_jobs_project ON sec_jobs (project, created_at DESC);
+            """)
+
+    # ── Findings ─────────────────────────────────────────────────
+
+    async def store_finding(
+        self,
+        *,
+        severity: str,
+        category: str,
+        title: str,
+        description: str,
+        affected_project: Optional[str] = None,
+        session_id: Optional[int] = None,
+        affected_files: Optional[List[str]] = None,
+        fix_type: Optional[str] = None,
+        github_issue_url: Optional[str] = None,
+        finding_fingerprint: Optional[str] = None,
+        status: str = "open",
+    ) -> Optional[int]:
+        """Schreibt EIN Finding (verhaltenstreue Obermenge beider Alt-INSERTs).
+
+        Fehlende Felder werden als NULL gespeichert. Dedup ist NICHT Aufgabe
+        dieses Helpers — der Caller berechnet/prüft den Fingerprint selbst.
+        Gibt findings.id zurück oder None bei Fehler.
+        """
+        try:
+            row = await self.pool.fetchrow(
+                """
+                INSERT INTO findings (
+                    severity, category, title, description, session_id,
+                    affected_project, affected_files, fix_type, github_issue_url,
+                    finding_fingerprint, status, found_at
+                ) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11, NOW())
+                RETURNING id
+                """,
+                severity, category, title, description, session_id,
+                affected_project, affected_files, fix_type, github_issue_url,
+                finding_fingerprint, status,
+            )
+            return row["id"] if row else None
+        except Exception:
+            logger.warning("store_finding fehlgeschlagen (title=%r)", title, exc_info=True)
+            return None
 
     # ── Fix-Attempts ──────────────────────────────────────────────
 

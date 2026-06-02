@@ -1,0 +1,18 @@
+[Unit]
+Description=Security npm-audit Worker (#290 P1, default OFF)
+After=network-online.target
+
+[Service]
+Type=simple
+WorkingDirectory=%h/shadowops-bot
+Environment=PYTHONPATH=%h/shadowops-bot/src
+Environment=REDIS_URL=redis://127.0.0.1:6379/0
+Environment=SECURITY_TEAM_ENABLED=false
+EnvironmentFile=%h/.config/shadowops-security-team.env
+ExecStart=%h/shadowops-bot/.venv/bin/python -m integrations.security_engine.team.workers.npm_audit_main
+Restart=on-failure
+RestartSec=10
+MemoryMax=768M
+
+[Install]
+WantedBy=default.target

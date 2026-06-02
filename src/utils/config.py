@@ -111,6 +111,28 @@ class Config:
         return bool(self.ai.get('enabled', False))
 
     @property
+    def security_team_enabled(self) -> bool:
+        """Feature-Flag für das Security-Agent-Team (P1). Default OFF.
+
+        Env SECURITY_TEAM_ENABLED überschreibt config security_team.enabled.
+        """
+        return self._security_team_enabled_value()
+
+    def _security_team_enabled_value(self) -> bool:
+        env = os.environ.get("SECURITY_TEAM_ENABLED")
+        if env is not None:
+            return env.strip().lower() in ("1", "true", "yes", "on")
+        return bool(self._config.get("security_team", {}).get("enabled", False))
+
+    @property
+    def security_team_projects(self) -> Dict[str, Any]:
+        return self._config.get("security_team", {}).get("projects", {})
+
+    @property
+    def security_team_active_workers(self) -> List[str]:
+        return list(self._config.get("security_team", {}).get("active_workers", []))
+
+    @property
     def projects(self) -> Any:
         return self._config.get('projects', [])
 
