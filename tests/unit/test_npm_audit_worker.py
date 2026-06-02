@@ -23,14 +23,14 @@ def _db():
 
 
 def test_parse_extracts_findings():
-    out = NpmAuditWorker._parse(_AUDIT_JSON, "guildscout")
+    out = NpmAuditWorker._parse(_AUDIT_JSON)
     assert len(out) == 2
     assert any(f["severity"] == "HIGH" for f in out)
     assert all(f["category"] == "npm_audit" for f in out)
 
 
 def test_parse_broken_json_returns_empty():
-    assert NpmAuditWorker._parse("not-json", "guildscout") == []
+    assert NpmAuditWorker._parse("not-json") == []
 
 
 @pytest.mark.asyncio
@@ -69,3 +69,36 @@ async def test_process_skips_deduped_findings():
         res = await w.process(job)
     assert res.findings_added == 0
     assert db.store_finding.await_count == 0
+
+
+@pytest.mark.asyncio
+async def test_process_enolock_is_partial():
+    w = NpmAuditWorker(db=_db())
+    job = SecurityJob(worker_type="npm_audit", project="guildscout", payload={"path": "/tmp"})
+    err_json = json.dumps({"error": {"code": "ENOLOCK", "summary": "requires lockfile"}})
+    with patch.object(NpmAuditWorker, "_run_npm_audit", new=AsyncMock(return_value=err_json)), \
+         patch("os.path.isdir", return_value=True):
+        res = await w.process(job)
+    assert res.status == JobStatus.PARTIAL
+    assert any("ENOLOCK" in e or "lockfile" in e for e in res.errors)
+
+
+@pytest.mark.asyncio
+async def test_process_npm_not_found_is_partial():
+    w = NpmAuditWorker(db=_db())
+    job = SecurityJob(worker_type="npm_audit", project="guildscout", payload={"path": "/tmp"})
+    with patch.object(NpmAuditWorker, "_run_npm_audit", new=AsyncMock(side_effect=FileNotFoundError())), \
+         patch("os.path.isdir", return_value=True):
+        res = await w.process(job)
+    assert res.status == JobStatus.PARTIAL
+
+
+@pytest.mark.asyncio
+async def test_process_timeout_is_partial():
+    import asyncio
+    w = NpmAuditWorker(db=_db())
+    job = SecurityJob(worker_type="npm_audit", project="guildscout", payload={"path": "/tmp"})
+    with patch.object(NpmAuditWorker, "_run_npm_audit", new=AsyncMock(side_effect=asyncio.TimeoutError())), \
+         patch("os.path.isdir", return_value=True):
+        res = await w.process(job)
+    assert res.status == JobStatus.PARTIAL
