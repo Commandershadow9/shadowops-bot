@@ -63,6 +63,51 @@ Drei System-Selbstpflege-Watchdogs ergänzen die Service-Watchdogs um automatisc
 State-Files sind pro Service getrennt (`data/watchdog_state_<service>.json`),
 damit Failure-Counter und Alert-Status sich nicht beeinflussen.
 
+## Deklarative Aktivierung via `sync-watchdog-units.sh` (kanonisch, seit #294)
+
+**Empfohlener Weg, um Watchdog-Units zu aktivieren.** Statt jede Unit manuell
+zu verlinken und per `systemctl --user enable` einzeln zu aktivieren (siehe
+Abschnitt 3 — bleibt als Referenz/Fallback erhalten), spiegelt
+`scripts/sync-watchdog-units.sh` **alle** `deploy/*-watchdog.{service,timer}`
+idempotent als Symlinks ins user-systemd-Verzeichnis und aktiviert die Timer.
+Das macht die Aktivierung deklarativ (IaC) und erkennt Drift.
+
+```bash
+# 1. Vorschau — zeigt geplante Aktionen, ändert NICHTS (kein Symlink, kein systemctl)
+~/shadowops-bot/scripts/sync-watchdog-units.sh --dry-run
+
+# 2. Anwenden — Symlinks setzen/korrigieren + daemon-reload + Timer enable --now
+~/shadowops-bot/scripts/sync-watchdog-units.sh
+
+# 3. Drift-Check (z.B. für CI/Cron) — Exit 1, wenn Orphans existieren
+~/shadowops-bot/scripts/sync-watchdog-units.sh --strict --dry-run
+```
+
+**Eigenschaften:**
+- **Idempotent:** Korrekter Symlink → skip. Falscher/fehlender → neu setzen.
+  `daemon-reload` läuft nur bei tatsächlichen Änderungen.
+- **Orphan-Erkennung:** Units im Ziel-Verzeichnis, die auf
+  `*-watchdog.{service,timer}` matchen, aber kein Pendant in `deploy/` haben,
+  werden gemeldet (mit Hinweis ob reguläre Datei oder Symlink). Standard:
+  **nur Report, kein Löschen.**
+  - **Bekannter Orphan:** `audit-watchdog.{service,timer}` läuft live als
+    reguläre Datei in `~/.config/systemd/user/` OHNE deploy/-Pendant. Das Skript
+    meldet ihn als Orphan. (Folge-Entscheidung: entweder Units nach `deploy/`
+    übernehmen → in IaC aufnehmen, oder bewusst außerhalb belassen.)
+- **`--prune`:** Entfernt verwaiste **Symlinks** (niemals reguläre Dateien).
+- **`--prune --force`:** Entfernt zusätzlich verwaiste **reguläre Dateien**
+  (mit lautem Warnhinweis — vorsichtig nutzen).
+- **`--strict`:** Exit-Code 1 bei Orphans (für ein Drift-Gate in CI/Cron).
+- **Ziel-Verzeichnis** überschreibbar via `WATCHDOG_UNIT_DIR` (Default
+  `~/.config/systemd/user`) — wird in Tests auf ein tmp-Verzeichnis gesetzt.
+
+**Sicherheit:** Im `--dry-run` werden **keine** systemd-Calls ausgeführt; alle
+`systemctl --user`-Aufrufe tragen dann das `(dry-run)`-Präfix. Test-Coverage:
+`tests/unit/test_sync_watchdog_units.py`.
+
+> Webhook-Config (`~/.config/shadowops-watchdog.env`) wird vom Skript **nicht**
+> angefasst — die muss wie unten beschrieben einmalig angelegt werden.
+
 ## Erst-Einrichtung (einmalig)
 
 ### 1. Discord-Webhook erstellen
@@ -94,7 +139,12 @@ nano ~/.config/shadowops-watchdog.env
 chmod 600 ~/.config/shadowops-watchdog.env
 ```
 
-### 3. systemd-Reload
+### 3. systemd-Reload (manuell — Referenz/Fallback)
+
+> **Hinweis:** Der kanonische Weg ist `sync-watchdog-units.sh` (siehe Abschnitt
+> "Deklarative Aktivierung" oben). Die folgende manuelle Liste bleibt als
+> Referenz/Fallback erhalten — sie muss bei jeder neuen Unit von Hand gepflegt
+> werden, das Skript erledigt das automatisch.
 
 ```bash
 systemctl --user daemon-reload
