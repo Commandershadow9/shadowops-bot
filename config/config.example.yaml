@@ -239,6 +239,16 @@ github:
   local_polling_enabled: true       # Pollt Repos lokal auf neue Commits (Fallback zu Webhooks)
   local_polling_interval: 60        # Polling-Intervall in Sekunden
 
+# Security-Agent-Team (P1) — default OFF. Env-Override: SECURITY_TEAM_ENABLED
+security_team:
+  enabled: false
+  active_workers: ["npm_audit"]
+  projects:
+    guildscout:
+      npm_audit_path: "/home/cmdshadow/GuildScout/web"
+    zerodox:
+      npm_audit_path: "/home/cmdshadow/ZERODOX"
+
 # ╔═══════════════════════════════════════════════════════════════════════════╗
 # ║ PROJECTS (Überwachte Projekte)                                           ║
 # ╚═══════════════════════════════════════════════════════════════════════════╝
