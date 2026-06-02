@@ -49,6 +49,15 @@ SERVICE_NAME="${WATCHDOG_SERVICE_NAME:-shadowops-bot}"
 HEALTH_URL="${WATCHDOG_HEALTH_URL:-${SHADOWOPS_HEALTH_URL:-http://127.0.0.1:8766/health}}"
 WEBHOOK_URL="${WATCHDOG_WEBHOOK:-${SHADOWOPS_WATCHDOG_WEBHOOK:-}}"
 CURL_TIMEOUT_S="${WATCHDOG_TIMEOUT_S:-${SHADOWOPS_WATCHDOG_TIMEOUT:-10}}"
+
+# Geteilte Discord-Send-Lib mit 429-Resilienz (#293). Fallback haelt das alte
+# Inline-Curl-Verhalten, falls die Lib bei kaputtem Deploy fehlt (Resilienz first).
+# shellcheck source=lib/discord-send.sh
+source "$(dirname "${BASH_SOURCE[0]}")/lib/discord-send.sh" 2>/dev/null || true
+if ! declare -f discord_post >/dev/null 2>&1; then
+    discord_post() { curl -sS -o /dev/null -w '%{http_code}' -X POST \
+        -H 'Content-Type: application/json' --data "$2" --max-time 10 "$1" 2>/dev/null || echo 000; }
+fi
 # REQUIRE_BOT_READY: shadowops-bot liefert bot_ready im Health-JSON.
 # Generische Services (ZERODOX, GuildScout) haben das nicht — Default OFF
 # für non-shadowops Services. Explizit setzbar via Env.
@@ -118,18 +127,13 @@ EOF
 )
 
     local http_code
-    http_code=$(curl -s -o /tmp/watchdog_resp.json -w "%{http_code}" \
-        --max-time 15 \
-        -H "Content-Type: application/json" \
-        -X POST -d "$payload" \
-        "$WEBHOOK_URL" || echo "000")
+    http_code=$(discord_post "$WEBHOOK_URL" "$payload")
 
     if [[ "$http_code" =~ ^2 ]]; then
         echo "[watchdog:$SERVICE_NAME] Discord-Alert gesendet (HTTP $http_code)"
         return 0
     else
         echo "[watchdog:$SERVICE_NAME] ERROR: Discord-Webhook fehlgeschlagen (HTTP $http_code)"
-        cat /tmp/watchdog_resp.json 2>/dev/null | head -2
         return 1
     fi
 }

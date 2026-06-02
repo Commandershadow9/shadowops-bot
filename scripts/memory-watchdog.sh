@@ -43,6 +43,14 @@ fi
 
 mkdir -p "$(dirname "$STATE_FILE")"
 
+# Geteilte Discord-Send-Lib mit 429-Resilienz (#293). Fallback = altes Inline-Curl.
+# shellcheck source=lib/discord-send.sh
+source "$(dirname "${BASH_SOURCE[0]}")/lib/discord-send.sh" 2>/dev/null || true
+if ! declare -f discord_post >/dev/null 2>&1; then
+  discord_post() { curl -sS -o /dev/null -w '%{http_code}' -X POST \
+    -H 'Content-Type: application/json' --data "$2" --max-time 10 "$1" 2>/dev/null || echo 000; }
+fi
+
 # ─── State lesen (Defaults) ───────────────────────────────
 if [ -f "$STATE_FILE" ]; then
   last_state=$(jq -r '.last_state // "ok"' "$STATE_FILE" 2>/dev/null || echo "ok")
@@ -147,9 +155,7 @@ send_alert() {
   )
 
   local http
-  http=$(curl -sS -o /dev/null -w "%{http_code}" \
-    -X POST -H "Content-Type: application/json" \
-    --data "$payload" --max-time 10 "$WEBHOOK_URL" 2>/dev/null || echo "000")
+  http=$(discord_post "$WEBHOOK_URL" "$payload")
   if [ "$http" = "204" ] || [ "$http" = "200" ]; then
     echo "[memory-watchdog] Alert gesendet (HTTP $http)"
     return 0

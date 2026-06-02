@@ -14,6 +14,9 @@ downloads/
 eggs/
 .eggs/
 lib/
+# Ausnahme: scripts/lib/ enthaelt versionierte geteilte Shell-Libs (discord-send.sh, #293)
+!scripts/lib/
+!scripts/lib/*
 lib64/
 parts/
 sdist/
