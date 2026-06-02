@@ -59,9 +59,10 @@ async def _amain(worker_cls: type[BaseSecurityWorker]) -> None:
         loop.add_signal_handler(sig, _graceful)
 
     try:
-        async for message in pubsub.listen():
-            if stop.is_set():
-                break
+        while not stop.is_set():
+            message = await pubsub.get_message(ignore_subscribe_messages=True, timeout=1.0)
+            if message is None:
+                continue
             if message.get("type") != "message":
                 continue
             try:
