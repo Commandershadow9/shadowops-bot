@@ -183,6 +183,9 @@ class GitHubIntegration(JulesWorkflowMixin,
         self.local_polling_task = None
         self._inflight_commits: Dict[str, float] = self._load_inflight_state()
         self._ci_polling_tasks: Dict[str, asyncio.Task] = {}
+        # #478: Hintergrund-Tasks fuer Auto-Deploy. Der Webhook-Handler darf nicht
+        # synchron auf den (minutenlangen) Deploy warten — sonst 504 (GitHub-Timeout).
+        self._deploy_tasks: set = set()
 
         # Enterprise Hardening: Concurrency Lock + AI Circuit Breaker
         self._patch_notes_lock = asyncio.Lock()
