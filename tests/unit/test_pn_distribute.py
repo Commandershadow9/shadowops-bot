@@ -1,5 +1,6 @@
 """Tests für Stufe 5: Distribute — Embeds, Sending, Rollback."""
 import pytest
+from types import SimpleNamespace
 from unittest.mock import MagicMock, AsyncMock
 from patch_notes.stages.distribute import (
     _build_full_embed, _build_summary_embed, _build_footer_text,
@@ -7,6 +8,7 @@ from patch_notes.stages.distribute import (
     _split_embed_for_sending, _format_change_line,
     _send_customer,
     distribute, retract_patch_notes,
+    _archive_release_notes,
 )
 from patch_notes.context import PipelineContext
 
@@ -379,3 +381,313 @@ def test_log_metrics_pipeline_total_time_fallback_to_metrics_dict(caplog):
     raw_json = metrics_records[-1].getMessage().split("METRICS|patch_notes_pipeline|", 1)[1]
     payload = _json.loads(raw_json)
     assert payload["pipeline_total_time_s"] == 12.3
+
+
+# ── _archive_release_notes: git commit + push (shadowops#302) ──
+#
+# Bug: Die Archivierung schrieb release_notes.md (Template-Reset) + das Archiv,
+# committete/pushte aber nie → Deploy-Repo blieb dirty → nächster git pull des
+# Auto-Deploys brach ab. Diese Tests pinnen das defensive commit+push-Verhalten.
+
+# Default-Antworten je git-Subkommando. diff --cached --quiet = rc 1 bedeutet
+# "es gibt gestagte Änderungen" → committen.
+_GIT_DEFAULTS = {
+    "rev-parse": (0, ".git\n", ""),
+    "symbolic-ref": (0, "main\n", ""),
+    "add": (0, "", ""),
+    "diff": (1, "", ""),
+    "config:user.email": (0, "bot@shadowops\n", ""),
+    "config:user.name": (0, "ShadowOps Bot\n", ""),
+    "commit": (0, "", ""),
+    "push": (0, "", ""),
+}
+
+
+def _git_responder(overrides=None):
+    """Fake für patch_notes.stages.distribute.subprocess.run.
+
+    Gibt (fake_run, calls) zurück. `calls` sammelt jede git-Argumentliste.
+    `overrides` (dict) ersetzt Default-Antworten pro Marker-Key.
+    """
+    overrides = overrides or {}
+    calls: list[list[str]] = []
+
+    def _key_for(cmd: list[str]) -> str:
+        sub = cmd[1] if len(cmd) > 1 else ""
+        if sub == "config":
+            return "config:" + (cmd[2] if len(cmd) > 2 else "")
+        return sub
+
+    def fake_run(cmd, **kwargs):
+        cmd = list(cmd)
+        calls.append(cmd)
+        key = _key_for(cmd)
+        rc, out, err = overrides.get(key, _GIT_DEFAULTS.get(key, (0, "", "")))
+        return SimpleNamespace(returncode=rc, stdout=out, stderr=err)
+
+    return fake_run, calls
+
+
+def _archive_ctx(tmp_path, **kwargs):
+    cfg = {"path": str(tmp_path), "patch_notes": {"type": "devops", "language": "de"}}
+    kwargs.setdefault("version", "1.2.3")
+    return _make_ctx(project_config=cfg, **kwargs)
+
+
+def _seed_release_notes(tmp_path, body="## Echtes Feature\nEin Eintrag mit deutlich mehr als zwanzig Zeichen Inhalt.\n"):
+    notes = tmp_path / "release_notes.md"
+    notes.write_text(f"<!-- template-kommentar -->\n\n{body}", encoding="utf-8")
+    return notes
+
+
+def _git_calls(calls, subcommand):
+    """Filtert calls auf ein git-Subkommando (cmd[1])."""
+    return [c for c in calls if len(c) > 1 and c[1] == subcommand]
+
+
+def test_archive_commits_only_two_files(tmp_path, monkeypatch):
+    _seed_release_notes(tmp_path)
+    ctx = _archive_ctx(tmp_path)
+    fake_run, calls = _git_responder()
+    monkeypatch.setattr("patch_notes.stages.distribute.subprocess.run", fake_run)
+
+    _archive_release_notes(ctx)
+
+    add_calls = _git_calls(calls, "add")
+    assert add_calls, "git add wurde nicht aufgerufen"
+    add = add_calls[0]
+    assert "--" in add, "Pathspec-Separator -- fehlt"
+    assert any("release_notes.md" in a for a in add)
+    assert any("v1.2.3.md" in a for a in add)
+
+
+def test_archive_never_uses_git_add_all(tmp_path, monkeypatch):
+    _seed_release_notes(tmp_path)
+    ctx = _archive_ctx(tmp_path)
+    fake_run, calls = _git_responder()
+    monkeypatch.setattr("patch_notes.stages.distribute.subprocess.run", fake_run)
+
+    _archive_release_notes(ctx)
+
+    for c in calls:
+        assert c[:3] != ["git", "add", "-A"], f"Verbotenes git add -A: {c}"
+
+
+def test_archive_git_failure_does_not_raise(tmp_path, monkeypatch):
+    _seed_release_notes(tmp_path)
+    ctx = _archive_ctx(tmp_path)
+    fake_run, _ = _git_responder(overrides={"commit": (1, "", "boom")})
+    monkeypatch.setattr("patch_notes.stages.distribute.subprocess.run", fake_run)
+
+    # darf nicht werfen; Archiv muss trotzdem auf Platte liegen
+    _archive_release_notes(ctx)
+    assert (tmp_path / "docs" / "release-history" / "v1.2.3.md").exists()
+
+
+def test_archive_subprocess_exception_does_not_raise(tmp_path, monkeypatch):
+    _seed_release_notes(tmp_path)
+    ctx = _archive_ctx(tmp_path)
+
+    def boom(cmd, **kwargs):
+        raise OSError("git not found")
+
+    monkeypatch.setattr("patch_notes.stages.distribute.subprocess.run", boom)
+    _archive_release_notes(ctx)  # kein Crash
+    assert (tmp_path / "docs" / "release-history" / "v1.2.3.md").exists()
+
+
+def test_archive_not_a_git_repo_skips_quietly(tmp_path, monkeypatch):
+    _seed_release_notes(tmp_path)
+    ctx = _archive_ctx(tmp_path)
+    fake_run, calls = _git_responder(overrides={"rev-parse": (128, "", "not a git repo")})
+    monkeypatch.setattr("patch_notes.stages.distribute.subprocess.run", fake_run)
+
+    _archive_release_notes(ctx)
+    assert not _git_calls(calls, "commit"), "Commit trotz Nicht-Git-Repo"
+    assert not _git_calls(calls, "push")
+
+
+def test_archive_detached_head_skips_push(tmp_path, monkeypatch):
+    _seed_release_notes(tmp_path)
+    ctx = _archive_ctx(tmp_path)
+    fake_run, calls = _git_responder(overrides={"symbolic-ref": (1, "", "detached")})
+    monkeypatch.setattr("patch_notes.stages.distribute.subprocess.run", fake_run)
+
+    _archive_release_notes(ctx)
+    assert not _git_calls(calls, "push"), "Push trotz detached HEAD"
+    assert not _git_calls(calls, "commit"), "Commit trotz detached HEAD (early return fehlt)"
+
+
+def test_archive_commit_uses_bot_identity_via_c_flags(tmp_path, monkeypatch):
+    # Bot-Identität wird via `git -c` pro Commit gesetzt — NICHT in .git/config
+    # geschrieben (keine Identity-Pollution im Deploy-Repo).
+    _seed_release_notes(tmp_path)
+    ctx = _archive_ctx(tmp_path)
+    fake_run, calls = _git_responder()
+    monkeypatch.setattr("patch_notes.stages.distribute.subprocess.run", fake_run)
+
+    _archive_release_notes(ctx)
+
+    commit_calls = _git_calls(calls, "commit")
+    assert commit_calls, "Kein commit-Call"
+    flat = commit_calls[0]
+    assert "-c" in flat
+    assert "user.email=shadowops@local" in flat
+    assert "user.name=ShadowOps Bot" in flat
+    # NIEMALS persistentes git config user.* schreiben (4-arg config-set)
+    config_sets = [c for c in calls if len(c) >= 4 and c[1] == "config"]
+    assert not config_sets, f"Persistentes git config geschrieben: {config_sets}"
+
+
+def test_archive_idempotent_nothing_staged(tmp_path, monkeypatch):
+    _seed_release_notes(tmp_path)
+    ctx = _archive_ctx(tmp_path)
+    # diff --cached --quiet rc 0 = nichts gestaged → kein commit
+    fake_run, calls = _git_responder(overrides={"diff": (0, "", "")})
+    monkeypatch.setattr("patch_notes.stages.distribute.subprocess.run", fake_run)
+
+    _archive_release_notes(ctx)
+    assert not _git_calls(calls, "commit"), "Commit trotz nichts-gestaged"
+
+
+def test_archive_push_failure_keeps_local_commit(tmp_path, monkeypatch, caplog):
+    import logging
+    _seed_release_notes(tmp_path)
+    ctx = _archive_ctx(tmp_path)
+    fake_run, calls = _git_responder(overrides={"push": (1, "", "no upstream")})
+    monkeypatch.setattr("patch_notes.stages.distribute.subprocess.run", fake_run)
+
+    with caplog.at_level(logging.WARNING, logger="shadowops"):
+        _archive_release_notes(ctx)
+
+    assert _git_calls(calls, "commit"), "Commit fehlt"
+    assert _git_calls(calls, "push"), "Push wurde nicht versucht"
+    # kein Raise; Warnung geloggt
+    assert any("push" in r.getMessage().lower() for r in caplog.records)
+
+
+def test_archive_commit_message_contains_version(tmp_path, monkeypatch):
+    _seed_release_notes(tmp_path)
+    ctx = _archive_ctx(tmp_path)
+    fake_run, calls = _git_responder()
+    monkeypatch.setattr("patch_notes.stages.distribute.subprocess.run", fake_run)
+
+    _archive_release_notes(ctx)
+
+    commit_calls = _git_calls(calls, "commit")
+    assert commit_calls, "Kein commit-Call"
+    msg_idx = commit_calls[0].index("-m") + 1
+    # Exakte Conventional-Commit-Form pinnen (nicht nur Substring)
+    assert commit_calls[0][msg_idx] == "docs: archive release notes v1.2.3"
+
+
+def test_archive_template_only_skips_git_entirely(tmp_path, monkeypatch):
+    # release_notes.md enthält nur einen HTML-Kommentar → kein Archiv, kein git
+    notes = tmp_path / "release_notes.md"
+    notes.write_text("<!-- nur template, kein inhalt -->\n", encoding="utf-8")
+    ctx = _archive_ctx(tmp_path)
+    fake_run, calls = _git_responder()
+    monkeypatch.setattr("patch_notes.stages.distribute.subprocess.run", fake_run)
+
+    _archive_release_notes(ctx)
+    assert calls == [], "git wurde trotz Template-only aufgerufen"
+
+
+def test_archive_commits_when_changes_staged(tmp_path, monkeypatch):
+    # Gegenrichtung zu test_archive_idempotent_nothing_staged (Mutation-Coverage):
+    # diff --cached --quiet rc 1 = es GIBT gestagte Änderungen → commit MUSS laufen.
+    _seed_release_notes(tmp_path)
+    ctx = _archive_ctx(tmp_path)
+    fake_run, calls = _git_responder(overrides={"diff": (1, "", "")})
+    monkeypatch.setattr("patch_notes.stages.distribute.subprocess.run", fake_run)
+
+    _archive_release_notes(ctx)
+    assert _git_calls(calls, "commit"), "Commit fehlt obwohl Änderungen gestaged sind"
+
+
+def test_archive_paths_outside_repo_skip(tmp_path, monkeypatch):
+    # relative_to(base) wirft ValueError → Commit wird übersprungen, kein Crash.
+    _seed_release_notes(tmp_path)
+    ctx = _archive_ctx(tmp_path)
+    fake_run, calls = _git_responder()
+    monkeypatch.setattr("patch_notes.stages.distribute.subprocess.run", fake_run)
+
+    from pathlib import Path as _P
+    orig = _P.relative_to
+
+    def _raise(self, *a, **k):
+        raise ValueError("outside repo")
+
+    monkeypatch.setattr(_P, "relative_to", _raise)
+    _archive_release_notes(ctx)  # kein Crash
+    monkeypatch.setattr(_P, "relative_to", orig)
+
+    assert not _git_calls(calls, "add"), "add trotz Pfad außerhalb Repo"
+    assert not _git_calls(calls, "commit")
+
+
+def test_archive_git_timeout_does_not_raise(tmp_path, monkeypatch):
+    import subprocess as _sp
+    _seed_release_notes(tmp_path)
+    ctx = _archive_ctx(tmp_path)
+
+    def timeout_run(cmd, **kwargs):
+        raise _sp.TimeoutExpired(cmd=cmd, timeout=kwargs.get("timeout", 30))
+
+    monkeypatch.setattr("patch_notes.stages.distribute.subprocess.run", timeout_run)
+    _archive_release_notes(ctx)  # kein Crash trotz git-Timeout
+    assert (tmp_path / "docs" / "release-history" / "v1.2.3.md").exists()
+
+
+def test_archive_invalid_version_skips_entirely(tmp_path, monkeypatch):
+    # Pfad-Traversal/Newline in der Version → gar nicht archivieren, kein git.
+    _seed_release_notes(tmp_path)
+    ctx = _archive_ctx(tmp_path, version="1.2.3/../../etc/passwd")
+    fake_run, calls = _git_responder()
+    monkeypatch.setattr("patch_notes.stages.distribute.subprocess.run", fake_run)
+
+    _archive_release_notes(ctx)
+    assert calls == [], "git lief trotz ungültiger Version"
+    assert not (tmp_path / "docs" / "release-history").exists(), "Archiv-Dir trotz ungültiger Version"
+
+
+def test_archive_newline_version_skips(tmp_path, monkeypatch):
+    _seed_release_notes(tmp_path)
+    ctx = _archive_ctx(tmp_path, version="1.2.3\nmalicious")
+    fake_run, calls = _git_responder()
+    monkeypatch.setattr("patch_notes.stages.distribute.subprocess.run", fake_run)
+
+    _archive_release_notes(ctx)
+    assert calls == []
+
+
+def test_archive_push_error_stderr_is_sanitized(tmp_path, monkeypatch, caplog):
+    # HIGH-Fix: git-stderr mit Token/URL darf NICHT im Klartext geloggt werden.
+    import logging
+    _seed_release_notes(tmp_path)
+    ctx = _archive_ctx(tmp_path)
+    leak = "remote: https://x-access-token:ghp_SECRET12345@github.com/o/r.git\nfatal: auth failed"
+    fake_run, _ = _git_responder(overrides={"push": (1, "", leak)})
+    monkeypatch.setattr("patch_notes.stages.distribute.subprocess.run", fake_run)
+
+    with caplog.at_level(logging.WARNING, logger="shadowops"):
+        _archive_release_notes(ctx)
+
+    msgs = " ".join(r.getMessage() for r in caplog.records)
+    assert "ghp_SECRET12345" not in msgs, "Token im Log geleakt!"
+    assert "x-access-token" not in msgs, "Auth-URL im Log geleakt!"
+    assert "github.com" not in msgs
+
+
+def test_archive_successful_push_logs_info(tmp_path, monkeypatch, caplog):
+    import logging
+    _seed_release_notes(tmp_path)
+    ctx = _archive_ctx(tmp_path)
+    fake_run, calls = _git_responder()
+    monkeypatch.setattr("patch_notes.stages.distribute.subprocess.run", fake_run)
+
+    with caplog.at_level(logging.INFO, logger="shadowops"):
+        _archive_release_notes(ctx)
+
+    assert _git_calls(calls, "push"), "Push fehlt im Happy-Path"
+    assert any("committed + gepusht" in r.getMessage() for r in caplog.records)

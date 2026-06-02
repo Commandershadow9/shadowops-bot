@@ -78,6 +78,7 @@ Bei Aenderungen an Shared-Services (Redis, PostgreSQL, Traefik) MUESSEN alle Kon
 - NIEMALS den `RuntimeError` Abort in `validate.py` bei `ai_result=None` entfernen — sonst Endlosschleife mit leeren DB-Einträgen (Vorfall 2026-04-14: 33 leere Einträge in 4h)
 - NIEMALS `discord_highlights` aus dem Schema in `_build_structured_wrapper` entfernen — `AIEngine.generate_structured_patch_notes()` returnt None ohne dieses Feld
 - Bei AIEngine-Calls: NICHT raten. Methoden sind: `generate_structured_patch_notes()`, `get_raw_ai_response()`, `query()` (existiert nur in Provider-Klassen, nicht in AIEngine)
+- **Release-Notes-Archivierung committet+pusht (seit 2026-06-02, #302):** `_archive_release_notes()` in `stages/distribute.py` schreibt `docs/release-history/v<version>.md` + setzt `release_notes.md` aufs Template zurück UND committet+pusht **genau diese zwei Dateien** via `_commit_and_push_archive()`. Grund: vorher blieb der Deploy-Checkout dirty → nächster Auto-Deploy-`git pull` brach ab (Vorfall mayday-sim PR #489). Regeln: NIEMALS `git add -A` (würde fremde uncommittete Changes im Deploy-Repo mitnehmen) — immer `git add -- <2 dateien>`. Git-Fehler dürfen die Pipeline NIE crashen (`_run_git_quiet` wirft nie, alles best-effort, Archiv liegt schon auf Platte). Direkter Push auf den Deploy-Branch triggert KEINEN Auto-Deploy (Block in `event_handlers_mixin.py`). Idempotent via `git diff --cached --quiet`.
 - Conventional Commit Hook auf allen 5 Projekten. Re-Deploy: `scripts/deploy-commit-hook.sh --all`
 
 ## Learning-System (agent_learning DB)
