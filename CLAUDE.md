@@ -257,6 +257,8 @@ Worker-Konventionen:
 
 ## Letztes Update dieser Datei
 
+2026-06-02 — Patch-Notes-Archivierung committet+pusht (#302 / PR #304): `_archive_release_notes()` in `stages/distribute.py` ließ den Deploy-Checkout dirty (Archiv + Template-Reset ohne git-Commit) → nächster Auto-Deploy-`git pull` brach ab (Vorfall mayday-sim PR #489). Fix: `_run_git_quiet` + `_commit_and_push_archive` stagen GENAU die zwei Archiv-Dateien (nie `git add -A`), best-effort + git crasht die Pipeline nie. Härtung aus adversarialem Review: `_sanitize_git_error()` (kein Token/URL im Log), SemVer-Version-Guard, Bot-Identität via `git -c` (keine config-Pollution). 18 Tests. Regel in `.claude/rules/safety.md` (Patch Notes Pipeline v6).
+
 2026-06-02 — Cross-Repo-Backlog-Sweep: #292 ki-cost-watchdog Cache-Read/Write-Pricing (0.1×/1.25× Input, `compute_cost()` + Env-Keys) + #293 geteilte `scripts/lib/discord-send.sh` (429-Resilienz: Jitter + Retry-After, eingeklinkt in service-/disk-hygiene-/doku-drift-/memory-watchdog, `bot-watchdog.sh` unberührt). Beide mit Tests, gemerged. Begleit-Doku: discord-send.sh in `.claude/rules/infrastructure.md` Scripts-Tabelle.
 
 2026-05-25 — Auto-Deploy Project-Name-Lookup-Fix (dash↔underscore-Toleranz für `mayday-sim` ↔ `mayday_sim`, neue Regel in `.claude/rules/safety.md`). Anlass: mayday-sim PR #449/#450 lagen 14h ohne Auto-Deploy.
