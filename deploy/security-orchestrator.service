@@ -1,0 +1,19 @@
+[Unit]
+Description=Security-Agent-Team Orchestrator (#290 P1, default OFF)
+After=network-online.target
+
+[Service]
+Type=simple
+WorkingDirectory=%h/shadowops-bot
+Environment=PYTHONPATH=%h/shadowops-bot/src
+Environment=SECURITY_TEAM_ENABLED=false
+Environment=REDIS_URL=redis://127.0.0.1:6379/0
+# SECURITY_ANALYST_DB_URL via EnvironmentFile (Secrets nicht ins Unit!)
+EnvironmentFile=%h/.config/shadowops-security-team.env
+ExecStart=%h/shadowops-bot/.venv/bin/python -m integrations.security_engine.team.orchestrator_main
+Restart=on-failure
+RestartSec=10
+MemoryMax=512M
+
+[Install]
+WantedBy=default.target
