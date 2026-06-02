@@ -24,7 +24,7 @@
 | AI Fallback | Claude CLI | claude-sonnet-4-6 / claude-opus-4-6 |
 | Container | Docker | mit Trivy fuer Scans |
 | Service | systemd | `/etc/systemd/system/shadowops-bot.service` |
-| Tests | pytest | 150+ Tests, unit + integration |
+| Tests | pytest | 700+ Tests, unit + integration |
 | Webhook | GitHub Webhooks | HMAC-SHA256 verifiziert |
 
 ## Architektur-Prinzipien
@@ -44,9 +44,11 @@ shadowops-bot/
 │   ├── bot.py                    # Haupt-Bot
 │   ├── cogs/                     # Slash-Commands (admin, inspector, monitoring)
 │   ├── integrations/             # Externe Systeme (siehe unten)
-│   └── utils/                    # config, logging, embeds, state
+│   ├── patch_notes/              # Patch Notes Pipeline v6 (5-Stufen State Machine, ~2100 Zeilen)
+│   ├── schemas/                  # JSON-Schemas fuer Structured Output (fix_strategy, patch_notes, incident_analysis, jules_review)
+│   └── utils/                    # config, logging, embeds, state, alert_humanizer, health_server, message_handler, circuit_breaker, changelog_parser, process_lock
 ├── tests/
-│   ├── unit/                     # 161+ Unit-Tests
+│   ├── unit/                     # 700+ Unit-Tests
 │   ├── integration/              # End-to-End-Workflows
 │   └── conftest.py
 ├── config/
@@ -57,7 +59,7 @@ shadowops-bot/
 │   └── PROJECT_*.md              # Per-projekt-Notizen
 ├── deploy/
 │   ├── shadowops-bot.service          # systemd Bot-Service
-│   ├── *-watchdog.{service,timer}     # Externe Uptime-Watchdogs (10 Watchdogs: HTTP/systemd/jq-filter/build-drift/state-drift + Backup-Test)
+│   ├── *-watchdog.{service,timer}     # Externe Uptime-Watchdogs (14 Watchdogs: HTTP/systemd/jq-filter/build-drift/state-drift + Backup-Test)
 │   ├── shadowops-watchdog.env.example # Webhook-Env Template
 │   └── MONITORING_SETUP.md            # Setup-Anleitung Watchdogs
 ├── .github/
@@ -71,7 +73,8 @@ shadowops-bot/
 │   ├── SETUP_GUIDE.md
 │   ├── reference/api.md
 │   ├── adr/                      # Architecture Decision Records
-│   └── plans/                    # Design-Dokumente
+│   ├── design/                   # Design-Dokumente (aktuelle Planung)
+│   └── plans/                    # Aeltere Design-Dokumente (archiviert)
 ├── data/                         # Runtime-Daten (gitignored)
 ├── logs/                         # Logs (gitignored)
 ├── .claude/                      # KI-spezifische Configs
@@ -89,11 +92,13 @@ shadowops-bot/
 - `code_analyzer.py` — Code Structure Analyzer (Git-History + AST)
 - `context_manager.py` — RAG: Project-Context + DO-NOT-TOUCH + Infra
 - `github_integration/` — Webhooks mit HMAC-SHA256 Verification + Jules Workflow (Package: core, webhook_mixin, event_handlers_mixin, jules_workflow_mixin, notifications_mixin, ci_mixin, agent_review/)
+- `security_engine/` — Autonomer SecurityScanAgent (scan_agent.py), CircuitBreaker, DB-Layer (db.py), Fixer-Adapters, ActivityMonitor, LearningBridge, Prompts (Package: engine, scan_agent, reactive, proactive, deep_scan, executor, fixer_adapters, learning_bridge, activity_monitor, prompts, models, db, migrations)
+- `fixers/` — Konkrete Fix-Implementierungen: fail2ban_fixer.py, crowdsec_fixer.py, aide_fixer.py, trivy_fixer.py, walg_fixer.py
 - `project_monitor.py` — Multi-Project Health-Checks
 - `deployment_manager.py` — Auto-Deploy mit Backup/Rollback. **WICHTIG:** Project-Name-Lookup ist dash↔underscore-tolerant (`mayday-sim` ↔ `mayday_sim`, seit 2026-05-25 — siehe `.claude/rules/safety.md`). Gleiche Logik in `github_integration/ci_mixin.py:_trigger_deployment()`.
 - `incident_manager.py` — Incident Threads in Discord
 - `customer_notifications.py` — Customer-Facing Alerts (Multi-Guild)
-- `fail2ban.py` / `crowdsec.py` / `aide.py` / `docker.py` — Security-Integrationen
+- `fail2ban.py` / `crowdsec.py` / `aide.py` / `docker.py` — Security-Event-Quellen (Monitoring-Integrationen)
 
 ## Externes Monitoring (seit 2026-05-17 — Defense-in-Depth)
 
@@ -239,7 +244,7 @@ Worker-Konventionen:
 
 ## Statistik (Stand v5.1)
 
-20.000+ LoC, 150+ Tests, 3 PostgreSQL DBs (21+7+11 Tabellen), 4 Security-Integrationen, 15 Discord-Commands, 3 Monitored Projects (GuildScout, ZERODOX, AI Agents).
+20.000+ LoC, 700+ Tests, 3 PostgreSQL DBs (21+7+11 Tabellen), 4 Security-Integrationen, 15 Discord-Commands, 3 Monitored Projects (GuildScout, ZERODOX, AI Agents).
 
 ## Aktuelle Doku
 
