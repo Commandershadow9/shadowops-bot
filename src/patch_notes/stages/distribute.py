@@ -4,7 +4,9 @@ from __future__ import annotations
 
 import json
 import logging
+import subprocess
 from datetime import datetime, timezone
+from pathlib import Path
 from typing import TYPE_CHECKING
 
 import discord
@@ -745,14 +747,131 @@ archiviert und hier wieder geleert. Du fangst also frisch an fuer den naechsten 
 """
 
 
+def _run_git_quiet(repo_path: Path, args: list, timeout: int = 15) -> tuple[bool, str, str]:
+    """Führt ein git-Kommando still aus. Gibt (erfolg, stdout, stderr) zurück.
+
+    Wirft NIE — git darf die Patch-Notes-Pipeline nicht crashen. Bei jeder
+    Störung (Timeout, git fehlt, exit != 0) wird (False, '', <fehler>) geliefert.
+    """
+    try:
+        result = subprocess.run(
+            ['git', *args],
+            cwd=str(repo_path),
+            capture_output=True,
+            text=True,
+            timeout=timeout,
+        )
+        return result.returncode == 0, (result.stdout or '').strip(), (result.stderr or '').strip()
+    except Exception as e:  # noqa: BLE001 — defensive: git darf nie die Pipeline abbrechen
+        return False, '', str(e)
+
+
+# Bot-Identität für Archiv-Commits — via `git -c` pro Commit gesetzt, damit die
+# .git/config des Deploy-Repos NICHT dauerhaft verändert wird (kein Blame-Pollution).
+_GIT_AUTHOR_FLAGS = ['-c', 'user.email=shadowops@local', '-c', 'user.name=ShadowOps Bot']
+
+
+def _sanitize_git_error(err: str) -> str:
+    """Redigiert potenziell sensible Zeilen aus git-stderr vor dem Logging.
+
+    git kann bei Auth-Fehlern Credential-Helper-Output, Remote-URLs mit
+    eingebetteten Tokens oder SSH-Key-/.netrc-Pfade emittieren. CLAUDE.md verbietet
+    Secrets in Logs — daher Zeilen mit Auth-/URL-Markern komplett verwerfen.
+    """
+    if not err:
+        return ''
+    sensitive = (
+        'token', 'password', 'passwd', 'credential', 'authorization',
+        'ssh', 'netrc', '@', 'http://', 'https://', 'bearer', 'secret',
+    )
+    out = []
+    for line in err.splitlines():
+        low = line.lower()
+        out.append('[redigiert]' if any(m in low for m in sensitive) else line)
+    return ' | '.join(out)[:300]
+
+
+def _commit_and_push_archive(
+    base: Path, notes_path: Path, archive_file: Path, version: str, project: str
+) -> None:
+    """Committet + pusht NUR die beiden Archiv-Dateien (best-effort, #302).
+
+    Lässt das Deploy-Repo nach dem Archivieren clean zurück, damit der nächste
+    Auto-Deploy-`git pull` nicht an einem dirty Working-Tree scheitert (war die
+    Ursache von shadowops#302). Staget ausschließlich `release_notes.md` + die
+    neue Archiv-Datei (nie `git add -A`), damit fremde uncommittete Änderungen
+    im Deploy-Checkout nicht mitgenommen werden.
+
+    Defensive: jede git-Störung wird geloggt und geschluckt — das Archiv liegt
+    bereits auf Platte, ein fehlgeschlagener Push ist nicht kritisch (der nächste
+    Release-Lauf pusht den lokalen Commit nach). Ein direkter Push auf den
+    Deploy-Branch triggert KEINEN Auto-Deploy (hardcoded Block in
+    event_handlers_mixin.py).
+    """
+    try:
+        # 1. git-Repo-Guard — project_path ist nicht zwingend ein Repo
+        ok, _, _ = _run_git_quiet(base, ['rev-parse', '--git-dir'], timeout=5)
+        if not ok:
+            logger.debug(f"[v6] {base} ist kein git-Repo — Archiv nicht committed")
+            return
+
+        # 2. Detached-HEAD-Guard + aktuellen Branch ermitteln
+        ok, branch, _ = _run_git_quiet(base, ['symbolic-ref', '-q', '--short', 'HEAD'], timeout=5)
+        if not ok or not branch:
+            logger.debug("[v6] detached HEAD — Archiv nicht gepusht")
+            return
+
+        # 3. Nur die zwei Dateien stagen (relative Pfade, -- trennt Pathspecs von Refs)
+        try:
+            rel_notes = str(notes_path.relative_to(base))
+            rel_archive = str(archive_file.relative_to(base))
+        except ValueError:
+            logger.warning("[v6] Archiv-Pfade außerhalb des Repos — Commit übersprungen")
+            return
+        _run_git_quiet(base, ['add', '--', rel_notes, rel_archive])
+
+        # 4. Idempotenz: git diff --cached --quiet → rc 0 = NICHTS gestaged → fertig.
+        #    nothing_staged spiegelt genau diese (invertierte) --quiet-Semantik.
+        nothing_staged, _, _ = _run_git_quiet(
+            base, ['diff', '--cached', '--quiet', '--', rel_notes, rel_archive]
+        )
+        if nothing_staged:
+            logger.debug("[v6] Archiv bereits committed — nichts zu tun")
+            return
+
+        # 5. Commit — exakt die zwei Pfade, Bot-Identität via -c (keine config-Pollution).
+        ok, _, err = _run_git_quiet(
+            base,
+            ['commit', *_GIT_AUTHOR_FLAGS,
+             '-m', f'docs: archive release notes v{version}',
+             '--', rel_notes, rel_archive],
+            timeout=20,
+        )
+        if not ok:
+            logger.warning(f"[v6] Archiv-Commit fehlgeschlagen: {_sanitize_git_error(err)}")
+            return
+
+        # 6. Push — best-effort, Working-Tree ist auch ohne Push schon clean
+        ok, _, err = _run_git_quiet(base, ['push', 'origin', branch], timeout=30)
+        if not ok:
+            logger.warning(
+                f"[v6] Archiv-Push fehlgeschlagen (lokal committed): {_sanitize_git_error(err)}"
+            )
+            return
+        logger.info(f"[v6] {project}: Archiv v{version} committed + gepusht ({branch})")
+    except Exception as e:  # noqa: BLE001 — Defense-in-Depth: git crasht die Pipeline nie
+        logger.warning(f"[v6] Archiv-Commit/Push unerwartet fehlgeschlagen: {e}")
+
+
 def _archive_release_notes(ctx: PipelineContext) -> None:
     """Archiviert release_notes.md nach docs/release-history/v<version>.md
     und setzt das Template zurück in die Original-Datei.
 
     Idempotent: wenn die Datei nicht existiert oder nur Template enthält,
     passiert nichts. Läuft nur bei erfolgreichem Discord-Send (messages_sent > 0).
+    Nach dem Archivieren werden die beiden Dateien committed + gepusht, damit das
+    Deploy-Repo clean bleibt (#302).
     """
-    from pathlib import Path
     import re
 
     project_path = ctx.project_config.get('path', '')
@@ -781,7 +900,14 @@ def _archive_release_notes(ctx: PipelineContext) -> None:
     # HTML-Kommentare strippen — wenn nichts übrig: nur Template, nicht archivieren
     stripped = re.sub(r'<!--.*?-->', '', raw, flags=re.DOTALL).strip()
     if len(stripped) < 20:
-        logger.debug(f"[v6] release_notes.md enthält nur Template — kein Archiv nötig")
+        logger.debug("[v6] release_notes.md enthält nur Template — kein Archiv nötig")
+        return
+
+    # Version-Guard: ctx.version fließt in Dateiname + Commit-Message. versioning.py
+    # liefert zwar striktes SemVer, aber am Boundary defensiv gegen Pfad-Traversal
+    # (../) und Newline-Injection in der Commit-Message absichern (#302-Review).
+    if not re.match(r'^\d+\.\d+\.\d+([.\-+][0-9A-Za-z.\-]+)?$', str(ctx.version)):
+        logger.warning(f"[v6] Ungültige Version, Archiv übersprungen: {ctx.version!r}")
         return
 
     # Archiv-Pfad: docs/release-history/v<version>.md
@@ -802,5 +928,8 @@ def _archive_release_notes(ctx: PipelineContext) -> None:
             f"[v6] {ctx.project}: release_notes.md archiviert -> {archive_file.name} "
             f"(Template zurückgesetzt)"
         )
+        # Deploy-Repo clean halten: die zwei Archiv-Dateien committen + pushen (#302).
+        # Eigenes try/except — git darf den Archiv-Erfolgspfad nie crashen.
+        _commit_and_push_archive(base, notes_path, archive_file, ctx.version, ctx.project)
     except Exception as e:
         logger.warning(f"[v6] release_notes Archivierung fehlgeschlagen: {e}")
