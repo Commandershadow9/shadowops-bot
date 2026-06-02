@@ -45,6 +45,7 @@ paths:
 | `bot-watchdog.sh` | Watchdog fuer shadowops-bot (Backward-Compat-Wrapper, seit 2026-05-17) |
 | `service-watchdog.sh` | Generischer Watchdog (HTTP- oder systemd-Mode), parametrisiert via Env-Vars |
 | `backup-restore-test.sh` | Wrapper um `~/ZERODOX/scripts/backup-test.sh` mit Discord-Alert |
+| `lib/discord-send.sh` | Geteilte `discord_post()`-Funktion mit 429-Resilienz (Jitter + Retry-After, #293). Gesourct von service-/disk-hygiene-/doku-drift-/memory-watchdog (Fallback-Guard hält altes Inline-Curl). `bot-watchdog.sh` bleibt unberührt (Backward-Compat). |
 
 ## Watchdog-Familie (seit 2026-05-17 — Defense-in-Depth gegen shadowops-bot-Down)
 

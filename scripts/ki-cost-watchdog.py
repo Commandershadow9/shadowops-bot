@@ -44,7 +44,9 @@ KRITISCH (Codex-Kumulativ-Falle):
 
 import json
 import os
+import random
 import sys
+import time
 from datetime import datetime, timezone
 from glob import glob
 from urllib import request, error
@@ -400,8 +402,12 @@ def fmt_tokens(n) -> str:
     return str(n)
 
 
-def send_discord(webhook, payload) -> bool:
-    data = json.dumps(payload).encode("utf-8")
+def _send_once(webhook, data):
+    """Ein POST-Versuch. Returns (code, retry_after_seconds_or_None).
+
+    code=None signalisiert einen Netzwerk-/URL-Fehler (kein HTTP-Status).
+    retry_after ist nur bei HTTP 429 gesetzt.
+    """
     req = request.Request(
         webhook,
         data=data,
@@ -410,18 +416,50 @@ def send_discord(webhook, payload) -> bool:
     )
     try:
         with request.urlopen(req, timeout=10) as resp:
-            code = resp.getcode()
+            return resp.getcode(), None
+    except error.HTTPError as exc:
+        retry_after = None
+        if exc.code == 429:
+            try:
+                retry_after = float((exc.headers.get("Retry-After") or "1").strip())
+            except (TypeError, ValueError, AttributeError):
+                retry_after = 1.0
+        return exc.code, retry_after
+    except (error.URLError, OSError, ValueError) as exc:
+        print(f"[ki-cost-watchdog] WARN: Discord-Send fehlgeschlagen: {exc}", file=sys.stderr)
+        return None, None
+
+
+def send_discord(webhook, payload) -> bool:
+    """Sendet den Embed mit 429-Resilienz (#293) — Python-Pendant zur geteilten
+    Bash-Lib scripts/lib/discord-send.sh.
+
+    - Kleiner Jitter (0..KICOST_MAX_JITTER_MS, default 400ms) VOR dem Send entzerrt
+      gleichzeitige Multi-Service-Alarme ueber denselben Webhook.
+    - Bei HTTP 429: respektiert Retry-After (gedeckelt auf DISCORD_RETRY_CAP=10s)
+      und versucht GENAU 1 Retry. Andere Fehler: kein Retry.
+    """
+    data = json.dumps(payload).encode("utf-8")
+
+    max_jitter_ms = int(os.environ.get("KICOST_MAX_JITTER_MS", "400") or 0)
+    if max_jitter_ms > 0:
+        time.sleep(random.uniform(0, max_jitter_ms / 1000.0))
+
+    retry_cap = float(os.environ.get("DISCORD_RETRY_CAP", "10") or 10)
+    for attempt in (1, 2):
+        code, retry_after = _send_once(webhook, data)
         if code in (200, 204):
             print(f"[ki-cost-watchdog] Discord-Send OK (HTTP {code})")
             return True
-        print(f"[ki-cost-watchdog] WARN: Discord HTTP {code}", file=sys.stderr)
+        if attempt == 1 and code == 429:
+            wait = min(retry_after if retry_after is not None else 1.0, retry_cap)
+            print(f"[ki-cost-watchdog] HTTP 429 — warte {wait:g}s, 1 Retry", file=sys.stderr)
+            time.sleep(wait)
+            continue
+        if code is not None:
+            print(f"[ki-cost-watchdog] WARN: Discord HTTP {code}", file=sys.stderr)
         return False
-    except error.HTTPError as exc:
-        print(f"[ki-cost-watchdog] WARN: Discord HTTPError {exc.code}", file=sys.stderr)
-        return False
-    except (error.URLError, OSError, ValueError) as exc:
-        print(f"[ki-cost-watchdog] WARN: Discord-Send fehlgeschlagen: {exc}", file=sys.stderr)
-        return False
+    return False
 
 
 def build_payload(day, claude, codex, total_cost, total_tokens, avg, anomaly):
