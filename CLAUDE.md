@@ -99,6 +99,33 @@ shadowops-bot/
 - `incident_manager.py` — Incident Threads in Discord
 - `customer_notifications.py` — Customer-Facing Alerts (Multi-Guild)
 - `fail2ban.py` / `crowdsec.py` / `aide.py` / `docker.py` — Security-Event-Quellen (Monitoring-Integrationen)
+- `approval_modes.py` — 3-Stufen-Approval-System (PARANOID/BALANCED/AGGRESSIVE) für Auto-Remediation: entscheidet Auto-Execute vs. manuelle Freigabe je nach Risiko + Confidence
+- `auto_fix_manager.py` — Reaction-basierter Flow für Code-Fix-Vorschläge (✅ umsetzen / 🧪 nur Tests / ❌ verwerfen), führt Tests/Lint aus + berichtet in Discord. Safety: keine Commits/Merges/Deploys, Pfad-Whitelist, Zeitlimit
+- `backup_manager.py` — Automatisches Backup & Restore (Dateien, Verzeichnisse, Docker-Image-Tags, PostgreSQL-Dumps) mit Auto-Rollback + Retention-Policy
+- `changelog_db.py` — Zentrale async SQLite-Changelog-DB für alle Projekte (Patch Notes v3): Paginierung, JSON-Felder, Upsert-Logik
+- `command_executor.py` — Sichere Shell-Command-Ausführung (Timeout, Output-Capture, Dry-Run/Validate-Mode, Command-Sanitization)
+- `content_sanitizer.py` — Filtert sensible Infos (Dateipfade, IPs/localhost, Ports, Config-Namen, API-Pfade) aus AI-generierten Patch Notes vor Discord-/Web-Versand
+- `customer_server_setup.py` — Legt automatisch Channels mit korrekten Permissions auf Kunden-Discord-Servern an (Admin-Kategorien je Projekt)
+- `docker_image_analyzer.py` — Unterscheidet externe vs. eigene Docker-Images (Dockerfile-Erkennung) + Update-Detection
+- `git_history_analyzer.py` — Analysiert Git-Commits (häufig geänderte Files, Fix-/Security-Commits, Author-Expertise) als AI-Context
+- `guildscout_alerts.py` — Webhook-Handler (HMAC-verifiziert) für GuildScout-Bot-Alerts (Verification/Errors/Health) → formatierte Discord-Posts
+- `health_schema_v1.py` — Dependency-freies Dataclass-Modell + Parse-Validierung für den Phase-5e Health-Aggregator (Quelle: ZERODOX HEALTH_SCHEMA_V1.md)
+- `impact_analyzer.py` — Bewertet Auswirkung von Security-Fixes auf laufende Projekte (betroffene Services, Downtime-Risiko, DO-NOT-TOUCH-Validierung)
+- `learning_notifier.py` — Automatische Discord-Posts im 🧠-ai-learning Channel über Agent-Erkenntnisse (Session-Summary, Feedback, Wöchentliches Learning, Meilensteine)
+- `llm_fine_tuning.py` — Exportiert Trainingsdaten im JSONL-Format für LLM-Fine-Tuning der Patch-Notes-Generierung (Quality-Score-gefiltert)
+- `log_analyzer.py` — Multi-Tool Log-Parsing (Fail2ban/CrowdSec/Docker/ShadowOps) für Pattern-Erkennung + Anomalie-Detection
+- `patch_notes_batcher.py` — Sammelt ALLE Commits und gibt sie kontrolliert frei (Cron täglich/wöchentlich, Notbremse ≥Schwelle, manuell; max 1 Auto-Release/Projekt/Tag, 24h-Cooldown)
+- `patch_notes_feedback.py` — Sammelt User-Feedback zu Patch Notes (Discord-Buttons Like/Rate, Text-Modal, Legacy-Reactions)
+- `patch_notes_learning.py` — PostgreSQL-basierter Feedback-Loop (agent_learning DB): Reactions → Variant-Gewichtung → bessere Generierung
+- `patch_notes_trainer.py` — AI-Training für Patch-Notes-Qualität (CHANGELOG-Input, Few-Shot-Beispiele, Feedback, Prompt-Optimierung, Quality-Scoring)
+- `patch_notes_web_exporter.py` — Exportiert Patch Notes als SEO-optimiertes JSON/Markdown + API-POST an Projekt-Backends (DB-basiert primär, File-Fallback)
+- `prompt_ab_testing.py` — A/B-Testing für Prompt-Varianten, trackt welche Variante am besten performt
+- `prompt_auto_tuner.py` — Justiert Prompts automatisch anhand Performance-Feedback (nutzt prompt_ab_testing + patch_notes_trainer)
+- `research_fetcher.py` — Abgesicherter HTTP-Fetcher mit Domain-Allowlist (PyPI/npm/GitHub API+Raw), Größen-/Timeout-Limit, Discord-Logging
+- `self_healing.py` — Self-Healing-Coordinator: AI-gestützte Retry-Logik + Circuit Breaker, orchestriert command_executor/backup_manager/impact_analyzer/service_manager/fixers
+- `server_assistant.py` — Token-sparsamer Server-Assistent: tägliches lokales Housekeeping (0 Token) + wöchentlicher Security-Report + event-getriebenes Git-Push-Security-Review
+- `service_manager.py` — Projekt-Service-Steuerung (Start/Stop/Restart) mit Graceful-Shutdown, Health-Checks, Dependency-Ordering, Discord-Downtime-Notifications
+- `zerodox_auto_fix_gate.py` — **Latent (config-gated, default off):** ZERODOX Auto-Fix Pre-Merge-Gate (Welle 16, #270/#271/#844). Klasse `AutoFixGate` ist implementiert+getestet, aber in keinem Produktivpfad instanziiert. Aktivierung via Config-Flag `zerodox.auto_fix_pipeline.enabled`
 
 ## Externes Monitoring (seit 2026-05-17 — Defense-in-Depth)
 

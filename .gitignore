@@ -79,3 +79,6 @@ node_modules/
 # reicht, kein Multi-Host-Sync noetig. Falls State-File fehlt: Worker erstellt
 # es beim ersten Lauf neu. Verzeichnis bleibt via .gitkeep erhalten.
 .routines/state/*.json
+
+# verwaiste Merge-/Backup-Reste
+*.orig
