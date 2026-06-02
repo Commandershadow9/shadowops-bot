@@ -277,3 +277,68 @@ def test_regular_file_at_managed_path_not_overwritten(script_exists, tmp_path):
     assert "existiert als REGULÄRE Datei im Ziel" in result.stdout
     # Datei bleibt unverändert.
     assert (unit_dir / name).read_text().endswith("# handgepflegt\n")
+
+
+def test_regular_file_unit_not_enabled_while_others_are(script_exists, tmp_path):
+    """B1-Regression: eine als reguläre Datei vorliegende GEMANAGTE Timer-Unit
+    darf NICHT ge-enabled werden, während frisch verlinkte Timer es werden.
+
+    Setup: alle deploy-Timer werden frisch verlinkt (CHANGED=1). Genau EIN
+    deploy-Timer liegt aber als reguläre Datei im Ziel → dieser geht in den
+    'reguläre Datei'-Zweig und darf nie in SYNCED_TIMERS landen.
+    """
+    timers = sorted(p.name for p in DEPLOY_DIR.glob("*-watchdog.timer"))
+    assert len(timers) >= 2, "Test braucht mind. 2 deploy-Timer"
+    shadowed = timers[0]   # liegt als reguläre Datei vor → darf NICHT enabled werden
+    other = timers[1]      # wird frisch verlinkt → MUSS enabled werden
+
+    unit_dir = tmp_path / "units"
+    unit_dir.mkdir()
+    (unit_dir / shadowed).write_text("[Timer]\n# handgepflegt, außerhalb der IaC\n")
+
+    result = _run(unit_dir, "--dry-run")
+    assert result.returncode == 0, result.stdout + result.stderr
+    # Positiv: ein regulär verlinkter Timer wird aktiviert.
+    assert f"systemctl --user enable --now {other}" in result.stdout
+    # Negativ (Kern der Regression): der reguläre-Datei-Timer wird NIE aktiviert.
+    assert f"enable --now {shadowed}" not in result.stdout
+
+
+def test_prune_force_real_run_deletes_regular_file(script_exists, tmp_path):
+    """B2-Regression: echter --prune --force-Lauf löscht die verwaiste reguläre
+    Datei — und NUR diese, keine unbeteiligten Dateien.
+
+    systemctl via PATH-Shim neutralisiert (echtes systemd wird nie berührt).
+    """
+    shim = tmp_path / "shim"
+    shim.mkdir()
+    (shim / "systemctl").write_text("#!/usr/bin/env bash\nexit 0\n")
+    (shim / "systemctl").chmod(0o755)
+
+    unit_dir = tmp_path / "units"
+    unit_dir.mkdir()
+    # Verwaiste reguläre Datei (matcht *-watchdog.timer, kein deploy-Pendant).
+    orphan_file = unit_dir / "foo-watchdog.timer"
+    orphan_file.write_text("[Timer]\n")
+    # Unbeteiligte Datei (matcht das Orphan-Glob NICHT) → muss überleben.
+    bystander = unit_dir / "keepme.txt"
+    bystander.write_text("nicht anfassen\n")
+
+    env = {
+        **os.environ,
+        "WATCHDOG_UNIT_DIR": str(unit_dir),
+        "PATH": f"{shim}:{os.environ['PATH']}",
+    }
+    result = subprocess.run(
+        ["bash", str(SCRIPT), "--prune", "--force"],
+        env=env,
+        capture_output=True,
+        text=True,
+        timeout=30,
+    )
+    assert result.returncode == 0, result.stdout + result.stderr
+    assert not orphan_file.exists(), (
+        "verwaiste reguläre Datei hätte mit --prune --force gelöscht werden müssen"
+    )
+    assert bystander.exists(), "unbeteiligte Datei darf NICHT gelöscht werden"
+    assert bystander.read_text() == "nicht anfassen\n"

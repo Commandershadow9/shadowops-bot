@@ -30,6 +30,13 @@ REPO_ROOT="$(cd "${SCRIPT_DIR}/.." && pwd)"
 DEPLOY_DIR="${REPO_ROOT}/deploy"
 UNIT_DIR="${WATCHDOG_UNIT_DIR:-${HOME}/.config/systemd/user}"
 
+# Safety-Guard: ein leeres oder "/"-UNIT_DIR würde den prune-rm in einem
+# gefährlichen Verzeichnis laufen lassen → hart abbrechen.
+if [[ -z "${UNIT_DIR}" || "${UNIT_DIR}" == "/" ]]; then
+    echo "FEHLER: UNIT_DIR ungültig (leer oder /)" >&2
+    exit 1
+fi
+
 # ---------- Flags ----------
 DRY_RUN=0
 PRUNE=0
@@ -65,6 +72,11 @@ while [[ $# -gt 0 ]]; do
     esac
     shift
 done
+
+# --force wirkt nur zusammen mit --prune (entfernt verwaiste reguläre Dateien).
+if [[ "${FORCE}" -eq 1 && "${PRUNE}" -eq 0 ]]; then
+    echo "[sync-watchdog] WARN: --force ohne --prune hat keine Wirkung"
+fi
 
 # ---------- Logging-Helper ----------
 log()    { echo "[sync-watchdog] $*"; }
@@ -154,24 +166,25 @@ for unit in "${SOURCE_UNITS[@]}"; do
             ln -sfn "${src}" "${dst}"
         fi
         SYNCED=$((SYNCED + 1)); CHANGED=1
+        [[ "${unit}" == *.timer ]] && SYNCED_TIMERS+=("${unit}")
     elif [[ -e "${dst}" ]]; then
-        # Reguläre Datei am Ziel-Pfad — NICHT blind überschreiben.
+        # Reguläre Datei am Ziel-Pfad — NICHT blind überschreiben UND NICHT
+        # aktivieren (würde eine Out-of-IaC-Unit ge-enabled → kein Timer-Append).
         log "WARN: ${unit} existiert als REGULÄRE Datei im Ziel — wird NICHT durch Symlink ersetzt."
         log "      → Manuell prüfen/entfernen, dann erneut syncen. (Datei: ${dst})"
         SKIPPED=$((SKIPPED + 1))
-        [[ "${unit}" == *.timer ]] && SYNCED_TIMERS+=("${unit}")
     else
         action "Symlink anlegen:    ${unit} → ${src}"
         if [[ "${DRY_RUN}" -eq 0 ]]; then
             ln -sfn "${src}" "${dst}"
         fi
         SYNCED=$((SYNCED + 1)); CHANGED=1
+        [[ "${unit}" == *.timer ]] && SYNCED_TIMERS+=("${unit}")
     fi
-
-    [[ "${unit}" == *.timer ]] && SYNCED_TIMERS+=("${unit}")
 done
 
-# Doppelte Timer-Einträge (skip+append) deduplizieren.
+# Doppelte Timer-Einträge defensiv deduplizieren (sollte nach dem Fix nicht mehr
+# vorkommen, schadet aber nicht).
 if [[ "${#SYNCED_TIMERS[@]}" -gt 0 ]]; then
     mapfile -t SYNCED_TIMERS < <(printf '%s\n' "${SYNCED_TIMERS[@]}" | sort -u)
 fi
