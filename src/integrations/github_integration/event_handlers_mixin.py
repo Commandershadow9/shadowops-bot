@@ -142,13 +142,22 @@ class EventHandlersMixin:
                         f"🚀 PR merged to {target_branch}, triggering deployment "
                         f"(wait-for-CI: repo={repo_full_name}, sha={merge_commit_sha})"
                     )
-                    await self._trigger_deployment(
-                        repo_name,
-                        target_branch,
-                        merge_commit_sha,
-                        repo_full_name=repo_full_name,
-                        full_sha=full_merge_sha,
+                    # #478: Deploy als Background-Task starten, NICHT synchron awaiten.
+                    # Synchrones await liess den Webhook-Handler bis zum Deploy-Ende
+                    # blockieren → GitHub-10s-Timeout → 504 → Auto-Deploy galt als
+                    # fehlgeschlagen. Task referenziert halten (GC-Schutz), Aufraeumen
+                    # via done-Callback.
+                    deploy_task = asyncio.create_task(
+                        self._trigger_deployment(
+                            repo_name,
+                            target_branch,
+                            merge_commit_sha,
+                            repo_full_name=repo_full_name,
+                            full_sha=full_merge_sha,
+                        )
                     )
+                    self._deploy_tasks.add(deploy_task)
+                    deploy_task.add_done_callback(self._deploy_tasks.discard)
 
         except Exception as e:
             self.logger.error(f"❌ Error handling PR event: {e}", exc_info=True)

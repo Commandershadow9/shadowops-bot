@@ -2,6 +2,7 @@
 Unit Tests for GitHub Integration
 """
 
+import asyncio
 import hashlib
 import hmac
 from unittest.mock import Mock, AsyncMock, MagicMock
@@ -425,6 +426,48 @@ class TestPullRequestHandling:
         kwargs = integration._trigger_deployment.call_args.kwargs
         assert kwargs['repo_full_name'] == 'Commandershadow9/ZERODOX'
         assert kwargs['full_sha'] == 'a' * 40
+
+    @pytest.mark.asyncio
+    async def test_pr_merge_does_not_block_on_deploy(self, mock_bot, enabled_config):
+        """#478: Der Merge-Handler darf NICHT synchron auf den (minutenlangen)
+        Deploy warten — sonst laeuft GitHubs 10s-Webhook-Timeout ab (504) und der
+        Auto-Deploy gilt als fehlgeschlagen. Deploy muss als Background-Task laufen,
+        der Handler kehrt sofort zurueck."""
+        integration = GitHubIntegration(mock_bot, enabled_config)
+        integration._send_pr_notification = AsyncMock()
+
+        deploy_started = asyncio.Event()
+        deploy_release = asyncio.Event()
+
+        async def slow_deploy(*args, **kwargs):
+            deploy_started.set()
+            await deploy_release.wait()  # simuliert einen langlaufenden Deploy
+
+        integration._trigger_deployment = AsyncMock(side_effect=slow_deploy)
+
+        payload = {
+            'action': 'closed',
+            'repository': {'name': 'mayday-sim', 'full_name': 'Commandershadow9/mayday-sim'},
+            'pull_request': {
+                'number': 408,
+                'title': 'Security PR',
+                'user': {'login': 'developer'},
+                'html_url': 'https://github.com/Commandershadow9/mayday-sim/pull/408',
+                'head': {'ref': 'cmd/security'},
+                'base': {'ref': 'main'},
+                'merged': True,
+                'merge_commit_sha': 'b' * 40,
+            },
+        }
+
+        # Handler muss schnell zurueckkehren, obwohl der Deploy noch laeuft (kein 504)
+        await asyncio.wait_for(integration.handle_pull_request_event(payload), timeout=1.0)
+        # Deploy wurde als Hintergrund-Task gestartet und laeuft noch
+        await asyncio.wait_for(deploy_started.wait(), timeout=1.0)
+        assert not deploy_release.is_set()
+
+        deploy_release.set()  # Cleanup: Background-Task abschliessen lassen
+        await asyncio.sleep(0)
 
 
 class TestWelle910WaitForCI:
