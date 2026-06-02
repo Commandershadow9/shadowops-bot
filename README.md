@@ -381,7 +381,12 @@ shadowops-bot/
 │       ├── logger.py                   # Logging
 │       ├── embeds.py                   # Discord Embed-Builder
 │       ├── discord_logger.py           # Discord Channel Logger
-│       └── alert_humanizer.py          # Status-Telemetrie zu mensch-lesbarem Deutsch
+│       ├── alert_humanizer.py          # Status-Telemetrie zu mensch-lesbarem Deutsch
+│       ├── health_server.py            # HTTP /health-Endpoint + Changelog REST API
+│       ├── message_handler.py          # Discord Rate-Limit + Message-Splitting
+│       ├── circuit_breaker.py          # Leichtgewichtiger Circuit Breaker (Util-Variante)
+│       ├── changelog_parser.py         # CHANGELOG.md Parser fuer Patch Notes
+│       └── process_lock.py             # Cross-Process Singleton Lock (fcntl + Stale-Detection)
 ├── tests/
 │   ├── conftest.py                     # Test Fixtures
 │   ├── unit/                           # Unit Tests (700+, 67 Dateien)

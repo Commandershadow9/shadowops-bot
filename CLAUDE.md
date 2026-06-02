@@ -46,7 +46,7 @@ shadowops-bot/
 │   ├── integrations/             # Externe Systeme (siehe unten)
 │   ├── patch_notes/              # Patch Notes Pipeline v6 (5-Stufen State Machine, ~2100 Zeilen)
 │   ├── schemas/                  # JSON-Schemas fuer Structured Output (fix_strategy, patch_notes, incident_analysis, jules_review)
-│   └── utils/                    # config, logging, embeds, state, alert_humanizer
+│   └── utils/                    # config, logging, embeds, state, alert_humanizer, health_server, message_handler, circuit_breaker, changelog_parser, process_lock
 ├── tests/
 │   ├── unit/                     # 700+ Unit-Tests
 │   ├── integration/              # End-to-End-Workflows
