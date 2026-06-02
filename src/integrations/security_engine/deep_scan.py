@@ -407,7 +407,7 @@ Antworte NUR mit dem JSON Array."""
         return findings
 
     async def _store_finding(self, finding: Dict) -> Optional[int]:
-        """Speichert ein Finding via geteilten Helper (Verhalten 1:1)."""
+        """Speichert ein Finding via geteilten Helper (Fehler-Log jetzt Warning statt Debug)."""
         if not hasattr(self.db, "store_finding"):
             return None
         return await self.db.store_finding(

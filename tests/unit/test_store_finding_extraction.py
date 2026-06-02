@@ -18,3 +18,13 @@ async def test_deep_scan_store_finding_delegates_to_helper():
     kwargs = db.store_finding.await_args.kwargs
     assert kwargs["severity"] == "HIGH"
     assert kwargs["affected_project"] == "server"
+
+
+@pytest.mark.asyncio
+async def test_deep_scan_store_finding_no_helper_returns_none():
+    db = object()  # hat KEIN store_finding
+    scanner = DeepScanMode.__new__(DeepScanMode)
+    scanner.db = db
+    fid = await scanner._store_finding({"severity": "LOW", "category": "x",
+                                        "title": "t", "description": "d"})
+    assert fid is None
