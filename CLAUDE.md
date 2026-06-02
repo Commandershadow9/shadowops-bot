@@ -257,6 +257,8 @@ Worker-Konventionen:
 
 ## Letztes Update dieser Datei
 
+2026-06-02 — Cross-Repo-Backlog-Sweep: #292 ki-cost-watchdog Cache-Read/Write-Pricing (0.1×/1.25× Input, `compute_cost()` + Env-Keys) + #293 geteilte `scripts/lib/discord-send.sh` (429-Resilienz: Jitter + Retry-After, eingeklinkt in service-/disk-hygiene-/doku-drift-/memory-watchdog, `bot-watchdog.sh` unberührt). Beide mit Tests, gemerged. Begleit-Doku: discord-send.sh in `.claude/rules/infrastructure.md` Scripts-Tabelle.
+
 2026-05-25 — Auto-Deploy Project-Name-Lookup-Fix (dash↔underscore-Toleranz für `mayday-sim` ↔ `mayday_sim`, neue Regel in `.claude/rules/safety.md`). Anlass: mayday-sim PR #449/#450 lagen 14h ohne Auto-Deploy.
 
 2026-05-24 — Watchdog-Tabelle auf 10 erweitert (shadowops-drift, zerodox-akquise-ai, mayday-ci-runner, mayday-sim-build-drift), Security-Sweep #265/266/268/272 abgearbeitet (siehe CHANGELOG).
