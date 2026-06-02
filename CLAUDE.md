@@ -152,7 +152,7 @@ Read-Only ACL auf `scripts/` und `deploy/` für `keydev` ist gesetzt (`getfacl` 
 - **Async-First:** discord.py + aiohttp — neue I/O ist `async`.
 - **Fehler-Handling:** Niemals leere `except:`. Mindestens loggen + re-raise oder klar entscheiden.
 - **Logging:** `from src.utils.logger import get_logger` — niemals `print()`.
-- **Secrets:** AUSSCHLIESSLICH via Env-Vars (DISCORD_BOT_TOKEN, OPENAI_API_KEY, ANTHROPIC_API_KEY). Niemals in Code, niemals in `config.yaml`.
+- **Secrets:** AUSSCHLIESSLICH via Env-Vars (DISCORD_BOT_TOKEN, OPENAI_API_KEY, ANTHROPIC_API_KEY, GITHUB_TOKEN). Niemals in Code, niemals in `config.yaml`.
 - **Tests:** Neue Module brauchen Tests in `tests/unit/test_<module>.py`. Fixtures in `conftest.py` wiederverwenden.
 - **Conventional Commits:** `fix:`, `feat:`, `refactor:`, `perf:`, `docs:`, `chore:`.
 
@@ -188,6 +188,7 @@ chmod 600 config/config.yaml
 #   export DISCORD_BOT_TOKEN="..."
 #   export OPENAI_API_KEY="..."
 #   export ANTHROPIC_API_KEY="..."
+#   export GITHUB_TOKEN="..."        # Optional: GitHub-Integration + Webhook-Auto-Create
 
 # Lokal testen
 python3 src/bot.py
