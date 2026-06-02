@@ -198,8 +198,13 @@ Call-Sites werden zu `await self.db.store_finding(...)`.
 
 ## 5. Datenmodell
 
-Neue Migration `security_engine/migrations/002_sec_jobs.sql` (analog `seo_jobs`;
-`001_finding_fingerprint.sql` existiert bereits → nächste Nummer ist 002):
+> **Mechanismus (Befund Self-Review):** Es gibt **keinen** Migrations-Runner — alle
+> Tabellen entstehen via `SecurityDB._ensure_schema()` (inline `CREATE TABLE IF NOT
+> EXISTS`), `migrations/001_*.sql` ist faktisch nur Doku. Daher: `sec_jobs` kommt
+> **in `_ensure_schema()`** (operativ), `migrations/002_sec_jobs.sql` bleibt als
+> Doku-Parität zu 001.
+
+`sec_jobs`-DDL (analog `seo_jobs`):
 
 ```sql
 CREATE TABLE IF NOT EXISTS sec_jobs (
