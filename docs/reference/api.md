@@ -341,6 +341,22 @@ Starts a headless Claude CLI session on the server and returns the output as Dis
 
 ---
 
+### Server Setup Commands
+
+#### `/setup-customer-server`
+Creates monitoring channels with correct permission overwrites on a customer Discord server.
+
+**Permissions:** Administrator
+**Parameters:** None
+**Returns:** Confirmation with created channel list per project category
+
+**Example:**
+```
+/setup-customer-server
+```
+
+---
+
 ## Configuration Reference
 
 ### Complete `config/config.yaml` Structure
@@ -496,6 +512,14 @@ log_paths:
   crowdsec: /var/log/crowdsec/crowdsec.log
   docker: /var/log/docker.log
   shadowops: logs/shadowops.log
+
+# ========================================
+# SECURITY AGENT TEAM (P1, default OFF)
+# Env-Override: SECURITY_TEAM_ENABLED=true
+# ========================================
+security_team:
+  enabled: false   # Schaltet Worker-Architektur (security_engine/team/) ein
+                   # Monolith scan_agent.py bleibt Source-of-Truth bis Cutover
 ```
 
 ---
@@ -921,6 +945,21 @@ Die Knowledge Base nutzt PostgreSQL, nicht SQLite. Haupttabellen:
 | `jules_pr_reviews` | PR-State, Lock-Claim, Iteration-Counter fuer Jules Workflow |
 
 DSN kommt aus `config.security_analyst_dsn` (Env: `SECURITY_ANALYST_DB_URL`).
+
+### Agent Learning (PostgreSQL — `agent_learning` DB)
+
+| Tabelle | Zweck |
+|---------|-------|
+| `agent_feedback` | User-Feedback zu Patch Notes (Reactions, Ratings) |
+| `agent_quality_scores` | Qualitaets-Scores pro Patch-Notes-Generation |
+| `agent_knowledge` | Persistiertes Agent-Wissen (Decay-basiert) |
+| `jules_review_examples` | Few-Shot-Beispiele fuer Jules-PR-Reviews |
+| `pn_generations` | Patch-Notes-Generierungen (Input, Output, Modell) |
+| `pn_variants` | A/B-Test-Varianten fuer Prompt-Optimierung |
+| `pn_examples` | Kuratierte Trainingsbeispiele (Quality-Score-gefiltert) |
+| `seo_fix_impact` | Impact-Tracking fuer SEO-Agent-Fixes |
+
+DSN kommt aus `config.agent_learning_dsn` (Env: `AGENT_LEARNING_DB_URL`).
 
 ### Project Monitor State (JSON)
 
