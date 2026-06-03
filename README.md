@@ -369,7 +369,7 @@ shadowops-bot/
 │   │   ├── code_analyzer.py            # Code Structure Analyzer
 │   │   ├── context_manager.py          # RAG Context Manager
 │   │   ├── github_integration/         # GitHub Webhooks + Jules Workflow (Package)
-│   │   ├── security_engine/            # Autonomer SecurityScanAgent + CircuitBreaker + DB
+│   │   ├── security_engine/            # Autonomer SecurityScanAgent + CircuitBreaker + DB + Agent-Team (team/)
 │   │   ├── project_monitor.py          # Multi-Project Monitoring
 │   │   ├── deployment_manager.py       # Auto-Deployment
 │   │   ├── incident_manager.py         # Incident Tracking
@@ -486,7 +486,7 @@ See [CHANGELOG.md](./CHANGELOG.md) for the full version history.
 - **PostgreSQL Databases**: 3 (security_analyst: 21 Tabellen, agent_learning: 7 Tabellen, seo_agent: 11 Tabellen)
 - **Learning Pipeline Tables**: 11 (Security: fix_attempts, fix_verifications, finding_quality, scan_coverage · Shared: agent_feedback, agent_quality_scores, agent_knowledge · Patch Notes: pn_generations, pn_variants, pn_examples · SEO: seo_fix_impact)
 - **Scan Areas**: 10 (firewall, ssh, docker, permissions, packages, services, logs, network, credentials, dependencies)
-- **Discord Commands**: 16 (inkl. /agent-stats, /claude)
+- **Discord Commands**: 20 (inkl. /agent-stats, /claude, /security-engine, /setup-customer-server)
 - **Monitored Projects**: 3 (GuildScout, ZERODOX, AI Agents)
 - **Auto Discord-Posts**: Session-Summaries, Feedback-Auswertungen, Weekly Summary, Meilensteine
 
