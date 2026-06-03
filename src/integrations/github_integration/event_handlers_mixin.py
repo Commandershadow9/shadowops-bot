@@ -72,35 +72,66 @@ class EventHandlersMixin:
                 except Exception as e:
                     self.logger.debug(f"Push Security Review Fehler: {e}")
 
-            # Auto-deploy on direct push is DISABLED for security reasons (PR review gate enforcement).
-            # Deployments should exclusively happen via Pull Request merges.
+            # Auto-deploy bei direktem Push: standardmaessig AUS (PR-Review-Gate) —
+            # nur ein Discord-Alert. Projekte mit `deploy.allow_direct_push: true`
+            # (Opt-in, z.B. ZERODOX/Solo-Operator) deployen aber auch bei direktem
+            # Push — ueber DIESELBE gehaertete wait-for-CI-Pipeline wie PR-Merges
+            # (_trigger_deployment: deploy.sh Pre-Flight-Hard-Gate blockt rote CI).
+            # Per-SHA-Dedup (_reserve_deploy) verhindert Doppel-Deploy, falls ein
+            # PR-Merge sowohl ein push- als auch ein pull_request-Event feuert.
             if self.auto_deploy_enabled and branch in self.deploy_branches:
-                self.logger.warning(
-                    f"⚠️ Auto-deploy for direct push to {branch} skipped for security. "
-                    f"Use a Branch+PR workflow with mandatory review."
-                )
+                full_sha = head_commit or ''
+                short_sha = full_sha[:7] if full_sha else ''
+                if self._project_allows_direct_push(repo_name):
+                    if not self._reserve_deploy(repo_name, full_sha):
+                        self.logger.info(
+                            f"ℹ️ Deploy {normalized_repo}@{short_sha} bereits reserviert "
+                            f"(PR-Event deployt denselben SHA) — Push-Deploy uebersprungen."
+                        )
+                    else:
+                        repo_full_name = payload.get('repository', {}).get('full_name')
+                        self.logger.info(
+                            f"🚀 Direct push to {branch} (allow_direct_push), triggering "
+                            f"deployment (wait-for-CI: repo={repo_full_name}, sha={short_sha})"
+                        )
+                        deploy_task = asyncio.create_task(
+                            self._trigger_deployment(
+                                repo_name,
+                                branch,
+                                short_sha,
+                                repo_full_name=repo_full_name,
+                                full_sha=full_sha,
+                            )
+                        )
+                        self._deploy_tasks.add(deploy_task)
+                        deploy_task.add_done_callback(self._deploy_tasks.discard)
+                else:
+                    self.logger.warning(
+                        f"⚠️ Auto-deploy for direct push to {branch} skipped for security. "
+                        f"Use a Branch+PR workflow with mandatory review."
+                    )
 
-                # Discord-Alert posten: ohne diese Notification entsteht silent
-                # inconsistency (Code in main, nicht deployed). Per-SHA Dedup
-                # verhindert Spam bei force-pushes. Siehe _send_direct_push_alert.
-                head_commit_obj = payload.get('head_commit') or {}
-                commit_msg = head_commit_obj.get('message') or ''
-                if not commit_msg and commits:
-                    commit_msg = commits[-1].get('message', '') or ''
-                try:
-                    await self._send_direct_push_alert(
-                        repo=normalized_repo,
-                        branch=branch,
-                        sha=head_commit or '',
-                        commit_message=commit_msg,
-                        pusher=pusher,
-                    )
-                except Exception as alert_err:
-                    # Alert-Fehler darf den Push-Handler nicht crashen
-                    self.logger.error(
-                        f"❌ Direct-Push-Alert fehlgeschlagen: {alert_err}",
-                        exc_info=True,
-                    )
+                    # Discord-Alert posten: ohne diese Notification entsteht silent
+                    # inconsistency (Code in main, nicht deployed). Per-SHA Dedup
+                    # verhindert Spam bei force-pushes. Siehe _send_direct_push_alert.
+                    head_commit_obj = payload.get('head_commit') or {}
+                    commit_msg = head_commit_obj.get('message') or ''
+                    if not commit_msg and commits:
+                        commit_msg = commits[-1].get('message', '') or ''
+                    try:
+                        await self._send_direct_push_alert(
+                            repo=normalized_repo,
+                            branch=branch,
+                            sha=head_commit or '',
+                            commit_message=commit_msg,
+                            pusher=pusher,
+                        )
+                    except Exception as alert_err:
+                        # Alert-Fehler darf den Push-Handler nicht crashen
+                        self.logger.error(
+                            f"❌ Direct-Push-Alert fehlgeschlagen: {alert_err}",
+                            exc_info=True,
+                        )
 
         except Exception as e:
             self.logger.error(f"❌ Error handling push event: {e}", exc_info=True)
@@ -138,26 +169,37 @@ class EventHandlersMixin:
                     full_merge_sha = pr.get('merge_commit_sha') or ''
                     merge_commit_sha = full_merge_sha[:7] if full_merge_sha else ''
                     repo_full_name = payload.get('repository', {}).get('full_name')
-                    self.logger.info(
-                        f"🚀 PR merged to {target_branch}, triggering deployment "
-                        f"(wait-for-CI: repo={repo_full_name}, sha={merge_commit_sha})"
-                    )
-                    # #478: Deploy als Background-Task starten, NICHT synchron awaiten.
-                    # Synchrones await liess den Webhook-Handler bis zum Deploy-Ende
-                    # blockieren → GitHub-10s-Timeout → 504 → Auto-Deploy galt als
-                    # fehlgeschlagen. Task referenziert halten (GC-Schutz), Aufraeumen
-                    # via done-Callback.
-                    deploy_task = asyncio.create_task(
-                        self._trigger_deployment(
-                            repo_name,
-                            target_branch,
-                            merge_commit_sha,
-                            repo_full_name=repo_full_name,
-                            full_sha=full_merge_sha,
+                    # Per-SHA-Dedup: falls fuer opt-in-Projekte (allow_direct_push)
+                    # bereits das push-Event denselben Merge-SHA reserviert/deployt
+                    # hat, hier NICHT doppelt triggern. Bei reinen PR-Projekten ist
+                    # diese Reservierung der erste/einzige Treffer. Schuetzt zusaetzlich
+                    # vor GitHub-Doppel-Webhooks (vgl. 15×-Trigger-Bug 2026-05-15).
+                    if not self._reserve_deploy(repo_name, full_merge_sha):
+                        self.logger.info(
+                            f"ℹ️ Deploy {repo_name}@{merge_commit_sha} bereits reserviert "
+                            f"(push-Event deployt denselben SHA) — PR-Deploy uebersprungen."
                         )
-                    )
-                    self._deploy_tasks.add(deploy_task)
-                    deploy_task.add_done_callback(self._deploy_tasks.discard)
+                    else:
+                        self.logger.info(
+                            f"🚀 PR merged to {target_branch}, triggering deployment "
+                            f"(wait-for-CI: repo={repo_full_name}, sha={merge_commit_sha})"
+                        )
+                        # #478: Deploy als Background-Task starten, NICHT synchron awaiten.
+                        # Synchrones await liess den Webhook-Handler bis zum Deploy-Ende
+                        # blockieren → GitHub-10s-Timeout → 504 → Auto-Deploy galt als
+                        # fehlgeschlagen. Task referenziert halten (GC-Schutz), Aufraeumen
+                        # via done-Callback.
+                        deploy_task = asyncio.create_task(
+                            self._trigger_deployment(
+                                repo_name,
+                                target_branch,
+                                merge_commit_sha,
+                                repo_full_name=repo_full_name,
+                                full_sha=full_merge_sha,
+                            )
+                        )
+                        self._deploy_tasks.add(deploy_task)
+                        deploy_task.add_done_callback(self._deploy_tasks.discard)
 
         except Exception as e:
             self.logger.error(f"❌ Error handling PR event: {e}", exc_info=True)

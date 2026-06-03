@@ -457,6 +457,20 @@ class CIMixin:
                 exc_info=True,
             )
 
+    def _project_allows_direct_push(self, repo_name: str) -> bool:
+        """True, wenn das Projekt Auto-Deploy bei DIREKTEM Push erlaubt
+        (deploy.allow_direct_push: true). Default False -> nur PR-Merge deployt
+        (PR-Review-Gate). Opt-in pro Projekt fuer Solo-Operator-Workflows (z.B.
+        ZERODOX). Lookup case-insensitive + dash/underscore-tolerant wie in
+        _trigger_deployment."""
+        normalized = repo_name.lower().replace("-", "_")
+        for key in self.config.projects.keys():
+            key_lower = key.lower()
+            if key_lower == repo_name.lower() or key_lower.replace("-", "_") == normalized:
+                deploy_config = self.config.projects[key].get('deploy', {})
+                return bool(deploy_config.get('allow_direct_push', False))
+        return False
+
     async def _trigger_deployment(
         self,
         repo_name: str,

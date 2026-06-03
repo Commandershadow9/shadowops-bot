@@ -126,3 +126,28 @@ class StateMixin:
             return False
         self._mark_commit_inflight(normalized, branch, commit_sha)
         return True
+
+    def _reserve_deploy(self, repo_name: str, full_sha: str, ttl_sec: int = 3600) -> bool:
+        """Reserviert (repo, full_sha) fuer GENAU EINEN Deploy.
+
+        Gibt True zurueck, wenn die Kombination NEU reserviert wurde, sonst False.
+        Verhindert Doppel-Deploy, wenn ein PR-Merge sowohl ein push- als auch ein
+        pull_request-Event feuert (beide tragen denselben Merge-SHA): wer zuerst
+        kommt, deployt; der zweite Handler ueberspringt. In-Memory, TTL-bereinigt
+        (Default 1 h). Ohne full_sha ist kein Dedup moeglich -> True (durchlassen).
+        """
+        if not full_sha:
+            return True
+        import time
+        if not hasattr(self, '_reserved_deploy_shas'):
+            self._reserved_deploy_shas = {}
+        now = time.monotonic()
+        # Abgelaufene Reservierungen aufraeumen
+        self._reserved_deploy_shas = {
+            k: v for k, v in self._reserved_deploy_shas.items() if now - v < ttl_sec
+        }
+        key = (self._normalize_repo_name(repo_name), full_sha)
+        if key in self._reserved_deploy_shas:
+            return False
+        self._reserved_deploy_shas[key] = now
+        return True

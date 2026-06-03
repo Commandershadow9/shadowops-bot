@@ -231,6 +231,10 @@ github:
   webhook_secret: ""                # HMAC-SHA256 Secret (in GitHub Webhook-Settings setzen)
   webhook_port: 8080                # Port fuer eingehende GitHub-Webhooks
   auto_deploy: false                # PR-Merge auf deploy_branches triggert Auto-Deploy
+  # Hinweis: Direkter Push auf deploy_branches deployt standardmaessig NICHT
+  # (nur Discord-Alert, PR-Review-Gate). Pro Projekt via `deploy.allow_direct_push:
+  # true` opt-in-bar (Solo-Operator-Workflow) — laeuft dann ueber dieselbe
+  # gehaertete wait-for-CI-Pipeline; per-SHA-Dedup verhindert Doppel-Deploy.
   deploy_branches:
     - main
     - master
