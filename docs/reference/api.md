@@ -1,7 +1,7 @@
 ---
 title: 🔧 ShadowOps API Documentation v5.1
 status: active
-last_reviewed: 2026-05-18
+last_reviewed: 2026-06-03
 owner: CommanderShadow9
 ---
 
@@ -698,8 +698,10 @@ Fallback auf das jeweils andere Modell bei Timeout oder leerer Response.
 ```python
 from src.integrations.knowledge_base import KnowledgeBase
 
-# Initialize
-kb = KnowledgeBase(db_path="data/knowledge_base.db")
+# Initialize (reads DSN from config.security_analyst_dsn / SECURITY_ANALYST_DB_URL)
+kb = KnowledgeBase()
+# Or pass DSN explicitly:
+# kb = KnowledgeBase(dsn="postgresql://user:pass@127.0.0.1:5433/security_analyst")
 
 # Record a fix
 kb.record_fix(
@@ -919,6 +921,8 @@ Die Knowledge Base nutzt PostgreSQL, nicht SQLite. Haupttabellen:
 | `scan_coverage` | Coverage-Tracking pro Scan-Area und Projekt |
 | `remediation_status` | Cross-Mode Lock fuer laufende Fixes |
 | `jules_pr_reviews` | PR-State, Lock-Claim, Iteration-Counter fuer Jules Workflow |
+| `sec_jobs` | Security-Agent-Team Job-Queue (status, project, worker_type, token_cost) |
+| `findings.finding_fingerprint` | Dedup-Index auf `findings` (hinzugefuegt als idempotente Migration) |
 
 DSN kommt aus `config.security_analyst_dsn` (Env: `SECURITY_ANALYST_DB_URL`).
 
