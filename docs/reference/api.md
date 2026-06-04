@@ -442,6 +442,7 @@ projects:
       test_command: pytest tests/           # Test command
       post_deploy_command: pip install -r requirements.txt  # Post-deploy command
       service_name: shadowops-bot           # Systemd service name
+      allow_direct_push: false              # Opt-in: Auto-Deploy auch bei direktem Push (Solo-Operator)
 
   guildscout:
     enabled: true
@@ -462,7 +463,9 @@ github:
   enabled: false                            # Enable GitHub webhooks
   webhook_secret: "your_webhook_secret_here"  # HMAC secret for verification
   webhook_port: 8080                        # Webhook server port
-  auto_deploy: false                        # Auto-deploy on push (RECOMENDED: false for security)
+  auto_deploy: false                        # Auto-deploy bei PR-Merge auf deploy_branches (default false)
+                                            # Direkter Push deployt NIE automatisch (nur Discord-Alert)
+                                            # Ausnahme: per-Projekt deploy.allow_direct_push: true (opt-in)
   deploy_branches:                          # Branches that trigger deployments
     - main
     - master
@@ -528,7 +531,7 @@ ShadowOps can receive GitHub webhook events for auto-deployment.
 #### Push Events
 Triggers when code is pushed to repository.
 
-**Auto-Deploy Trigger:** If push is to a deploy branch (e.g., `main`)
+**Auto-Deploy Trigger:** Nur wenn `deploy.allow_direct_push: true` fuer das Projekt gesetzt ist (per-Projekt opt-in, default false). Ohne dieses Flag: Discord-Alert, kein Deploy.
 
 **Discord Notification:** Always sent with:
 - Repository name
