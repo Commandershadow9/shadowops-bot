@@ -516,6 +516,11 @@ log_paths:
 # ========================================
 # SECURITY AGENT TEAM (P1, default OFF)
 # Env-Override: SECURITY_TEAM_ENABLED=true
+#
+# Worker-ENV (nur relevant wenn enabled=true, werden von runner.py gelesen):
+#   SECURITY_ANALYST_DB_URL  PostgreSQL-DSN fuer SecurityDB (Pflicht fuer Worker)
+#                            Fallback: DATABASE_URL
+#   REDIS_URL                Redis-URL fuer Job-Channels (default: redis://127.0.0.1:6379/0)
 # ========================================
 security_team:
   enabled: false   # Schaltet Worker-Architektur (security_engine/team/) ein
