@@ -4,11 +4,10 @@
 
 **ShadowOps** ist ein **vollständig autonomer Security Guardian** mit lernfähigem AI Security Analyst, KI-gesteuerter Auto-Remediation, adaptiver Session-Steuerung und wachsender Knowledge-DB — kein statischer Scanner, sondern ein **System das aus seinen Erfahrungen lernt und immer besser wird**.
 
-> 📖 **Security Analyst Doku:** [docs/SECURITY_ANALYST.md](./docs/SECURITY_ANALYST.md)
-> 📚 **Dokumentations-Übersicht:** [DOCS_OVERVIEW.md](./DOCS_OVERVIEW.md)
-> 🔧 **API Dokumentation:** [docs/reference/api.md](./docs/reference/api.md)
-> 🚀 **Setup Guide:** [docs/SETUP_GUIDE.md](./docs/SETUP_GUIDE.md)
-> 📐 **Learning Pipeline Design:** [docs/plans/2026-03-18-analyst-learning-pipeline-design.md](./docs/plans/2026-03-18-analyst-learning-pipeline-design.md)
+> **Security Engine Doku:** [docs/architecture/security-engine/README.md](./docs/architecture/security-engine/README.md)
+> **Dokumentations-Uebersicht:** [docs/README.md](./docs/README.md)
+> **API Dokumentation:** [docs/reference/api.md](./docs/reference/api.md)
+> **Setup Guide:** [docs/operations/setup.md](./docs/operations/setup.md)
 
 ## ⚡ Highlights v5.1
 
@@ -541,9 +540,9 @@ tail -f logs/shadowops.log | grep deployment
 
 ### Vollständige Dokumentation
 
-- 📖 [Setup Guide](./docs/SETUP_GUIDE.md) - Schritt-für-Schritt Installation
-- 🔧 [API Documentation](./docs/reference/api.md) - Vollständige API-Referenz
-- 📚 [Docs Overview](./DOCS_OVERVIEW.md) - Dokumentations-Index
+- [Setup Guide](./docs/operations/setup.md) - Schritt-fuer-Schritt Installation
+- [API Documentation](./docs/reference/api.md) - Vollstaendige API-Referenz
+- [Docs Overview](./docs/README.md) - Dokumentations-Index
 
 ### Bei Problemen
 

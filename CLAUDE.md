@@ -69,9 +69,9 @@ shadowops-bot/
 │       └── auto-label-pr.yml          # Auto-Labeling nach Conventional Commits
 ├── scripts/                      # Wartungs-Skripte
 ├── docs/
-│   ├── SECURITY_ANALYST.md
-│   ├── SETUP_GUIDE.md
-│   ├── reference/api.md
+│   ├── reference/api.md          # API-Referenz
+│   ├── architecture/             # Tiefen-Doku (security-engine/, jules-workflow/, multi-agent-review/)
+│   ├── operations/               # Setup, Rollout, Daily-Ops (setup.md, quickstart.md, ...)
 │   ├── adr/                      # Architecture Decision Records
 │   ├── design/                   # Design-Dokumente (aktuelle Planung)
 │   └── plans/                    # Aeltere Design-Dokumente (archiviert)
@@ -248,7 +248,7 @@ sudo journalctl -u shadowops-bot -f
 2. Im `event_watcher.py` registrieren.
 3. Config-Key in `config.example.yaml` ergaenzen.
 4. Test mit Mock-Subprocess-Output.
-5. README + `docs/SECURITY_ANALYST.md` updaten.
+5. README + `docs/architecture/security-engine/README.md` updaten.
 
 ### Neuen AI-Provider als Engine
 1. Klasse in `ai_engine.py` analog zu `CodexEngine` / `ClaudeEngine`.
@@ -272,15 +272,15 @@ Worker-Konventionen:
 
 ## Statistik (Stand v5.1)
 
-20.000+ LoC, 700+ Tests, 3 PostgreSQL DBs (21+7+11 Tabellen), 4 Security-Integrationen, 15 Discord-Commands, 3 Monitored Projects (GuildScout, ZERODOX, AI Agents).
+20.000+ LoC, 700+ Tests, 3 PostgreSQL DBs (21+7+11 Tabellen), 4 Security-Integrationen, 20 Discord-Commands, 3 Monitored Projects (GuildScout, ZERODOX, AI Agents).
 
 ## Aktuelle Doku
 
 - [README.md](./README.md)
-- [docs/SECURITY_ANALYST.md](./docs/SECURITY_ANALYST.md)
-- [docs/SETUP_GUIDE.md](./docs/SETUP_GUIDE.md)
+- [docs/architecture/security-engine/README.md](./docs/architecture/security-engine/README.md)
+- [docs/operations/setup.md](./docs/operations/setup.md)
 - [docs/reference/api.md](./docs/reference/api.md)
-- [DOCS_OVERVIEW.md](./DOCS_OVERVIEW.md)
+- [docs/README.md](./docs/README.md)
 - [config/DO-NOT-TOUCH.md](./config/DO-NOT-TOUCH.md)
 
 ## Letztes Update dieser Datei
