@@ -473,6 +473,9 @@ projects:
 
 # ========================================
 # GITHUB INTEGRATION (v3.1)
+# GITHUB_TOKEN (Env-Var, optional): GitHub API-Token fuer Webhook-Erstellung,
+#   Label-Anlage und Auto-Merge-Calls. GH_TOKEN wird als Fallback akzeptiert
+#   (webhook_mixin.py: os.getenv('GITHUB_TOKEN') or os.getenv('GH_TOKEN')).
 # ========================================
 github:
   enabled: false                            # Enable GitHub webhooks
