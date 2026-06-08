@@ -482,7 +482,7 @@ See [CHANGELOG.md](./CHANGELOG.md) for the full version history.
 - **AI Engines**: 2 (Codex CLI + Claude CLI)
 - **AI Models**: 6 (gpt-4o, gpt-5.3-codex, o3, claude-sonnet-4-6, claude-opus-4-6)
 - **Security Integrations**: 4 (Fail2ban, CrowdSec, AIDE, Trivy)
-- **PostgreSQL Databases**: 3 (security_analyst: 21 Tabellen, agent_learning: 7 Tabellen, seo_agent: 11 Tabellen)
+- **PostgreSQL Databases**: 3 (security_analyst: 21 Tabellen, agent_learning: 8 Tabellen, seo_agent: 11 Tabellen)
 - **Learning Pipeline Tables**: 11 (Security: fix_attempts, fix_verifications, finding_quality, scan_coverage · Shared: agent_feedback, agent_quality_scores, agent_knowledge · Patch Notes: pn_generations, pn_variants, pn_examples · SEO: seo_fix_impact)
 - **Scan Areas**: 10 (firewall, ssh, docker, permissions, packages, services, logs, network, credentials, dependencies)
 - **Discord Commands**: 20 (inkl. /agent-stats, /claude, /security-engine, /setup-customer-server)
