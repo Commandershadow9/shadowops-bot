@@ -16,6 +16,43 @@ class AdminCog(commands.Cog):
         self.bot = bot
         self.logger = bot.logger
 
+    @app_commands.command(
+        name="maintenance",
+        description="🔧 Auto-Heal pausieren/fortsetzen (global oder pro Projekt)",
+    )
+    @app_commands.checks.has_permissions(administrator=True)
+    async def maintenance_command(
+        self,
+        interaction: discord.Interaction,
+        scope: str,
+        state: str,
+        minutes: int = 60,
+        reason: str = "",
+    ):
+        """Slash Command: /maintenance <scope> <on|off> [minutes] [reason].
+
+        Pausiert das Auto-Heal des MaintenanceGate für ein Projekt oder global
+        (Checks laufen weiter, nur Heilung wird unterdrückt). scope=global wirkt
+        auf alle Projekte."""
+        from integrations.maintenance_gate import apply_maintenance_command
+
+        await interaction.response.defer()
+        pm = getattr(self.bot, "project_monitor", None)
+        gate = getattr(pm, "_maintenance_gate", None) if pm else None
+        if gate is None:
+            await interaction.followup.send(
+                "❌ Monitoring-Engine (MaintenanceGate) nicht verfügbar."
+            )
+            return
+        try:
+            msg = apply_maintenance_command(
+                gate, scope, state, minutes=minutes, reason=reason
+            )
+        except ValueError as e:
+            await interaction.followup.send(f"❌ {e}")
+            return
+        await interaction.followup.send(msg)
+
     @app_commands.command(name="scan", description="Trigger manuellen Docker Security Scan")
     @app_commands.checks.has_permissions(administrator=True)
     async def scan_command(self, interaction: discord.Interaction):

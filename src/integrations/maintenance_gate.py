@@ -45,3 +45,25 @@ class MaintenanceGate:
         """True, wenn Auto-Heal für ``project`` aktuell unterdrückt ist
         (global oder projektspezifisch)."""
         return self._active(self.GLOBAL) or self._active(project)
+
+
+def apply_maintenance_command(
+    gate: "MaintenanceGate",
+    scope: str,
+    state: str,
+    minutes: int = 60,
+    reason: str = "",
+) -> str:
+    """Pure Command-Logik für /maintenance: wendet on/off auf das Gate an und
+    gibt einen Bestätigungstext zurück. Vom Discord-Command + Tests genutzt."""
+    state = state.strip().lower()
+    if state == "on":
+        gate.enable(scope, minutes=minutes, reason=reason or "manuell")
+        return (
+            f"🔧 Wartung **AKTIV** für `{scope}` ({minutes} Min) — Auto-Heal "
+            f"pausiert. Grund: {reason or 'manuell'}"
+        )
+    if state == "off":
+        gate.disable(scope)
+        return f"✅ Wartung **BEENDET** für `{scope}` — Auto-Heal wieder aktiv."
+    raise ValueError("state muss 'on' oder 'off' sein")
