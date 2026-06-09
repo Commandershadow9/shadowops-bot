@@ -84,6 +84,7 @@ shadowops-bot/
 ### Module unter `src/integrations/`
 
 - `ai_engine.py` — Dual-Engine Router (Codex Primary, Claude Fallback)
+- `ai_learning/` — Kontinuierlicher Lernagent: Echtzeit-Systemanalyse, Git-Commit-Mustererkennung, Code-Struktur-Analyse, Security-Event-Korrelation via AI Engine. Klassen: ContinuousLearningAgent, LearningInsight, LearningSession (continuous_learning_agent.py); knowledge_db.py, knowledge_synthesizer.py.
 - `smart_queue.py` — Analyse-Pool (Semaphore=3) + serieller Fix-Lock + Circuit Breaker
 - `verification.py` — Pre-Push Pipeline (Confidence ≥85% → Tests → Claude-Verify → KB-Check)
 - `orchestrator/` — Multi-Event-Batching (10s Fenster) + Approval-Flow (Package: core, batch_mixin, planner_mixin, executor_mixin, recovery_mixin, discord_mixin, models)
