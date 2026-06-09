@@ -1,0 +1,64 @@
+# Monitoring-Inventar (Single Source of Truth)
+
+> **Zweck:** Vollständige Liste *aller* Health/Monitoring/Auto-Heal-Mechanismen über alle Projekte. Diese Datei ist die SSoT für die Migration zur zentralen ShadowOps-Engine (Spec: `docs/2026-06-09-zentrales-monitoring-auto-health-design.md`). Sie existiert, damit beim nächsten Server-Umzug **kein Check verloren geht** (Lehre aus mayday-sim#491).
+>
+> **Stand:** 2026-06-09 (Phase 0). **Status-Spalte:** `aktiv` = läuft als Cron/Watchdog · `→ Engine` = soll in ShadowOps wandern · `Dead-Man` = bleibt bewusst extern · `abgelöst:<id>` = von ShadowOps übernommen (nach Cut-over-Kriterien §8).
+
+## Legende Ziel-Check-Typ / Heal-Stufe
+
+- **Check-Typen:** `http` · `script` (synthetic) · `resource` (disk/mem/netz) · `container` · `report` (kein Health/Heal)
+- **Heal-Stufen:** `reversible-auto` (Container/Service/Netz-Restart, autonom) · `approval` (riskant, Discord-Freigabe) · `alert-only`
+
+---
+
+## 1 · cmdshadow-Crontab — Health/Monitoring-Crons
+
+| id | Script | Intervall | Kategorie | Ziel-Typ | Heal heute | Status |
+|---|---|---|---|---|---|---|
+| zerodox-health | `cron-health-check.sh` | */10 | liveness | `http` | alert-only (curl /api/cron/health) | → Engine |
+| zerodox-onboarding-smoke | `synthetic-monitor.sh` | */15 | funktional | `script` | alert-only | → Engine |
+| akquise-liveness | `akquise-ai-watchdog.sh` | */5 | liveness | `http` (:9300) | alert-only | → Engine |
+| akquise-synthetic | `akquise-ai-synthetic-check.sh` | */15 | funktional | `script` | alert-only | → Engine |
+| agent-listener | `cron-agent-listener-health.sh` | */5 | funktional | `http`/`script` | alert-only (pg_notify-Listener) | → Engine |
+| analytics-bridge | `ensure-analytics-network.sh` | @reboot+*/10 | resource/netz | `container` | **network-reconnect** (reversible-auto) | → Engine |
+| ci-main-health | `ci-main-health-check.sh` | hourly | meta/CI | `http` (GitHub) | alert-only | → Engine (oder report) |
+| billing-pdf-drift | `billing-pdf-drift-check` (curl) | daily 04:50 | business | `http` | alert-only | → Engine |
+| soak-monitor | `cron-soak-monitor.sh` | daily 07:30 | report | `report` | — | Phase-0-Entscheid (bleibt Cron) |
+| stale-pr-monitor | `cron-stale-pr-monitor.sh` | Mo 06:00 | report | `report` | — | bleibt Cron |
+| backup-monitor | `cron-backup-monitor.sh` | Mo 07:00 | report | `report` | — | bleibt Cron |
+
+> **Phase-0-Entscheidung (Defaults):** Report-only-Crons (soak/stale-pr/backup-monitor) bleiben vorerst Cron — kein Health/Heal, niedrige Prio. ci-main-health kann als `http`-Check rein.
+
+## 2 · user-systemd Watchdog-Schicht (~14 aktiv / 28 Units)
+
+| Watchdog | Mode | Target | Ziel-Typ | Status |
+|---|---|---|---|---|
+| **shadowops-watchdog** | http | :8766/health (bot_ready Pflicht) | — | **Dead-Man (bleibt extern)** |
+| **shadowops-drift-watchdog** | systemd-state + drift | shadowops-bot State + NRestarts-Loop | — | **Dead-Man (bleibt extern)** |
+| zerodox-watchdog | http | https://zerodox.de/api/health | `http` | → Engine |
+| guildscout-watchdog | http | localhost:8765/health | `http` | → Engine |
+| mayday-sim-watchdog | http | 127.0.0.1:3200/api/health | `http` | → Engine |
+| zerodox-akquise-ai-watchdog | http | 172.19.0.1:9300/health | `http` | → Engine |
+| mayday-ci-runner-watchdog | http + jq | 10.8.0.10:9100/health (`.components.ci_runner.ok`) | `http` | → Engine |
+| mayday-sim-build-drift-watchdog | build-drift | :3200/api/build-id vs origin/main | `script` | → Engine |
+| disk-hygiene-watchdog | disk + auto-prune | Disk >85% prune, >90% alarm | `resource` | → Engine (heal: disk-prune = reversible-auto) |
+| memory-watchdog | meminfo | RAM ≥90% / Swap ≥80% | `resource` | → Engine |
+| ai-agent-framework-watchdog | systemd | guildscout-feedback/zerodox-support/seo-agent | `container`/`http` | → Engine |
+| cmdshadow-design-watchdog (+healthcheck) | systemd-result | cmdshadow-design-healthcheck (max_age 36h) | `script` | → Engine |
+| doku-drift-watchdog | doku-drift | Container-Ports vs Port-Map + MEMORY.md-Limit | `report` | bleibt (oder report) |
+| ki-cost-watchdog | ki-cost | Token/Kosten-Rollup Claude+Codex | `report` | bleibt (report) |
+| check-worker-drift | systemd | Worker-Daemon-Drift | `script` | → Engine |
+
+## 3 · ShadowOps `project_monitor` — was schon zentral läuft
+
+Bestehende `_check_*`-Methoden pro Projekt (HTTP-health, systemd, TCP, log-pattern, disk, memory, container-restart, SSL-cert, backup-freshness, db-pool, failed-login, onboarding-smoke, critical-endpoint-5xx) + `auto_remediation` (balanced approval, AI-Fix codex→claude). **Diese bleiben** — die deklarative `checks:`-Schicht (neu) ergänzt sie und löst die verstreuten Crons/Watchdogs ab.
+
+## 4 · Offen für Phase-0-Vervollständigung
+
+- [ ] GuildScout-/MayDay-eigene Crons (`/srv/leitstelle/scripts/cron-*.sh`, GuildScout-Container-Crons) — separat katalogisieren, falls Checks außerhalb der cmdshadow-Crontab existieren.
+- [ ] Watchdog-Webhook-Targets je Unit (`~/.config/shadowops-watchdog.env`) dokumentieren.
+- [ ] Pro `→ Engine`-Eintrag: deklarativen `checks:`-Block in config.yaml schreiben (Plan 2/3).
+
+## 5 · Migrations-Status-Tracking
+
+Wenn ein Check via ShadowOps `checks:` übernommen + nach Cut-over-Kriterien (Spec §8) verifiziert ist: Status hier auf `abgelöst:<check-id>` setzen und Alt-Cron/-Watchdog `disable` (48 h Beobachtung, dann entfernen). Dead-Man-Einträge werden **nie** abgelöst.
