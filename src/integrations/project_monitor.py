@@ -127,6 +127,11 @@ class ProjectStatus:
         # TCP-Port-basiertes Health-Checking (für DB-Ports etc.)
         self.tcp_ports = config.get('tcp_ports', [])
 
+        # Deklarative Checks (zentrale Monitoring-Engine) — ein YAML-Eintrag pro
+        # Check unter monitor.checks. Leer = nur die klassischen _check_*-Methoden.
+        from src.integrations.check_definitions import CheckDefinition
+        self.checks = [CheckDefinition.from_dict(c) for c in config.get('checks', [])]
+
         # Current status
         self.is_online = False
         self.last_check_time: Optional[datetime] = None
@@ -297,6 +302,18 @@ class ProjectMonitor:
         # Pro Check + Project: Wann zuletzt ausgefuehrt? (Min-Intervall-Filter)
         self._health_check_last_run: Dict[str, datetime] = {}
 
+        # ── Zentrale Monitoring-Engine: deklarative Checks + gestuftes Heal ──────
+        from src.integrations.check_runner import CheckRunner
+        from src.integrations.heal_executor import HealExecutor
+        from src.integrations.maintenance_gate import MaintenanceGate
+        self._maintenance_gate = MaintenanceGate()
+        self._check_runner = CheckRunner(base_url_resolver=self._resolve_check_url)
+        self._heal_executor = HealExecutor(
+            shell_runner=self._run_shell,
+            approval_cb=self._request_heal_approval,
+            max_per_hour=5,
+        )
+
         self.logger.info(f"🔧 Project Monitor initialized with {len(self.projects)} projects")
 
     def _load_projects(self):
@@ -465,6 +482,10 @@ class ProjectMonitor:
                 # Schliesst Luecke: Buchungs-Endpoint defekt, niemand merkt, Kunden verloren.
                 await self._check_critical_endpoint_5xx_rate(project)
 
+                # Zentrale Monitoring-Engine: deklarative checks: aus config.yaml
+                # (http/script/...) + gestuftes Heal, sofern nicht in Wartung.
+                await self._run_declarative_checks(project)
+
                 await asyncio.sleep(project.check_interval)
 
             except asyncio.CancelledError:
@@ -475,6 +496,47 @@ class ProjectMonitor:
                     exc_info=True
                 )
                 await asyncio.sleep(project.check_interval)
+
+    def _resolve_check_url(self, project_name: str, target: str) -> str:
+        """Relativen Check-Pfad an die Projekt-Basis-URL haengen; absolute URL
+        (http...) unveraendert lassen."""
+        if target.startswith("http"):
+            return target
+        base = self.projects[project_name].url.strip()
+        if "//" in base:
+            scheme, rest = base.split("//", 1)
+            host = rest.split("/", 1)[0]
+            base = f"{scheme}//{host}"
+        return base.rstrip("/") + target
+
+    async def _run_shell(self, cmd: str) -> int:
+        """Shell-Kommando fuer reversible Heal-Aktionen ausfuehren -> Exit-Code."""
+        proc = await asyncio.create_subprocess_shell(cmd)
+        await proc.communicate()
+        return proc.returncode or 0
+
+    async def _request_heal_approval(self, project_name: str, check_id: str, policy) -> bool:
+        """Discord-Approval fuer riskante Heal-Aktionen. Bis zur Verdrahtung mit
+        dem auto_remediation-Approval-Workflow konservativ False: nichts
+        Riskantes wird ohne explizite Freigabe ausgefuehrt."""
+        return False
+
+    async def _run_declarative_checks(self, project: ProjectStatus) -> None:
+        """Fuehrt die deklarativen checks: des Projekts aus. Bei FAIL wird —
+        sofern das MaintenanceGate nicht aktiv ist — gemaess Heal-Policy
+        geheilt (reversibel autonom, riskant per Approval)."""
+        from src.integrations.check_definitions import CheckStatus
+        for check in getattr(project, "checks", []):
+            ckey = f"decl:{check.id}"
+            if not self._should_run_health_check(project, ckey):
+                continue
+            self._mark_health_check_ran(project, ckey)
+            result = await self._check_runner.run(check, project.name)
+            if result.status is CheckStatus.OK:
+                continue
+            if self._maintenance_gate.is_suppressed(project.name):
+                continue  # Wartung -> kein Heal
+            await self._heal_executor.heal(project.name, check.id, check.heal)
 
     async def _check_project_health(self, project: ProjectStatus):
         """
