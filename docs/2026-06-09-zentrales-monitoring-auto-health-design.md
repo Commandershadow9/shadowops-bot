@@ -205,3 +205,18 @@ Pro migriertem Check muss **alles** erfüllt sein, bevor das Alt-System (Cron/Wa
 ---
 
 *Nächster Schritt nach Spec-Approval: Implementierungsplan via writing-plans (Phase 0 zuerst — Inventar).*
+
+---
+
+## Status — Plan 1 (Engine-Grundlage) ABGESCHLOSSEN + verifiziert (2026-06-10)
+
+Plan 1 (`docs/plans/2026-06-09-monitoring-engine-grundlage-plan.md`) ist live auf `main`:
+- **4 Engine-Module** (CheckDefinition/CheckRunner/HealExecutor/MaintenanceGate) + ProjectMonitor-Integration + `/maintenance`-Command + Monitoring-Inventar (`docs/MONITORING_INVENTORY.md`).
+- **Adversarialer Multi-Linsen-Review** (26 Findings) umgesetzt: Discord-Alert bei jedem Nicht-HEALED-Outcome, Shell-Sicherheit (argv-exec statt Shell-String), Flake-Filter, JSON-Assertion, gather-Parallelität, Input-Validierung.
+- **52 Engine-Tests + 1331 Suite grün.**
+- **Real-Chaos-Verifikation bestanden:** Wegwerf-Container real gestoppt → Engine erkannte FAIL → autonomer `docker restart` → Container up (~42s) + Discord-Alert end-to-end (#🚨-critical). Eindeutig die Engine (`--restart=no`).
+- **Lektion (Real-Chaos fand Unit-Tests verfehlten):** Bot läuft mit `PYTHONPATH=src` → Paket-interne Imports MÜSSEN relativ sein (`from .x`), sonst crasht der gesamte Project Monitor trotz grüner Tests.
+
+**Engine läuft dormant** (keine `checks:` in config.yaml) — bereit für **Plan 2** (ZERODOX-Migration: echte Checks aus dem Inventar deklarativ aktivieren, Parallelbetrieb, Cut-over nach §8) und **Plan 3** (GuildScout/MayDay + Dead-Man-Härtung).
+
+**Offener Infra-Befund (separat, nicht Engine):** `redis`/`pydantic`/`dotenv`/`psycopg2` fehlen in `pyproject.toml` main-deps (nur in `requirements.txt`) → jedes `uv sync` baut ein unvollständiges venv. Deploy excludet `.venv` (aktuell ok), aber pyproject ↔ requirements sollte konsolidiert werden (`uv add`), sonst killt der nächste `uv sync` Runtime-Deps.
