@@ -99,3 +99,16 @@ def test_heal_unknown_action_raises():
             "id": "x", "type": "http", "target": "/h", "interval": 60,
             "heal": {"action": "nuke", "target": "c"},
         })
+
+
+def test_check_definition_headers():
+    cd = CheckDefinition.from_dict({
+        "id": "x", "type": "http", "target": "/h", "interval": 60,
+        "headers": {"X-Agent-Key": "$ZERODOX_AGENT_API_KEY"},
+    })
+    assert cd.headers == {"X-Agent-Key": "$ZERODOX_AGENT_API_KEY"}
+
+
+def test_check_definition_headers_default_empty():
+    cd = CheckDefinition.from_dict({"id": "x", "type": "http", "target": "/h", "interval": 60})
+    assert cd.headers == {}

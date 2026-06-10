@@ -90,6 +90,7 @@ class CheckDefinition:
     expect: dict[str, Any] = field(default_factory=dict)  # z.B. {"status": 200}
     heal: HealPolicy = field(default_factory=HealPolicy)
     flake_polls: int = 1  # konsekutive Fehl-Polls vor Alert (Flake-Filter)
+    headers: dict[str, Any] = field(default_factory=dict)  # HTTP-Header; Werte mit $VAR werden aus os.environ aufgelöst
 
     # Längen-Limits gegen versehentlich riesige config-Werte
     _MAX_ID = 100
@@ -146,6 +147,7 @@ class CheckDefinition:
             expect=d.get("expect", {}),
             heal=HealPolicy.from_dict(d.get("heal")),
             flake_polls=flake_polls,
+            headers=d.get("headers", {}),
         )
 
 

@@ -32,7 +32,7 @@ def _fake_session(resp: _FakeResp):
             return False
 
     class _Session:
-        def get(self, url):
+        def get(self, url, headers=None):
             return _GetCM()
 
         async def __aenter__(self):
@@ -197,4 +197,124 @@ async def test_resource_type_returns_error_not_crash():
     runner = CheckRunner(base_url_resolver=lambda p, t: t)
     result = await runner.run(cd, project_name="zerodox")
     assert result.status is CheckStatus.ERROR
-    assert "Plan 2" in result.message
+    assert "Plan 3" in result.message
+
+
+# ── HTTP-Header mit $ENV-Auflösung (Plan 2) ─────────────────────────────────
+
+@pytest.mark.asyncio
+async def test_http_resolves_env_header(monkeypatch):
+    monkeypatch.setenv("ZERODOX_AGENT_API_KEY", "secret123")
+    cd = CheckDefinition.from_dict(
+        {"id": "h", "type": "http", "target": "/h", "interval": 60,
+         "expect": {"status": 200}, "headers": {"X-Agent-Key": "$ZERODOX_AGENT_API_KEY"}}
+    )
+    captured = {}
+
+    def _sess(resp):
+        class _G:
+            async def __aenter__(s):
+                return resp
+
+            async def __aexit__(s, *a):
+                return False
+
+        class _S:
+            def get(s, url, headers=None):
+                captured["headers"] = headers
+                return _G()
+
+            async def __aenter__(s):
+                return s
+
+            async def __aexit__(s, *a):
+                return False
+
+        return _S()
+
+    runner = CheckRunner(base_url_resolver=lambda p, t: t)
+    with patch("aiohttp.ClientSession", return_value=_sess(_FakeResp(200))):
+        result = await runner.run(cd, project_name="zerodox")
+    assert result.status is CheckStatus.OK
+    assert captured["headers"] == {"X-Agent-Key": "secret123"}
+
+
+@pytest.mark.asyncio
+async def test_http_literal_header_unchanged():
+    cd = CheckDefinition.from_dict(
+        {"id": "h", "type": "http", "target": "/h", "interval": 60,
+         "expect": {"status": 200}, "headers": {"X-Static": "literal-value"}}
+    )
+    captured = {}
+
+    def _sess(resp):
+        class _G:
+            async def __aenter__(s):
+                return resp
+
+            async def __aexit__(s, *a):
+                return False
+
+        class _S:
+            def get(s, url, headers=None):
+                captured["headers"] = headers
+                return _G()
+
+            async def __aenter__(s):
+                return s
+
+            async def __aexit__(s, *a):
+                return False
+
+        return _S()
+
+    runner = CheckRunner(base_url_resolver=lambda p, t: t)
+    with patch("aiohttp.ClientSession", return_value=_sess(_FakeResp(200))):
+        await runner.run(cd, project_name="zerodox")
+    assert captured["headers"] == {"X-Static": "literal-value"}
+
+
+# ── container-Check (network-attached, Plan 2) ──────────────────────────────
+
+@pytest.mark.asyncio
+async def test_container_network_attached_ok():
+    cd = CheckDefinition.from_dict(
+        {"id": "br", "type": "container", "target": "guildscout-postgres", "interval": 600,
+         "expect": {"network": "project_sicherheitsdienst-network"}}
+    )
+    runner = CheckRunner(base_url_resolver=lambda p, t: t)
+    proc = Mock()
+    proc.returncode = 0
+    proc.communicate = AsyncMock(
+        return_value=(b'{"project_sicherheitsdienst-network":{},"other":{}}', b"")
+    )
+    with patch("asyncio.create_subprocess_exec", AsyncMock(return_value=proc)):
+        result = await runner.run(cd, project_name="zerodox")
+    assert result.status is CheckStatus.OK
+
+
+@pytest.mark.asyncio
+async def test_container_network_detached_fails():
+    cd = CheckDefinition.from_dict(
+        {"id": "br", "type": "container", "target": "guildscout-postgres", "interval": 600,
+         "expect": {"network": "project_sicherheitsdienst-network"}}
+    )
+    runner = CheckRunner(base_url_resolver=lambda p, t: t)
+    proc = Mock()
+    proc.returncode = 0
+    proc.communicate = AsyncMock(return_value=(b'{"other-network":{}}', b""))
+    with patch("asyncio.create_subprocess_exec", AsyncMock(return_value=proc)):
+        result = await runner.run(cd, project_name="zerodox")
+    assert result.status is CheckStatus.FAIL
+    assert "project_sicherheitsdienst-network" in result.message
+
+
+@pytest.mark.asyncio
+async def test_container_missing_network_in_expect_errors():
+    cd = CheckDefinition.from_dict(
+        {"id": "br", "type": "container", "target": "x", "interval": 600}
+    )
+    runner = CheckRunner(base_url_resolver=lambda p, t: t)
+    result = await runner.run(cd, project_name="zerodox")
+    assert result.status is CheckStatus.ERROR
+    assert "expect.network" in result.message
