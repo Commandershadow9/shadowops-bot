@@ -16,7 +16,7 @@ from collections import defaultdict, deque
 from enum import Enum
 from typing import Awaitable, Callable
 
-from src.integrations.check_definitions import HealPolicy, HealAction
+from .check_definitions import HealPolicy, HealAction
 
 # exec-Runner: bekommt eine argv-Liste (kein Shell), liefert Exit-Code.
 ExecRunner = Callable[[list], Awaitable[int]]

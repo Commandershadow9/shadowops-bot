@@ -15,7 +15,7 @@ from typing import Any, Callable
 
 import aiohttp
 
-from src.integrations.check_definitions import (
+from .check_definitions import (
     CheckDefinition,
     CheckType,
     CheckResult,

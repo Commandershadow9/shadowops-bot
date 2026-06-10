@@ -129,7 +129,7 @@ class ProjectStatus:
 
         # Deklarative Checks (zentrale Monitoring-Engine) — ein YAML-Eintrag pro
         # Check unter monitor.checks. Leer = nur die klassischen _check_*-Methoden.
-        from src.integrations.check_definitions import CheckDefinition
+        from .check_definitions import CheckDefinition
         self.checks = [CheckDefinition.from_dict(c) for c in config.get('checks', [])]
 
         # Current status
@@ -303,9 +303,9 @@ class ProjectMonitor:
         self._health_check_last_run: Dict[str, datetime] = {}
 
         # ── Zentrale Monitoring-Engine: deklarative Checks + gestuftes Heal ──────
-        from src.integrations.check_runner import CheckRunner
-        from src.integrations.heal_executor import HealExecutor
-        from src.integrations.maintenance_gate import MaintenanceGate
+        from .check_runner import CheckRunner
+        from .heal_executor import HealExecutor
+        from .maintenance_gate import MaintenanceGate
         self._maintenance_gate = MaintenanceGate()
         self._check_runner = CheckRunner(base_url_resolver=self._resolve_check_url)
         self._heal_executor = HealExecutor(
@@ -550,8 +550,8 @@ class ProjectMonitor:
     async def _run_one_declarative_check(self, project: ProjectStatus, check) -> None:
         """Ein einzelner deklarativer Check: ausfuehren, Flake-Filter, dann je
         nach Status/Heal-Outcome heilen + alarmieren."""
-        from src.integrations.check_definitions import CheckStatus
-        from src.integrations.heal_executor import HealOutcome
+        from .check_definitions import CheckStatus
+        from .heal_executor import HealOutcome
 
         fkey = f"{project.name}:{check.id}"
         try:
@@ -606,7 +606,7 @@ class ProjectMonitor:
 
     def _heal_outcome_alert(self, outcome):
         """Mappt einen HealOutcome auf (Severity, Operator-Hinweis)."""
-        from src.integrations.heal_executor import HealOutcome
+        from .heal_executor import HealOutcome
         mapping = {
             HealOutcome.HEALED: (Severity.MEDIUM, "✅ Auto-Heal erfolgreich (reversibel)."),
             HealOutcome.FAILED: (Severity.CRITICAL, "🔴 Auto-Heal FEHLGESCHLAGEN — Service vermutlich weiter defekt, manuell pruefen."),
