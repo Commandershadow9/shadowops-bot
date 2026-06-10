@@ -19,11 +19,70 @@ logger = logging.getLogger('shadowops')
 class Config:
     """Type-safe configuration helper with convenient access patterns."""
 
+    # ZERODOX-Monitoring-Secrets: werden von der deklarativen Engine
+    # (zerodox-onboarding-smoke, agent-listener, akquise-synthetic) UND vom
+    # Legacy project_monitor.internal_health (DB-Pool + Failed-Login-Stats)
+    # gebraucht. Single-Source = NUR in ZERODOX/.env pflegen → keine Rotations-
+    # Drift durch ein bot/.env-Duplikat.
+    _MONITORING_SECRET_KEYS = ('CRON_API_KEY', 'ZERODOX_AGENT_API_KEY', 'AKQUISE_AI_BEARER_TOKEN')
+
     def __init__(self, config_path: str = "config/config.yaml"):
         load_dotenv()
+        self._load_monitoring_secrets()  # Single-Source aus ZERODOX/.env (fail-closed)
         self.config_path = Path(config_path)
         self._config: Dict[str, Any] = {}
         self.load()
+
+    def _load_monitoring_secrets(self) -> None:
+        """Lädt die ZERODOX-Monitoring-Secrets aus ZERODOX/.env nach os.environ —
+        Single-Source statt Duplikat in bot/.env. Pfad via ZERODOX_ENV_PATH
+        konfigurierbar (der EINE Umzugs-Anpasspunkt). FAIL-CLOSED: fehlt die
+        Quelle oder ein Key, wird laut alarmiert (Discord + Log), niemals still
+        ein Default gesetzt. Lehre aus mayday-sim#491 (stille Umzugs-Brüche).
+        Läuft VOR Engine- und project_monitor-Init, damit beide Konsumenten die
+        Keys aus os.environ sehen."""
+        from dotenv import dotenv_values
+        zerodox_env = Path(os.getenv('ZERODOX_ENV_PATH', '/home/cmdshadow/ZERODOX/.env'))
+        if zerodox_env.exists():
+            vals = dotenv_values(zerodox_env)
+            for k in self._MONITORING_SECRET_KEYS:
+                # override=False: ein bewusst in bot/.env gesetzter Wert (Notfall/
+                # Test) behält Vorrang. Im Normalbetrieb steht der Key NUR in
+                # ZERODOX/.env, also greift dieser Loader.
+                if k not in os.environ and vals.get(k):
+                    os.environ[k] = vals[k]
+        else:
+            logger.error("❌ Monitoring-Secret-Quelle fehlt: %s (ZERODOX_ENV_PATH). "
+                         "ZERODOX-Checks werden FAILen.", zerodox_env)
+        # Self-Check: fehlende Keys laut melden — deckt die deklarative Engine UND
+        # den Legacy-Pfad project_monitor.internal_health, der sonst STILL skippt
+        # (fail-open). Ehrlicher Alert 'Quelle fehlt' statt irreführendem HTTP-401.
+        missing = [k for k in self._MONITORING_SECRET_KEYS if not os.environ.get(k)]
+        if missing:
+            self._alert_missing_secrets(missing, zerodox_env)
+
+    @staticmethod
+    def _alert_missing_secrets(missing: List[str], source: Path) -> None:
+        """Feuert einen Discord-Alert (nicht nur journald), damit ein fehlendes
+        Monitoring-Secret SICHTBAR ist — nicht erst als verwirrender HTTP-401."""
+        logger.error("❌ Monitoring-Secrets fehlen: %s (Quelle: %s)", missing, source)
+        webhook = os.getenv('SHADOWOPS_WATCHDOG_WEBHOOK') or os.getenv('DISCORD_DEPLOY_WEBHOOK')
+        if not webhook:
+            return
+        try:
+            import json
+            import urllib.request
+            desc = (f"Monitoring-Secrets fehlen: **{', '.join(missing)}**\n"
+                    f"Quelle: `{source}` (ZERODOX_ENV_PATH). Betroffene Checks failen jetzt — "
+                    f"bei Server-Umzug ZERODOX_ENV_PATH in shadowops-bot.service anpassen.")
+            payload = json.dumps({'embeds': [{
+                'title': '🔴 ShadowOps: Monitoring-Secret-Quelle fehlt',
+                'description': desc, 'color': 15158332}]}).encode()
+            req = urllib.request.Request(
+                webhook, data=payload, headers={'Content-Type': 'application/json'})
+            urllib.request.urlopen(req, timeout=10)  # noqa: S310 (eigener Webhook-Host)
+        except Exception as e:
+            logger.error("Konnte Secret-Fehler-Alert nicht senden: %s", e)
 
     def __getitem__(self, key: str) -> Any:
         """Allow dictionary-style access (e.g. config['discord'])."""
