@@ -536,9 +536,8 @@ class ProjectMonitor:
         Check blockiert nicht die anderen oder den Poll-Loop)."""
         due = []
         for check in getattr(project, "checks", []):
-            ckey = f"decl:{check.id}"
-            if self._should_run_health_check(project, ckey):
-                self._mark_health_check_ran(project, ckey)
+            if self._should_run_decl_check(project, check):
+                self._mark_health_check_ran(project, f"decl:{check.id}")
                 due.append(check)
         if not due:
             return
@@ -546,6 +545,16 @@ class ProjectMonitor:
             *(self._run_one_declarative_check(project, check) for check in due),
             return_exceptions=True,
         )
+
+    def _should_run_decl_check(self, project: ProjectStatus, check) -> bool:
+        """Deklarativer Check respektiert seine eigene check.interval (statt des
+        globalen 60s-Default-Min-Intervalls von _should_run_health_check)."""
+        key = f"{project.name}:decl:{check.id}"
+        last = self._health_check_last_run.get(key)
+        if last is None:
+            return True
+        elapsed = (datetime.now(timezone.utc) - last).total_seconds()
+        return elapsed >= check.interval
 
     async def _run_one_declarative_check(self, project: ProjectStatus, check) -> None:
         """Ein einzelner deklarativer Check: ausfuehren, Flake-Filter, dann je

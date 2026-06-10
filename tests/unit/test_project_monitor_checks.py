@@ -95,6 +95,17 @@ async def test_ok_check_no_heal_no_alert():
     mon._send_health_alert.assert_not_awaited()
 
 
+def test_should_run_decl_check_respects_interval():
+    mon = _make_monitor(_check())  # interval 60
+    proj = mon.projects["zerodox"]
+    check = proj.checks[0]
+    # Erstlauf: läuft (noch nie gelaufen)
+    assert mon._should_run_decl_check(proj, check) is True
+    mon._mark_health_check_ran(proj, f"decl:{check.id}")
+    # Sofort danach: läuft NICHT (interval 60s nicht erreicht — vorher lief es im 60s-Loop)
+    assert mon._should_run_decl_check(proj, check) is False
+
+
 @pytest.mark.asyncio
 async def test_flake_filter_delays_heal_until_threshold():
     mon = _make_monitor(_check(flake_polls=2))
