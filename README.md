@@ -1,6 +1,6 @@
 # 🗡️ ShadowOps - Active Security Guardian v5.1 🚀
 
-**Status:** AKTIV | **Version:** 5.1.0 | **Letzte Aktualisierung:** 18.05.2026
+**Status:** AKTIV | **Version:** 5.1.0 | **Letzte Aktualisierung:** 10.06.2026
 
 **ShadowOps** ist ein **vollständig autonomer Security Guardian** mit lernfähigem AI Security Analyst, KI-gesteuerter Auto-Remediation, adaptiver Session-Steuerung und wachsender Knowledge-DB — kein statischer Scanner, sondern ein **System das aus seinen Erfahrungen lernt und immer besser wird**.
 
