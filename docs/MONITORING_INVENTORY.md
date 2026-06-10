@@ -79,3 +79,30 @@ Engine-Erweiterung: HTTP-Header (`$ENV`-Auflösung) + `container`-Check-Typ (net
 **Noch NICHT migriert (Plan 3):** `agent-listener`/`ci-main-health`/`akquise-synthetic` (Secrets fehlen im Bot: CRON_API_KEY/GITHUB_PAT/AKQUISE_AI_BEARER_TOKEN), `synthetic-frontend/csp/functional` (Chrome/Playwright + POST-Body-Check), GuildScout/MayDay, Dead-Man-Härtung.
 
 **Nach 48h-Soak (ab 2026-06-12):** disabled Crons entfernen (oder bei Divergenz reaktivieren). Backup: `/tmp/crontab-backup-plan2-*.txt`.
+
+## 7 · Plan 3 — Secret-Checks (2026-06-10)
+
+Engine-Erweiterung: HTTP-Header `$ENV` **eingebettet** (`Bearer $TOKEN` via `os.path.expandvars`), POST-Body, `json_schema`-Check (dot-path-fähig). Secrets (CRON_API_KEY/GITHUB_PAT/AKQUISE_AI_BEARER_TOKEN) in shadowops-bot/.env kopiert.
+
+| Check | Engine-Status | Heal | Alt-Quelle | Cut-over |
+|---|---|---|---|---|
+| `agent-listener` | ✅ aktiv (http + X-API-Key, json_path healthy=true) | alert-only | cron-agent-listener-health.sh */5 | **Cron BEHALTEN** (erstellt GitHub-Issues — Aktion außerhalb Engine) |
+| `akquise-synthetic` | ✅ aktiv (POST + Bearer + json_schema result.*, real 29s) | alert-only | akquise-ai-synthetic-check.sh */15 | **Cron disabled (06-10, Soak)** |
+
+**Real verifiziert:** agent-listener (healthy=true), akquise-synthetic (POST gegen :9300, result.hook/finding/bridge non-empty, 29s).
+
+**Bewusst zurückgestellt:** `ci-main-health` — braucht age-Logik (CI rot >1h) + Array-Index-Parse, die ein reiner `json_path` nicht leistet; Cron + GitHub-CI decken zuverlässig ab. Aufwand > Mehrwert.
+
+**Secret-Wartung:** Bei Rotation von CRON_API_KEY/AKQUISE_AI_BEARER_TOKEN/GITHUB_PAT jetzt an **zwei** Orten (ZERODOX/.env + shadowops-bot/.env). Backup Plan-3-Crontab: `/tmp/crontab-backup-plan3-*.txt`.
+
+---
+
+## Zentralisierung — Gesamtstand (Plan 1+2+3)
+
+**Engine** (Plan 1): deklaratives Check-Inventar, gestuftes Heal (reversibel-autonom/approval/alert-only), Circuit-Breaker, Maintenance-Gate, Discord-Alert, Dead-Man-Watchdog extern. Check-Typen: http (+header/POST/json_path/json_schema), script, container.
+
+**Aktive ZERODOX-Engine-Checks (6):** zerodox-health, akquise-liveness, zerodox-onboarding-smoke, analytics-bridge (⭐ Auto-Heal), agent-listener, akquise-synthetic.
+
+**Abgelöste Crons (Soak):** cron-health-check, akquise-ai-watchdog, ensure-analytics-network (*/10), akquise-ai-synthetic-check. **Behalten:** @reboot-ensure-analytics, cron-agent-listener-health (Issues), synthetic-monitor (Chrome/Playwright-Sub-Checks), alle Watchdogs (Defense-in-Depth).
+
+**Offen (kein klarer Mehrwert / Operator):** ci-main-health (age-Logik), synthetic-frontend/csp/functional (Browser), GuildScout/MayDay (redundant zu project_monitor+Watchdog).
