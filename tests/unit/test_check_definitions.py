@@ -58,3 +58,44 @@ def test_check_result_defaults():
     r = CheckResult(check_id="web", status=CheckStatus.OK)
     assert r.value is None
     assert r.message == ""
+
+
+# ── Input-Validierung (Review-Fix: klare Fehler statt KeyError) ─────────────
+
+@pytest.mark.parametrize("missing", ["id", "type", "target", "interval"])
+def test_missing_required_field_raises(missing):
+    spec = {"id": "x", "type": "http", "target": "/h", "interval": 60}
+    del spec[missing]
+    with pytest.raises(ValueError, match=missing):
+        CheckDefinition.from_dict(spec)
+
+
+def test_invalid_interval_raises():
+    with pytest.raises(ValueError, match="interval"):
+        CheckDefinition.from_dict({"id": "x", "type": "http", "target": "/h", "interval": "bald"})
+
+
+def test_zero_interval_raises():
+    with pytest.raises(ValueError, match="interval"):
+        CheckDefinition.from_dict({"id": "x", "type": "http", "target": "/h", "interval": 0})
+
+
+def test_too_long_id_raises():
+    with pytest.raises(ValueError, match="id"):
+        CheckDefinition.from_dict({"id": "x" * 101, "type": "http", "target": "/h", "interval": 60})
+
+
+def test_heal_missing_action_raises():
+    with pytest.raises(ValueError, match="action"):
+        CheckDefinition.from_dict({
+            "id": "x", "type": "http", "target": "/h", "interval": 60,
+            "heal": {"target": "c"},  # action fehlt
+        })
+
+
+def test_heal_unknown_action_raises():
+    with pytest.raises(ValueError, match="heal-Aktion"):
+        CheckDefinition.from_dict({
+            "id": "x", "type": "http", "target": "/h", "interval": 60,
+            "heal": {"action": "nuke", "target": "c"},
+        })

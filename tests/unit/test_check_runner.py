@@ -1,10 +1,8 @@
-"""Unit-Tests für den CheckRunner (Plan 1, Task 2+3).
+"""Unit-Tests für den CheckRunner (Plan 1, Task 2+3 + Review-Fixes).
 
-http-Checks werden mit einem robusten async-Context-Manager-Fake getestet.
-script-Checks mocken ``asyncio.create_subprocess_shell`` (Unit-Tests starten
-keine echten Prozesse — das koppelt an asyncios globalen Child-Watcher und
-verschmutzt nachfolgende async-Tests). Die echte Subprocess-Ausführung wird
-in der Real-Chaos-Verifikation (Plan-Task 8) gegen echte Targets getestet.
+http-Checks mit async-Context-Manager-Fake (inkl. JSON-Assertion). script-
+Checks mocken ``asyncio.create_subprocess_exec`` (Unit-Tests starten keine
+echten Prozesse). Unimplementierte Typen → graceful ERROR (kein Crash).
 """
 import asyncio
 import pytest
@@ -15,14 +13,17 @@ from src.integrations.check_definitions import CheckDefinition, CheckStatus
 
 
 class _FakeResp:
-    def __init__(self, status: int):
+    def __init__(self, status: int, json_data=None):
         self.status = status
+        self._json = json_data
+
+    async def json(self):
+        if self._json is None:
+            raise ValueError("kein JSON")
+        return self._json
 
 
 def _fake_session(resp: _FakeResp):
-    """Fake-aiohttp.ClientSession als async-Context-Manager; .get() liefert
-    einen async-CM mit der Fake-Response."""
-
     class _GetCM:
         async def __aenter__(self):
             return resp
@@ -44,13 +45,14 @@ def _fake_session(resp: _FakeResp):
 
 
 def _fake_proc(returncode, stderr: bytes = b""):
-    """Gemockter asyncio-Subprocess mit definiertem Exit-Code."""
     proc = Mock()
     proc.returncode = returncode
     proc.communicate = AsyncMock(return_value=(b"", stderr))
     proc.kill = Mock()
     return proc
 
+
+# ── http ────────────────────────────────────────────────────────────────────
 
 @pytest.mark.asyncio
 async def test_http_check_ok():
@@ -78,12 +80,55 @@ async def test_http_check_wrong_status_fails():
 
 
 @pytest.mark.asyncio
+async def test_http_json_assertion_ok():
+    cd = CheckDefinition.from_dict(
+        {"id": "h", "type": "http", "target": "/h", "interval": 60,
+         "expect": {"status": 200, "json_path": "data.ready", "json_eq": True}}
+    )
+    runner = CheckRunner(base_url_resolver=lambda p, t: t)
+    resp = _FakeResp(200, json_data={"data": {"ready": True}})
+    with patch("aiohttp.ClientSession", return_value=_fake_session(resp)):
+        result = await runner.run(cd, project_name="zerodox")
+    assert result.status is CheckStatus.OK
+
+
+@pytest.mark.asyncio
+async def test_http_json_assertion_mismatch_fails():
+    cd = CheckDefinition.from_dict(
+        {"id": "h", "type": "http", "target": "/h", "interval": 60,
+         "expect": {"status": 200, "json_path": "status", "json_eq": "ok"}}
+    )
+    runner = CheckRunner(base_url_resolver=lambda p, t: t)
+    resp = _FakeResp(200, json_data={"status": "degraded"})
+    with patch("aiohttp.ClientSession", return_value=_fake_session(resp)):
+        result = await runner.run(cd, project_name="zerodox")
+    assert result.status is CheckStatus.FAIL
+    assert "degraded" in result.message
+
+
+@pytest.mark.asyncio
+async def test_http_json_path_missing_fails():
+    cd = CheckDefinition.from_dict(
+        {"id": "h", "type": "http", "target": "/h", "interval": 60,
+         "expect": {"status": 200, "json_path": "nope.here", "json_eq": 1}}
+    )
+    runner = CheckRunner(base_url_resolver=lambda p, t: t)
+    resp = _FakeResp(200, json_data={"status": "ok"})
+    with patch("aiohttp.ClientSession", return_value=_fake_session(resp)):
+        result = await runner.run(cd, project_name="zerodox")
+    assert result.status is CheckStatus.FAIL
+    assert "nicht im Response" in result.message
+
+
+# ── script (exec, gemockt) ───────────────────────────────────────────────────
+
+@pytest.mark.asyncio
 async def test_script_check_exit0_ok():
     cd = CheckDefinition.from_dict(
         {"id": "smoke", "type": "script", "target": "echo hi", "interval": 900}
     )
     runner = CheckRunner(base_url_resolver=lambda p, t: t)
-    with patch("asyncio.create_subprocess_shell", AsyncMock(return_value=_fake_proc(0))):
+    with patch("asyncio.create_subprocess_exec", AsyncMock(return_value=_fake_proc(0))):
         result = await runner.run(cd, project_name="zerodox")
     assert result.status is CheckStatus.OK
 
@@ -91,11 +136,11 @@ async def test_script_check_exit0_ok():
 @pytest.mark.asyncio
 async def test_script_check_nonzero_fails():
     cd = CheckDefinition.from_dict(
-        {"id": "smoke", "type": "script", "target": "exit 1", "interval": 900}
+        {"id": "smoke", "type": "script", "target": "false", "interval": 900}
     )
     runner = CheckRunner(base_url_resolver=lambda p, t: t)
     with patch(
-        "asyncio.create_subprocess_shell",
+        "asyncio.create_subprocess_exec",
         AsyncMock(return_value=_fake_proc(1, stderr=b"boom")),
     ):
         result = await runner.run(cd, project_name="zerodox")
@@ -112,15 +157,44 @@ async def test_script_check_timeout_fails():
     runner = CheckRunner(base_url_resolver=lambda p, t: t)
 
     async def _slow_communicate():
-        await asyncio.sleep(5)  # überschreitet timeout=1 → TimeoutError
+        await asyncio.sleep(5)
         return (b"", b"")
 
     proc = Mock()
     proc.returncode = None
     proc.communicate = _slow_communicate
     proc.kill = Mock()
-    with patch("asyncio.create_subprocess_shell", AsyncMock(return_value=proc)):
+    with patch("asyncio.create_subprocess_exec", AsyncMock(return_value=proc)):
         result = await runner.run(cd, project_name="zerodox")
     assert result.status is CheckStatus.FAIL
     assert "Timeout" in result.message
     proc.kill.assert_called_once()
+
+
+@pytest.mark.asyncio
+async def test_script_uses_exec_not_shell_with_argv():
+    # Sicherheit: metazeichen-haltiges target wird als argv übergeben, nicht als Shell.
+    cd = CheckDefinition.from_dict(
+        {"id": "s", "type": "script", "target": "bash scripts/smoke.sh", "interval": 900}
+    )
+    runner = CheckRunner(base_url_resolver=lambda p, t: t)
+    fake = AsyncMock(return_value=_fake_proc(0))
+    with patch("asyncio.create_subprocess_exec", fake):
+        await runner.run(cd, project_name="zerodox")
+    # erstes Positionsargument = Programm, dann die restlichen argv
+    args = fake.call_args.args
+    assert args[0] == "bash"
+    assert args[1] == "scripts/smoke.sh"
+
+
+# ── unimplementierte Typen: graceful ERROR (kein Crash) ─────────────────────
+
+@pytest.mark.asyncio
+async def test_resource_type_returns_error_not_crash():
+    cd = CheckDefinition.from_dict(
+        {"id": "disk", "type": "resource", "target": "disk.free", "interval": 300}
+    )
+    runner = CheckRunner(base_url_resolver=lambda p, t: t)
+    result = await runner.run(cd, project_name="zerodox")
+    assert result.status is CheckStatus.ERROR
+    assert "Plan 2" in result.message

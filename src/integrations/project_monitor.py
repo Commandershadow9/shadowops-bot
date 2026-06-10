@@ -309,10 +309,13 @@ class ProjectMonitor:
         self._maintenance_gate = MaintenanceGate()
         self._check_runner = CheckRunner(base_url_resolver=self._resolve_check_url)
         self._heal_executor = HealExecutor(
-            shell_runner=self._run_shell,
+            exec_runner=self._run_exec,
             approval_cb=self._request_heal_approval,
             max_per_hour=5,
         )
+        # Flake-Filter: konsekutive Fehl-Polls pro deklarativem Check
+        # Key: f"{project.name}:{check.id}" -> int
+        self._decl_consecutive_fails: Dict[str, int] = {}
 
         self.logger.info(f"🔧 Project Monitor initialized with {len(self.projects)} projects")
 
@@ -499,44 +502,136 @@ class ProjectMonitor:
 
     def _resolve_check_url(self, project_name: str, target: str) -> str:
         """Relativen Check-Pfad an die Projekt-Basis-URL haengen; absolute URL
-        (http...) unveraendert lassen."""
-        if target.startswith("http"):
+        (http(s)://...) unveraendert lassen. Robuste Origin-Extraktion via
+        urlparse (schneidet bestehende Pfade der Basis-URL sauber ab)."""
+        if target.startswith(("http://", "https://")):
             return target
-        base = self.projects[project_name].url.strip()
-        if "//" in base:
-            scheme, rest = base.split("//", 1)
-            host = rest.split("/", 1)[0]
-            base = f"{scheme}//{host}"
-        return base.rstrip("/") + target
+        from urllib.parse import urlparse
+        base = (self.projects[project_name].url or "").strip()
+        parsed = urlparse(base)
+        if parsed.scheme and parsed.netloc:
+            origin = f"{parsed.scheme}://{parsed.netloc}"
+        else:
+            origin = base.rstrip("/")
+        if not target.startswith("/"):
+            target = "/" + target
+        return origin.rstrip("/") + target
 
-    async def _run_shell(self, cmd: str) -> int:
-        """Shell-Kommando fuer reversible Heal-Aktionen ausfuehren -> Exit-Code."""
-        proc = await asyncio.create_subprocess_shell(cmd)
+    async def _run_exec(self, argv: list) -> int:
+        """argv-Liste fuer reversible Heal-Aktionen ausfuehren (kein Shell →
+        kein Injection) -> Exit-Code."""
+        proc = await asyncio.create_subprocess_exec(*argv)
         await proc.communicate()
         return proc.returncode or 0
 
     async def _request_heal_approval(self, project_name: str, check_id: str, policy) -> bool:
         """Discord-Approval fuer riskante Heal-Aktionen. Bis zur Verdrahtung mit
         dem auto_remediation-Approval-Workflow konservativ False: nichts
-        Riskantes wird ohne explizite Freigabe ausgefuehrt."""
+        Riskantes wird ohne explizite Freigabe ausgefuehrt. Der Operator wird
+        bei AWAITING_OR_DENIED via Alert informiert (siehe _run_one_declarative_check)."""
         return False
 
     async def _run_declarative_checks(self, project: ProjectStatus) -> None:
-        """Fuehrt die deklarativen checks: des Projekts aus. Bei FAIL wird —
-        sofern das MaintenanceGate nicht aktiv ist — gemaess Heal-Policy
-        geheilt (reversibel autonom, riskant per Approval)."""
-        from src.integrations.check_definitions import CheckStatus
+        """Fuehrt die faelligen deklarativen checks: PARALLEL aus (ein langsamer
+        Check blockiert nicht die anderen oder den Poll-Loop)."""
+        due = []
         for check in getattr(project, "checks", []):
             ckey = f"decl:{check.id}"
-            if not self._should_run_health_check(project, ckey):
-                continue
-            self._mark_health_check_ran(project, ckey)
+            if self._should_run_health_check(project, ckey):
+                self._mark_health_check_ran(project, ckey)
+                due.append(check)
+        if not due:
+            return
+        await asyncio.gather(
+            *(self._run_one_declarative_check(project, check) for check in due),
+            return_exceptions=True,
+        )
+
+    async def _run_one_declarative_check(self, project: ProjectStatus, check) -> None:
+        """Ein einzelner deklarativer Check: ausfuehren, Flake-Filter, dann je
+        nach Status/Heal-Outcome heilen + alarmieren."""
+        from src.integrations.check_definitions import CheckStatus
+        from src.integrations.heal_executor import HealOutcome
+
+        fkey = f"{project.name}:{check.id}"
+        try:
             result = await self._check_runner.run(check, project.name)
-            if result.status is CheckStatus.OK:
-                continue
-            if self._maintenance_gate.is_suppressed(project.name):
-                continue  # Wartung -> kein Heal
-            await self._heal_executor.heal(project.name, check.id, check.heal)
+        except Exception as e:
+            self.logger.error(
+                f"❌ Deklarativer Check {check.id} ({project.name}) crashte: {e}",
+                exc_info=True,
+            )
+            return
+
+        if result.status is CheckStatus.OK:
+            self._decl_consecutive_fails.pop(fkey, None)  # Flake-Reset
+            return
+
+        # Nicht-OK: Flake-Filter — erst ab flake_polls konsekutiven Fehlern handeln.
+        fails = self._decl_consecutive_fails.get(fkey, 0) + 1
+        self._decl_consecutive_fails[fkey] = fails
+        if fails < check.flake_polls:
+            return  # transienter Glitch
+
+        # ERROR = der Check selbst ist kaputt (nicht das Ziel) → alarmieren, NICHT heilen.
+        if result.status is CheckStatus.ERROR:
+            await self._alert_declarative(
+                project, check, Severity.HIGH,
+                f"Check-Fehler — {check.id} ({project.name})",
+                f"Der deklarative Check `{check.id}` konnte nicht ausgefuehrt werden (kein Heal).",
+                result.message,
+            )
+            return
+
+        # FAIL = Ziel ungesund.
+        if self._maintenance_gate.is_suppressed(project.name):
+            await self._alert_declarative(
+                project, check, Severity.MEDIUM,
+                f"Check FAIL (Wartung) — {check.id} ({project.name})",
+                f"`{check.id}` schlaegt fehl, Auto-Heal ist wegen Wartung pausiert.",
+                result.message,
+            )
+            return
+
+        outcome = await self._heal_executor.heal(project.name, check.id, check.heal)
+        severity, note = self._heal_outcome_alert(outcome)
+        await self._alert_declarative(
+            project, check, severity,
+            f"Check FAIL — {check.id} ({project.name})",
+            f"`{check.id}` ist ungesund: {result.message}",
+            note,
+        )
+        if outcome is HealOutcome.HEALED:
+            self._decl_consecutive_fails.pop(fkey, None)  # geheilt → Reset
+
+    def _heal_outcome_alert(self, outcome):
+        """Mappt einen HealOutcome auf (Severity, Operator-Hinweis)."""
+        from src.integrations.heal_executor import HealOutcome
+        mapping = {
+            HealOutcome.HEALED: (Severity.MEDIUM, "✅ Auto-Heal erfolgreich (reversibel)."),
+            HealOutcome.FAILED: (Severity.CRITICAL, "🔴 Auto-Heal FEHLGESCHLAGEN — Service vermutlich weiter defekt, manuell pruefen."),
+            HealOutcome.CIRCUIT_OPEN: (Severity.HIGH, "⛔ Circuit-Breaker offen — zu viele Heilungen/Stunde, Eskalation noetig."),
+            HealOutcome.AWAITING_OR_DENIED: (Severity.HIGH, "✋ Riskante Heilung braucht manuelle Freigabe (kein Auto-Heal)."),
+            HealOutcome.ALERT_ONLY: (Severity.HIGH, "ℹ️ Check FAIL — kein Auto-Heal konfiguriert (alert-only)."),
+        }
+        return mapping.get(outcome, (Severity.HIGH, str(outcome)))
+
+    async def _alert_declarative(self, project, check, severity, title, desc, outcome_note) -> None:
+        """Sendet einen Discord-Alert fuer einen deklarativen Check (nutzt den
+        bestehenden _send_health_alert-Pfad inkl. Anti-Spam-Cooldown)."""
+        await self._send_health_alert(
+            project=project,
+            check_type=f"decl:{check.id}",
+            title=title,
+            description=f"{desc}\n\n{outcome_note}",
+            severity=severity,
+            fields=[
+                {"name": "Check", "value": f"`{check.id}` ({check.type.value})", "inline": True},
+                {"name": "Heal-Policy", "value": f"`{check.heal.action.value}`", "inline": True},
+            ],
+            channel_key="critical",
+            fallback_channel_id=1441655480840617994,
+        )
 
     async def _check_project_health(self, project: ProjectStatus):
         """

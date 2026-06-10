@@ -69,7 +69,13 @@ class HealPolicy:
     def from_dict(cls, d: Optional[dict[str, Any]]) -> "HealPolicy":
         if not d:
             return cls()
-        return cls(action=HealAction(d["action"]), target=d.get("target"))
+        if "action" not in d:
+            raise ValueError(f"heal-Feld 'action' fehlt in {d!r}")
+        try:
+            action = HealAction(d["action"])
+        except ValueError as e:
+            raise ValueError(f"unbekannte heal-Aktion: {d.get('action')!r}") from e
+        return cls(action=action, target=d.get("target"))
 
 
 @dataclass
@@ -85,21 +91,61 @@ class CheckDefinition:
     heal: HealPolicy = field(default_factory=HealPolicy)
     flake_polls: int = 1  # konsekutive Fehl-Polls vor Alert (Flake-Filter)
 
+    # Längen-Limits gegen versehentlich riesige config-Werte
+    _MAX_ID = 100
+    _MAX_TARGET = 500
+
     @classmethod
     def from_dict(cls, d: dict[str, Any]) -> "CheckDefinition":
+        if not isinstance(d, dict):
+            raise ValueError(f"Check muss ein dict sein, war {type(d).__name__}")
+        for req in ("id", "type", "target", "interval"):
+            if req not in d:
+                raise ValueError(f"Check-Feld '{req}' fehlt in {d!r}")
+
+        cid = str(d["id"])
+        if not cid or len(cid) > cls._MAX_ID:
+            raise ValueError(f"Check-id ungültig (1-{cls._MAX_ID} Zeichen): {cid!r}")
+
         try:
             ctype = CheckType(d["type"])
         except ValueError as e:
             raise ValueError(f"unbekannter Check-Typ: {d.get('type')!r}") from e
+
+        target = str(d["target"])
+        if not target or len(target) > cls._MAX_TARGET:
+            raise ValueError(f"Check-target ungültig (1-{cls._MAX_TARGET} Zeichen): id={cid}")
+
+        try:
+            interval = int(d["interval"])
+        except (ValueError, TypeError) as e:
+            raise ValueError(f"Check-interval muss eine Zahl sein (id={cid}): {d['interval']!r}") from e
+        if interval < 1:
+            raise ValueError(f"Check-interval muss >= 1 sein (id={cid}): {interval}")
+
+        try:
+            timeout = int(d.get("timeout", 10))
+        except (ValueError, TypeError) as e:
+            raise ValueError(f"Check-timeout muss eine Zahl sein (id={cid})") from e
+        if timeout < 1:
+            raise ValueError(f"Check-timeout muss >= 1 sein (id={cid}): {timeout}")
+
+        try:
+            flake_polls = int(d.get("flake_polls", 1))
+        except (ValueError, TypeError) as e:
+            raise ValueError(f"Check-flake_polls muss eine Zahl sein (id={cid})") from e
+        if flake_polls < 1:
+            raise ValueError(f"Check-flake_polls muss >= 1 sein (id={cid}): {flake_polls}")
+
         return cls(
-            id=d["id"],
+            id=cid,
             type=ctype,
-            target=d["target"],
-            interval=int(d["interval"]),
-            timeout=int(d.get("timeout", 10)),
+            target=target,
+            interval=interval,
+            timeout=timeout,
             expect=d.get("expect", {}),
             heal=HealPolicy.from_dict(d.get("heal")),
-            flake_polls=int(d.get("flake_polls", 1)),
+            flake_polls=flake_polls,
         )
 
 

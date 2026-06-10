@@ -3,6 +3,11 @@ riskante nur nach Discord-Approval, alert-only macht nichts.
 
 Spiegelt die server-safety/autonomy-Regeln: reversibel = einfach machen,
 riskant = stop & fragen.
+
+Sicherheit: Heal-Aktionen werden als **argv-Liste** an einen exec-Runner
+(create_subprocess_exec) übergeben, NICHT als Shell-String. So gibt es keinen
+Shell-Interpolations-/Injection-Pfad, selbst wenn ein target aus einer
+versehentlich falschen config.yaml stammt.
 """
 from __future__ import annotations
 
@@ -13,8 +18,9 @@ from typing import Awaitable, Callable
 
 from src.integrations.check_definitions import HealPolicy, HealAction
 
-ShellRunner = Callable[[str], Awaitable[int]]                     # cmd -> exit code
-ApprovalCb = Callable[[str, str, HealPolicy], Awaitable[bool]]    # projekt, check, policy -> approved?
+# exec-Runner: bekommt eine argv-Liste (kein Shell), liefert Exit-Code.
+ExecRunner = Callable[[list], Awaitable[int]]
+ApprovalCb = Callable[[str, str, HealPolicy], Awaitable[bool]]  # projekt, check, policy -> approved?
 
 
 class HealOutcome(str, Enum):
@@ -25,26 +31,46 @@ class HealOutcome(str, Enum):
     FAILED = "failed"
 
 
-# Reversible Aktion → Shell-Kommando-Template
-_CMD: dict[HealAction, str] = {
-    HealAction.RESTART_CONTAINER: "docker restart {target}",
-    HealAction.RESTART_SERVICE: "systemctl --user restart {target}",
-    HealAction.NETWORK_RECONNECT: "docker network connect {target}",  # target: "net container"
-    HealAction.DISK_PRUNE: "docker builder prune -af && docker image prune -af",
-}
+def build_heal_argv(policy: HealPolicy) -> list:
+    """Baut die argv-Liste für eine reversible Heal-Aktion. Wirft ValueError,
+    wenn die Aktion kein Auto-Kommando hat oder ein nötiges target fehlt.
+
+    Kein Shell — target wird als eigenes Argument übergeben (kein Injection)."""
+    action = policy.action
+    target = (policy.target or "").strip()
+    if action is HealAction.RESTART_CONTAINER:
+        if not target:
+            raise ValueError("restart-container braucht ein target (Container-Name)")
+        return ["docker", "restart", target]
+    if action is HealAction.RESTART_SERVICE:
+        if not target:
+            raise ValueError("restart-service braucht ein target (Service-Name)")
+        return ["systemctl", "--user", "restart", target]
+    if action is HealAction.NETWORK_RECONNECT:
+        parts = target.split()
+        if len(parts) != 2:
+            raise ValueError(
+                "network-reconnect braucht target im Format 'netzwerk container'"
+            )
+        return ["docker", "network", "connect", parts[0], parts[1]]
+    if action is HealAction.DISK_PRUNE:
+        return ["docker", "builder", "prune", "-af"]
+    raise ValueError(f"keine Auto-argv für Aktion {action}")
 
 
 class HealExecutor:
     def __init__(
         self,
-        shell_runner: ShellRunner,
+        exec_runner: ExecRunner,
         approval_cb: ApprovalCb,
         max_per_hour: int = 5,
     ):
-        self._shell = shell_runner
+        self._exec = exec_runner
         self._approval = approval_cb
         self._max = max_per_hour
-        # "{projekt}:{check}" -> Zeitstempel der letzten Heilungen (Circuit-Breaker-Fenster)
+        # "{projekt}:{check}" -> Zeitstempel der letzten Heilungs-VERSUCHE
+        # (Circuit-Breaker-Fenster; jeder Versuch zählt, auch fehlgeschlagene —
+        # so stoppt der Breaker auch dauerhaft erfolglose Restart-Loops).
         self._events: dict[str, deque] = defaultdict(deque)
 
     def _circuit_open(self, key: str) -> bool:
@@ -68,8 +94,8 @@ class HealExecutor:
             approved = await self._approval(project, check_id, policy)
             if not approved:
                 return HealOutcome.AWAITING_OR_DENIED
-            # Nach Approval: die konkrete Ausführung regelt der Approval-Workflow
-            # (kein Auto-Kommando-Template für riskante Aktionen).
+            # Nach Approval regelt der Approval-Workflow die Ausführung selbst
+            # (kein Auto-Kommando für riskante Aktionen).
             self._record(key)
             return HealOutcome.HEALED
 
@@ -77,7 +103,14 @@ class HealExecutor:
         if self._circuit_open(key):
             return HealOutcome.CIRCUIT_OPEN
 
-        cmd = _CMD[policy.action].format(target=policy.target or "")
+        try:
+            argv = build_heal_argv(policy)
+        except ValueError:
+            # Ungültige Heal-Config (z.B. fehlendes target) → als Fehlschlag
+            # melden (der Alert zeigt dem Operator die Ursache).
+            self._record(key)
+            return HealOutcome.FAILED
+
         self._record(key)
-        code = await self._shell(cmd)
+        code = await self._exec(argv)
         return HealOutcome.HEALED if code == 0 else HealOutcome.FAILED
