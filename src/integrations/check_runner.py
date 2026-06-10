@@ -61,9 +61,11 @@ class CheckRunner:
 
     @staticmethod
     def _resolve_headers(headers: dict) -> dict:
-        """Header-Werte mit $VAR-Syntax aus os.environ auflösen (kein Secret in config nötig)."""
+        """Header-Werte: $VAR aus os.environ auflösen — auch EINGEBETTET
+        (z.B. 'Bearer $TOKEN'), nicht nur wenn der ganze Wert $VAR ist.
+        Kein Secret-Duplikat in der config nötig."""
         return {
-            k: (os.environ.get(v[1:], "") if isinstance(v, str) and v.startswith("$") else v)
+            k: (os.path.expandvars(v) if isinstance(v, str) else v)
             for k, v in (headers or {}).items()
         }
 
@@ -74,7 +76,11 @@ class CheckRunner:
         try:
             timeout = aiohttp.ClientTimeout(total=check.timeout)
             async with aiohttp.ClientSession(timeout=timeout) as session:
-                async with session.get(url, headers=headers or None) as resp:
+                if check.method == "POST":
+                    request_ctx = session.post(url, json=check.body or None, headers=headers or None)
+                else:
+                    request_ctx = session.get(url, headers=headers or None)
+                async with request_ctx as resp:
                     if resp.status != expected:
                         return CheckResult(
                             check.id,
@@ -106,6 +112,23 @@ class CheckRunner:
                                 CheckStatus.FAIL,
                                 message=f"json_path '{json_path}'={actual!r}, erwartet {expected_val!r}",
                             )
+                    # Optionale JSON-Schema-Prüfung: alle Felder vorhanden + non-empty
+                    json_schema = check.expect.get("json_schema")
+                    if json_schema:
+                        try:
+                            sbody = await resp.json()
+                        except Exception as e:
+                            return CheckResult(
+                                check.id, CheckStatus.FAIL,
+                                message=f"JSON erwartet (json_schema), aber kein gültiges JSON: {e}",
+                            )
+                        for fld in json_schema:
+                            val = _dig(sbody, fld)  # dot-path-fähig (z.B. result.hook)
+                            if val is _MISSING or not val:
+                                return CheckResult(
+                                    check.id, CheckStatus.FAIL,
+                                    message=f"json_schema-Feld '{fld}' fehlt oder leer",
+                                )
                     return CheckResult(check.id, CheckStatus.OK)
         except Exception as e:  # Netzwerk/Timeout = FAIL (Ziel nicht erreichbar = ungesund)
             return CheckResult(check.id, CheckStatus.FAIL, message=f"unerreichbar: {e}")

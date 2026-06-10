@@ -91,6 +91,8 @@ class CheckDefinition:
     heal: HealPolicy = field(default_factory=HealPolicy)
     flake_polls: int = 1  # konsekutive Fehl-Polls vor Alert (Flake-Filter)
     headers: dict[str, Any] = field(default_factory=dict)  # HTTP-Header; Werte mit $VAR werden aus os.environ aufgelöst
+    method: str = "GET"  # HTTP-Methode (GET/POST)
+    body: dict[str, Any] = field(default_factory=dict)  # POST-Body (als JSON gesendet)
 
     # Längen-Limits gegen versehentlich riesige config-Werte
     _MAX_ID = 100
@@ -148,6 +150,8 @@ class CheckDefinition:
             heal=HealPolicy.from_dict(d.get("heal")),
             flake_polls=flake_polls,
             headers=d.get("headers", {}),
+            method=str(d.get("method", "GET")).upper(),
+            body=d.get("body", {}),
         )
 
 

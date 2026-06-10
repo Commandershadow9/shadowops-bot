@@ -35,6 +35,9 @@ def _fake_session(resp: _FakeResp):
         def get(self, url, headers=None):
             return _GetCM()
 
+        def post(self, url, json=None, headers=None):
+            return _GetCM()
+
         async def __aenter__(self):
             return self
 
@@ -240,6 +243,42 @@ async def test_http_resolves_env_header(monkeypatch):
 
 
 @pytest.mark.asyncio
+async def test_http_embedded_env_header(monkeypatch):
+    monkeypatch.setenv("AKQUISE_AI_BEARER_TOKEN", "tok42")
+    cd = CheckDefinition.from_dict(
+        {"id": "h", "type": "http", "target": "/h", "interval": 60,
+         "expect": {"status": 200}, "headers": {"Authorization": "Bearer $AKQUISE_AI_BEARER_TOKEN"}}
+    )
+    captured = {}
+
+    def _sess(resp):
+        class _G:
+            async def __aenter__(s):
+                return resp
+
+            async def __aexit__(s, *a):
+                return False
+
+        class _S:
+            def get(s, url, headers=None):
+                captured["headers"] = headers
+                return _G()
+
+            async def __aenter__(s):
+                return s
+
+            async def __aexit__(s, *a):
+                return False
+
+        return _S()
+
+    runner = CheckRunner(base_url_resolver=lambda p, t: t)
+    with patch("aiohttp.ClientSession", return_value=_sess(_FakeResp(200))):
+        await runner.run(cd, project_name="zerodox")
+    assert captured["headers"] == {"Authorization": "Bearer tok42"}
+
+
+@pytest.mark.asyncio
 async def test_http_literal_header_unchanged():
     cd = CheckDefinition.from_dict(
         {"id": "h", "type": "http", "target": "/h", "interval": 60,
@@ -307,6 +346,36 @@ async def test_container_network_detached_fails():
         result = await runner.run(cd, project_name="zerodox")
     assert result.status is CheckStatus.FAIL
     assert "project_sicherheitsdienst-network" in result.message
+
+
+@pytest.mark.asyncio
+async def test_http_post_with_body_and_schema_ok():
+    cd = CheckDefinition.from_dict(
+        {"id": "syn", "type": "http", "target": "http://x/compose", "interval": 900,
+         "method": "POST", "body": {"prospectId": "synthetic-check"},
+         "expect": {"status": 200, "json_schema": ["hook", "finding_paragraph", "bridge_paragraph"]}}
+    )
+    assert cd.method == "POST"
+    runner = CheckRunner(base_url_resolver=lambda p, t: t)
+    resp = _FakeResp(200, json_data={"hook": "h", "finding_paragraph": "f", "bridge_paragraph": "b"})
+    with patch("aiohttp.ClientSession", return_value=_fake_session(resp)):
+        result = await runner.run(cd, project_name="zerodox")
+    assert result.status is CheckStatus.OK
+
+
+@pytest.mark.asyncio
+async def test_http_schema_missing_field_fails():
+    cd = CheckDefinition.from_dict(
+        {"id": "syn", "type": "http", "target": "http://x/compose", "interval": 900,
+         "method": "POST", "body": {"prospectId": "x"},
+         "expect": {"status": 200, "json_schema": ["hook", "finding_paragraph", "bridge_paragraph"]}}
+    )
+    runner = CheckRunner(base_url_resolver=lambda p, t: t)
+    resp = _FakeResp(200, json_data={"hook": "h", "finding_paragraph": ""})  # bridge fehlt, finding leer
+    with patch("aiohttp.ClientSession", return_value=_fake_session(resp)):
+        result = await runner.run(cd, project_name="zerodox")
+    assert result.status is CheckStatus.FAIL
+    assert "json_schema" in result.message
 
 
 @pytest.mark.asyncio
