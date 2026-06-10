@@ -62,3 +62,20 @@ Bestehende `_check_*`-Methoden pro Projekt (HTTP-health, systemd, TCP, log-patte
 ## 5 · Migrations-Status-Tracking
 
 Wenn ein Check via ShadowOps `checks:` übernommen + nach Cut-over-Kriterien (Spec §8) verifiziert ist: Status hier auf `abgelöst:<check-id>` setzen und Alt-Cron/-Watchdog `disable` (48 h Beobachtung, dann entfernen). Dead-Man-Einträge werden **nie** abgelöst.
+
+## 6 · Plan 2 — ZERODOX-Migrations-Status (2026-06-10)
+
+Engine-Erweiterung: HTTP-Header (`$ENV`-Auflösung) + `container`-Check-Typ (network-attached). 4 ZERODOX-Checks deklarativ aktiv (config.yaml), real verifiziert:
+
+| Check | Engine-Status | Heal | Alt-Quelle | Cut-over-Stand |
+|---|---|---|---|---|
+| `zerodox-health` | ✅ aktiv (http) | alert-only (Auto-Rollback via remediation bleibt) | cron-health-check.sh */10 | **Cron disabled (06-10, 48h-Soak)** — Watchdog + project_monitor bleiben |
+| `akquise-liveness` | ✅ aktiv (http) | alert-only | akquise-ai-watchdog.sh */5 | **Cron disabled (06-10, 48h-Soak)** — systemd-Watchdog bleibt |
+| `analytics-bridge` | ✅ aktiv (container) | **network-reconnect (real getriggert + autonom geheilt ✅)** | ensure-analytics-network.sh */10 | **Cron disabled (06-10)** — `@reboot`-Zeile behalten |
+| `zerodox-onboarding-smoke` | ✅ aktiv (http+header) | alert-only | synthetic-monitor.sh (1 Sub-Check) | **Alt behalten** (andere Sub-Checks noch nicht migriert) |
+
+**Real-Trigger-Beweise:** analytics-bridge (Netz getrennt → Engine reconnect ~27s + Discord-Alert), chaos-container (Plan-1-Verifikation). http-Checks im Normalzustand OK-verifiziert.
+
+**Noch NICHT migriert (Plan 3):** `agent-listener`/`ci-main-health`/`akquise-synthetic` (Secrets fehlen im Bot: CRON_API_KEY/GITHUB_PAT/AKQUISE_AI_BEARER_TOKEN), `synthetic-frontend/csp/functional` (Chrome/Playwright + POST-Body-Check), GuildScout/MayDay, Dead-Man-Härtung.
+
+**Nach 48h-Soak (ab 2026-06-12):** disabled Crons entfernen (oder bei Divergenz reaktivieren). Backup: `/tmp/crontab-backup-plan2-*.txt`.
