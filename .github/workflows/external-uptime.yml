@@ -1,0 +1,88 @@
+name: external-uptime
+
+# Externer Uptime-Backstop (VPS-Totalausfall-Schutz, #277-Folge).
+# Läuft auf GitHub-hosted ubuntu-latest = VOLLSTÄNDIG VPS-unabhängig. Wenn der
+# ganze VPS tot ist, sind die internen systemd-Watchdogs auch tot — DIESER Check
+# alarmiert trotzdem, weil er außerhalb läuft und discord.com (nicht den VPS)
+# zum Alarmieren nutzt. Best-Effort-Schedule (~5-15 min Drift): NUR Backstop,
+# schnelle Erkennung macht der interne Watchdog.
+on:
+  schedule:
+    - cron: '*/5 * * * *'
+  workflow_dispatch: {}
+
+permissions:
+  contents: read
+
+concurrency:
+  group: external-uptime
+  cancel-in-progress: false
+
+jobs:
+  probe:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - name: Probe öffentliche Health-Endpoints
+        id: probe
+        env:
+          WEBHOOK: ${{ secrets.UPTIME_DISCORD_WEBHOOK }}
+        run: |
+          set +e
+          # name|url|jq-Pfad zum status|erwarteter Wert
+          TARGETS=(
+            "ZERODOX|https://zerodox.de/api/health|.status|ok"
+            "GuildScout|https://guildscout.eu/health|.data.status|healthy"
+          )
+          FAILURES=""
+          for t in "${TARGETS[@]}"; do
+            IFS='|' read -r name url jqpath want <<< "$t"
+            ok=0; klass=""; detail=""
+            for i in 1 2 3; do
+              code=$(curl -sS -o /tmp/body.json -w '%{http_code}' --max-time 20 "$url" 2>/tmp/curlerr)
+              cexit=$?
+              if [ "$cexit" -ne 0 ] || [ -z "$code" ] || [ "$code" = "000" ]; then
+                klass="UNREACHABLE"; detail="curl-exit=$cexit, code=${code:-leer}"
+              elif [ "$code" -ge 500 ]; then
+                klass="ERROR"; detail="HTTP $code"
+              else
+                # 2>/dev/null ist LOAD-BEARING (fail-closed): Nicht-JSON-Body
+                # (HTML-Fehlerseite) → status bleibt 'missing' → Alert feuert.
+                # NICHT entfernen, sonst kippt der Pfad zu fail-OPEN.
+                status=$(jq -r "$jqpath // \"missing\"" /tmp/body.json 2>/dev/null)
+                if [ "$code" = "200" ] && [ "$status" = "$want" ]; then
+                  ok=1; break
+                else
+                  klass="DEGRADED"; detail="HTTP $code, status='$status' (erwartet '$want')"
+                fi
+              fi
+              sleep 8
+            done
+            if [ "$ok" -ne 1 ]; then
+              case "$klass" in
+                UNREACHABLE) line="🔴 **$name extern UNERREICHBAR** (Verdacht VPS-/Netz-Totalausfall) — $detail";;
+                ERROR)       line="🔴 **$name meldet ERROR** (Site antwortet, Kernkomponente tot) — $detail";;
+                DEGRADED)    line="🟠 **$name DEGRADED** (Site lebt, Subkomponente gestört) — $detail";;
+                *)           line="🔴 **$name Check fehlgeschlagen** — $detail";;
+              esac
+              FAILURES="${FAILURES}${line}"$'\n'
+            fi
+          done
+          if [ -n "$FAILURES" ]; then
+            echo "failed=1" >> "$GITHUB_OUTPUT"
+            DESC="Probe-Quelle: GitHub-Actions-Runner (VPS-unabhängig). Schneller-Detail über interne Watchdogs."$'\n\n'"$FAILURES"
+            jq -n --arg d "$DESC" \
+              '{embeds:[{title:"🚨 ShadowOps externer Uptime-Check", description:$d, color:15158332}]}' \
+              > /tmp/payload.json
+            if [ -n "$WEBHOOK" ]; then
+              curl -sS -X POST -H "Content-Type: application/json" --data @/tmp/payload.json "$WEBHOOK" >/dev/null
+            else
+              echo "::warning::UPTIME_DISCORD_WEBHOOK nicht gesetzt — kein Alert versendet"
+            fi
+          else
+            echo "failed=0" >> "$GITHUB_OUTPUT"
+            echo "✅ alle Targets gesund"
+          fi
+      - name: Lauf rot färben bei Ausfall (Actions-UI-Sichtbarkeit)
+        if: steps.probe.outputs.failed == '1'
+        run: exit 1
