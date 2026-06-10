@@ -2,7 +2,7 @@
 
 > **Zweck:** Vollständige Liste *aller* Health/Monitoring/Auto-Heal-Mechanismen über alle Projekte. Diese Datei ist die SSoT für die Migration zur zentralen ShadowOps-Engine (Spec: `docs/2026-06-09-zentrales-monitoring-auto-health-design.md`). Sie existiert, damit beim nächsten Server-Umzug **kein Check verloren geht** (Lehre aus mayday-sim#491).
 >
-> **Stand:** 2026-06-09 (Phase 0). **Status-Spalte:** `aktiv` = läuft als Cron/Watchdog · `→ Engine` = soll in ShadowOps wandern · `Dead-Man` = bleibt bewusst extern · `abgelöst:<id>` = von ShadowOps übernommen (nach Cut-over-Kriterien §8).
+> **Stand:** 2026-06-10 — **Plan 1+2+3 live** (Engine + 6 ZERODOX-Checks, siehe §6/§7 + Gesamtstand unten). **Status-Spalte:** `aktiv` = läuft als Cron/Watchdog · `→ Engine` = soll in ShadowOps wandern · `Dead-Man` = bleibt bewusst extern · `abgelöst:<id>` = von ShadowOps übernommen (nach Cut-over-Kriterien §8).
 
 ## Legende Ziel-Check-Typ / Heal-Stufe
 
