@@ -517,6 +517,19 @@ log_paths:
   shadowops: logs/shadowops.log
 
 # ========================================
+# MONITORING SECRETS SOURCE (Single-Source, seit 2026-06-10, #277-Folge)
+# Bot laedt CRON_API_KEY, ZERODOX_AGENT_API_KEY, AKQUISE_AI_BEARER_TOKEN beim
+# Start aus einer externen .env-Datei (src/utils/config.py:_load_monitoring_secrets).
+# FAIL-CLOSED: fehlt Quelle oder Key -> Self-Check feuert Discord-Alert.
+#
+# Operator-ENV (z.B. in shadowops-bot.service.d/zerodox-env.conf):
+#   ZERODOX_ENV_PATH   Pfad zur .env-Quelldatei
+#                      (default: /home/cmdshadow/ZERODOX/.env)
+#                      Bei Server-Umzug diesen Wert anpassen, sonst alarmieren
+#                      alle ZERODOX-Monitoring-Checks (gewollt, kein stiller Verlust).
+# ========================================
+
+# ========================================
 # SECURITY AGENT TEAM (P1, default OFF)
 # Env-Override: SECURITY_TEAM_ENABLED=true
 #
