@@ -66,7 +66,8 @@ shadowops-bot/
 │   └── workflows/
 │       ├── ci.yml                     # Test-Pipeline (pytest)
 │       ├── worker-dedup-gate.yml      # Verhindert Duplikat-Worker-PRs
-│       └── auto-label-pr.yml          # Auto-Labeling nach Conventional Commits
+│       ├── auto-label-pr.yml          # Auto-Labeling nach Conventional Commits
+│       └── external-uptime.yml        # Externer Uptime-Backstop (GitHub-hosted, VPS-unabhängig) — pingt zerodox.de + guildscout.eu alle 5 min, Discord-Alert via Repo-Secret UPTIME_DISCORD_WEBHOOK (seit #277-Folge)
 ├── scripts/                      # Wartungs-Skripte
 ├── docs/
 │   ├── reference/api.md          # API-Referenz
@@ -151,6 +152,8 @@ Zusätzlich zum internen `project_monitor.py` laufen 14 unabhängige user-system
 | `doku-drift-watchdog` | doku-drift | Container-Ports vs. Port-Map + MEMORY.md-Limit (<200), nur Alarm (täglich 06:30, Selbstpflege seit 2026-05-30) |
 | `ki-cost-watchdog` | ki-cost | Token/Kosten-Rollup Claude+Codex aus JSONL + Anomalie-Alarm (täglich 07:15, Selbstpflege seit 2026-05-30) |
 | `shadowops-backup-test` | — | monatlich 1. d. Monats, Wrapper um `~/ZERODOX/scripts/backup-test.sh` |
+
+**GitHub Actions Externer Backstop (seit 2026-06-10, #277-Folge):** `.github/workflows/external-uptime.yml` läuft auf GitHub-hosted `ubuntu-latest` (VPS-unabhängig), pingt `zerodox.de/api/health` + `guildscout.eu/health` alle 5 min, alarmiert via Repo-Secret `UPTIME_DISCORD_WEBHOOK` in `#🩺-uptime-alerts`. Drei Alert-Klassen: UNREACHABLE (DNS/Totalausfall), ERROR (5xx), DEGRADED (200 + status≠ok). Reiner Backstop bei VPS-Totalausfall — schnelle Erkennung machen die internen Watchdogs.
 
 **Skripte:** `scripts/service-watchdog.sh` (generisch, parametrisiert), `scripts/bot-watchdog.sh` (Backward-Compat), `scripts/sync-watchdog-units.sh` (IaC-Sync: spiegelt `deploy/*-watchdog.{service,timer}` als Symlinks in `~/.config/systemd/user/`, idempotent, `--dry-run`/`--prune`/`--strict`-Flags, `--strict` exit 1 bei Orphans fuer CI-Drift-Gate, seit #294). **Service-Files:** `deploy/<name>-watchdog.{service,timer}`. **Webhook-Config:** `~/.config/shadowops-watchdog.env` (chmod 600). **Setup-Anleitung:** [`deploy/MONITORING_SETUP.md`](./deploy/MONITORING_SETUP.md).
 
