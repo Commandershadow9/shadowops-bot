@@ -213,6 +213,33 @@ Changes the auto-remediation approval mode.
 
 ---
 
+### Monitoring Engine Commands
+
+#### `/maintenance`
+Pauses or resumes Auto-Heal for a project or globally. Checks continue running; only the healing step is suppressed while maintenance is active.
+
+**Permissions:** Administrator
+**Parameters:**
+- `scope` (required): Project name (e.g., `zerodox`) or `global` to affect all projects
+- `state` (required): `on` to pause healing, `off` to resume
+- `minutes` (optional): Duration in minutes before auto-expiry (default: 60)
+- `reason` (optional): Free-text reason logged for audit purposes
+
+**Returns:** Confirmation message with scope, state, and expiry time
+
+**Example:**
+```
+/maintenance scope:zerodox state:on minutes:30 reason:"Schema-Migration"
+/maintenance scope:global state:off
+```
+
+**Notes:**
+- Requires `MaintenanceGate` to be initialized (i.e., `project_monitor.py` must be running)
+- Expiry is best-effort; the gate is checked on every heal attempt
+- State is in-memory only — a bot restart resets all maintenance windows
+
+---
+
 ### AI & Learning System Commands
 
 #### `/get-ai-stats`
