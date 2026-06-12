@@ -70,7 +70,7 @@ TREND_REPORT_HOUR = 9  # 09:00 lokal
 DB_PATH = Path(__file__).resolve().parents[2] / "data" / "health_history.db"
 RETENTION_DAYS = 90
 
-DASHBOARD_CHANNEL_ID = 1479615549356114124  # 📊-dashboard
+DASHBOARD_CHANNEL_ID = 1441655486981214309  # 🤖-bot-status (verschoben aus 📊-dashboard 2026-06-12 — dort nur noch Budget + project_monitor-Dashboard)
 CRITICAL_CHANNEL_ID = 1441655480840617994   # 🚨-critical
 
 # STATUS_COLOR / STATUS_EMOJI sind ab jetzt Single-Source in
