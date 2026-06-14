@@ -904,7 +904,21 @@ class DeploymentManager:
     async def _forward_deploy_to_external(self, project_name: str, embed: discord.Embed):
         """Deployment-Embed an externe Guilds weiterleiten (Kunden-Discord)."""
         try:
-            project_config = self.bot.config.projects.get(project_name, {})
+            # GitHub-Repo-Namen nutzen Bindestriche ("mayday-sim"), Config-Keys oft
+            # Underscores ("mayday_sim"). Gleicher dash/underscore-Fallback wie in
+            # deploy_project/_trigger_deployment — sonst bleibt external_notifications
+            # leer und der Kunden-Deploy-Post wird nie gesendet (Issue #504, gleicher
+            # Bug-Typ wie Vorfall 2026-05-25 PR #449/#450).
+            projects = self.bot.config.projects
+            project_config = None
+            normalized_name = project_name.lower().replace("-", "_")
+            for key in projects.keys():
+                key_lower = key.lower()
+                if key_lower == project_name.lower() or key_lower.replace("-", "_") == normalized_name:
+                    project_config = projects[key]
+                    break
+            if not project_config:
+                return
             notifications = project_config.get('external_notifications', [])
 
             for notif in notifications:
