@@ -213,6 +213,33 @@ Changes the auto-remediation approval mode.
 
 ---
 
+### Monitoring Engine Commands
+
+#### `/maintenance`
+Pauses or resumes Auto-Heal for a project or globally. Checks continue running; only the healing step is suppressed while maintenance is active.
+
+**Permissions:** Administrator
+**Parameters:**
+- `scope` (required): Project name (e.g., `zerodox`) or `global` to affect all projects
+- `state` (required): `on` to pause healing, `off` to resume
+- `minutes` (optional): Duration in minutes before auto-expiry (default: 60)
+- `reason` (optional): Free-text reason logged for audit purposes
+
+**Returns:** Confirmation message with scope, state, and expiry time
+
+**Example:**
+```
+/maintenance scope:zerodox state:on minutes:30 reason:"Schema-Migration"
+/maintenance scope:global state:off
+```
+
+**Notes:**
+- Requires `MaintenanceGate` to be initialized (i.e., `project_monitor.py` must be running)
+- Expiry is best-effort; the gate is checked on every heal attempt
+- State is in-memory only — a bot restart resets all maintenance windows
+
+---
+
 ### AI & Learning System Commands
 
 #### `/get-ai-stats`
@@ -341,6 +368,22 @@ Starts a headless Claude CLI session on the server and returns the output as Dis
 
 ---
 
+### Server Setup Commands
+
+#### `/setup-customer-server`
+Creates monitoring channels with correct permission overwrites on a customer Discord server.
+
+**Permissions:** Administrator
+**Parameters:** None
+**Returns:** Confirmation with created channel list per project category
+
+**Example:**
+```
+/setup-customer-server
+```
+
+---
+
 ## Configuration Reference
 
 ### Complete `config/config.yaml` Structure
@@ -457,6 +500,9 @@ projects:
 
 # ========================================
 # GITHUB INTEGRATION (v3.1)
+# GITHUB_TOKEN (Env-Var, optional): GitHub API-Token fuer Webhook-Erstellung,
+#   Label-Anlage und Auto-Merge-Calls. GH_TOKEN wird als Fallback akzeptiert
+#   (webhook_mixin.py: os.getenv('GITHUB_TOKEN') or os.getenv('GH_TOKEN')).
 # ========================================
 github:
   enabled: false                            # Enable GitHub webhooks
@@ -496,6 +542,32 @@ log_paths:
   crowdsec: /var/log/crowdsec/crowdsec.log
   docker: /var/log/docker.log
   shadowops: logs/shadowops.log
+
+# ========================================
+# MONITORING SECRETS SOURCE (Single-Source, seit 2026-06-10, #277-Folge)
+# Bot laedt CRON_API_KEY, ZERODOX_AGENT_API_KEY, AKQUISE_AI_BEARER_TOKEN beim
+# Start aus einer externen .env-Datei (src/utils/config.py:_load_monitoring_secrets).
+# FAIL-CLOSED: fehlt Quelle oder Key -> Self-Check feuert Discord-Alert.
+#
+# Operator-ENV (z.B. in shadowops-bot.service.d/zerodox-env.conf):
+#   ZERODOX_ENV_PATH   Pfad zur .env-Quelldatei
+#                      (default: /home/cmdshadow/ZERODOX/.env)
+#                      Bei Server-Umzug diesen Wert anpassen, sonst alarmieren
+#                      alle ZERODOX-Monitoring-Checks (gewollt, kein stiller Verlust).
+# ========================================
+
+# ========================================
+# SECURITY AGENT TEAM (P1, default OFF)
+# Env-Override: SECURITY_TEAM_ENABLED=true
+#
+# Worker-ENV (nur relevant wenn enabled=true, werden von runner.py gelesen):
+#   SECURITY_ANALYST_DB_URL  PostgreSQL-DSN fuer SecurityDB (Pflicht fuer Worker)
+#                            Fallback: DATABASE_URL
+#   REDIS_URL                Redis-URL fuer Job-Channels (default: redis://127.0.0.1:6379/0)
+# ========================================
+security_team:
+  enabled: false   # Schaltet Worker-Architektur (security_engine/team/) ein
+                   # Monolith scan_agent.py bleibt Source-of-Truth bis Cutover
 ```
 
 ---
@@ -921,6 +993,21 @@ Die Knowledge Base nutzt PostgreSQL, nicht SQLite. Haupttabellen:
 | `jules_pr_reviews` | PR-State, Lock-Claim, Iteration-Counter fuer Jules Workflow |
 
 DSN kommt aus `config.security_analyst_dsn` (Env: `SECURITY_ANALYST_DB_URL`).
+
+### Agent Learning (PostgreSQL — `agent_learning` DB)
+
+| Tabelle | Zweck |
+|---------|-------|
+| `agent_feedback` | User-Feedback zu Patch Notes (Reactions, Ratings) |
+| `agent_quality_scores` | Qualitaets-Scores pro Patch-Notes-Generation |
+| `agent_knowledge` | Persistiertes Agent-Wissen (Decay-basiert) |
+| `jules_review_examples` | Few-Shot-Beispiele fuer Jules-PR-Reviews |
+| `pn_generations` | Patch-Notes-Generierungen (Input, Output, Modell) |
+| `pn_variants` | A/B-Test-Varianten fuer Prompt-Optimierung |
+| `pn_examples` | Kuratierte Trainingsbeispiele (Quality-Score-gefiltert) |
+| `seo_fix_impact` | Impact-Tracking fuer SEO-Agent-Fixes |
+
+DSN kommt aus `config.agent_learning_dsn` (Env: `AGENT_LEARNING_DB_URL`).
 
 ### Project Monitor State (JSON)
 
