@@ -198,15 +198,17 @@ Bei Aenderungen an Shared-Services (Redis, PostgreSQL, Traefik) MUESSEN alle Kon
 - NIEMALS den Block in `event_handlers_mixin.py` entfernen ohne Review. Er ist die letzte Verteidigungslinie gegen AI-Commits, die ohne Human-Gate deployed werden.
 - NIEMALS `_deploy_after_fix` wieder auf `git push` (ohne Branch-Check) umbauen — das wuerde PR #135 (#131) regressieren.
 
-## Auto-Deploy Project-Name-Lookup (seit 2026-05-25, Vorfall mayday-sim PR #449/#450)
+## Auto-Deploy Project-Name-Lookup (seit 2026-05-25, Vorfall mayday-sim PR #449/#450; erneut 2026-06-14 #316 / Issue mayday-sim#504)
 - **GitHub-Repo-Namen verwenden Bindestriche** (`mayday-sim`, `ai-agent-framework`), **Config-Keys teilweise Unterstriche** (`mayday_sim`). Beim PR-Merge-Webhook bekommt ShadowOps `repo_name="mayday-sim"`, der Lookup gegen `self.config.projects` muss daher dash↔underscore-tolerant sein.
-- **Zwei Code-Pfade** mit dieser Logik, BEIDE pflegen:
-  - `src/integrations/deployment_manager.py:117-128` (`deploy_project()` Eingangs-Lookup)
-  - `src/integrations/github_integration/ci_mixin.py:486-498` (`_trigger_deployment()` project_config-Lookup für deploy.enabled-Check)
-- **Pattern:** `normalized = name.lower().replace("-", "_")` + dann `key.lower() == name.lower() OR key.lower().replace("-", "_") == normalized`
+- **Mehrere Code-Pfade** mit dieser Logik, ALLE pflegen:
+  - `src/integrations/deployment_manager.py` (`deploy_project()` Eingangs-Lookup, ~Z. 157-163)
+  - `src/integrations/github_integration/ci_mixin.py` (`_trigger_deployment()` project_config-Lookup für deploy.enabled-Check, ~Z. 503-509)
+  - `src/integrations/deployment_manager.py` (`_forward_deploy_to_external()` `external_notifications`-Lookup für **Kunden**-Deploy-Posts, ~Z. 904-922 — **seit #316**: ohne diesen Fallback blieb der Kunden-`#🚀-deploy-log` wochenlang leer, ohne Fehler im Log, weil dieser Pfad beim 2026-05-25-Fix übersehen wurde).
+- **⚠️ Restschulden gleichen Musters** (noch offen, #317): `notifications_mixin.py` `_get_last_version_from_git` (Z. 486), `_get_version_from_commit_tags` (Z. 517), `_send_push_notification` (Z. 33-37, case-insensitiv aber NICHT dash-tolerant). Bei Arbeit an diesen Funktionen mitfixen.
+- **Pattern:** `normalized = name.lower().replace("-", "_")` + dann `key.lower() == name.lower() OR key.lower().replace("-", "_") == normalized`. **TODO (Tech-Debt):** in EINEN Helper extrahieren — 3+ Duplikate, Muster nachweislich fehleranfällig (2× Vorfall).
 - NIEMALS einen der beiden Lookups auf reines `key in projects` zurücksetzen — der dash↔underscore-Mismatch ist heimtückisch (logs zeigen "Project 'mayday-sim' not found" obwohl der Key `mayday_sim` existiert).
 - NIEMALS bei neuen Projekten den dash↔underscore-Drift bewusst einführen — neuen Config-Key direkt mit Bindestrichen anlegen wenn das Repo Bindestriche hat. Lookup-Toleranz ist Fallback, nicht erste Wahl.
-- **Tests:** 35× grün in `tests/unit/test_deployment_manager_error_capture.py` + `tests/unit/test_github_integration.py` nach dem Fix. Bei künftigen Lookup-Änderungen beide Suites laufen lassen.
+- **Tests:** `tests/unit/test_deployment_manager_error_capture.py` + `tests/unit/test_github_integration.py` + `tests/unit/test_deployment_external_forward.py` (external-Forward dash/underscore, seit #316). Bei künftigen Lookup-Änderungen alle drei Suites laufen lassen (zuletzt 41× grün).
 
 ## post_deploy_command für Prisma-Projekte (seit 2026-05-25)
 - **Prisma-basierte Projekte** (mayday-sim, ZERODOX) haben das Risiko dass `src/generated/client/` nach Schema-Migrationen stale ist. TSC bricht dann mit Dutzenden `Property X does not exist on type PrismaClient` ab.

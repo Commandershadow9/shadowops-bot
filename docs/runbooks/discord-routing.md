@@ -21,7 +21,7 @@ Alle Notifications laufen zentral im **DEV Commandershadow** Discord-Server (`14
 |---------|-----|-----------|-----|
 | `🤖-bot-status` | `1441655486981214309` | ShadowOps Startup-Logs, Recovery-Alerts | Bot-System-Status |
 | `👥-customer-alerts` | `1441655498515550370` | ZERODOX Eskalationen (Kunden) | DSGVO-/Customer-relevant |
-| `🚀-deployment-log` | `1441655502441414675` | `deploy.sh` (via `DISCORD_DEPLOY_WEBHOOK`), ShadowOps Auto-Deploy | Deploy-Erfolg/Fehler/Rollback |
+| `🚀-deployment-log` | `1441655502441414675` | ShadowOps `DeploymentManager._send_deployment_success`/`_failure` (alle Auto-Deploys). `deploy.sh` selbst postet **nicht** nach Discord — der Embed kommt aus dem Bot (Issue mayday-sim#504) | Deploy-Erfolg/Fehler/Rollback (intern, DEV-Server) |
 | `📊-dashboard` | `1479615549356114124` | ShadowOps `_update_dashboard_loop` (5 Min Update) | Live Status aller Projekte |
 | `🎮-mayday-sim` | `1486896113503043725` | MayDay Sim Health | Spezial-Projekt |
 
@@ -40,6 +40,18 @@ Alle Notifications laufen zentral im **DEV Commandershadow** Discord-Server (`14
 - `🤖-agent-reviews` (`1493613914062323712`) — Claude-Reviews für Agent-PRs
 - SEO-Kategorie (vier Channels) — vollständig SEO-Agent
 - Backups: `backup-dashboard` (`1486479593602023486`)
+
+## Externe Kunden-Deploy-Posts (nicht DEV-Server)
+
+Zusätzlich zu den internen Posts oben sendet ShadowOps Deploy-Embeds an **Kunden-Discord-Server** — konfiguriert pro Projekt über `external_notifications` in `config.yaml`. Versand: `DeploymentManager._forward_deploy_to_external` → `external_notifications[].deploy_channel_id` (nur wenn `notify_on.deployments: true`).
+
+| Projekt | Server | Channel | ID | Gate |
+|---------|--------|---------|-----|------|
+| mayday-sim | MayDay Sim (`1486692590198853672`) | `🚀-deploy-log` | `1486899717362421840` | `notify_on.deployments: true` |
+
+**⚠️ Repo-Name (Bindestrich) vs. Config-Key (Underscore):** `_forward_deploy_to_external` bekommt den GitHub-Repo-Namen (`mayday-sim`) und muss ihn dash/underscore-tolerant auf den Config-Key (`mayday_sim`) auflösen. Fehlt die Normalisierung, bleibt der Post **still** aus — genau das war der Vorfall **#316 / Issue mayday-sim#504** (Channel wochenlang leer, ohne Fehler im Log). Restschulden gleichen Musters in `notifications_mixin.py`: **#317**.
+
+**Verwechslungsgefahr:** Der externe `#🚀-deploy-log` (Kunden, ID endet `…421840`) ist **nicht** der interne `#🚀-deployment-log` (DEV-Server, ID endet `…414675`). Zwei verschiedene Channels auf zwei verschiedenen Servern.
 
 ## Webhook-Routing (`.env` ZERODOX)
 
