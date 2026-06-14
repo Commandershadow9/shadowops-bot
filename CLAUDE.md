@@ -42,7 +42,7 @@
 shadowops-bot/
 ├── src/
 │   ├── bot.py                    # Haupt-Bot
-│   ├── cogs/                     # Slash-Commands (admin, inspector, monitoring)
+│   ├── cogs/                     # Slash-Commands (admin, inspector, monitoring, claude_cli, cron_heartbeat, customer_setup_commands, phase_5e_health_aggregator)
 │   ├── integrations/             # Externe Systeme (siehe unten)
 │   ├── patch_notes/              # Patch Notes Pipeline v6 (5-Stufen State Machine, ~2100 Zeilen)
 │   ├── schemas/                  # JSON-Schemas fuer Structured Output (fix_strategy, patch_notes, incident_analysis, jules_review)
@@ -66,12 +66,13 @@ shadowops-bot/
 │   └── workflows/
 │       ├── ci.yml                     # Test-Pipeline (pytest)
 │       ├── worker-dedup-gate.yml      # Verhindert Duplikat-Worker-PRs
-│       └── auto-label-pr.yml          # Auto-Labeling nach Conventional Commits
+│       ├── auto-label-pr.yml          # Auto-Labeling nach Conventional Commits
+│       └── external-uptime.yml        # Externer Uptime-Backstop (GitHub-hosted, VPS-unabhängig) — pingt zerodox.de + guildscout.eu alle 5 min, Discord-Alert via Repo-Secret UPTIME_DISCORD_WEBHOOK (seit #277-Folge)
 ├── scripts/                      # Wartungs-Skripte
 ├── docs/
-│   ├── SECURITY_ANALYST.md
-│   ├── SETUP_GUIDE.md
-│   ├── reference/api.md
+│   ├── reference/api.md          # API-Referenz
+│   ├── architecture/             # Tiefen-Doku (security-engine/, jules-workflow/, multi-agent-review/)
+│   ├── operations/               # Setup, Rollout, Daily-Ops (setup.md, quickstart.md, ...)
 │   ├── adr/                      # Architecture Decision Records
 │   ├── design/                   # Design-Dokumente (aktuelle Planung)
 │   └── plans/                    # Aeltere Design-Dokumente (archiviert)
@@ -84,6 +85,7 @@ shadowops-bot/
 ### Module unter `src/integrations/`
 
 - `ai_engine.py` — Dual-Engine Router (Codex Primary, Claude Fallback)
+- `ai_learning/` — Kontinuierlicher Lernagent: Echtzeit-Systemanalyse, Git-Commit-Mustererkennung, Code-Struktur-Analyse, Security-Event-Korrelation via AI Engine. Klassen: ContinuousLearningAgent, LearningInsight, LearningSession (continuous_learning_agent.py); knowledge_db.py, knowledge_synthesizer.py.
 - `smart_queue.py` — Analyse-Pool (Semaphore=3) + serieller Fix-Lock + Circuit Breaker
 - `verification.py` — Pre-Push Pipeline (Confidence ≥85% → Tests → Claude-Verify → KB-Check)
 - `orchestrator/` — Multi-Event-Batching (10s Fenster) + Approval-Flow (Package: core, batch_mixin, planner_mixin, executor_mixin, recovery_mixin, discord_mixin, models)
@@ -150,7 +152,9 @@ Zusätzlich zum internen `project_monitor.py` laufen 14 unabhängige user-system
 | `ki-cost-watchdog` | ki-cost | Token/Kosten-Rollup Claude+Codex aus JSONL + Anomalie-Alarm (täglich 07:15, Selbstpflege seit 2026-05-30) |
 | `shadowops-backup-test` | — | monatlich 1. d. Monats, Wrapper um `~/ZERODOX/scripts/backup-test.sh` |
 
-**Script:** `scripts/service-watchdog.sh` (generisch, parametrisiert) und `scripts/bot-watchdog.sh` (Backward-Compat). **Service-Files:** `deploy/<name>-watchdog.{service,timer}`. **Webhook-Config:** `~/.config/shadowops-watchdog.env` (chmod 600). **Setup-Anleitung:** [`deploy/MONITORING_SETUP.md`](./deploy/MONITORING_SETUP.md).
+**GitHub Actions Externer Backstop (seit 2026-06-10, #277-Folge):** `.github/workflows/external-uptime.yml` läuft auf GitHub-hosted `ubuntu-latest` (VPS-unabhängig), pingt `zerodox.de/api/health` + `guildscout.eu/health` alle 5 min, alarmiert via Repo-Secret `UPTIME_DISCORD_WEBHOOK` in `#🩺-uptime-alerts`. Drei Alert-Klassen: UNREACHABLE (DNS/Totalausfall), ERROR (5xx), DEGRADED (200 + status≠ok). Reiner Backstop bei VPS-Totalausfall — schnelle Erkennung machen die internen Watchdogs.
+
+**Skripte:** `scripts/service-watchdog.sh` (generisch, parametrisiert), `scripts/bot-watchdog.sh` (Backward-Compat), `scripts/sync-watchdog-units.sh` (IaC-Sync: spiegelt `deploy/*-watchdog.{service,timer}` als Symlinks in `~/.config/systemd/user/`, idempotent, `--dry-run`/`--prune`/`--strict`-Flags, `--strict` exit 1 bei Orphans fuer CI-Drift-Gate, seit #294). **Service-Files:** `deploy/<name>-watchdog.{service,timer}`. **Webhook-Config:** `~/.config/shadowops-watchdog.env` (chmod 600). **Setup-Anleitung:** [`deploy/MONITORING_SETUP.md`](./deploy/MONITORING_SETUP.md).
 
 **Regel beim Hinzufügen eines neuen kritischen Services:** Watchdog-Service-File aus `deploy/` kopieren, Env-Vars anpassen, Symlink in `~/.config/systemd/user/`, `daemon-reload + enable + start`, Recovery-Alert testen. Tabelle hier UND in `MONITORING_SETUP.md` erweitern.
 
@@ -248,7 +252,7 @@ sudo journalctl -u shadowops-bot -f
 2. Im `event_watcher.py` registrieren.
 3. Config-Key in `config.example.yaml` ergaenzen.
 4. Test mit Mock-Subprocess-Output.
-5. README + `docs/SECURITY_ANALYST.md` updaten.
+5. README + `docs/architecture/security-engine/README.md` updaten.
 
 ### Neuen AI-Provider als Engine
 1. Klasse in `ai_engine.py` analog zu `CodexEngine` / `ClaudeEngine`.
@@ -272,15 +276,15 @@ Worker-Konventionen:
 
 ## Statistik (Stand v5.1)
 
-20.000+ LoC, 700+ Tests, 3 PostgreSQL DBs (21+7+11 Tabellen), 4 Security-Integrationen, 15 Discord-Commands, 3 Monitored Projects (GuildScout, ZERODOX, AI Agents).
+20.000+ LoC, 700+ Tests, 3 PostgreSQL DBs (21+8+11 Tabellen), 4 Security-Integrationen, 21 Discord-Commands, 3 Monitored Projects (GuildScout, ZERODOX, AI Agents).
 
 ## Aktuelle Doku
 
 - [README.md](./README.md)
-- [docs/SECURITY_ANALYST.md](./docs/SECURITY_ANALYST.md)
-- [docs/SETUP_GUIDE.md](./docs/SETUP_GUIDE.md)
+- [docs/architecture/security-engine/README.md](./docs/architecture/security-engine/README.md)
+- [docs/operations/setup.md](./docs/operations/setup.md)
 - [docs/reference/api.md](./docs/reference/api.md)
-- [DOCS_OVERVIEW.md](./DOCS_OVERVIEW.md)
+- [docs/README.md](./docs/README.md)
 - [config/DO-NOT-TOUCH.md](./config/DO-NOT-TOUCH.md)
 
 ## Letztes Update dieser Datei

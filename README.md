@@ -1,14 +1,13 @@
 # 🗡️ ShadowOps - Active Security Guardian v5.1 🚀
 
-**Status:** AKTIV | **Version:** 5.1.0 | **Letzte Aktualisierung:** 18.05.2026
+**Status:** AKTIV | **Version:** 5.1.0 | **Letzte Aktualisierung:** 10.06.2026
 
 **ShadowOps** ist ein **vollständig autonomer Security Guardian** mit lernfähigem AI Security Analyst, KI-gesteuerter Auto-Remediation, adaptiver Session-Steuerung und wachsender Knowledge-DB — kein statischer Scanner, sondern ein **System das aus seinen Erfahrungen lernt und immer besser wird**.
 
-> 📖 **Security Analyst Doku:** [docs/SECURITY_ANALYST.md](./docs/SECURITY_ANALYST.md)
-> 📚 **Dokumentations-Übersicht:** [DOCS_OVERVIEW.md](./DOCS_OVERVIEW.md)
-> 🔧 **API Dokumentation:** [docs/reference/api.md](./docs/reference/api.md)
-> 🚀 **Setup Guide:** [docs/SETUP_GUIDE.md](./docs/SETUP_GUIDE.md)
-> 📐 **Learning Pipeline Design:** [docs/plans/2026-03-18-analyst-learning-pipeline-design.md](./docs/plans/2026-03-18-analyst-learning-pipeline-design.md)
+> **Security Engine Doku:** [docs/architecture/security-engine/README.md](./docs/architecture/security-engine/README.md)
+> **Dokumentations-Uebersicht:** [docs/README.md](./docs/README.md)
+> **API Dokumentation:** [docs/reference/api.md](./docs/reference/api.md)
+> **Setup Guide:** [docs/operations/setup.md](./docs/operations/setup.md)
 
 ## ⚡ Highlights v5.1
 
@@ -362,7 +361,7 @@ shadowops-bot/
 │   │   ├── code_analyzer.py            # Code Structure Analyzer
 │   │   ├── context_manager.py          # RAG Context Manager
 │   │   ├── github_integration/         # GitHub Webhooks + Jules Workflow (Package)
-│   │   ├── security_engine/            # Autonomer SecurityScanAgent + CircuitBreaker + DB
+│   │   ├── security_engine/            # Autonomer SecurityScanAgent + CircuitBreaker + DB + Agent-Team (team/)
 │   │   ├── project_monitor.py          # Multi-Project Monitoring
 │   │   ├── deployment_manager.py       # Auto-Deployment
 │   │   ├── incident_manager.py         # Incident Tracking
@@ -476,10 +475,10 @@ See [CHANGELOG.md](./CHANGELOG.md) for the full version history.
 - **AI Engines**: 2 (Codex CLI + Claude CLI)
 - **AI Models**: 6 (gpt-4o, gpt-5.3-codex, o3, claude-sonnet-4-6, claude-opus-4-6)
 - **Security Integrations**: 4 (Fail2ban, CrowdSec, AIDE, Trivy)
-- **PostgreSQL Databases**: 3 (security_analyst: 21 Tabellen, agent_learning: 7 Tabellen, seo_agent: 11 Tabellen)
+- **PostgreSQL Databases**: 3 (security_analyst: 21 Tabellen, agent_learning: 8 Tabellen, seo_agent: 11 Tabellen)
 - **Learning Pipeline Tables**: 11 (Security: fix_attempts, fix_verifications, finding_quality, scan_coverage · Shared: agent_feedback, agent_quality_scores, agent_knowledge · Patch Notes: pn_generations, pn_variants, pn_examples · SEO: seo_fix_impact)
 - **Scan Areas**: 10 (firewall, ssh, docker, permissions, packages, services, logs, network, credentials, dependencies)
-- **Discord Commands**: 16 (inkl. /agent-stats, /claude)
+- **Discord Commands**: 20 (inkl. /agent-stats, /claude, /security-engine, /setup-customer-server)
 - **Monitored Projects**: 3 (GuildScout, ZERODOX, AI Agents)
 - **Auto Discord-Posts**: Session-Summaries, Feedback-Auswertungen, Weekly Summary, Meilensteine
 
@@ -541,9 +540,9 @@ tail -f logs/shadowops.log | grep deployment
 
 ### Vollständige Dokumentation
 
-- 📖 [Setup Guide](./docs/SETUP_GUIDE.md) - Schritt-für-Schritt Installation
-- 🔧 [API Documentation](./docs/reference/api.md) - Vollständige API-Referenz
-- 📚 [Docs Overview](./DOCS_OVERVIEW.md) - Dokumentations-Index
+- [Setup Guide](./docs/operations/setup.md) - Schritt-fuer-Schritt Installation
+- [API Documentation](./docs/reference/api.md) - Vollstaendige API-Referenz
+- [Docs Overview](./docs/README.md) - Dokumentations-Index
 
 ### Bei Problemen
 
