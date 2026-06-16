@@ -485,6 +485,17 @@ projects:
       test_command: pytest tests/           # Test command
       post_deploy_command: pip install -r requirements.txt  # Post-deploy command
       service_name: shadowops-bot           # Systemd service name
+      allow_direct_push: false              # Direct push to deploy branch triggers deploy (opt-in, default off)
+
+    # External deploy notifications — posted to customer Discord servers on each deploy.
+    # Handled by DeploymentManager._forward_deploy_to_external.
+    # Config-key lookup is dash/underscore-tolerant (mayday-sim ↔ mayday_sim).
+    # Without this block, only the internal DEV-server deployment-log channel receives posts.
+    external_notifications:
+      - enabled: true
+        deploy_channel_id: 0               # Discord channel ID on the customer server
+        notify_on:
+          deployments: true                # Send on successful and failed deploys
 
   guildscout:
     enabled: true
