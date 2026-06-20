@@ -6,6 +6,9 @@
 #
 # Sicherheit: rührt AUSSCHLIESSLICH Docker-Cache/dangling-Images + journald an.
 # Niemals Volumes, Projektordner, /srv/vault, .env, Worktrees.
+# Prune bleibt dangling-only (`-f`, NIE `-a`/`-af`): schuetzt u.a. das getaggte
+# ZERODOX-Rollback-Image `zerodox-zerodox-web:rollback` (#1186) — ein `-a`-Prune
+# wuerde es entfernen und den Auto-Rollback-Pfad toeten.
 #
 # Muster: scripts/memory-watchdog.sh. State: data/watchdog_state_disk-hygiene.json
 # Webhook-Config: ~/.config/shadowops-watchdog.env (Fallback auf SHADOWOPS_WATCHDOG_WEBHOOK)
@@ -60,13 +63,30 @@ send_alert() {  # color title desc fields_json
 
 freed_note="keine Aktion noetig"
 if [ "$pct_before" -ge "$WARN_PCT" ]; then
-  # Stufe 1: sichere Auto-Bereinigung
+  # Stufe 1: sichere Auto-Bereinigung.
+  #
+  # ⚠ INVARIANTE (#1186, ZERODOX-Rollback-Schutz): `docker image prune` MUSS
+  # dangling-only bleiben (`-f`, NIEMALS `-a`/`-af`). ZERODOX taggt sein Vorgaenger-
+  # Image als `zerodox-zerodox-web:rollback`, damit es nach einem Deploy nicht
+  # dangling wird und der Auto-Rollback-Pfad funktioniert. Ein `-a`-Prune wuerde
+  # dieses ungenutzte, aber GETAGGTE Image entfernen → Rollback tot genau dann,
+  # wenn er gebraucht wird.
+  rollback_tag_before=0
+  docker image inspect zerodox-zerodox-web:rollback >/dev/null 2>&1 && rollback_tag_before=1
+
   bc=$(docker builder prune -f 2>/dev/null | awk '/Total:/{print $2}' || echo "0")
   docker image prune -f >/dev/null 2>&1 || true
   journalctl --vacuum-size="$JOURNAL_CAP" >/dev/null 2>&1 || true
   pct_after=$(disk_pct)
   freed_note="builder-cache: ${bc:-0}, Disk ${pct_before}% -> ${pct_after}%"
   echo "[disk-hygiene] Auto-Prune: $freed_note"
+
+  # Defense-in-depth-Tripwire: war der :rollback-Tag VOR dem Prune da und ist
+  # danach weg, hat der Prune ein GETAGGTES Image entfernt — das darf dangling-only
+  # NIE. Signalisiert, dass die Prune-Semantik gekippt ist (versehentlich `-a`?).
+  if [ "$rollback_tag_before" = "1" ] && ! docker image inspect zerodox-zerodox-web:rollback >/dev/null 2>&1; then
+    echo "[disk-hygiene] WARN: zerodox-zerodox-web:rollback wurde vom Prune entfernt — Prune ist NICHT mehr dangling-only (ZERODOX-Rollback-Schutz #1186 verletzt)!" >&2
+  fi
 else
   pct_after="$pct_before"
 fi
