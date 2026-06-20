@@ -7,6 +7,8 @@ Wants=network-online.target
 [Service]
 Type=oneshot
 EnvironmentFile=-%h/.config/shadowops-watchdog.env
+# SB5 (#529): über Traefik statt :3200 (web N-fach repliziert, kein Host-Port mehr)
+Environment=MAYDAY_HEALTH_URL=https://maydaysim.de/api/build-id
 ExecStart=%h/shadowops-bot/scripts/build-drift-watchdog.sh
 StandardOutput=journal
 StandardError=journal
