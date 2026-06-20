@@ -21,7 +21,7 @@
                                                         alle 5min
        │         │           │                  │            │
        ▼         ▼           ▼                  ▼            ▼
-  :8766/    https://    localhost:8765   127.0.0.1:3200  systemctl --user
+  :8766/    https://    localhost:8765   maydaysim.de    systemctl --user
   health    zerodox.de  /health          /api/health     is-active
             /api/health                                  (3 Core-Agents)
 ```
@@ -190,9 +190,9 @@ echo '{"last_status":"up","last_alert_at":"","consecutive_failures":0}' \
 | `zerodox` | http | https://zerodox.de/api/health (testet via Internet DNS+Traefik+TLS+App) | 5 min | 3 min |
 | `zerodox-akquise-ai` | http | http://172.19.0.1:9300/health (Bridge-Gateway, kein bot_ready, Vorfall 2026-05-24 OOM-Kill) | 5 min | 7 min |
 | `guildscout` | http | http://localhost:8765/health | 5 min | 4 min |
-| `mayday-sim` | http | http://127.0.0.1:3200/api/health | 5 min | 5 min |
+| `mayday-sim` | http | https://maydaysim.de/api/health | 5 min | 5 min |
 | `mayday-ci-runner` | http + jq-filter | http://10.8.0.10:9100/health, filter `.components.ci_runner.ok` (#mayday-sim#425) | 5 min | 7 min |
-| `mayday-sim-build-drift` | build-drift | http://127.0.0.1:3200/api/build-id vs. origin/main HEAD (max. 30 min Drift, #mayday-sim#416) | 15 min | 2 min |
+| `mayday-sim-build-drift` | build-drift | https://maydaysim.de/api/build-id vs. origin/main HEAD (max. 30 min Drift, #mayday-sim#416) | 15 min | 2 min |
 | `mayday-scheduler` | container | leitstelle-scheduler (Docker-Health, Game-Tick-Owner SB3 #mayday-sim#498) | 5 min | 7 min |
 | `ai-agent-framework` | systemd | guildscout-feedback-agent, zerodox-support-agent, seo-agent | 5 min | 6 min |
 | `cmdshadow-design` | systemd-result | cmdshadow-design-healthcheck.service (max_age=36h) | 1 h | 8 min |
