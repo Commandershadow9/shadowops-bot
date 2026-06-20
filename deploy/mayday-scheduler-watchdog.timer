@@ -1,0 +1,14 @@
+[Unit]
+Description=mayday-scheduler Watchdog Timer — alle 5 Minuten (mit Jitter)
+Documentation=https://github.com/Commandershadow9/shadowops-bot
+
+[Timer]
+# Erster Lauf 7 Minuten nach Boot (versetzt zu mayday-sim:5, ai-agent:6)
+OnBootSec=7min
+OnUnitActiveSec=5min
+RandomizedDelaySec=45s
+AccuracySec=15s
+Persistent=false
+
+[Install]
+WantedBy=timers.target

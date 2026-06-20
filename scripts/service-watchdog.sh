@@ -310,12 +310,69 @@ check_health_systemd_result() {
     return 0
 }
 
+# ─── Health-Check (container-Mode) ─────────────────────────────────────
+# Prueft den Docker-Healthcheck-Status eines Containers via `docker inspect`.
+# Fuer kritische Container OHNE Host-Port-Binding (z.B. leitstelle-scheduler
+# :3203 nur intern erreichbar). DOWN wenn der Container fehlt, nicht laeuft,
+# oder ein definierter Healthcheck != healthy meldet. Container ohne eigenen
+# Healthcheck gelten als UP solange sie laufen ("running").
+# Nutzt `docker` ohne sudo (Watchdog-User ist in der docker-Gruppe; vgl.
+# disk-hygiene-watchdog.sh).
+check_health_container() {
+    if [[ -z "${WATCHDOG_CONTAINER:-}" ]]; then
+        echo "DOWN:no_container_configured"
+        return 1
+    fi
+    if ! command -v docker >/dev/null 2>&1; then
+        echo "DOWN:docker_not_found"
+        return 1
+    fi
+
+    # docker-Zugriff: bevorzugt direkt (Watchdog-User in docker-Gruppe), sonst
+    # via passwordless sudo. Noetig, weil der `systemd --user`-Manager die
+    # docker-Gruppe nicht aktiv haben kann, wenn er vor dem usermod gestartet
+    # wurde (Gruppen-Caching) → `docker` ohne sudo schlaegt dann fehl.
+    local DK="docker"
+    if ! docker info >/dev/null 2>&1; then
+        if sudo -n docker info >/dev/null 2>&1; then
+            DK="sudo -n docker"
+        else
+            echo "DOWN:docker_unreachable"
+            return 1
+        fi
+    fi
+
+    local state
+    state=$($DK inspect "$WATCHDOG_CONTAINER" --format '{{.State.Status}}' 2>/dev/null || echo "missing")
+    if [[ "$state" == "missing" ]]; then
+        echo "DOWN:container_missing"
+        return 1
+    fi
+    if [[ "$state" != "running" ]]; then
+        echo "DOWN:state_${state}"
+        return 1
+    fi
+
+    # Health-Status nur pruefen, wenn der Container einen Healthcheck definiert.
+    local health
+    health=$($DK inspect "$WATCHDOG_CONTAINER" \
+        --format '{{if .State.Health}}{{.State.Health.Status}}{{else}}none{{end}}' 2>/dev/null || echo "unknown")
+    if [[ "$health" != "none" && "$health" != "healthy" ]]; then
+        echo "DOWN:health_${health}"
+        return 1
+    fi
+
+    echo "UP"
+    return 0
+}
+
 # ─── Health-Check Dispatcher ───────────────────────────────────────────
 check_health() {
     case "${WATCHDOG_MODE:-http}" in
         http)           check_health_http ;;
         systemd)        check_health_systemd ;;
         systemd-result) check_health_systemd_result ;;
+        container)      check_health_container ;;
         *)              echo "DOWN:invalid_mode_${WATCHDOG_MODE}"
                         return 1
                         ;;
