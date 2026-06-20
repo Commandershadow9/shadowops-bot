@@ -7,7 +7,9 @@ After=network-online.target docker.service
 Type=oneshot
 EnvironmentFile=-/home/cmdshadow/.config/shadowops-watchdog.env
 Environment=WATCHDOG_SERVICE_NAME=mayday-sim
-Environment=WATCHDOG_HEALTH_URL=http://127.0.0.1:3200/api/health
+# SB5 (#529): über Traefik statt :3200 — web ist N-fach repliziert, kein einzelnes
+# Host-Port-Binding mehr. Testet die ganze Kette (DNS+Traefik+TLS+LB+App).
+Environment=WATCHDOG_HEALTH_URL=https://maydaysim.de/api/health
 Environment=WATCHDOG_REQUIRE_BOT_READY=0
 ExecStart=/home/cmdshadow/shadowops-bot/scripts/service-watchdog.sh
 SuccessExitStatus=0 1
