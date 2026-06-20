@@ -139,9 +139,9 @@ Zusätzlich zum internen `project_monitor.py` laufen 14 unabhängige user-system
 | `zerodox-watchdog` | http | https://zerodox.de/api/health |
 | `zerodox-akquise-ai-watchdog` | http | http://172.19.0.1:9300/health (Bridge-Gateway, kein bot_ready) |
 | `guildscout-watchdog` | http | http://localhost:8765/health |
-| `mayday-sim-watchdog` | http | http://127.0.0.1:3200/api/health |
+| `mayday-sim-watchdog` | http | https://maydaysim.de/api/health |
 | `mayday-ci-runner-watchdog` | http + jq-filter | http://10.8.0.10:9100/health, filter=`.components.ci_runner.ok` (#mayday-sim#425) |
-| `mayday-sim-build-drift-watchdog` | build-drift | http://127.0.0.1:3200/api/build-id vs. origin/main HEAD — Alert bei >30 min Drift, Zyklus 15 min (#mayday-sim#416) |
+| `mayday-sim-build-drift-watchdog` | build-drift | https://maydaysim.de/api/build-id vs. origin/main HEAD — Alert bei >30 min Drift, Zyklus 15 min (#mayday-sim#416) |
 | `mayday-scheduler-watchdog` | container | leitstelle-scheduler (Docker-Health) — Game-Tick-Owner seit SB3 (#mayday-sim#498), unüberwachter SPOF ohne diesen Watchdog |
 | `ai-agent-framework-watchdog` | systemd | guildscout-feedback-agent, zerodox-support-agent, seo-agent |
 | `cmdshadow-design-watchdog` | systemd-result | cmdshadow-design-healthcheck.service (max_age=36h, 1h-Cycle) |
