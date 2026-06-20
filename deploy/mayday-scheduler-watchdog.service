@@ -1,0 +1,15 @@
+[Unit]
+Description=mayday-scheduler Watchdog — leitstelle-scheduler Container-Health + Discord-Alert
+Documentation=https://github.com/Commandershadow9/shadowops-bot
+After=network-online.target docker.service
+
+[Service]
+Type=oneshot
+EnvironmentFile=-/home/cmdshadow/.config/shadowops-watchdog.env
+Environment=WATCHDOG_SERVICE_NAME=mayday-scheduler
+Environment=WATCHDOG_MODE=container
+Environment=WATCHDOG_CONTAINER=leitstelle-scheduler
+ExecStart=/home/cmdshadow/shadowops-bot/scripts/service-watchdog.sh
+SuccessExitStatus=0 1
+StandardOutput=journal
+StandardError=journal

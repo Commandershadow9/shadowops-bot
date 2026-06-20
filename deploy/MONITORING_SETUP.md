@@ -193,6 +193,7 @@ echo '{"last_status":"up","last_alert_at":"","consecutive_failures":0}' \
 | `mayday-sim` | http | http://127.0.0.1:3200/api/health | 5 min | 5 min |
 | `mayday-ci-runner` | http + jq-filter | http://10.8.0.10:9100/health, filter `.components.ci_runner.ok` (#mayday-sim#425) | 5 min | 7 min |
 | `mayday-sim-build-drift` | build-drift | http://127.0.0.1:3200/api/build-id vs. origin/main HEAD (max. 30 min Drift, #mayday-sim#416) | 15 min | 2 min |
+| `mayday-scheduler` | container | leitstelle-scheduler (Docker-Health, Game-Tick-Owner SB3 #mayday-sim#498) | 5 min | 7 min |
 | `ai-agent-framework` | systemd | guildscout-feedback-agent, zerodox-support-agent, seo-agent | 5 min | 6 min |
 | `cmdshadow-design` | systemd-result | cmdshadow-design-healthcheck.service (max_age=36h) | 1 h | 8 min |
 | `disk-hygiene` | disk + auto-prune | Auto-Prune (docker builder/image + journald) bei Disk >85%, Alarm >90% (Selbstpflege seit 2026-05-30) | 1 h | — |

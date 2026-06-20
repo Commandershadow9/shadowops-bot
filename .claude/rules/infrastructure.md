@@ -57,6 +57,7 @@ paths:
 | `zerodox-watchdog.timer` | http | https://zerodox.de/api/health (testet via Internet DNS+Traefik+TLS+App) | 3 min |
 | `guildscout-watchdog.timer` | http | http://localhost:8765/health | 4 min |
 | `mayday-sim-watchdog.timer` | http | http://127.0.0.1:3200/api/health | 5 min |
+| `mayday-scheduler-watchdog.timer` | container | leitstelle-scheduler (Docker-Health, Tick-Owner SB3) | 7 min |
 | `ai-agent-framework-watchdog.timer` | systemd | guildscout-feedback-agent, zerodox-support-agent, seo-agent | 6 min |
 | `memory-watchdog.timer` | meminfo | RAM ≥90% oder Swap ≥80% — Frühwarnung OOM (Throttle 60 min, seit Vorfall 2026-05-25) | 4 min |
 | `disk-hygiene-watchdog.timer` | disk + auto-prune | Auto-Prune (docker builder/image + journald) bei Disk >85%, Alarm >90% (stündlich, Selbstpflege seit 2026-05-30) | hourly |
