@@ -58,7 +58,7 @@ Discord-Embed mit 5 Feldern: RAM (used/total/%), Available, Swap (used/total/%),
 
 Drei System-Selbstpflege-Watchdogs ergänzen die Service-Watchdogs um automatische Hygiene und Drift-/Kosten-Erkennung. Nutzen eigene Skripte (nicht `service-watchdog.sh`), weil Datenquelle Disk/Doku/JSONL statt HTTP/systemd ist. Details auch in `~/.claude/rules/self-maintenance.md`.
 
-- **`disk-hygiene-watchdog`** (stündlich): Zweistufig — Stufe 1 macht Auto-Prune (`docker builder prune` + alte Images + `journalctl --vacuum`) bei Disk > 85 %, Stufe 2 alarmt bei Disk > 90 %. State: `data/watchdog_state_disk-hygiene.json`. (Bugfix: `du|head` unter `set -e+pipefail` → SIGPIPE 141 → `|| true`.)
+- **`disk-hygiene-watchdog`** (stündlich): Zweistufig — Stufe 1 macht Auto-Prune (`docker builder prune` + dangling Images + `journalctl --vacuum`) bei Disk > 85 %, Stufe 2 alarmt bei Disk > 90 %. State: `data/watchdog_state_disk-hygiene.json`. (Bugfix: `du|head` unter `set -e+pipefail` → SIGPIPE 141 → `|| true`.) Invariante (#1186): `docker image prune` bleibt dangling-only (`-f`, nie `-a`/`-af`) — schützt `zerodox-zerodox-web:rollback` vor Löschung durch den Watchdog.
 - **`doku-drift-watchdog`** (täglich 06:30): Vergleicht laufende Container-Ports gegen die Port-Maps in CLAUDE.md/infrastructure.md und prüft MEMORY.md-Zeilenlimit (<200). Nur Alarm, keine Auto-Korrektur. State: `data/watchdog_state_doku-drift.json`.
 - **`ki-cost-watchdog`** (täglich 07:15): Rollup von Token/Kosten aus Claude- + Codex-JSONL + Anomalie-Alarm bei Ausreißern. Postet bevorzugt in `#💰-ki-kosten` (Fallback: `SHADOWOPS_WATCHDOG_WEBHOOK`). State: `data/watchdog_state_ki-cost.json`.
 
