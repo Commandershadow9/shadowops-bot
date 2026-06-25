@@ -273,6 +273,7 @@ projects:
     tag: "[GUILDSCOUT]"
     color: 0x9B59B6  # Lila
     path: "/home/cmdshadow/project/GuildScout"
+    repo_url: "https://github.com/Commandershadow9/GuildScout"
     services:
       - "guildscout"
     critical: false

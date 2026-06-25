@@ -24,3 +24,10 @@ def test_ai_agent_framework_has_explicit_github_repo_url():
     project = cfg["projects"]["ai-agent-framework"]
 
     assert project["repo_url"] == "https://github.com/Commandershadow9/ai-agent-framework"
+
+
+def test_guildscout_has_explicit_github_repo_url():
+    cfg = _load_config()
+    project = cfg["projects"]["guildscout"]
+
+    assert project["repo_url"] == "https://github.com/Commandershadow9/GuildScout"
