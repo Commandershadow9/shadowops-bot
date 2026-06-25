@@ -37,10 +37,10 @@
 | **shadowops-drift-watchdog** | systemd-state + drift | shadowops-bot State + NRestarts-Loop | — | **Dead-Man (bleibt extern)** |
 | zerodox-watchdog | http | https://zerodox.de/api/health | `http` | → Engine |
 | guildscout-watchdog | http | localhost:8765/health | `http` | → Engine |
-| mayday-sim-watchdog | http | 127.0.0.1:3200/api/health | `http` | → Engine |
+| mayday-sim-watchdog | http | https://maydaysim.de/api/health | `http` | → Engine |
 | zerodox-akquise-ai-watchdog | http | 172.19.0.1:9300/health | `http` | → Engine |
 | mayday-ci-runner-watchdog | http + jq | 10.8.0.10:9100/health (`.components.ci_runner.ok`) | `http` | → Engine |
-| mayday-sim-build-drift-watchdog | build-drift | :3200/api/build-id vs origin/main | `script` | → Engine |
+| mayday-sim-build-drift-watchdog | build-drift | https://maydaysim.de/api/build-id vs origin/main | `script` | → Engine |
 | disk-hygiene-watchdog | disk + auto-prune | Disk >85% prune, >90% alarm | `resource` | → Engine (heal: disk-prune = reversible-auto) |
 | memory-watchdog | meminfo | RAM ≥90% / Swap ≥80% | `resource` | → Engine |
 | ai-agent-framework-watchdog | systemd | guildscout-feedback/zerodox-support/seo-agent | `container`/`http` | → Engine |

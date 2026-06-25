@@ -345,6 +345,36 @@ projects:
       - "nexus"
     critical: false
 
+  # === AI AGENT FRAMEWORK ===
+  ai-agent-framework:
+    enabled: true
+    tag: "[AGENTS]"
+    path: "/home/cmdshadow/agents"
+    repo_url: "https://github.com/Commandershadow9/ai-agent-framework"
+    services:
+      - "guildscout-feedback-agent"
+      - "zerodox-support-agent"
+      - "seo-agent"
+
+  # === MAYDAY SIM ===
+  mayday_sim:
+    enabled: true
+    tag: "[MAYDAY-SIM]"
+    path: "/srv/leitstelle/app"
+    repo_url: "https://github.com/Commandershadow9/mayday-sim"
+    monitor:
+      enabled: true
+      url: "https://maydaysim.de/api/health"
+      expected_status: 200
+      timeout: 10
+      tcp_ports:
+        - host: "127.0.0.1"
+          port: 5436
+          label: "PostgreSQL"
+        - host: "127.0.0.1"
+          port: 6380
+          label: "Redis"
+
   # === SHADOWOPS-BOT (dieser Bot selbst) ===
   shadowops-bot:
     enabled: true
@@ -434,6 +464,7 @@ changelog_api:
 agent_review:
   enabled: false                       # Master-Switch — default off bis Phase 6
   dry_run: false                       # Loggt Actions ohne sie auszufuehren
+  api_key: ""                          # Jules API-Key fuer Session-Starts (leer = Scheduler ohne API-Client)
 
   # Queue fuer Jules-Session-Starts (einzige Queue im System)
   jules_queue:

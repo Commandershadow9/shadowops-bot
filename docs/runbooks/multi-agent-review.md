@@ -102,7 +102,7 @@ journalctl -u shadowops-bot -n 200 | grep -A 20 "agent-queue.*crashed"
 ```
 
 **Häufige Ursachen:**
-- `JulesAPIError: http_401` → API-Key ungültig, prüfe `jules_workflow.api_key`
+- `JulesAPIError: http_401` → API-Key ungültig, prüfe `agent_review.api_key` (Legacy-Fallback: `jules_workflow.api_key`)
 - `asyncpg.exceptions.ConnectionDoesNotExistError` → DB-Pool tot, Bot-Restart
 - `JulesAPIError: rate_limited` → Normal bei 100/24h-Limit, Scheduler retryt selbstständig
 
@@ -301,6 +301,7 @@ ORDER BY cnt DESC;
 ```yaml
 agent_review:
   enabled: true/false         # Master-Switch
+  api_key: "jules-..."        # NIE in Git. Nur config.yaml oder ENV var.
   adapters:
     jules: true/false
     seo: true/false
@@ -311,8 +312,7 @@ agent_review:
       <name>: { allowed: true/false, trivial_threshold: N }
 
 jules_workflow:
-  api_key: "jules-..."        # NIE in Git. Nur config.yaml oder ENV var.
-  enabled: true
+  enabled: true               # Legacy-Jules-Pfad; api_key nur noch Fallback
 ```
 
 ### Opt-in Features

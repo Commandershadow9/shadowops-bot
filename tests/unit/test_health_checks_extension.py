@@ -481,6 +481,7 @@ async def test_db_pool_saturation_no_pool_field_no_alert(tmp_path):
 async def test_failed_login_rate_above_threshold_triggers_alert(tmp_path):
     """Failed-Login > 100 in 5 Min → HIGH-Alert in critical."""
     monitor, project, channel = _build_monitor_with_api()
+    monitor._fetch_health_schema_v1 = AsyncMock(return_value=None)
 
     fake_stats = {
         "dbPool": {"saturationPercent": 5},
@@ -496,9 +497,35 @@ async def test_failed_login_rate_above_threshold_triggers_alert(tmp_path):
 
 
 @pytest.mark.asyncio
+async def test_failed_login_rate_uses_schema_v1_component(tmp_path):
+    """Failed-Login liest Schema-v1-Komponente ohne Legacy-Health-Stats."""
+    monitor, project, channel = _build_monitor_with_api()
+    monitor._fetch_health_schema_v1 = AsyncMock(return_value={
+        **_schema_v1_body(pool_saturation=5),
+        "components": {
+            **_schema_v1_body(pool_saturation=5)["components"],
+            "failed_logins": {
+                "count": 180,
+                "window_minutes": 5,
+                "unique_emails": 90,
+            },
+        },
+    })
+    monitor._fetch_app_health_stats = AsyncMock()
+
+    await monitor._check_failed_login_rate(project)
+
+    monitor._fetch_app_health_stats.assert_not_awaited()
+    channel.send.assert_called_once()
+    sent_embed = channel.send.call_args.kwargs["embed"]
+    assert "Failed-Login-Rate hoch" in sent_embed.title
+
+
+@pytest.mark.asyncio
 async def test_failed_login_rate_extreme_volume_critical_severity(tmp_path):
     """Failed-Login > 500 (5x Threshold) → CRITICAL-Severity."""
     monitor, project, channel = _build_monitor_with_api()
+    monitor._fetch_health_schema_v1 = AsyncMock(return_value=None)
 
     fake_stats = {
         "dbPool": {"saturationPercent": 5},
@@ -517,6 +544,7 @@ async def test_failed_login_rate_extreme_volume_critical_severity(tmp_path):
 async def test_failed_login_rate_below_threshold_no_alert(tmp_path):
     """Failed-Login <= 100 → kein Alert."""
     monitor, project, channel = _build_monitor_with_api()
+    monitor._fetch_health_schema_v1 = AsyncMock(return_value=None)
 
     fake_stats = {
         "dbPool": {"saturationPercent": 5},
@@ -546,6 +574,7 @@ async def test_app_health_check_skip_when_api_key_missing(tmp_path):
     """Kein API-Key → Failed-Login-Pfad skippt (Schema v1 ist auth-frei,
     DB-Pool funktioniert daher unabhängig vom env-Key)."""
     monitor, project, channel = _build_monitor_with_api(api_key=None)
+    monitor._fetch_health_schema_v1 = AsyncMock(return_value=None)
 
     # _fetch_app_health_stats (Legacy, Failed-Login) returnt None ohne Key
     result = await monitor._fetch_app_health_stats(project)

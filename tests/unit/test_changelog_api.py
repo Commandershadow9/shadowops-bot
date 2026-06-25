@@ -2,11 +2,11 @@
 Tests fuer die Changelog REST API auf dem Health-Server.
 """
 
-import pytest
 import json
+import pytest
+from types import SimpleNamespace
 from unittest.mock import AsyncMock, MagicMock
-from aiohttp import web
-from aiohttp.test_utils import TestClient, TestServer
+from aiohttp.test_utils import make_mocked_request
 
 from src.utils.health_server import HealthCheckServer
 
@@ -45,38 +45,49 @@ def mock_changelog_db():
 
 
 @pytest.fixture
-async def client(mock_bot, mock_changelog_db):
-    """Erstellt einen aiohttp TestClient mit dem HealthCheckServer."""
+def health_server(mock_bot, mock_changelog_db):
+    """Erstellt einen HealthCheckServer ohne echten TCP-Listener."""
     server = HealthCheckServer(
         bot=mock_bot,
         port=0,
         changelog_db=mock_changelog_db,
         api_key='test-secret-key',
     )
-    app = server._create_app()
-    async with TestClient(TestServer(app)) as client:
-        yield client
+    return server
 
 
 @pytest.fixture
-async def client_no_db(mock_bot):
-    """TestClient OHNE changelog_db (fuer 503-Tests)."""
-    server = HealthCheckServer(bot=mock_bot, port=0)
-    app = server._create_app()
-    async with TestClient(TestServer(app)) as client:
-        yield client
+def app(health_server):
+    """aiohttp-App fuer socketfreie Handler-/Middleware-Tests."""
+    return health_server._create_app()
+
+
+async def _handle(app, method: str, path: str, headers=None):
+    request = make_mocked_request(method, path, headers=headers or {}, app=app)
+    return await app._handle(request)
+
+
+def _json(response):
+    return json.loads(response.text)
+
+
+class _JsonRequest(SimpleNamespace):
+    """Minimaler Request-Doppelgaenger fuer POST-Handler ohne Socket."""
+
+    async def json(self):
+        return self.payload
 
 
 # --- Tests ---
 
 
 @pytest.mark.asyncio
-async def test_list_changelogs(client, mock_changelog_db):
+async def test_list_changelogs(app, mock_changelog_db):
     """GET /api/changelogs?project=zerodox liefert 200 mit Daten."""
-    resp = await client.get('/api/changelogs?project=zerodox')
+    resp = await _handle(app, 'GET', '/api/changelogs?project=zerodox')
     assert resp.status == 200
 
-    body = await resp.json()
+    body = _json(resp)
     assert body['success'] is True
     assert len(body['data']) == 1
     assert body['data'][0]['project'] == 'zerodox'
@@ -88,22 +99,22 @@ async def test_list_changelogs(client, mock_changelog_db):
 
 
 @pytest.mark.asyncio
-async def test_list_changelogs_requires_project(client):
+async def test_list_changelogs_requires_project(app):
     """GET /api/changelogs ohne project-Parameter gibt 400."""
-    resp = await client.get('/api/changelogs')
+    resp = await _handle(app, 'GET', '/api/changelogs')
     assert resp.status == 400
 
-    body = await resp.json()
+    body = _json(resp)
     assert 'error' in body
 
 
 @pytest.mark.asyncio
-async def test_get_changelog_detail(client, mock_changelog_db):
+async def test_get_changelog_detail(app, mock_changelog_db):
     """GET /api/changelogs/zerodox/2.9.1 liefert 200 mit Daten."""
-    resp = await client.get('/api/changelogs/zerodox/2.9.1')
+    resp = await _handle(app, 'GET', '/api/changelogs/zerodox/2.9.1')
     assert resp.status == 200
 
-    body = await resp.json()
+    body = _json(resp)
     assert body['success'] is True
     assert body['data']['version'] == '2.9.1'
     assert body['data']['project'] == 'zerodox'
@@ -112,32 +123,34 @@ async def test_get_changelog_detail(client, mock_changelog_db):
 
 
 @pytest.mark.asyncio
-async def test_get_changelog_not_found(client, mock_changelog_db):
+async def test_get_changelog_not_found(app, mock_changelog_db):
     """GET /api/changelogs/zerodox/9.9.9 bei nicht-existentem Eintrag gibt 404."""
     mock_changelog_db.get.return_value = None
 
-    resp = await client.get('/api/changelogs/zerodox/9.9.9')
+    resp = await _handle(app, 'GET', '/api/changelogs/zerodox/9.9.9')
     assert resp.status == 404
 
-    body = await resp.json()
+    body = _json(resp)
     assert 'error' in body
 
 
 @pytest.mark.asyncio
-async def test_post_requires_auth(client):
+async def test_post_requires_auth(health_server):
     """POST /api/changelogs ohne API-Key gibt 401."""
-    resp = await client.post(
-        '/api/changelogs',
-        json={'project': 'test', 'version': '1.0.0', 'title': 'T', 'content': 'C'},
+    resp = await health_server.changelog_create(
+        _JsonRequest(
+            headers={},
+            payload={'project': 'test', 'version': '1.0.0', 'title': 'T', 'content': 'C'},
+        )
     )
     assert resp.status == 401
 
-    body = await resp.json()
+    body = _json(resp)
     assert 'error' in body
 
 
 @pytest.mark.asyncio
-async def test_post_with_valid_key(client, mock_changelog_db):
+async def test_post_with_valid_key(health_server, mock_changelog_db):
     """POST /api/changelogs mit korrektem API-Key gibt 201."""
     payload = {
         'project': 'zerodox',
@@ -145,14 +158,12 @@ async def test_post_with_valid_key(client, mock_changelog_db):
         'title': 'Neues Feature',
         'content': 'Beschreibung der Aenderungen',
     }
-    resp = await client.post(
-        '/api/changelogs',
-        json=payload,
-        headers={'X-API-Key': 'test-secret-key'},
+    resp = await health_server.changelog_create(
+        _JsonRequest(headers={'X-API-Key': 'test-secret-key'}, payload=payload)
     )
     assert resp.status == 201
 
-    body = await resp.json()
+    body = _json(resp)
     assert body['success'] is True
 
     mock_changelog_db.upsert.assert_awaited_once()
@@ -163,46 +174,56 @@ async def test_post_with_valid_key(client, mock_changelog_db):
 
 
 @pytest.mark.asyncio
-async def test_post_validates_required_fields(client):
+async def test_post_validates_required_fields(health_server):
     """POST /api/changelogs ohne title gibt 400."""
     payload = {
         'project': 'zerodox',
         'version': '3.0.0',
         'content': 'Nur Content, kein Title',
     }
-    resp = await client.post(
-        '/api/changelogs',
-        json=payload,
-        headers={'X-API-Key': 'test-secret-key'},
+    resp = await health_server.changelog_create(
+        _JsonRequest(headers={'X-API-Key': 'test-secret-key'}, payload=payload)
     )
     assert resp.status == 400
 
-    body = await resp.json()
+    body = _json(resp)
     assert 'error' in body
     assert 'title' in body['error']
 
 
 @pytest.mark.asyncio
-async def test_cors_headers_allowed_origin(client):
+async def test_cors_headers_allowed_origin(health_server):
     """API echoed den Origin zurueck wenn er in CORS_ALLOWED_ORIGINS ist.
 
     Seit 2026-03-30 nutzt health_server.py eine Origin-Allowlist statt '*'
     (Defense-in-Depth — siehe CORS_ALLOWED_ORIGINS in health_server.py).
     """
-    resp = await client.get(
-        '/api/changelogs?project=zerodox',
-        headers={'Origin': 'https://zerodox.de'},
+    resp = await health_server._cors_middleware(
+        SimpleNamespace(
+            method='GET',
+            path='/api/changelogs',
+            headers={'Origin': 'https://zerodox.de'},
+        ),
+        lambda request: health_server.changelog_list(
+            make_mocked_request('GET', '/api/changelogs?project=zerodox')
+        ),
     )
     assert resp.status == 200
     assert resp.headers.get('Access-Control-Allow-Origin') == 'https://zerodox.de'
 
 
 @pytest.mark.asyncio
-async def test_cors_headers_unknown_origin(client):
+async def test_cors_headers_unknown_origin(health_server):
     """Unbekannter Origin bekommt keinen CORS-Header (Allowlist greift)."""
-    resp = await client.get(
-        '/api/changelogs?project=zerodox',
-        headers={'Origin': 'https://evil.example.com'},
+    resp = await health_server._cors_middleware(
+        SimpleNamespace(
+            method='GET',
+            path='/api/changelogs',
+            headers={'Origin': 'https://evil.example.com'},
+        ),
+        lambda request: health_server.changelog_list(
+            make_mocked_request('GET', '/api/changelogs?project=zerodox')
+        ),
     )
     assert resp.status == 200
     # Unbekannter Origin -> kein Allow-Origin-Header
@@ -210,13 +231,13 @@ async def test_cors_headers_unknown_origin(client):
 
 
 @pytest.mark.asyncio
-async def test_rss_feed(client, mock_changelog_db):
+async def test_rss_feed(app, mock_changelog_db):
     """GET /api/changelogs/feed?project=zerodox liefert RSS-XML."""
-    resp = await client.get('/api/changelogs/feed?project=zerodox')
+    resp = await _handle(app, 'GET', '/api/changelogs/feed?project=zerodox')
     assert resp.status == 200
     assert 'application/rss+xml' in resp.headers.get('Content-Type', '')
 
-    text = await resp.text()
+    text = resp.text
     assert '<rss' in text
     assert '<channel>' in text
     assert '<item>' in text
@@ -224,15 +245,17 @@ async def test_rss_feed(client, mock_changelog_db):
 
 
 @pytest.mark.asyncio
-async def test_sitemap(client, mock_changelog_db):
+async def test_sitemap(app, mock_changelog_db):
     """GET /api/changelogs/sitemap liefert XML-Sitemap."""
-    resp = await client.get(
-        '/api/changelogs/sitemap?project=zerodox&base_url=https://zerodox.de'
+    resp = await _handle(
+        app,
+        'GET',
+        '/api/changelogs/sitemap?project=zerodox&base_url=https://zerodox.de',
     )
     assert resp.status == 200
     assert 'application/xml' in resp.headers.get('Content-Type', '')
 
-    text = await resp.text()
+    text = resp.text
     assert '<urlset' in text
     assert '<url>' in text
     assert 'https://zerodox.de/changelogs/2.9.1' in text
@@ -241,11 +264,11 @@ async def test_sitemap(client, mock_changelog_db):
 
 
 @pytest.mark.asyncio
-async def test_existing_health_endpoint_still_works(client):
+async def test_existing_health_endpoint_still_works(app):
     """/health Endpoint funktioniert weiterhin."""
-    resp = await client.get('/health')
+    resp = await _handle(app, 'GET', '/health')
     assert resp.status == 200
 
-    body = await resp.json()
+    body = _json(resp)
     assert body['status'] == 'healthy'
     assert body['service'] == 'shadowops-bot'

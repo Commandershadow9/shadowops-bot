@@ -66,6 +66,94 @@ class TestGitHubIntegrationInit:
         assert integration.deployment_channel_id == 0
 
 
+class TestAgentReviewStartup:
+    """Tests fuer Agent-Review Initialisierung ohne echte DB/API."""
+
+    class _Config:
+        security_analyst_dsn = "postgresql://test/security"
+        agent_learning_dsn = "postgresql://test/learning"
+
+        def __init__(self, raw):
+            self._config = raw
+
+    class _Queue:
+        connected = False
+
+        def __init__(self, dsn):
+            self.dsn = dsn
+
+        async def connect(self):
+            self.connected = True
+
+    class _OutcomeTracker(_Queue):
+        pass
+
+    class _JulesClient:
+        def __init__(self, api_key):
+            self.api_key = api_key
+
+    class _Poller:
+        def __init__(self, queue, jules_api, repos, max_per_run):
+            self.queue = queue
+            self.jules_api = jules_api
+            self.repos = repos
+            self.max_per_run = max_per_run
+
+    @staticmethod
+    def _patch_agent_review_classes(monkeypatch):
+        import src.integrations.github_integration.agent_review.queue as queue_mod
+        import src.integrations.github_integration.agent_review.jules_api as api_mod
+        import src.integrations.github_integration.agent_review.suggestions_poller as poller_mod
+        import src.integrations.github_integration.agent_review.outcome_tracker as outcome_mod
+
+        monkeypatch.setattr(queue_mod, "TaskQueue", TestAgentReviewStartup._Queue)
+        monkeypatch.setattr(api_mod, "JulesAPIClient", TestAgentReviewStartup._JulesClient)
+        monkeypatch.setattr(poller_mod, "JulesSuggestionsPoller", TestAgentReviewStartup._Poller)
+        monkeypatch.setattr(outcome_mod, "OutcomeTracker", TestAgentReviewStartup._OutcomeTracker)
+
+    @pytest.mark.asyncio
+    async def test_startup_uses_agent_review_api_key_first(self, mock_bot, monkeypatch):
+        self._patch_agent_review_classes(monkeypatch)
+        cfg = self._Config({
+            "github": {"enabled": True},
+            "channels": {},
+            "jules_workflow": {"enabled": False, "api_key": "legacy-key"},
+            "agent_review": {
+                "enabled": True,
+                "api_key": "agent-review-key",
+                "suggestions_poller": {
+                    "enabled": True,
+                    "repos": ["Commandershadow9/shadowops-bot"],
+                    "max_per_run": 3,
+                },
+            },
+        })
+
+        integration = GitHubIntegration(mock_bot, cfg)
+        await integration._agent_review_startup()
+
+        assert integration.jules_api_client.api_key == "agent-review-key"
+        assert integration.suggestions_poller is not None
+        assert integration.suggestions_poller.repos == ["Commandershadow9/shadowops-bot"]
+        assert integration.suggestions_poller.max_per_run == 3
+
+    @pytest.mark.asyncio
+    async def test_startup_falls_back_to_legacy_jules_workflow_key(self, mock_bot, monkeypatch):
+        self._patch_agent_review_classes(monkeypatch)
+        cfg = self._Config({
+            "github": {"enabled": True},
+            "channels": {},
+            "jules_workflow": {"enabled": False, "api_key": "legacy-key"},
+            "agent_review": {"enabled": True, "suggestions_poller": {"enabled": False}},
+        })
+
+        integration = GitHubIntegration(mock_bot, cfg)
+        await integration._agent_review_startup()
+
+        assert integration.jules_api_client.api_key == "legacy-key"
+        assert integration.suggestions_poller is None
+
+
 class TestWebhookVerification:
     """Tests for webhook signature verification."""
 
@@ -90,6 +178,37 @@ class TestWebhookVerification:
         invalid_signature = 'sha256=' + hmac.new(b'wrong', payload, hashlib.sha256).hexdigest()
 
         assert integration.verify_signature(payload, invalid_signature) is False
+
+    @pytest.mark.asyncio
+    async def test_project_webhook_prefers_explicit_repo_url(self, mock_bot, enabled_config):
+        """Explizite repo_url verhindert Fallback auf kaputte lokale Remotes."""
+        enabled_config.github = {
+            **enabled_config.github,
+            'auto_create_webhooks': True,
+            'webhook_public_url': 'https://shadowops.example/webhook',
+        }
+        enabled_config.projects = {
+            'ai-agent-framework': {
+                'enabled': True,
+                'path': '/home/cmdshadow/agents',
+                'repo_url': 'https://github.com/Commandershadow9/ai-agent-framework',
+            },
+        }
+        integration = GitHubIntegration(mock_bot, enabled_config)
+        integration._get_github_token = Mock(return_value='token')
+        integration._get_repo_url = Mock(
+            return_value='https://github.com-ai-agent-framework/Commandershadow9/ai-agent-framework'
+        )
+        integration._ensure_webhook_for_repo = AsyncMock()
+
+        await integration.ensure_project_webhooks()
+
+        integration._get_repo_url.assert_not_called()
+        integration._ensure_webhook_for_repo.assert_awaited_once_with(
+            project_name='ai-agent-framework',
+            repo_url='https://github.com/Commandershadow9/ai-agent-framework',
+            github_token='token',
+        )
 
 
 class TestPushEventHandling:

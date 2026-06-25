@@ -1732,8 +1732,8 @@ class ProjectMonitor:
         threshold_percent = float(self._get_health_threshold(project, 'disk_warn_percent'))
 
         try:
-            # shutil.disk_usage ist blocking → in Thread-Pool offloaden.
-            usage = await asyncio.to_thread(shutil.disk_usage, path)
+            # Kurzer lokaler statvfs-Call; sync vermeidet pytest-asyncio Thread-Teardown-Haenger.
+            usage = shutil.disk_usage(path)
         except FileNotFoundError:
             self.logger.debug(f"ℹ️ Disk-Check {project.name}: Pfad {path} existiert nicht")
             return
@@ -2116,9 +2116,9 @@ class ProjectMonitor:
     # Schema-v1-Migration (Issue #568, 2026-05-03):
     #   - DB-Pool: liest aus `/api/internal/health` (Schema v1, auth-frei)
     #     → components.database.pool_saturation_percent
-    #   - Failed-Login: bleibt auf altem `/api/internal/health-stats`
-    #     (Schema v1 hat noch keine failed-login-Komponente; Folge-Issue
-    #     in ZERODOX-Repo trackt die Erweiterung)
+    #   - Failed-Login: liest bevorzugt components.failed_logins aus Schema v1,
+    #     faellt aber auf altes `/api/internal/health-stats` zurueck, solange
+    #     die Komponente projektseitig noch fehlt.
     #
     # Auth-Modi:
     #   - Schema v1 (`/api/internal/health`): kein Header (rate-limited public)
@@ -2193,10 +2193,9 @@ class ProjectMonitor:
     async def _fetch_app_health_stats(self, project: ProjectStatus) -> Optional[Dict[str, Any]]:
         """HTTP-Call zur internal Health-Stats-API des Projekts.
 
-        DEPRECATED: ZERODOX Schema v1 hat noch keine failed-login-Komponente —
-        diese Methode wird ausschließlich von _check_failed_login_rate genutzt,
-        bis ZERODOX-Folge-Issue die Komponente ergänzt. NICHT entfernen ohne
-        Migration. Für DB-Pool-Saturation siehe _fetch_health_schema_v1.
+        Legacy-Fallback fuer Checks, deren Schema-v1-Komponente noch nicht
+        von allen Projekten geliefert wird. Für DB-Pool-Saturation siehe
+        _fetch_health_schema_v1.
 
         Returnt None wenn:
           - Kein internal_health_endpoint konfiguriert
@@ -2246,6 +2245,34 @@ class ProjectMonitor:
         except (ValueError, KeyError) as exc:
             self.logger.warning(f"⚠️ App-Health-Stats {project.name}: JSON-Fehler — {exc}")
             return None
+
+    @staticmethod
+    def _extract_failed_login_component(schema_v1: Optional[Dict[str, Any]]) -> Optional[Dict[str, Any]]:
+        """Normalisiert die optionale Schema-v1-Failed-Login-Komponente.
+
+        Erwartete Komponenten-Namen: `failed_logins` oder `failed_login`.
+        Feldnamen duerfen snake_case oder camelCase sein, damit ZERODOX die
+        Komponente ohne ShadowOps-Lockstep ausrollen kann.
+        """
+        if not isinstance(schema_v1, dict):
+            return None
+        components = schema_v1.get('components')
+        if not isinstance(components, dict):
+            return None
+        failed = components.get('failed_logins') or components.get('failed_login')
+        if not isinstance(failed, dict):
+            return None
+
+        count = (
+            failed.get('count')
+            if failed.get('count') is not None
+            else failed.get('failed_count', failed.get('failedCount'))
+        )
+        return {
+            'count': count,
+            'windowMinutes': failed.get('window_minutes', failed.get('windowMinutes', 5)),
+            'uniqueEmails': failed.get('unique_emails', failed.get('uniqueEmails', 0)),
+        }
 
     async def _check_db_pool_saturation(self, project: ProjectStatus) -> None:
         """
@@ -2326,36 +2353,34 @@ class ProjectMonitor:
         Cooldown: 15 Min.
         Frequenz: alle 60s (Brute-Force kann schnell hochlaufen).
 
-        Datenquelle: ZERODOX /api/internal/health-stats Response.failedLogins.count.
+        Datenquelle: bevorzugt Schema v1 `components.failed_logins`, Legacy-Fallback
+        ZERODOX /api/internal/health-stats Response.failedLogins.count.
         DSGVO-konform: nur Counts, keine Email-Adressen oder User-IDs.
-
-        DEPRECATED: ZERODOX Schema v1 hat noch keine failed-login-Komponente —
-        Folge-Issue im ZERODOX-Repo trackt die Erweiterung. Sobald Schema v1
-        `components.failed_logins` exposed, auf _fetch_health_schema_v1 migrieren.
-        NICHT entfernen ohne Migration — Failed-Login-Detection ist
-        Security-kritisch (Brute-Force, Credential-Stuffing).
         """
         if not self._should_run_health_check(project, 'failed_login_rate'):
             return
         self._mark_health_check_ran(project, 'failed_login_rate')
 
-        # Deprecation-Hinweis einmal pro Bot-Run (nicht pro Call), damit
-        # Operator weiß, dass dieser Pfad noch auf den alten Endpoint pollt.
-        if not getattr(self, '_failed_login_deprecation_logged', False):
-            self.logger.warning(
-                "[5c] Failed-Login pollt deprecated /api/internal/health-stats — "
-                "Schema v1 hat noch keine failed-login-Komponente. Folge-Issue im "
-                "ZERODOX-Repo trackt die Erweiterung."
-            )
-            self._failed_login_deprecation_logged = True
+        schema_v1 = await self._fetch_health_schema_v1(project)
+        failed = self._extract_failed_login_component(schema_v1)
 
-        stats = await self._fetch_app_health_stats(project)
-        if not stats:
-            return
+        if failed is None:
+            # Legacy-Hinweis einmal pro Bot-Run (nicht pro Call), damit Operator
+            # sieht, dass dieser Pfad noch auf den alten Endpoint faellt.
+            if not getattr(self, '_failed_login_legacy_logged', False):
+                self.logger.warning(
+                    "[5c] Failed-Login nutzt Legacy-Fallback /api/internal/health-stats — "
+                    "Schema-v1-Komponente components.failed_logins fehlt noch."
+                )
+                self._failed_login_legacy_logged = True
 
-        failed = stats.get('failedLogins')
-        if not isinstance(failed, dict):
-            return
+            stats = await self._fetch_app_health_stats(project)
+            if not stats:
+                return
+
+            failed = stats.get('failedLogins')
+            if not isinstance(failed, dict):
+                return
 
         threshold = int(self._get_health_threshold(project, 'failed_login_per_5min_warn'))
         try:

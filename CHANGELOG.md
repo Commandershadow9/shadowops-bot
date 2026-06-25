@@ -2,6 +2,15 @@
 
 ## [Unreleased]
 
+### Fixed — Operational Follow-ups (2026-06-25)
+
+- **Changelog-DB/API-Tests entblockt**: `ChangelogDB` nutzt wieder stdlib-`sqlite3` hinter async-kompatiblen Methoden. Damit entfaellt der Sandbox-Haenger durch `aiosqlite.connect()`. Die aiohttp-API-Tests laufen socketfrei direkt gegen Handler/Middleware statt ueber `TestServer`.
+- **Runtime-Config bereinigt**: `mayday_sim` monitort wieder den oeffentlichen `https://maydaysim.de/api/health` Endpoint; der stale lokale TCP-Port `3200` ist aus der Bot-Config entfernt. `ai-agent-framework` hat jetzt ein explizites `repo_url`, damit Webhook-Setup nicht mehr auf Namensheuristiken angewiesen ist.
+- **Agent-Review API-Key sauber verdrahtet**: `agent_review.api_key` ist die primaere Quelle fuer Jules-Session-Starts; `jules_workflow.api_key` bleibt als Legacy-Fallback erhalten. Beispielconfig und Runbook sind angepasst.
+- **Failed-Login Health-Schema-v1 vorbereitet**: `_check_failed_login_rate()` liest bevorzugt `components.failed_logins` aus Schema v1 und nutzt `/health-stats` nur noch als Legacy-Fallback. Der Fallback ist weiterhin bewusst aktiv, bis alle Projekte die Komponente liefern.
+- **Health-Test-Haenger beseitigt**: Disk-Usage nutzt wieder den kurzen synchronen `shutil.disk_usage()` Call, damit pytest-asyncio beim Teardown keine Thread-Pool-Haenger produziert.
+- **Tests**: Changelog-DB/API, Runtime-Config, GitHub-Integration und Health-Checks laufen fokussiert gruen.
+
 ### Added — Patch Notes v7 Editorial Layer (2026-06-25)
 
 - **Redaktionsbriefing vor der AI-Generierung**: Neuer `patch_notes/editorial.py` Layer priorisiert Hero-Changes, Release-Klammer, Kanalplan und Qualitätsregeln deterministisch aus Gruppen, Commit-Tags, Zielgruppe und Commit-Anzahl. Ziel: Patch Notes wie professionelle Release Notes statt gleichgewichtiger Commitliste.

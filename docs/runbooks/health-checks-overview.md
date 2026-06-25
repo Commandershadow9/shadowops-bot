@@ -12,7 +12,9 @@
     ┌─────────────────────────────────────────────────────┐
     │  ZERODOX-API (Next.js)                              │
     │   ├─ /api/health (HTTP 200 = liveness)             │
-    │   └─ /api/internal/health-stats (DB-Pool, Logins)  │ ← Auth via X-Agent-Key
+    │   ├─ /api/internal/health (Schema v1: DB-Pool,     │
+    │   │  Failed-Logins wenn Komponente vorhanden)      │
+    │   └─ /api/internal/health-stats (Legacy-Fallback)  │ ← Auth via X-Agent-Key
     └─────────────────────────────────────────────────────┘
                               │
                               │ aiohttp polling
@@ -57,8 +59,8 @@
 | **Restart-Count** | `docker inspect → RestartCount` | > 3 / 24h | MEDIUM | `🤖-bot-status` | 6h | 1h |
 | **SSL-Cert** | `asyncio.open_connection` + cert.notAfter | < 30 Tage | HIGH (<7d), MEDIUM | `🤖-bot-status` | 24h | 6h |
 | **Backup** | Mtime von `<path>/backups/daily/` neuestem File | > 25h alt | HIGH | `backup-dashboard` | 60 Min | 30 Min |
-| **DB-Pool-Saturation** | `pg_stat_activity` / `max_connections` via API | > 80% | HIGH | `🧪-ci-zerodox` | 30 Min | 5 Min |
-| **Failed-Login-Rate** | `LoginAttempt.success=false WHERE createdAt > NOW()-5min` via API | > 100 / 5 Min | HIGH (CRITICAL >500) | `🚨-critical` | 15 Min | 60s |
+| **DB-Pool-Saturation** | Schema v1 `components.database.pool_saturation_percent` | > 80% | HIGH | `🧪-ci-zerodox` | 30 Min | 5 Min |
+| **Failed-Login-Rate** | Schema v1 `components.failed_logins`, sonst Legacy-Stats | > 100 / 5 Min | HIGH (CRITICAL >500) | `🚨-critical` | 15 Min | 60s |
 | **Onboarding-Smoke** *(Phase 5d, PR #189)* | `/api/internal/onboarding-smoke` ready-check (Schema + getNextCustomerId + DB) | `ready: false` | HIGH | `🧪-ci-zerodox` | 5 Min | 2 Min |
 
 ### Phase 5d — Onboarding-Functional-Smoke
@@ -89,6 +91,7 @@ projects:
       check_interval: 60
       container: zerodox-web
       # Phase 5c: App-Insights API
+      health_v1_endpoint: https://zerodox.de/api/internal/health
       internal_health_endpoint: https://zerodox.de/api/internal/health-stats
       health_api_key_env: ZERODOX_AGENT_API_KEY
       # Schwellen pro Projekt überschreibbar (Defaults siehe HEALTH_CHECK_DEFAULTS)

@@ -130,9 +130,12 @@ class GitHubIntegration(JulesWorkflowMixin,
             self.jules_state = JulesState(self.config.security_analyst_dsn)
             self.jules_learning = JulesLearning(self.config.agent_learning_dsn)
         else:
-            # Disabled Namespace damit self.config.jules_workflow.enabled = False liefert
+            # Disabled Namespace damit self.config.jules_workflow.enabled = False liefert,
+            # aber Legacy-Felder wie api_key fuer Agent-Review-Fallback erhalten bleiben.
             if not isinstance(config, dict):
-                self.config.jules_workflow = SimpleNamespace(enabled=False)
+                disabled_jules = dict(jules_raw)
+                disabled_jules['enabled'] = False
+                self.config.jules_workflow = _dict_to_namespace(disabled_jules)
             self.jules_state = None
             self.jules_learning = None
         self.redis = None  # Wird in _jules_startup gesetzt
@@ -239,13 +242,16 @@ class GitHubIntegration(JulesWorkflowMixin,
             self.outcome_tracker = OutcomeTracker(self.config.security_analyst_dsn)
             await self.outcome_tracker.connect()
 
-            # Jules API — Key aus jules_workflow.api_key
-            api_key = getattr(self.config.jules_workflow, "api_key", None)
+            # Jules API — bevorzugt agent_review.api_key, jules_workflow.api_key
+            # bleibt nur Legacy-Fallback fuer alte Configs.
+            api_key = getattr(self.config.agent_review, "api_key", None)
+            if not api_key:
+                api_key = getattr(self.config.jules_workflow, "api_key", None)
             if api_key:
                 self.jules_api_client = JulesAPIClient(api_key=api_key)
             else:
                 self.logger.warning(
-                    "[agent-review] kein jules_workflow.api_key, "
+                    "[agent-review] kein agent_review.api_key konfiguriert, "
                     "Scheduler kann keine Sessions starten",
                 )
 
