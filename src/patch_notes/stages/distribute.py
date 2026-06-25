@@ -118,13 +118,13 @@ def _build_summary_embed(ctx: PipelineContext, changelog_url: str) -> discord.Em
                 parts.append(f"**{section_title}**")
                 for change in items:
                     badge = _type_to_emoji(change.get('type', 'other'))
-                    desc = change.get('description', '')
-                    parts.append(f"{badge} **{desc[:200]}**")
+                    desc = _discord_change_summary(change)
+                    parts.append(f"{badge} **{desc[:220]}**")
                     # bei mega noch 1. Detail als Sub-Bullet
                     if size == "mega":
-                        details = change.get('details') or []
-                        if details and isinstance(details[0], str):
-                            parts.append(f"   ↳ {details[0][:180]}")
+                        subline = _discord_change_subline(change)
+                        if subline:
+                            parts.append(f"   ↳ {subline[:180]}")
                     # Inline-Credit: authors-Liste (Multi-Author) oder single author (legacy)
                     credit = _format_authors_line(change)
                     if credit:
@@ -135,7 +135,7 @@ def _build_summary_embed(ctx: PipelineContext, changelog_url: str) -> discord.Em
             # Kompakte Variante: keine Sections, aber Leerzeile zwischen Items
             for change in changes_subset:
                 badge = _type_to_emoji(change.get('type', 'other'))
-                desc = change.get('description', '')
+                desc = _discord_change_summary(change)
                 display = _authors_display(change)
                 credit = f" · {display}" if display else ""
                 parts.append(f"{badge} {desc[:200]}{credit}")
@@ -258,8 +258,7 @@ def _build_full_embed(ctx: PipelineContext) -> discord.Embed:
             parts.append("**🆕 Neue Features**")
             for f in features[:max_features]:
                 parts.append(_format_change_line(f, show_author))
-                details = f.get('details', [])
-                for d in details[:2]:
+                for d in _change_detail_lines(f)[:3]:
                     parts.append(f"  • {d}")
             if len(features) > max_features:
                 parts.append(f"  *+{len(features) - max_features} weitere*")
@@ -275,6 +274,8 @@ def _build_full_embed(ctx: PipelineContext) -> discord.Embed:
             parts.append("**🐛 Bugfixes**")
             for f in fixes[:max_fixes]:
                 parts.append(_format_change_line(f, show_author))
+                for d in _change_detail_lines(f)[:1]:
+                    parts.append(f"  • {d}")
             if len(fixes) > max_fixes:
                 parts.append(f"  *+{len(fixes) - max_fixes} weitere*")
             parts.append("")
@@ -283,6 +284,8 @@ def _build_full_embed(ctx: PipelineContext) -> discord.Embed:
             parts.append("**⚡ Verbesserungen**")
             for i in improvements[:max_improvements]:
                 parts.append(_format_change_line(i, show_author))
+                for d in _change_detail_lines(i)[:1]:
+                    parts.append(f"  • {d}")
             if len(improvements) > max_improvements:
                 parts.append(f"  *+{len(improvements) - max_improvements} weitere*")
             parts.append("")
@@ -291,6 +294,8 @@ def _build_full_embed(ctx: PipelineContext) -> discord.Embed:
             parts.append("**📝 Weitere Änderungen**")
             for o in other[:3]:
                 parts.append(_format_change_line(o, show_author))
+                for d in _change_detail_lines(o)[:1]:
+                    parts.append(f"  • {d}")
             parts.append("")
 
     elif ctx.web_content:
@@ -307,12 +312,54 @@ def _build_full_embed(ctx: PipelineContext) -> discord.Embed:
 
 def _format_change_line(change: dict, show_author: bool) -> str:
     """Formatiere eine Change-Zeile mit optionaler Inline-Attribution (Multi-Author)."""
-    desc = change.get('description', '')
+    desc = _discord_change_summary(change)
     if show_author:
         credit = _authors_display(change)
         if credit:
             return f"→ {desc} · *{credit}*"
     return f"→ {desc}"
+
+
+def _discord_change_summary(change: dict) -> str:
+    """Kompakte Change-Zeile fuer Discord: Titel + konkreter Nutzen."""
+    title = (change.get('title') or '').strip()
+    impact = (change.get('impact') or '').strip()
+    desc = (change.get('description') or '').strip()
+    if title and impact and impact.lower() not in desc.lower():
+        return f"{title}: {impact}"
+    return desc or title or "Änderung"
+
+
+def _discord_change_subline(change: dict) -> str:
+    """Eine konkrete zweite Zeile fuer grosse Discord-Embeds."""
+    after = (change.get('after') or '').strip()
+    if after:
+        return after
+    details = change.get('details') or []
+    if details and isinstance(details[0], str):
+        return details[0]
+    return (change.get('why') or '').strip()
+
+
+def _change_detail_lines(change: dict) -> list[str]:
+    """Detailzeilen fuer Discord-only Embeds, mit v7-Feldern zuerst."""
+    lines: list[str] = []
+    before = (change.get('before') or '').strip()
+    after = (change.get('after') or '').strip()
+    why = (change.get('why') or '').strip()
+    action = (change.get('user_action') or '').strip()
+    if before and after:
+        lines.append(f"Vorher: {before} Jetzt: {after}")
+    elif after:
+        lines.append(after)
+    if why:
+        lines.append(why)
+    if action and action.lower() not in ('keine', 'none', 'n/a'):
+        lines.append(f"Aktion nötig: {action}")
+    for detail in change.get('details') or []:
+        if isinstance(detail, str) and detail.strip() and detail.strip() not in lines:
+            lines.append(detail.strip())
+    return lines
 
 
 def _authors_display(change: dict) -> str:

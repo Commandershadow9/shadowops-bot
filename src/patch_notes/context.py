@@ -39,6 +39,7 @@ class PipelineContext:
     team_credits: list[dict] = field(default_factory=list)
     update_size: str = "normal"
     previous_version_content: str = ""
+    editorial_context: dict = field(default_factory=dict)
 
     # --- Stufe 3: GENERATE ---
     prompt: str = ""

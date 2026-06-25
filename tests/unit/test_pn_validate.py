@@ -3,6 +3,7 @@ import pytest
 from patch_notes.stages.validate import (
     check_feature_count, check_design_doc_leaks, strip_ai_version,
     normalize_umlauts, extract_display_content, validate,
+    normalize_editorial_change_fields, check_generic_patchnote_language,
 )
 from patch_notes.context import PipelineContext
 
@@ -100,6 +101,48 @@ def test_extract_raw_string():
     extract_display_content(ctx)
     assert ctx.title == "test Update"
     assert "Einfacher Text" in ctx.web_content
+
+
+def test_normalize_editorial_change_fields_backfills_v7_fields():
+    ctx = _make_ctx(
+        changes=[{"type": "feature", "description": "BOS-Funk verbessert"}],
+        editorial_context={
+            "hero_candidates": [{
+                "theme": "BOS-Funk",
+                "source_commits": ["add radio routing"],
+                "keywords": ["funk", "radio"],
+                "suggested_change_fields": {
+                    "impact": "Dispatcher sehen Funkstatus schneller.",
+                    "before": "Status war im Ablauf schwerer erkennbar.",
+                    "after": "Funkstatus steht direkt im Einsatzkontext.",
+                    "why": "Das reduziert Rueckfragen im Einsatz.",
+                    "user_action": "Keine",
+                },
+            }]
+        },
+    )
+    normalize_editorial_change_fields(ctx)
+    change = ctx.changes[0]
+    assert change["title"] == "BOS-Funk verbessert"
+    assert change["impact"] == ""
+    assert change["before"] == ""
+    assert change["after"] == ""
+    assert change["why"] == ""
+    assert change["user_action"] == "Keine"
+    assert change["is_hero"] is True
+    assert change["source_commits"] == ["add radio routing"]
+    assert change["author"] == ""
+
+
+def test_generic_patchnote_language_warns_without_specifics():
+    ctx = _make_ctx(changes=[{
+        "type": "improvement",
+        "title": "UX",
+        "description": "Verbesserte UX",
+        "details": [],
+    }])
+    check_generic_patchnote_language(ctx)
+    assert ctx.warnings
 
 
 @pytest.mark.asyncio

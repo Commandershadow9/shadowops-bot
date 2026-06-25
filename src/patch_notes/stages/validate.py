@@ -54,6 +54,8 @@ async def validate(ctx: 'PipelineContext', bot=None) -> None:
     sanitize_content(ctx)
     normalize_umlauts(ctx)
     extract_display_content(ctx)
+    normalize_editorial_change_fields(ctx)
+    check_generic_patchnote_language(ctx)
     enrich_changes_with_authors(ctx)
 
 
@@ -186,6 +188,151 @@ def extract_display_content(ctx: 'PipelineContext') -> None:
         ctx.tldr = ctx.ai_result[:200]
     else:
         ctx.title = f'{ctx.project} Update'
+
+
+_ALLOWED_CHANGE_TYPES = {
+    'feature', 'content', 'gameplay', 'design', 'performance', 'multiplayer',
+    'fix', 'breaking', 'infrastructure', 'improvement', 'docs', 'security',
+}
+
+_GENERIC_PHRASES = (
+    'verbesserte ux', 'bessere ux', 'verbesserte user experience',
+    'bessere performance', 'verbesserte performance', 'mehr stabilitaet',
+    'mehr stabilität', 'optimierte performance', 'massives update',
+    'umfangreiches update', 'viele neue features', 'improved ux',
+    'better performance', 'improved performance', 'many new features',
+)
+
+
+def normalize_editorial_change_fields(ctx: 'PipelineContext') -> None:
+    """Normalisiere changes[] auf das v7-Format, ohne alte Outputs zu brechen."""
+    if not ctx.changes:
+        return
+
+    editorial_by_theme = _editorial_by_theme(ctx)
+    hero_count = 0
+
+    normalized: list[dict] = []
+    for idx, raw in enumerate(ctx.changes):
+        if not isinstance(raw, dict):
+            continue
+        change = raw
+
+        ctype = str(change.get('type') or 'improvement').lower()
+        if ctype not in _ALLOWED_CHANGE_TYPES:
+            ctype = 'improvement'
+        change['type'] = ctype
+
+        details = change.get('details')
+        if details is None:
+            details = []
+        elif isinstance(details, str):
+            details = [details]
+        elif not isinstance(details, list):
+            details = [str(details)]
+        change['details'] = [str(d) for d in details if d is not None]
+
+        title = _clean_text(change.get('title')) or _title_from_description(change.get('description', ''))
+        change['title'] = title or f"Änderung {idx + 1}"
+
+        description = _clean_text(change.get('description'))
+        if not description:
+            description = _clean_text(change.get('impact')) or change['title']
+        change['description'] = description
+
+        matched = _match_editorial(change, editorial_by_theme)
+        for key in ('impact', 'before', 'after', 'why', 'user_action'):
+            value = _clean_text(change.get(key))
+            if key == 'user_action' and not value:
+                value = 'Keine' if ctx.project_config.get('patch_notes', {}).get('language', 'de') == 'de' else 'None'
+            change[key] = value
+
+        source_commits = change.get('source_commits')
+        if source_commits is None and matched:
+            source_commits = matched.get('source_commits', [])
+        if isinstance(source_commits, str):
+            source_commits = [source_commits]
+        if not isinstance(source_commits, list):
+            source_commits = []
+        change['source_commits'] = [str(c)[:160] for c in source_commits if c][:6]
+
+        if bool(change.get('is_hero')):
+            hero_count += 1
+        elif hero_count < 4 and matched:
+            change['is_hero'] = True
+            hero_count += 1
+        else:
+            change['is_hero'] = False
+
+        if 'author' not in change or change.get('author') is None:
+            change['author'] = ''
+
+        normalized.append(change)
+
+    ctx.changes = normalized
+    if isinstance(ctx.ai_result, dict):
+        ctx.ai_result['changes'] = normalized
+
+
+def check_generic_patchnote_language(ctx: 'PipelineContext') -> None:
+    """Warne bei stumpfen, nicht belegten Patchnote-Formulierungen."""
+    for change in ctx.changes or []:
+        if not isinstance(change, dict):
+            continue
+        text = ' '.join(
+            str(change.get(k, '')) for k in ('title', 'description', 'impact', 'before', 'after', 'why')
+        ).lower()
+        details = ' '.join(str(d) for d in change.get('details', []))
+        has_specifics = bool(change.get('source_commits') or re.search(r'\d|wenn |falls |bei |durch |per |mit ', text + ' ' + details.lower()))
+        if any(phrase in text for phrase in _GENERIC_PHRASES) and not has_specifics:
+            ctx.warnings.append(
+                f"Generische Patchnote-Formulierung ohne konkreten Beleg: {change.get('title', '')[:80]}"
+            )
+
+
+def _editorial_by_theme(ctx: 'PipelineContext') -> dict[str, dict]:
+    editorial = ctx.editorial_context or {}
+    out: dict[str, dict] = {}
+    for item in editorial.get('hero_candidates') or []:
+        if isinstance(item, dict) and item.get('theme'):
+            out[_norm_key(item['theme'])] = item
+    return out
+
+
+def _match_editorial(change: dict, editorial_by_theme: dict[str, dict]) -> dict | None:
+    if not editorial_by_theme:
+        return None
+    haystack = ' '.join(
+        str(change.get(k, '')) for k in ('title', 'description', 'impact')
+    ).lower()
+    for key, item in editorial_by_theme.items():
+        theme = str(item.get('theme', ''))
+        if key and key in _norm_key(haystack):
+            return item
+        keywords = item.get('keywords') or []
+        if any(str(kw).lower() in haystack for kw in keywords[:5]):
+            return item
+        if theme and theme.lower() in haystack:
+            return item
+    return None
+
+
+def _title_from_description(description: str) -> str:
+    desc = _clean_text(description)
+    if not desc:
+        return ''
+    first = re.split(r'[.:;—]', desc, maxsplit=1)[0].strip()
+    return first[:80] or desc[:80]
+
+
+def _clean_text(value) -> str:
+    if value is None:
+        return ''
+    return str(value).strip()
+
+
+def _norm_key(value: str) -> str:
+    return re.sub(r'[^a-z0-9äöüß]+', ' ', str(value).lower()).strip()
 
 
 def enrich_changes_with_authors(ctx: 'PipelineContext') -> None:

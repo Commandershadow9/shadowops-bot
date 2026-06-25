@@ -48,6 +48,7 @@ TEAM_MAPPING: dict[str, tuple[str, str]] = {
 
 async def classify(ctx: PipelineContext, bot=None) -> None:
     """Stufe 2: Gruppierung + Version + Credits + Update-Größe."""
+    from patch_notes.editorial import build_editorial_context
     from patch_notes.grouping import group_commits
     from patch_notes.versioning import calculate_version
 
@@ -87,6 +88,9 @@ async def classify(ctx: PipelineContext, bot=None) -> None:
 
     # 5. Vorherige Version laden (Duplikat-Guard)
     ctx.previous_version_content = _load_previous_content(ctx.project)
+
+    # 6. Editorial-Layer: deterministische Priorisierung fuer Prompt/Discord/Web.
+    ctx.editorial_context = build_editorial_context(ctx)
 
 
 def _extract_credits(commits: list[dict]) -> list[dict]:

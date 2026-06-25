@@ -56,6 +56,13 @@ Event → TaskRouter → Codex CLI (Primary)
                SmartQueue (Fix-Lock + Circuit Breaker)
 ```
 
+### 📝 **Patch Notes v7 Editorial Layer**
+- ✅ **Hero-Changes statt Commitliste**: Releases bekommen 1-4 priorisierte Highlights mit konkretem Nutzer-, Spieler- oder Ops-Nutzen.
+- ✅ **Before/After/Impact/User-Action**: Strukturierte Felder fuer Web-Changelog und Discord, ohne alte AI-Outputs zu brechen.
+- ✅ **Kanaltrennung**: Discord bleibt kurz und stark, Web bekommt Highlights + Detailgruppen, Ops-Hinweise nennen Migrationen/Config/Downtime.
+- ✅ **Qualitaetsguard**: Generische Formulierungen wie "bessere UX" oder "verbesserte Performance" werden gewarnt, wenn kein konkreter Beleg dabei ist.
+- ✅ **Kompatibler Rollout**: Neue Felder im `changes[]` Schema sind optional; bestehende Releases, DB-Eintraege und Export-Pfade bleiben kompatibel.
+
 ## 🎯 Features
 
 ### 🔔 Auto-Alerts

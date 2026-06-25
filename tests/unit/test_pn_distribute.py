@@ -180,6 +180,36 @@ def test_build_summary_embed_inline_credits():
     assert "Shadow" in embed.description
 
 
+def test_build_summary_embed_uses_editorial_title_and_impact():
+    ctx = _make_ctx(changes=[{
+        "type": "feature",
+        "title": "BOS-Funk",
+        "description": "Funk verbessert",
+        "impact": "Dispatcher sehen Statuswechsel direkt im Einsatz.",
+        "after": "Statuswechsel erscheinen ohne Zusatzklick.",
+        "is_hero": True,
+    }])
+    embed = _build_summary_embed(ctx, "https://example.com/changelog")
+    assert "BOS-Funk" in embed.description
+    assert "Dispatcher sehen Statuswechsel" in embed.description
+
+
+def test_build_full_embed_shows_before_after_user_action():
+    ctx = _make_ctx(changes=[{
+        "type": "feature",
+        "title": "Rollen",
+        "description": "Rollensteuerung erweitert",
+        "impact": "Admins koennen Rechte sauberer vergeben.",
+        "before": "Rechte waren zu breit.",
+        "after": "Rollen sind feiner getrennt.",
+        "why": "Das reduziert Fehlkonfigurationen.",
+        "user_action": "Rollen einmal pruefen",
+    }])
+    embed = _build_full_embed(ctx)
+    assert "Vorher:" in embed.description
+    assert "Rollen einmal pruefen" in embed.description
+
+
 # ── Footer Tests ──
 
 

@@ -144,6 +144,7 @@ class BaseTemplate:
         sections = [
             self._system_instruction(ctx),
             self._groups_section(ctx),
+            self._editorial_section(ctx),
             self._narrative_input_block(ctx),
             self._context_section(ctx),
             self._extra_context_section(ctx),
@@ -212,6 +213,16 @@ REGELN für `changes[].description` und `details[]`:
 - KEINE Generika ("Verbesserte UX", "Bessere Performance") ohne konkreten Nutzen.
 - KEINE leeren Adjektive ("massiv", "umfangreich", "spektakulär") ohne Zahl/Fakt.
 
+OPTIONALE Editorial-Felder pro `changes[]` wenn sinnvoll:
+- title: kurze, sprechende Überschrift ohne Version.
+- impact: konkreter Nutzer-/Spieler-/Ops-Nutzen in einem Satz.
+- before: vorherige Reibung oder Einschränkung, nur wenn aus Input ableitbar.
+- after: neuer Ablauf oder neues Verhalten, konkret und überprüfbar.
+- why: warum diese Änderung im Release wichtig ist.
+- user_action: "Keine" wenn niemand etwas tun muss; sonst Migration/Config/Re-Login klar nennen.
+- is_hero: true nur für die 1-4 wichtigsten Änderungen.
+- source_commits: kurze Commit-Titel aus dem Input, keine erfundenen PRs.
+
 Antworte als JSON mit: title, tldr, discord_highlights (3-6 Bullet-Points),
 summary (1-3 Sätze Intro), web_content, changes (type/description/details),
 seo_keywords.
@@ -273,6 +284,72 @@ WICHTIG: Erfinde KEINE Version im Titel. Der Titel enthält NUR den Namen des Up
             if del_f:
                 lines.append(f"  Gelöschte Dateien: {del_f}")
             lines.append("")
+
+        return "\n".join(lines)
+
+    def _editorial_section(self, ctx: PipelineContext) -> str:
+        """Redaktionsbriefing aus dem v7 Editorial-Layer."""
+        editorial = ctx.editorial_context or {}
+        if not editorial:
+            return ""
+
+        lines: list[str] = ["# REDAKTIONSBRIEFING v7"]
+        angle = editorial.get('release_angle')
+        if angle:
+            lines.append(f"Release-Klammer: {angle}")
+
+        plan = editorial.get('channel_plan') or {}
+        if plan:
+            lines.append("Kanal-Plan:")
+            if plan.get('discord'):
+                lines.append(f"- Discord: {plan['discord']}")
+            if plan.get('web'):
+                lines.append(f"- Web: {plan['web']}")
+            if plan.get('ops'):
+                lines.append(f"- Ops/Page-Hinweise: {plan['ops']}")
+
+        heroes = editorial.get('hero_candidates') or []
+        if heroes:
+            lines.append("")
+            lines.append("Hero-Change-Kandidaten (oben priorisieren, max. 1-4 als is_hero=true):")
+            for idx, item in enumerate(heroes[:4], start=1):
+                lines.append(
+                    f"{idx}. [{item.get('type', 'improvement')}] {item.get('theme', 'Update')} "
+                    f"({item.get('commit_count', 0)} Commits, Zielgruppe: {item.get('audience', 'unknown')})"
+                )
+                fields = item.get('suggested_change_fields') or {}
+                if fields:
+                    lines.append(f"   impact: {fields.get('impact', '')}")
+                    lines.append(f"   before: {fields.get('before', '')}")
+                    lines.append(f"   after: {fields.get('after', '')}")
+                    lines.append(f"   user_action: {fields.get('user_action', '')}")
+                commits = item.get('source_commits') or []
+                for msg in commits[:3]:
+                    lines.append(f"   source_commit: {msg}")
+
+        support = editorial.get('supporting_changes') or []
+        if support:
+            lines.append("")
+            lines.append("Weitere Änderungen: kurz gruppieren, nicht als gleich grosse Highlights verkaufen.")
+            for item in support[:6]:
+                lines.append(
+                    f"- [{item.get('type', 'improvement')}] {item.get('theme', 'Update')} "
+                    f"({item.get('commit_count', 0)} Commits)"
+                )
+
+        must = editorial.get('must_call_out') or []
+        if must:
+            lines.append("")
+            lines.append("MUSS prominent genannt werden:")
+            for item in must:
+                lines.append(f"- [{item.get('type', 'breaking')}] {item.get('theme', 'Update')}")
+
+        quality = editorial.get('quality_bar') or []
+        if quality:
+            lines.append("")
+            lines.append("Qualitätslatte:")
+            for rule in quality:
+                lines.append(f"- {rule}")
 
         return "\n".join(lines)
 

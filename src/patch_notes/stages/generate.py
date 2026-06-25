@@ -169,7 +169,12 @@ def _build_structured_wrapper(prompt: str, ctx: PipelineContext) -> str:
             '  "discord_highlights": [str],      # 3-6 kurze Stichpunkte für Discord\n'
             '  "web_content": str,               # Vollständiger Markdown-Text für Website\n'
             '  "summary": str,                   # Kurzer Intro-Absatz (1-3 Sätze)\n'
-            '  "changes": [{"type": str, "description": str, "details": [str]}],\n'
+            '  "changes": [{\n'
+            '    "type": str, "description": str, "details": [str], "author": str,\n'
+            '    "title": str, "impact": str, "before": str, "after": str,\n'
+            '    "why": str, "user_action": str, "is_hero": bool,\n'
+            '    "source_commits": [str]\n'
+            '  }],\n'
             '  "seo_keywords": [str]             # 3-8 SEO-Keywords\n'
             "}\n"
             "WICHTIG: 'title' enthält NUR den Update-Namen, KEINE Version.\n"
@@ -185,7 +190,12 @@ def _build_structured_wrapper(prompt: str, ctx: PipelineContext) -> str:
             '  "discord_highlights": [str],      # 3-6 short bullet points for Discord\n'
             '  "web_content": str,               # Full markdown content for website\n'
             '  "summary": str,                   # Short intro paragraph\n'
-            '  "changes": [{"type": str, "description": str, "details": [str]}],\n'
+            '  "changes": [{\n'
+            '    "type": str, "description": str, "details": [str], "author": str,\n'
+            '    "title": str, "impact": str, "before": str, "after": str,\n'
+            '    "why": str, "user_action": str, "is_hero": bool,\n'
+            '    "source_commits": [str]\n'
+            '  }],\n'
             '  "seo_keywords": [str]\n'
             "}\n"
             "IMPORTANT: 'title' must contain ONLY the update name, NO version.\n"

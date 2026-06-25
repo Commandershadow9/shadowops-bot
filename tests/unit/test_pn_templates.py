@@ -49,11 +49,15 @@ def test_saas_tone():
     assert "sachlich" in tone.lower() or "professionell" in tone.lower()
 
 def test_build_prompt_contains_groups(gaming_ctx):
+    from patch_notes.editorial import build_editorial_context
+    gaming_ctx.editorial_context = build_editorial_context(gaming_ctx)
     prompt = GamingTemplate().build_prompt(gaming_ctx)
     assert "BOS-Funk" in prompt
     assert "Event-System" in prompt
     assert "mayday_sim" in prompt
     assert "0.21.0" in prompt
+    assert "REDAKTIONSBRIEFING v7" in prompt
+    assert "Hero-Change-Kandidaten" in prompt
 
 def test_build_prompt_player_facing_first(gaming_ctx):
     prompt = GamingTemplate().build_prompt(gaming_ctx)

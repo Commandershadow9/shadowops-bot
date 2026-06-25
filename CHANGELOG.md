@@ -2,6 +2,14 @@
 
 ## [Unreleased]
 
+### Added — Patch Notes v7 Editorial Layer (2026-06-25)
+
+- **Redaktionsbriefing vor der AI-Generierung**: Neuer `patch_notes/editorial.py` Layer priorisiert Hero-Changes, Release-Klammer, Kanalplan und Qualitätsregeln deterministisch aus Gruppen, Commit-Tags, Zielgruppe und Commit-Anzahl. Ziel: Patch Notes wie professionelle Release Notes statt gleichgewichtiger Commitliste.
+- **Strukturierte v7-Change-Felder**: `changes[]` akzeptiert optional `title`, `impact`, `before`, `after`, `why`, `user_action`, `is_hero`, `source_commits`. Bestehende AI-Outputs bleiben kompatibel; `validate.py` normalisiert alte und neue Formate.
+- **Discord + Web sauber getrennt**: Discord zeigt kurze Outcome-Zeilen (`title + impact`) und bei großen Releases konkrete Subzeilen. Web/Markdown rendert `## Highlights` plus Detailgruppen mit Before/After/Why/User-Action.
+- **Qualitätsguard gegen stumpfe Patchnotes**: Generische Aussagen wie "verbesserte UX" oder "bessere Performance" werden als Warning markiert, wenn kein konkreter Beleg, keine Quelle oder kein Beispiel vorhanden ist.
+- **Tests**: 143× Patch-Notes/Web-Export grün, 60× AI/Schema-naher Pfad grün. Changelog-DB/API-Tests bleiben in der aktuellen Sandbox durch `aiosqlite`/aiohttp-Testserver-Umgebung blockiert, ohne Code-Diff in den betroffenen Modulen.
+
 ### Fixed — Auto-Deploy Project-Name-Lookup (Vorfall 2026-05-25)
 
 - **`deployment_manager.deploy_project()` + `ci_mixin._trigger_deployment()`**: Lookup um dash↔underscore-Fallback erweitert. GitHub-Webhooks senden `repo_name="mayday-sim"` (mit Bindestrich), Config-Keys benutzten teilweise `mayday_sim` (mit Unterstrich) → exact-Match scheiterte, ShadowOps loggte "Project 'mayday-sim' not found in deployment config" und brach Auto-Deploy ab. Vorfall: PR #449/#450 in mayday-sim wurden gemerged, aber Container lief 14h mit altem Code, bis keydev manuell pingte. Fix: zusätzlich `key.lower().replace("-", "_") == name.lower().replace("-", "_")` als Match-Stufe. Tests: 35× grün in deployment_manager + github_integration suites.

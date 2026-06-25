@@ -24,7 +24,19 @@
             "type": "array",
             "items": { "type": "string" }
           },
-          "author": { "type": "string", "description": "Name des Autors (z.B. 'Shadow', 'Mapu'). Leer-String wenn unklar." }
+          "author": { "type": "string", "description": "Name des Autors (z.B. 'Shadow', 'Mapu'). Leer-String wenn unklar." },
+          "title": { "type": "string", "description": "Kurze sprechende Change-Ueberschrift ohne Version." },
+          "impact": { "type": "string", "description": "Konkreter Nutzer-, Spieler- oder Ops-Nutzen." },
+          "before": { "type": "string", "description": "Vorherige Reibung/Einschraenkung, nur wenn aus Input ableitbar." },
+          "after": { "type": "string", "description": "Neuer Ablauf oder neues Verhalten." },
+          "why": { "type": "string", "description": "Warum diese Aenderung fuer das Release wichtig ist." },
+          "user_action": { "type": "string", "description": "Keine oder konkrete Migration/Config/Re-Login/Handlung." },
+          "is_hero": { "type": "boolean", "description": "True fuer 1-4 wichtigste Hero-Aenderungen." },
+          "source_commits": {
+            "type": "array",
+            "items": { "type": "string" },
+            "description": "Kurze Commit-Titel aus dem Input, keine erfundenen PRs."
+          }
         },
         "required": ["type", "description", "details", "author"],
         "additionalProperties": false

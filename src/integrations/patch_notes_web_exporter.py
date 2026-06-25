@@ -292,6 +292,15 @@ class PatchNotesWebExporter:
             show_author = len(unique_authors) > 1
 
             if grouped:
+                hero_changes = [c for c in changes if c.get('is_hero')]
+                if hero_changes:
+                    hero_header = '## Highlights' if language == 'de' else '## Highlights'
+                    lines.append(hero_header)
+                    lines.append('')
+                    for item in hero_changes[:4]:
+                        lines.extend(self._format_editorial_change_markdown(item, language, level='###'))
+                    lines.append('')
+
                 header = '## Änderungen im Detail' if language == 'de' else '## Changes in Detail'
                 lines.append(header)
                 lines.append('')
@@ -304,13 +313,13 @@ class PatchNotesWebExporter:
                     lines.append(f'### {emoji} {label}')
                     lines.append('')
                     for item in items:
-                        desc = item.get('description', '')
-                        author = item.get('author', '')
+                        desc = self._change_summary(item)
+                        author = self._authors_display(item)
                         if show_author and author:
                             lines.append(f'- **{desc}** · *{author}*')
                         else:
                             lines.append(f'- **{desc}**')
-                        for detail in item.get('details', []):
+                        for detail in self._change_detail_lines(item, language):
                             lines.append(f'  - {detail}')
                     lines.append('')
 
@@ -353,6 +362,86 @@ class PatchNotesWebExporter:
             lines.append('')
 
         return '\n'.join(lines)
+
+    def _format_editorial_change_markdown(self, item: Dict, language: str,
+                                          level: str = '###') -> List[str]:
+        """Formatiere einen v7-Hero-Change fuer Markdown/Web."""
+        title = item.get('title') or self._change_summary(item)
+        lines = [f'{level} {title}', '']
+
+        impact = item.get('impact') or item.get('description', '')
+        if impact:
+            lines.append(impact)
+            lines.append('')
+
+        before = item.get('before', '')
+        after = item.get('after', '')
+        why = item.get('why', '')
+        action = item.get('user_action', '')
+
+        if before or after:
+            label = 'Vorher / Jetzt' if language == 'de' else 'Before / After'
+            lines.append(f'**{label}:**')
+            if before:
+                prefix = 'Vorher' if language == 'de' else 'Before'
+                lines.append(f'- {prefix}: {before}')
+            if after:
+                prefix = 'Jetzt' if language == 'de' else 'After'
+                lines.append(f'- {prefix}: {after}')
+            lines.append('')
+
+        if why:
+            label = 'Warum wichtig' if language == 'de' else 'Why it matters'
+            lines.append(f'**{label}:** {why}')
+            lines.append('')
+
+        if action and action.lower() not in ('keine', 'none', 'n/a'):
+            label = 'Aktion nötig' if language == 'de' else 'Action required'
+            lines.append(f'**{label}:** {action}')
+            lines.append('')
+
+        return lines
+
+    def _change_summary(self, item: Dict) -> str:
+        title = (item.get('title') or '').strip()
+        impact = (item.get('impact') or '').strip()
+        desc = (item.get('description') or '').strip()
+        if title and impact and impact.lower() not in desc.lower():
+            return f'{title}: {impact}'
+        return desc or title or 'Update'
+
+    def _change_detail_lines(self, item: Dict, language: str) -> List[str]:
+        lines: List[str] = []
+        before = (item.get('before') or '').strip()
+        after = (item.get('after') or '').strip()
+        why = (item.get('why') or '').strip()
+        action = (item.get('user_action') or '').strip()
+        if before and after:
+            if language == 'de':
+                lines.append(f'Vorher: {before} Jetzt: {after}')
+            else:
+                lines.append(f'Before: {before} After: {after}')
+        elif after:
+            lines.append(after)
+        if why:
+            lines.append(why)
+        if action and action.lower() not in ('keine', 'none', 'n/a'):
+            label = 'Aktion nötig' if language == 'de' else 'Action required'
+            lines.append(f'{label}: {action}')
+        for detail in item.get('details', []) or []:
+            if isinstance(detail, str) and detail.strip() and detail.strip() not in lines:
+                lines.append(detail.strip())
+        return lines
+
+    def _authors_display(self, item: Dict) -> str:
+        authors = item.get('authors') or []
+        if not authors:
+            return item.get('author', '') or ''
+        if len(authors) == 1:
+            return authors[0]
+        if len(authors) == 2:
+            return f'{authors[0]} + {authors[1]}'
+        return ', '.join(authors)
 
     def _build_meta_description(self, project: str, version: str, tldr: str) -> str:
         """Baue SEO Meta-Description (max 160 Zeichen)."""

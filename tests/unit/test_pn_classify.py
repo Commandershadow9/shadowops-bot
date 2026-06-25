@@ -159,3 +159,17 @@ async def test_classify_player_facing_detected(ctx_major):
     await classify(ctx_major)
     pf = [g for g in ctx_major.groups if g.get("is_player_facing")]
     assert len(pf) > 0
+
+
+@pytest.mark.asyncio
+async def test_classify_builds_editorial_context(ctx_major):
+    """v7 Editorial-Layer priorisiert Hero-Kandidaten fuer Prompt/Discord/Web."""
+    await classify(ctx_major)
+    editorial = ctx_major.editorial_context
+    assert editorial["version"] == 7
+    assert editorial["hero_candidates"]
+    assert "channel_plan" in editorial
+    hero = editorial["hero_candidates"][0]
+    assert hero["theme"]
+    assert hero["source_commits"]
+    assert "suggested_change_fields" in hero

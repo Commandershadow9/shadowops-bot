@@ -1,16 +1,61 @@
 ---
-title: Patch Notes Pipeline v6 — Design Document
+title: Patch Notes Pipeline v6/v7 — Design Document
 status: active
-last_reviewed: 2026-04-15
+last_reviewed: 2026-06-25
 owner: CommanderShadow9
 ---
 
-# Patch Notes Pipeline v6 — Design Document
+# Patch Notes Pipeline v6/v7 — Design Document
 
 **Datum:** 2026-04-13
 **Status:** DESIGN
 **Autor:** Shadow + Claude
 **Vorgänger:** Patch Notes v5 (Unified Pipeline), 5839 Zeilen / 9 Dateien / 92 Methoden
+
+## Update 2026-06-25: v7 Editorial Layer
+
+v7 erweitert v6 ohne Pipeline-Bruch um eine redaktionelle Ebene zwischen
+Klassifizierung und Generierung. Ziel ist, Releases nicht mehr als gleichgewichtige
+Commit- oder Feature-Liste auszugeben, sondern wie professionelle Patch Notes:
+oben wenige Hero-Changes, danach Details, Fixes, Breaking Changes und Ops-Hinweise.
+
+### Ziele von v7
+
+1. **Hero-Priorisierung:** Pro Release werden 1-4 wichtigste Änderungen aus Gruppen,
+   Tags, Commit-Anzahl und Zielgruppenwirkung abgeleitet.
+2. **Konkreter Nutzen:** AI-Output soll `title`, `impact`, `before`, `after`, `why`
+   und `user_action` pro Change liefern, wenn diese Informationen belegbar sind.
+3. **Kanaltrennung:** Discord nutzt kurze Outcome-Zeilen; Web rendert Highlights und
+   strukturierte Detailgruppen; Ops-Hinweise nennen Migration, Config, Downtime oder
+   Security-Risiko.
+4. **Kompatibilität:** Neue Felder in `changes[]` sind optional. Alte AI-Outputs werden
+   in `validate.py` normalisiert und bleiben fuer Discord/Web renderbar.
+5. **Keine erfundenen Fakten:** Der Editorial-Layer liefert Briefing und Priorität,
+   aber keine Platzhaltertexte als veröffentlichte Fakten.
+
+### Neue Bausteine
+
+- `patch_notes/editorial.py`: deterministischer Redaktionsbrief mit
+  `release_angle`, `hero_candidates`, `supporting_changes`, `must_call_out`,
+  `channel_plan` und `quality_bar`.
+- `PipelineContext.editorial_context`: transportiert das Briefing durch die Pipeline.
+- `templates/base.py`: fuegt das Redaktionsbriefing in den Prompt ein und fordert
+  optionale v7-Felder pro `changes[]`.
+- `schemas/patch_notes.json`: erlaubt optionale Felder `title`, `impact`, `before`,
+  `after`, `why`, `user_action`, `is_hero`, `source_commits`.
+- `stages/validate.py`: normalisiert alte und neue Outputs, setzt Hero-Fallbacks und
+  warnt bei generischen Patchnote-Formulierungen ohne konkreten Beleg.
+- `stages/distribute.py`: Discord zeigt `title + impact` und bei grossen Releases
+  konkrete zweite Zeilen.
+- `patch_notes_web_exporter.py`: Markdown/JSON/Web-Backup rendert `## Highlights`
+  und Detailgruppen inklusive Before/After/Why/User-Action.
+
+### Testabdeckung
+
+- Patch-Notes-Pipeline-Satz: `tests/unit/test_pn_*.py`
+- Web-Export: `tests/unit/test_patch_notes_web_exporter.py`
+- AI/Schema-naher Pfad: `tests/unit/test_ai_engine.py`,
+  `tests/unit/test_ai_engine_token_tracking.py`
 
 ## Motivation
 
@@ -92,14 +137,16 @@ PatchNotePipeline.run(ctx)
     │   - Commits nach Scope/Thema gruppieren (ALLE, kein Cap!) │
     │   - Version berechnen (DB-basiert, EINMAL)                │
     │   - Team-Credits extrahieren                              │
-    │   - Update-Größe bestimmen (SMALL/NORMAL/BIG/MAJOR)      │
-    │   Output: ctx.groups, ctx.version, ctx.team_credits       │
+    │   - Update-Größe bestimmen (SMALL/NORMAL/BIG/MAJOR/MEGA) │
+    │   - v7 Editorial-Kontext bauen (Hero-Kandidaten, Kanalplan)│
+    │   Output: ctx.groups, ctx.version, ctx.team_credits,      │
+    │           ctx.editorial_context                           │
     │                                                           │
     ├── GENERATING ─────────────────────────────────────────────┤
     │   generate.py:                                            │
     │   - Template laden (gaming/saas/devops je nach Config)    │
     │   - A/B-Variante wählen (oder Gewinner wenn stabil)      │
-    │   - Prompt bauen aus: Template + Gruppen + Kontext        │
+    │   - Prompt bauen aus: Template + Gruppen + Editorial + Kontext│
     │   - Big-Update-Override wenn ctx.update_size >= BIG       │
     │   - Feature-Branch-Teasers anhängen                       │
     │   - AI-Call (Codex → Claude Fallback, mit Retry)          │
@@ -114,6 +161,8 @@ PatchNotePipeline.run(ctx)
     │   - Content-Sanitizer (Pfade, IPs, Secrets)               │
     │   - Umlaut-Normalisierung (ae→ä, oe→ö)                   │
     │   - Titel + TL;DR + Web-Content extrahieren               │
+    │   - v7 Change-Felder normalisieren                        │
+    │   - Generische Patchnote-Sprache warnen                   │
     │   Output: ctx.title, ctx.tldr, ctx.web_content, ctx.valid │
     │                                                           │
     └── DISTRIBUTING ───────────────────────────────────────────┘
