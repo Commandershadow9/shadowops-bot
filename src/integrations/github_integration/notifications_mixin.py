@@ -19,25 +19,26 @@ logger = logging.getLogger('shadowops')
 
 
 class NotificationsMixin:
+    def _get_project_config_for_repo(self, repo_name: str) -> tuple[Dict, str]:
+        """Find project config by exact, case-insensitive or dash/underscore-normalized name."""
+        projects = getattr(self.config, 'projects', {}) or {}
+        if repo_name in projects:
+            return projects[repo_name], repo_name
+
+        repo_norm = repo_name.lower().replace('-', '_')
+        for key, value in projects.items():
+            if key.lower().replace('-', '_') == repo_norm:
+                return value, key
+
+        return {}, repo_name
 
     async def _send_push_notification(
         self, repo_name: str, repo_url: str, branch: str, pusher: str, commits: list,
         skip_batcher: bool = False
     ):
         """Send detailed Discord notification for a push event."""
-        # Find project config to get color and potential customer channel (case-insensitive)
-        project_config = {}
-        project_config_key = repo_name
-
-        # Try case-insensitive lookup for project config
-        for key in self.config.projects.keys():
-            if key.lower() == repo_name.lower():
-                project_config = self.config.projects[key]
-                project_config_key = key
-                break
-
-        if not project_config:
-            project_config = self.config.projects.get(repo_name, {})
+        # Find project config to get color and potential customer channel.
+        project_config, project_config_key = self._get_project_config_for_repo(repo_name)
 
         # ── v6 Pipeline Dispatch ──────────────────────────────────
         # Push-Webhooks dürfen NICHT direkt einen Release auslösen, sonst
@@ -483,7 +484,7 @@ class NotificationsMixin:
         try:
             import subprocess
             # Projektpfad aus Config holen
-            project_config = self.bot.config.projects.get(repo_name, {})
+            project_config, _ = self._get_project_config_for_repo(repo_name)
             project_path = project_config.get('path', '')
             if not project_path:
                 return None
@@ -514,7 +515,7 @@ class NotificationsMixin:
         """
         try:
             import subprocess
-            project_config = self.bot.config.projects.get(repo_name, {})
+            project_config, _ = self._get_project_config_for_repo(repo_name)
             project_path = project_config.get('path', '')
             if not project_path:
                 return None

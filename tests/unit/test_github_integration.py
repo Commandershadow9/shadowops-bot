@@ -979,6 +979,70 @@ class TestReleaseHandling:
         integration._send_release_notification.assert_called_once()
 
 
+class TestNotificationsProjectLookup:
+    """Regressionstests fuer dash/underscore-Projektnamen in Notifications."""
+
+    def test_project_config_lookup_matches_dash_to_underscore(self, mock_bot, enabled_config):
+        integration = GitHubIntegration(mock_bot, enabled_config)
+        integration.config.projects = {
+            'mayday_sim': {'path': '/srv/leitstelle/app', 'patch_notes': {'engine': 'v6'}},
+        }
+
+        project_config, project_key = integration._get_project_config_for_repo('mayday-sim')
+
+        assert project_key == 'mayday_sim'
+        assert project_config['path'] == '/srv/leitstelle/app'
+
+    def test_last_version_from_git_uses_normalized_project_path(
+        self, mock_bot, enabled_config, monkeypatch
+    ):
+        integration = GitHubIntegration(mock_bot, enabled_config)
+        integration.config.projects = {
+            'mayday_sim': {'path': '/srv/leitstelle/app'},
+        }
+
+        calls = []
+
+        def fake_run(*args, **kwargs):
+            calls.append(kwargs)
+            result = MagicMock()
+            result.returncode = 0
+            result.stdout = 'v1.2.3\n'
+            return result
+
+        monkeypatch.setattr('subprocess.run', fake_run)
+
+        assert integration._get_last_version_from_git('mayday-sim') == '1.2.3'
+        assert calls[0]['cwd'] == '/srv/leitstelle/app'
+
+    def test_commit_tag_version_uses_normalized_project_path(
+        self, mock_bot, enabled_config, monkeypatch
+    ):
+        integration = GitHubIntegration(mock_bot, enabled_config)
+        integration.config.projects = {
+            'mayday_sim': {'path': '/srv/leitstelle/app'},
+        }
+
+        calls = []
+
+        def fake_run(*args, **kwargs):
+            calls.append(kwargs)
+            result = MagicMock()
+            result.returncode = 0
+            result.stdout = 'v2.0.0 abc123 abc123\n'
+            return result
+
+        monkeypatch.setattr('subprocess.run', fake_run)
+
+        version = integration._get_version_from_commit_tags(
+            commits=[{'id': 'abc123ffff', 'message': 'release'}],
+            repo_name='mayday-sim',
+        )
+
+        assert version == '2.0.0'
+        assert calls[0]['cwd'] == '/srv/leitstelle/app'
+
+
 class TestV6BatcherGate:
     """Regression: v6 darf bei Webhook NIE direkt releasen — nur via Cron/manuell/Notbremse.
 
