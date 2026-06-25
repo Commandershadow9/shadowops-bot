@@ -351,6 +351,7 @@ projects:
     tag: "[AGENTS]"
     path: "/home/cmdshadow/agents"
     repo_url: "https://github.com/Commandershadow9/ai-agent-framework"
+    auto_create_webhook: true
     services:
       - "guildscout-feedback-agent"
       - "zerodox-support-agent"

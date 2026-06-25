@@ -128,6 +128,9 @@ class WebhookMixin:
         for project_name, project_config in projects.items():
             if not project_config.get('enabled', True):
                 continue
+            if project_config.get('auto_create_webhook') is False:
+                self.logger.debug(f"⏭️ Auto-Webhook fuer {project_name} deaktiviert")
+                continue
             repo_url = project_config.get('repo_url') or project_config.get('repository_url')
             if not repo_url:
                 repo_path = project_config.get('path')

@@ -210,6 +210,31 @@ class TestWebhookVerification:
             github_token='token',
         )
 
+    @pytest.mark.asyncio
+    async def test_project_webhook_skips_project_opt_out(self, mock_bot, enabled_config):
+        """Monitor-only Projekte duerfen Auto-Webhook explizit abwaehlen."""
+        enabled_config.github = {
+            **enabled_config.github,
+            'auto_create_webhooks': True,
+            'webhook_public_url': 'https://shadowops.example/webhook',
+        }
+        enabled_config.projects = {
+            'database-ports': {
+                'enabled': True,
+                'path': '/home/cmdshadow/agents',
+                'auto_create_webhook': False,
+            },
+        }
+        integration = GitHubIntegration(mock_bot, enabled_config)
+        integration._get_github_token = Mock(return_value='token')
+        integration._get_repo_url = Mock()
+        integration._ensure_webhook_for_repo = AsyncMock()
+
+        await integration.ensure_project_webhooks()
+
+        integration._get_repo_url.assert_not_called()
+        integration._ensure_webhook_for_repo.assert_not_awaited()
+
 
 class TestPushEventHandling:
     """Tests for push event handling."""
