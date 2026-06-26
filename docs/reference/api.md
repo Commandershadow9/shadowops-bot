@@ -1,7 +1,7 @@
 ---
 title: 🔧 ShadowOps API Documentation v5.1
 status: active
-last_reviewed: 2026-05-18
+last_reviewed: 2026-06-26
 owner: CommanderShadow9
 ---
 
@@ -176,7 +176,7 @@ Shows auto-remediation statistics and performance metrics.
 ```
 
 #### `/stop-all-fixes`
-🛑 EMERGENCY: Stops all running auto-fix processes immediately.
+EMERGENCY: Stops all running auto-fix processes immediately.
 
 **Permissions:** Administrator
 **Parameters:** None
@@ -187,7 +187,7 @@ Shows auto-remediation statistics and performance metrics.
 /stop-all-fixes
 ```
 
-**⚠️ Warning:** Only use in emergency situations. May leave fixes in incomplete state.
+**Warning:** Only use in emergency situations. May leave fixes in incomplete state.
 
 #### `/set-approval-mode [mode]`
 Changes the auto-remediation approval mode.
@@ -236,7 +236,7 @@ Pauses or resumes Auto-Heal for a project or globally. Checks continue running; 
 **Notes:**
 - Requires `MaintenanceGate` to be initialized (i.e., `project_monitor.py` must be running)
 - Expiry is best-effort; the gate is checked on every heal attempt
-- State is in-memory only — a bot restart resets all maintenance windows
+- State is in-memory only -- a bot restart resets all maintenance windows
 
 ---
 
@@ -350,14 +350,14 @@ Starts a headless Claude CLI session on the server and returns the output as Dis
 **Permissions:** Owner-only (user ID check, not role-based)
 **Parameters:**
 - `prompt` (required): The task for Claude
-- `project` (optional): Working directory — one of `home`, `zerodox`, `guildscout`, `shadowops`, `agents`, `sharedui`, `design` (default: `home`)
+- `project` (optional): Working directory -- one of `home`, `zerodox`, `guildscout`, `shadowops`, `agents`, `sharedui`, `design` (default: `home`)
 - `model` (optional): `sonnet` (default), `opus`, `haiku`
 - `timeout` (optional): Seconds until abort (default: 300, max: 600)
 
-**Returns:** Header embed (model, elapsed, exit code) followed by Claude's output in code-block chunks (≤1900 chars each)
+**Returns:** Header embed (model, elapsed, exit code) followed by Claude's output in code-block chunks (<=1900 chars each)
 
 **Security notes:**
-- Project paths are a fixed whitelist — no path traversal possible
+- Project paths are a fixed whitelist -- no path traversal possible
 - Any user other than the owner receives an ephemeral error
 - Requires `claude` CLI at `~/.local/bin/claude`
 
@@ -470,6 +470,10 @@ projects:
     enabled: true                           # Enable this project
     path: /home/user/shadowops-bot          # Absolute path to project
     branch: main                            # Git branch for deployments
+    # If true, GitHub webhook events (push, PR, releases, auto-deploy) are silently skipped
+    # for this project. Health checks via project_monitor still run.
+    # Use for externally-tracked services that ShadowOps monitors but does not deploy.
+    monitor_only: false                     # default false
 
     # Health monitoring (v3.1)
     monitor:
@@ -487,9 +491,9 @@ projects:
       service_name: shadowops-bot           # Systemd service name
       allow_direct_push: false              # Direct push to deploy branch triggers deploy (opt-in, default off)
 
-    # External deploy notifications — posted to customer Discord servers on each deploy.
+    # External deploy notifications -- posted to customer Discord servers on each deploy.
     # Handled by DeploymentManager._forward_deploy_to_external.
-    # Config-key lookup is dash/underscore-tolerant (mayday-sim ↔ mayday_sim).
+    # Config-key lookup is dash/underscore-tolerant (mayday-sim <-> mayday_sim).
     # Without this block, only the internal DEV-server deployment-log channel receives posts.
     external_notifications:
       - enabled: true
@@ -590,7 +594,7 @@ ShadowOps can receive GitHub webhook events for auto-deployment.
 ### Setup
 
 1. **Configure webhook in GitHub:**
-   - Repository → Settings → Webhooks → Add webhook
+   - Repository -> Settings -> Webhooks -> Add webhook
    - Payload URL: `http://your-server:8080/webhook`
    - Content type: `application/json`
    - Secret: (from `github.webhook_secret` in config.yaml)
@@ -611,7 +615,7 @@ ShadowOps can receive GitHub webhook events for auto-deployment.
 #### Push Events
 Triggers when code is pushed to repository.
 
-**Auto-Deploy Trigger:** If push is to a deploy branch (e.g., `main`)
+**Auto-Deploy Trigger:** If push is to a deploy branch (e.g., `main`) and `monitor_only: false`
 
 **Discord Notification:** Always sent with:
 - Repository name
@@ -622,12 +626,12 @@ Triggers when code is pushed to repository.
 #### Pull Request Events
 Triggers when PRs are opened, closed, or updated.
 
-**Auto-Deploy Trigger:** If PR is merged to a deploy branch
+**Auto-Deploy Trigger:** If PR is merged to a deploy branch and `monitor_only: false`
 
 **Discord Notification:** Always sent with:
 - PR number and title
 - Author
-- Source → Target branch
+- Source -> Target branch
 - Action (opened/closed/merged)
 
 #### Release Events
@@ -710,10 +714,10 @@ Der Jules-Workflow reagiert auf folgende GitHub-Webhook-Events:
 
 | Event | Action | Reaktion |
 |-------|--------|----------|
-| `pull_request` | `opened` | Jules-PR erkannt → Claude-Review starten |
-| `pull_request` | `synchronize` | Neuer Commit → Re-Review (wenn neuer SHA) |
-| `pull_request` | `ready_for_review` | Draft→Ready → Review starten |
-| `pull_request` | `closed` | Merged → Finding resolved / Abandoned → Terminal |
+| `pull_request` | `opened` | Jules-PR erkannt -> Claude-Review starten |
+| `pull_request` | `synchronize` | Neuer Commit -> Re-Review (wenn neuer SHA) |
+| `pull_request` | `ready_for_review` | Draft->Ready -> Review starten |
+| `pull_request` | `closed` | Merged -> Finding resolved / Abandoned -> Terminal |
 | `issue_comment` | `created` | Nur `/review` Command vom Repo-Owner |
 
 **Blockierte Events (Loop-Schutz):**
@@ -721,7 +725,7 @@ Alle `issue_comment`, `pull_request_review`, `pull_request_review_comment` Event
 
 ### Konfiguration
 
-Siehe `config/config.example.yaml` → `jules_workflow:` Block.
+Siehe `config/config.example.yaml` -> `jules_workflow:` Block.
 
 | Parameter | Default | Beschreibung |
 |-----------|---------|-------------|
@@ -757,7 +761,7 @@ Siehe `config/config.example.yaml` → `jules_workflow:` Block.
 Der Bot waehlt automatisch Opus oder Sonnet basierend auf PR-Charakteristik:
 
 | Kriterium | Modell | Timeout |
-|-----------|--------|---------|
+|-----------|--------|--------|
 | Security-Keywords (xss/cve/injection/dos/auth/csrf) | **Opus (thinking)** | 180s |
 | Diff > 3000 Zeichen | **Opus (thinking)** | 180s |
 | Alles andere | **Sonnet (standard)** | 120s |
@@ -990,7 +994,7 @@ event = SecurityEvent(
 
 ## Database Schema
 
-### Knowledge Base (PostgreSQL — `security_analyst` DB)
+### Knowledge Base (PostgreSQL -- `security_analyst` DB)
 
 Die Knowledge Base nutzt PostgreSQL, nicht SQLite. Haupttabellen:
 
@@ -1005,7 +1009,7 @@ Die Knowledge Base nutzt PostgreSQL, nicht SQLite. Haupttabellen:
 
 DSN kommt aus `config.security_analyst_dsn` (Env: `SECURITY_ANALYST_DB_URL`).
 
-### Agent Learning (PostgreSQL — `agent_learning` DB)
+### Agent Learning (PostgreSQL -- `agent_learning` DB)
 
 | Tabelle | Zweck |
 |---------|-------|
@@ -1057,7 +1061,7 @@ DSN kommt aus `config.agent_learning_dsn` (Env: `AGENT_LEARNING_DB_URL`).
       },
       {
         "timestamp": "2025-11-21T10:15:00Z",
-        "event": "Status changed: open → in_progress",
+        "event": "Status changed: open -> in_progress",
         "author": "admin"
       }
     ],
@@ -1189,4 +1193,4 @@ sudo ufw status
 
 ---
 
-**API Documentation v5.1** | Last Updated: 2026-05-18
+**API Documentation v5.1** | Last Updated: 2026-06-26
