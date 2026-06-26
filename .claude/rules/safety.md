@@ -54,8 +54,9 @@ Bei Aenderungen an Shared-Services (Redis, PostgreSQL, Traefik) MUESSEN alle Kon
 - **Vorfaelle:** 2026-03-17 Bind-Address (11h Ausfall), 2026-03-18 Redis-Auth (SEO-Audit ausgefallen)
 - **Checkliste vor Auth-Aenderungen:** `grep -r "redis-cli\|redis://\|5433\|6379" ~/agents/ ~/shadowops-bot/scripts/`
 
-## Patch Notes Pipeline v6 (seit 2026-04-13, ersetzt v5 Mixins)
-- **Code:** `src/patch_notes/` — 5-Stufen State Machine (~2100 Zeilen, 101 Tests)
+## Patch Notes Pipeline v6/v7 (v6 seit 2026-04-13 ersetzt v5 Mixins; v7 Editorial Layer seit 2026-06-25)
+- **Code:** `src/patch_notes/` — 5-Stufen State Machine + `editorial.py` (v7 Pre-Context-Builder, seit 2026-06-25) — ~2300 Zeilen
+- **Editorial Layer (v7):** `build_editorial_context()` in `editorial.py` — baut Hero-Kandidaten, Kanalplan + Qualitaetsbar deterministisch aus Commit-Gruppen. Kein Stage, laeuft vor `generate.py`. Output ist rein datengeleitet, KEIN AI-generierter Inhalt. NIEMALS `hero_candidates` mit erfundenen Daten befuellen.
 - **Vorfall-Historie:** v5 hatte Commit-Cap (50), 5 Version-Quellen, halluzinierte Features (v2.9.2, v3.0.8)
 - **Safety-Checks (Stufe 4 — validate.py):**
   - `check_feature_count()` — AI-Features ≤ echte Feature-Gruppen × 2
@@ -204,7 +205,7 @@ Bei Aenderungen an Shared-Services (Redis, PostgreSQL, Traefik) MUESSEN alle Kon
   - `src/integrations/deployment_manager.py` (`deploy_project()` Eingangs-Lookup, ~Z. 157-163)
   - `src/integrations/github_integration/ci_mixin.py` (`_trigger_deployment()` project_config-Lookup für deploy.enabled-Check, ~Z. 503-509)
   - `src/integrations/deployment_manager.py` (`_forward_deploy_to_external()` `external_notifications`-Lookup für **Kunden**-Deploy-Posts, ~Z. 904-922 — **seit #316**: ohne diesen Fallback blieb der Kunden-`#🚀-deploy-log` wochenlang leer, ohne Fehler im Log, weil dieser Pfad beim 2026-05-25-Fix übersehen wurde).
-- **⚠️ Restschulden gleichen Musters** (noch offen, #317): `notifications_mixin.py` `_get_last_version_from_git` (Z. 486), `_get_version_from_commit_tags` (Z. 517), `_send_push_notification` (Z. 33-37, case-insensitiv aber NICHT dash-tolerant). Bei Arbeit an diesen Funktionen mitfixen.
+- **Restschulden gleichen Musters geschlossen** (#317, Commit `41b3197`, 2026-06-25): `notifications_mixin.py` `_get_last_version_from_git`, `_get_version_from_commit_tags`, `_send_push_notification` normalisieren jetzt dash→underscore. 64 neue Tests in `test_github_integration.py`. **Tech-Debt noch offen:** Helper-Extraktion der 3+ separaten inline-Implementierungen (deploy_project, _trigger_deployment, _forward_deploy_to_external, notifications_mixin).
 - **Pattern:** `normalized = name.lower().replace("-", "_")` + dann `key.lower() == name.lower() OR key.lower().replace("-", "_") == normalized`. **TODO (Tech-Debt):** in EINEN Helper extrahieren — 3+ Duplikate, Muster nachweislich fehleranfällig (2× Vorfall).
 - NIEMALS einen der beiden Lookups auf reines `key in projects` zurücksetzen — der dash↔underscore-Mismatch ist heimtückisch (logs zeigen "Project 'mayday-sim' not found" obwohl der Key `mayday_sim` existiert).
 - NIEMALS bei neuen Projekten den dash↔underscore-Drift bewusst einführen — neuen Config-Key direkt mit Bindestrichen anlegen wenn das Repo Bindestriche hat. Lookup-Toleranz ist Fallback, nicht erste Wahl.
