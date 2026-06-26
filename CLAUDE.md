@@ -44,7 +44,7 @@ shadowops-bot/
 │   ├── bot.py                    # Haupt-Bot
 │   ├── cogs/                     # Slash-Commands (admin, inspector, monitoring, claude_cli, cron_heartbeat, customer_setup_commands, phase_5e_health_aggregator)
 │   ├── integrations/             # Externe Systeme (siehe unten)
-│   ├── patch_notes/              # Patch Notes Pipeline v6 (5-Stufen State Machine, ~2100 Zeilen)
+│   ├── patch_notes/              # Patch Notes Pipeline v6 + Editorial Layer v7 (editorial.py, seit 2026-06-25) — 5-Stufen State Machine + Pre-Context-Builder (~2300 Zeilen)
 │   ├── schemas/                  # JSON-Schemas fuer Structured Output (fix_strategy, patch_notes, incident_analysis, jules_review)
 │   └── utils/                    # config, logging, embeds, state, alert_humanizer, health_server, message_handler, circuit_breaker, changelog_parser, process_lock
 ├── tests/
@@ -289,6 +289,10 @@ Worker-Konventionen:
 - [config/DO-NOT-TOUCH.md](./config/DO-NOT-TOUCH.md)
 
 ## Letztes Update dieser Datei
+
+2026-06-25 — Patch Notes v7 Editorial Layer (Commit `23df6d0`): `src/patch_notes/editorial.py` (neues Modul) baut aus Commit-Gruppen einen deterministischen Prompt-Kontext (Hero-Kandidaten, Kanalplan, Qualitaetsbar) vor der AI-Generierung. Kein neuer Stage. Neue optionale Felder in `src/schemas/patch_notes.json`: `title`, `impact`, `before`, `after`, `why`, `user_action`, `is_hero`, `source_commits`. README, CHANGELOG und `docs/design/patch-notes-v6.md` aktualisiert. Safety-Regeln in `.claude/rules/safety.md` ergaenzt.
+
+2026-06-25 — Restschulden `notifications_mixin.py` (#317) geschlossen (Commit `41b3197`): `_get_last_version_from_git`, `_get_version_from_commit_tags`, `_send_push_notification` normalisieren jetzt dash→underscore. 64 neue Tests.
 
 2026-06-14 — Externer Deploy-Post erreichte Kunden-Channel nicht (#316 / Issue mayday-sim#504): `_forward_deploy_to_external` (in `deployment_manager.py`) schlug die Projekt-Config mit dem **rohen** GitHub-Repo-Namen `mayday-sim` (Bindestrich) nach — Config-Key ist `mayday_sim` (Underscore) → leere `external_notifications` → der externe Deploy-Post im `#🚀-deploy-log` (mayday-sim Kunden-Discord, `1486899717362421840`) kam **nie** an, obwohl `deploy_channel_id` korrekt war. Der **interne** `#🚀-deployment-log` bekam Posts, weil `_send_deployment_success` den **globalen** `deployment_channel_id` nutzt (kein Projekt-Lookup) — nur der externe Forward hing am kaputten Lookup. **Gleicher dash/underscore-Bug wie 2026-05-25** (PR #449/#450) — `deploy_project`/`_trigger_deployment` waren damals gefixt, `_forward_deploy_to_external` übersehen. Fix: identischer Fallback-Lookup. 3 neue Tests (`test_deployment_external_forward.py`), 41 Deploy/GitHub-Tests grün. **In Produktion verifiziert:** erster Post im bis dahin leeren Channel exakt zum Deploy `ac4af87` (16:04:25). Restschulden (gleiches Muster) in `notifications_mixin.py` → #317. Doku: `docs/runbooks/discord-routing.md` um externe Kunden-Deploy-Posts ergänzt.
 
