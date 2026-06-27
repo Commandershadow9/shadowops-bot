@@ -470,6 +470,10 @@ projects:
     enabled: true                           # Enable this project
     path: /home/user/shadowops-bot          # Absolute path to project
     branch: main                            # Git branch for deployments
+    # Optional: explicit GitHub repo URL (e.g. https://github.com/owner/repo).
+    # Used by github_integration to create/verify webhooks and by /release-notes to link the repo.
+    # Falls back to auto-detection from git remote when omitted.
+    # repo_url: "https://github.com/Commandershadow9/shadowops-bot"
     # If true, GitHub webhook events (push, PR, releases, auto-deploy) are silently skipped
     # for this project. Health checks via project_monitor still run.
     # Use for externally-tracked services that ShadowOps monitors but does not deploy.
