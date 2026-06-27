@@ -1,0 +1,16 @@
+[Unit]
+Description=SEO-Agent Audit-Freshness Watchdog Timer — stündlich (mit Jitter)
+Documentation=https://github.com/Commandershadow9/shadowops-bot
+
+[Timer]
+# Erster Lauf 8 Minuten nach Boot (versetzt zu den 5-Minuten-Watchdogs).
+# Stündlich reicht: seo-agent auditet 1×/Tag, Schwelle 49h (Defense-in-Depth-
+# Backstop hinter dem SEO-eigenen check-staleness.sh, das alle 30 min bei 25h warnt).
+OnBootSec=8min
+OnUnitActiveSec=1h
+RandomizedDelaySec=5min
+AccuracySec=1min
+Persistent=false
+
+[Install]
+WantedBy=timers.target

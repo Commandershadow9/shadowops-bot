@@ -1,0 +1,19 @@
+[Unit]
+Description=SEO-Agent Audit-Freshness Watchdog — letzter erfolgreicher zerodox-Audit < 49h (DB completed_at)
+Documentation=https://github.com/Commandershadow9/shadowops-bot
+After=network-online.target
+
+[Service]
+Type=oneshot
+EnvironmentFile=-/home/cmdshadow/.config/shadowops-watchdog.env
+Environment=WATCHDOG_SERVICE_NAME=seo-audit-freshness
+Environment=WATCHDOG_MODE=pg-freshness
+Environment=WATCHDOG_PG_CONTAINER=guildscout-postgres
+Environment=WATCHDOG_PG_USER=seo_agent
+Environment=WATCHDOG_PG_DB=seo_agent
+Environment=WATCHDOG_MAX_AGE_HOURS=49
+Environment="WATCHDOG_PG_QUERY=SELECT COALESCE(EXTRACT(EPOCH FROM (NOW()-MAX(completed_at)))/3600, 999999) FROM seo_audits WHERE site_name='zerodox' AND status='completed'"
+ExecStart=/home/cmdshadow/shadowops-bot/scripts/service-watchdog.sh
+SuccessExitStatus=0 1
+StandardOutput=journal
+StandardError=journal

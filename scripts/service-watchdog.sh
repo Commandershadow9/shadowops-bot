@@ -366,6 +366,70 @@ check_health_container() {
     return 0
 }
 
+# ─── Health-Check (pg-freshness-Mode) ──────────────────────────────────
+# Prueft ein DB-gestuetztes Frische-Signal: WATCHDOG_PG_QUERY muss GENAU EINE
+# Zahl liefern = Alter in Stunden (z.B. via EXTRACT(EPOCH FROM NOW()-MAX(ts))/3600).
+# DOWN wenn Alter > WATCHDOG_MAX_AGE_HOURS (Default 49) oder Query fehlschlaegt.
+#
+# Use-Case: Services deren *Prozess* laeuft (systemd active), deren *Arbeit* aber
+# stillschweigend scheitern kann — z.B. seo-agent, dessen Audit nach GSC/AI crasht
+# BEVOR er per save_score persistiert (Vorfall 2026-06-21..27: 7 Tage Audit-Ausfall,
+# systemd-Mode blind weil Service active). Dieser Mode prueft die *Wirkung* (frischer
+# completed-Audit in der DB), nicht nur die Prozess-Existenz. Defense-in-Depth neben
+# dem SEO-eigenen crontab-check-staleness.sh (unabhaengige zweite Schicht).
+#
+# Env-Vars:
+#   WATCHDOG_PG_QUERY      — SQL, das eine einzelne Zahl (Alter in h) liefert (Pflicht)
+#   WATCHDOG_PG_CONTAINER  — Docker-Container des Postgres (default guildscout-postgres)
+#   WATCHDOG_PG_USER       — psql -U (default seo_agent)
+#   WATCHDOG_PG_DB         — psql -d (default seo_agent)
+#   WATCHDOG_MAX_AGE_HOURS — Schwelle in Stunden (default 49)
+check_health_pg_freshness() {
+    if [[ -z "${WATCHDOG_PG_QUERY:-}" ]]; then
+        echo "DOWN:no_query_configured"
+        return 1
+    fi
+    if ! command -v docker >/dev/null 2>&1; then
+        echo "DOWN:docker_not_found"
+        return 1
+    fi
+    # docker-Zugriff: direkt (Watchdog-User in docker-Gruppe), sonst passwordless sudo.
+    # Identisch zu check_health_container (Gruppen-Caching-Problem bei systemd --user).
+    local DK="docker"
+    if ! docker info >/dev/null 2>&1; then
+        if sudo -n docker info >/dev/null 2>&1; then
+            DK="sudo -n docker"
+        else
+            echo "DOWN:docker_unreachable"
+            return 1
+        fi
+    fi
+
+    local container="${WATCHDOG_PG_CONTAINER:-guildscout-postgres}"
+    local pg_user="${WATCHDOG_PG_USER:-seo_agent}"
+    local pg_db="${WATCHDOG_PG_DB:-seo_agent}"
+    local max_age_hours="${WATCHDOG_MAX_AGE_HOURS:-49}"
+
+    local raw
+    raw=$($DK exec "$container" psql -U "$pg_user" -d "$pg_db" -tAc "$WATCHDOG_PG_QUERY" 2>/dev/null | head -n1 | tr -d '[:space:]')
+    if [[ -z "$raw" ]]; then
+        echo "DOWN:query_failed_or_empty"
+        return 1
+    fi
+    # Numerische Validierung (Integer oder Float) — schuetzt vor psql-Fehlertext.
+    if ! [[ "$raw" =~ ^[0-9]+([.][0-9]+)?$ ]]; then
+        echo "DOWN:non_numeric_result"
+        return 1
+    fi
+    # Float-Vergleich via awk (bash kann nur Integer). exit-Code 0 wenn raw > max.
+    if awk -v a="$raw" -v m="$max_age_hours" 'BEGIN{exit !(a > m)}'; then
+        echo "DOWN:stale_${raw%%.*}h"
+        return 1
+    fi
+    echo "UP"
+    return 0
+}
+
 # ─── Health-Check Dispatcher ───────────────────────────────────────────
 check_health() {
     case "${WATCHDOG_MODE:-http}" in
@@ -373,6 +437,7 @@ check_health() {
         systemd)        check_health_systemd ;;
         systemd-result) check_health_systemd_result ;;
         container)      check_health_container ;;
+        pg-freshness)   check_health_pg_freshness ;;
         *)              echo "DOWN:invalid_mode_${WATCHDOG_MODE}"
                         return 1
                         ;;
