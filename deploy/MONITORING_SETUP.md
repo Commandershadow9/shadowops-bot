@@ -27,10 +27,12 @@
 ```
 
 Alle Watchdogs nutzen `scripts/service-watchdog.sh` — ein generisches
-Script, parametrisiert via Env-Vars. Drei Modi:
+Script, parametrisiert via Env-Vars. Fünf Modi:
 - `WATCHDOG_MODE=http` (Default): curl auf `WATCHDOG_HEALTH_URL`
 - `WATCHDOG_MODE=systemd`: prüft `systemctl is-active` für jede Unit in `WATCHDOG_SYSTEMD_UNITS` (Komma-separiert)
 - `WATCHDOG_MODE=systemd-result`: prüft Result + Alter (`ExecMainStartTimestamp`) des letzten Laufs für oneshot/Daily-Jobs. `WATCHDOG_MAX_AGE_HOURS` (Default 36h) — bei `stale_*h` → DOWN.
+- `WATCHDOG_MODE=container`: prüft Docker-State + Healthcheck eines Containers (`WATCHDOG_CONTAINER`) via `docker inspect`. Für kritische Container ohne Host-Port.
+- `WATCHDOG_MODE=pg-freshness` (seit 2026-06-27): führt `WATCHDOG_PG_QUERY` gegen einen Postgres-Container (`WATCHDOG_PG_CONTAINER`/`_USER`/`_DB`) aus; die Query MUSS eine Zahl = Alter in Stunden liefern, DOWN wenn > `WATCHDOG_MAX_AGE_HOURS` (Default 49h). Prüft die **Wirkung** eines Dienstes (z.B. frischer DB-Eintrag), nicht nur die Prozess-Existenz — fängt Services, die `active` sind aber deren Arbeit still scheitert (Vorfall seo-agent 2026-06-27).
 
 **Optionaler JSON-Pfad-Filter (http-Mode):** `WATCHDOG_HEALTH_JQ_FILTER` — wenn gesetzt, wird der HTTP-Statuscode ignoriert und stattdessen eine jq-Boolean-Expression gegen den Response-Body ausgewertet. Nützlich wenn ein Endpoint HTTP 503 zurückgibt sobald *irgendeine* Komponente kaputt ist, aber nur eine bestimmte Komponente überwacht werden soll. Beispiel: `WATCHDOG_HEALTH_JQ_FILTER=.components.ci_runner.ok`. Test-Coverage: `tests/unit/test_service_watchdog_jq_filter.py`.
 
@@ -194,7 +196,8 @@ echo '{"last_status":"up","last_alert_at":"","consecutive_failures":0}' \
 | `mayday-ci-runner` | http + jq-filter | http://10.8.0.10:9100/health, filter `.components.ci_runner.ok` (#mayday-sim#425) | 5 min | 7 min |
 | `mayday-sim-build-drift` | build-drift | https://maydaysim.de/api/build-id vs. origin/main HEAD (max. 30 min Drift, #mayday-sim#416) | 15 min | 2 min |
 | `mayday-scheduler` | container | leitstelle-scheduler (Docker-Health, Game-Tick-Owner SB3 #mayday-sim#498) | 5 min | 7 min |
-| `ai-agent-framework` | systemd | guildscout-feedback-agent, zerodox-support-agent, seo-agent | 5 min | 6 min |
+| `ai-agent-framework` | systemd | guildscout-feedback-agent, zerodox-support-agent, seo-agent (nur Prozess-State) | 5 min | 6 min |
+| `seo-audit-freshness` | pg-freshness | seo_agent-DB: letzter erfolgreicher zerodox-Audit (`completed_at`) < 49h (Vorfall 2026-06-27: 7 Tage Audit-Crash trotz Service `active` — `systemd`-Mode blind, dieser prüft die Wirkung) | 1 h | 8 min |
 | `cmdshadow-design` | systemd-result | cmdshadow-design-healthcheck.service (max_age=36h) | 1 h | 8 min |
 | `disk-hygiene` | disk + auto-prune | Auto-Prune (docker builder/image + journald) bei Disk >85%, Alarm >90% (Selbstpflege seit 2026-05-30) | 1 h | — |
 | `doku-drift` | doku-drift | Container-Ports vs. Port-Map + MEMORY.md-Limit (<200), nur Alarm (Selbstpflege seit 2026-05-30) | täglich 06:30 | — |
