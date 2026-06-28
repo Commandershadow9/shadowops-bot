@@ -59,7 +59,7 @@ shadowops-bot/
 │   └── PROJECT_*.md              # Per-projekt-Notizen
 ├── deploy/
 │   ├── shadowops-bot.service          # systemd Bot-Service
-│   ├── *-watchdog.{service,timer}     # Externe Uptime-Watchdogs (15 Watchdogs: HTTP/systemd/container/jq-filter/build-drift/state-drift + Backup-Test)
+│   ├── *-watchdog.{service,timer}     # Externe Uptime-Watchdogs (16 Watchdogs: HTTP/systemd/container/pg-freshness/jq-filter/build-drift/state-drift + Backup-Test)
 │   ├── shadowops-watchdog.env.example # Webhook-Env Template
 │   └── MONITORING_SETUP.md            # Setup-Anleitung Watchdogs
 ├── .github/
@@ -132,7 +132,7 @@ shadowops-bot/
 
 ## Externes Monitoring (seit 2026-05-17 — Defense-in-Depth)
 
-Zusätzlich zum internen `project_monitor.py` laufen 15 unabhängige user-systemd Watchdogs (Zyklen: 5–15 min je nach Watchdog, cmdshadow-design 1h, Selbstpflege-Watchdogs stündlich/täglich, Backup-Test monatlich) und posten Down/Recovery direkt via Discord-Webhook in `#🩺-uptime-alerts` (NICHT über den Bot — funktioniert auch wenn shadowops-bot tot ist):
+Zusätzlich zum internen `project_monitor.py` laufen 16 unabhängige user-systemd Watchdogs (Zyklen: 5–15 min je nach Watchdog, cmdshadow-design 1h, Selbstpflege-Watchdogs stündlich/täglich, Backup-Test monatlich) und posten Down/Recovery direkt via Discord-Webhook in `#🩺-uptime-alerts` (NICHT über den Bot — funktioniert auch wenn shadowops-bot tot ist):
 
 | Watchdog | Mode | Target |
 |---|---|---|
@@ -145,7 +145,8 @@ Zusätzlich zum internen `project_monitor.py` laufen 15 unabhängige user-system
 | `mayday-ci-runner-watchdog` | http + jq-filter | http://10.8.0.10:9100/health, filter=`.components.ci_runner.ok` (#mayday-sim#425) |
 | `mayday-sim-build-drift-watchdog` | build-drift | https://maydaysim.de/api/build-id vs. origin/main HEAD — Alert bei >30 min Drift, Zyklus 15 min (#mayday-sim#416) |
 | `mayday-scheduler-watchdog` | container | leitstelle-scheduler (Docker-Health) — Game-Tick-Owner seit SB3 (#mayday-sim#498), unüberwachter SPOF ohne diesen Watchdog |
-| `ai-agent-framework-watchdog` | systemd | guildscout-feedback-agent, zerodox-support-agent, seo-agent |
+| `ai-agent-framework-watchdog` | systemd | guildscout-feedback-agent, zerodox-support-agent, seo-agent (nur Prozess-State — prüft nicht ob die Arbeit gelingt) |
+| `seo-audit-freshness-watchdog` | pg-freshness | seo_agent-DB: letzter erfolgreicher zerodox-Audit (`completed_at`) < 49h — fängt Services die `active` sind aber deren Arbeit still scheitert (Vorfall 2026-06-27: 7 Tage Audit-Crash, stündlich) |
 | `cmdshadow-design-watchdog` | systemd-result | cmdshadow-design-healthcheck.service (max_age=36h, 1h-Cycle) |
 | `memory-watchdog` | meminfo | RAM ≥90% oder Swap ≥80% auf VPS, Frühwarnung vor OOM-Cascade (seit 2026-05-25, Vorfall logind-Kill durch earlyoom) |
 | `disk-hygiene-watchdog` | disk + auto-prune | Auto-Prune (docker builder/image + journald) bei Disk >85%, Alarm >90% (stündlich, Selbstpflege seit 2026-05-30) |
@@ -291,6 +292,8 @@ Worker-Konventionen:
 ## Letztes Update dieser Datei
 
 2026-07-09 — Security-Agent-Team Phase 0 + W1 (#290 / PRs #333, #338, #339 — alle gemerged + live): **Phase 0:** AI-Kern des Monolithen war seit 07.07. komplett tot — Doppel-Ursache: `security_analyst.model gpt-5.3-codex` vom ChatGPT-Abo nicht mehr unterstützt (HTTP 400) + hartcodierter Claude-CLI-Pfad `~/.local/bin/claude` existiert seit npm-Umzug nicht mehr (FileNotFoundError in Fallback UND Fix-Phase). Fixes: `resolve_claude_cli_path()` (env `CLAUDE_CLI_PATH` → configured → which → Fallback-Liste), Live-Config auf `gpt-5.5` (real getestet; `gpt-5.5-codex` → 400), Reflection-KeyError `'"quality_score"'` = `str.format()` auf Template mit JSON-Beispiel → `render_reflection_prompt()` mit `.replace()`, stale Server-Fakten (Debian 12/8 GB → Debian 13/64 GB) in 7 Prompt-Stellen, fail2ban aus Tool-Listen (nicht installiert, #295). **Live verifiziert:** Session #539 OK via codex/gpt-5.5 (6 Findings/6 Issues) — dabei nächsten verdeckten Bug gefangen: Fix-Phase crashte bei LLM-`summary` als dict (`dict + str`) → #338. **W1 (PR #339, zweistufig subagent-reviewt):** `orchestrator_main` = echter `sec:trigger`-Subscribe-Loop, `trigger`-Durchreichung, Trigger-/Reaper-/Soak-Scripts, `security-freshness-watchdog`, Modell-Default-Hygiene repo-weit. Reviews fingen CRITICAL (`findings` hat `found_at`, NICHT `created_at` — Soak-Script wäre stumm gewesen) + IMPORTANT (psql-Command-Tag-Off-by-one bei `RETURNING 1 | wc -l` → CTE-Zählung; gleicher Bug im SEO-Reaper gefixt, agents@a472627). **Ops:** Units + env-Datei (600) + 3 Crons (05:23/06:41/07:31) installiert, erster E2E-Lauf 2×`ok`/14 Findings (GuildScout: 1 CRITICAL + 4 HIGH npm!), Watchdog getestet + Timer aktiv. **7d-Soak bis ~2026-07-16**, dann W2. Dazu Phase-0-Ops: Trivy 0.72.0 + Daily-Scan 04:15 reaktiviert (`~/scripts/trivy-daily-scan.sh`, Bot-Format; Erstlauf 15 Images: 15 CRITICAL/242 HIGH), kptr_restrict=1, Backup-Dirs 700/750, Dashboard-Binding 127.0.0.1, 9 obsolete Issues geschlossen (#313 #314 #295 #310 #311 #327 #328 #330 #331). Spec v2: `docs/design/2026-07-09-security-agent-team-v2-spec.md`.
+
+2026-06-27 — seo-audit-freshness-watchdog + pg-freshness Mode (Commits `4775d4e`, `fda1bff`): Vorfall 2026-06-21..27 — seo-agent crashte 7 Tage täglich nach GSC/AI-Calls VOR `save_score`, aber der Prozess blieb `active`. `ai-agent-framework-watchdog` (Mode systemd) blieb blind. Neuer Mode `WATCHDOG_MODE=pg-freshness` in `scripts/service-watchdog.sh`: führt `WATCHDOG_PG_QUERY` gegen einen Postgres-Container aus, die Query muss Alter in Stunden liefern, DOWN wenn > `WATCHDOG_MAX_AGE_HOURS`. Prüft die **Wirkung** (frischer DB-Eintrag), nicht Prozess-Existenz. `seo-audit-freshness-watchdog.{service,timer}`: stündlich, Schwelle 49h. Zweite unabhängige Schicht neben SEO-Crontab `check-staleness.sh` (25h).
 
 2026-06-25 — Patch Notes v7 Editorial Layer (Commit `23df6d0`): `src/patch_notes/editorial.py` (neues Modul) baut aus Commit-Gruppen einen deterministischen Prompt-Kontext (Hero-Kandidaten, Kanalplan, Qualitaetsbar) vor der AI-Generierung. Kein neuer Stage. Neue optionale Felder in `src/schemas/patch_notes.json`: `title`, `impact`, `before`, `after`, `why`, `user_action`, `is_hero`, `source_commits`. README, CHANGELOG und `docs/design/patch-notes-v6.md` aktualisiert. Safety-Regeln in `.claude/rules/safety.md` ergaenzt.
 
