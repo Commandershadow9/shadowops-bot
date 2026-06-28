@@ -31,7 +31,7 @@ Script, parametrisiert via Env-Vars. Fünf Modi:
 - `WATCHDOG_MODE=http` (Default): curl auf `WATCHDOG_HEALTH_URL`
 - `WATCHDOG_MODE=systemd`: prüft `systemctl is-active` für jede Unit in `WATCHDOG_SYSTEMD_UNITS` (Komma-separiert)
 - `WATCHDOG_MODE=systemd-result`: prüft Result + Alter (`ExecMainStartTimestamp`) des letzten Laufs für oneshot/Daily-Jobs. `WATCHDOG_MAX_AGE_HOURS` (Default 36h) — bei `stale_*h` → DOWN.
-- `WATCHDOG_MODE=container`: prüft Docker-State + Healthcheck eines Containers (`WATCHDOG_CONTAINER`) via `docker inspect`. Für kritische Container ohne Host-Port.
+- `WATCHDOG_MODE=container`: prüft Docker-State + Healthcheck eines Containers (`WATCHDOG_CONTAINER`) via `docker inspect`. Gibt DOWN zurück wenn Container fehlt, nicht läuft oder Health `unhealthy` ist. `sudo docker` als Fallback wenn User-Systemd keinen Socket-Zugriff hat. Für kritische Container ohne Host-Port.
 - `WATCHDOG_MODE=pg-freshness` (seit 2026-06-27): führt `WATCHDOG_PG_QUERY` gegen einen Postgres-Container (`WATCHDOG_PG_CONTAINER`/`_USER`/`_DB`) aus; die Query MUSS eine Zahl = Alter in Stunden liefern, DOWN wenn > `WATCHDOG_MAX_AGE_HOURS` (Default 49h). Prüft die **Wirkung** eines Dienstes (z.B. frischer DB-Eintrag), nicht nur die Prozess-Existenz — fängt Services, die `active` sind aber deren Arbeit still scheitert (Vorfall seo-agent 2026-06-27).
 
 **Optionaler JSON-Pfad-Filter (http-Mode):** `WATCHDOG_HEALTH_JQ_FILTER` — wenn gesetzt, wird der HTTP-Statuscode ignoriert und stattdessen eine jq-Boolean-Expression gegen den Response-Body ausgewertet. Nützlich wenn ein Endpoint HTTP 503 zurückgibt sobald *irgendeine* Komponente kaputt ist, aber nur eine bestimmte Komponente überwacht werden soll. Beispiel: `WATCHDOG_HEALTH_JQ_FILTER=.components.ci_runner.ok`. Test-Coverage: `tests/unit/test_service_watchdog_jq_filter.py`.
@@ -58,7 +58,7 @@ Discord-Embed mit 5 Feldern: RAM (used/total/%), Available, Swap (used/total/%),
 
 Drei System-Selbstpflege-Watchdogs ergänzen die Service-Watchdogs um automatische Hygiene und Drift-/Kosten-Erkennung. Nutzen eigene Skripte (nicht `service-watchdog.sh`), weil Datenquelle Disk/Doku/JSONL statt HTTP/systemd ist. Details auch in `~/.claude/rules/self-maintenance.md`.
 
-- **`disk-hygiene-watchdog`** (stündlich): Zweistufig — Stufe 1 macht Auto-Prune (`docker builder prune` + alte Images + `journalctl --vacuum`) bei Disk > 85 %, Stufe 2 alarmt bei Disk > 90 %. State: `data/watchdog_state_disk-hygiene.json`. (Bugfix: `du|head` unter `set -e+pipefail` → SIGPIPE 141 → `|| true`.)
+- **`disk-hygiene-watchdog`** (stündlich): Zweistufig — Stufe 1 macht Auto-Prune (`docker builder prune` + dangling Images + `journalctl --vacuum`) bei Disk > 85 %, Stufe 2 alarmt bei Disk > 90 %. State: `data/watchdog_state_disk-hygiene.json`. (Bugfix: `du|head` unter `set -e+pipefail` → SIGPIPE 141 → `|| true`.) Invariante (#1186): `docker image prune` bleibt dangling-only (`-f`, nie `-a`/`-af`) — schützt `zerodox-zerodox-web:rollback` vor Löschung durch den Watchdog.
 - **`doku-drift-watchdog`** (täglich 06:30): Vergleicht laufende Container-Ports gegen die Port-Maps in CLAUDE.md/infrastructure.md und prüft MEMORY.md-Zeilenlimit (<200). Nur Alarm, keine Auto-Korrektur. State: `data/watchdog_state_doku-drift.json`.
 - **`ki-cost-watchdog`** (täglich 07:15): Rollup von Token/Kosten aus Claude- + Codex-JSONL + Anomalie-Alarm bei Ausreißern. Postet bevorzugt in `#💰-ki-kosten` (Fallback: `SHADOWOPS_WATCHDOG_WEBHOOK`). State: `data/watchdog_state_ki-cost.json`.
 
