@@ -12,7 +12,15 @@ Environment=WATCHDOG_PG_CONTAINER=guildscout-postgres
 Environment=WATCHDOG_PG_USER=seo_agent
 Environment=WATCHDOG_PG_DB=seo_agent
 Environment=WATCHDOG_MAX_AGE_HOURS=168
-Environment="WATCHDOG_PG_QUERY=WITH last_output AS (SELECT GREATEST(COALESCE((SELECT MAX(created_at) FROM seo_topic_locks WHERE site='zerodox' AND issue_number IS NOT NULL),'epoch'), COALESCE((SELECT MAX(completed_at) FROM seo_audits WHERE site_name='zerodox' AND pr_url IS NOT NULL),'epoch')) AS ts) SELECT COALESCE(EXTRACT(EPOCH FROM (NOW()-MIN(i.created_at)))/3600, 0) FROM seo_insights i, last_output lo WHERE i.site_name='zerodox' AND i.actioned=FALSE AND i.created_at < lo.ts"
+# Ausgabe-Freshness statt Insight-Status: 'actioned' wird vom Agent kaum je gesetzt
+# (25 von 988 Insights) und taugt daher NICHT als Stau-Signal. Stattdessen:
+#  - Gate: nur pruefen, wenn der Agent ueberhaupt frische Insights produziert
+#    (juengstes Insight < 3 Tage) — sonst 0 (gesund; toter Audit ist Sache des
+#    seo-audit-freshness-Watchdogs).
+#  - Metrik: Alter (h) der JUENGSTEN echten Ausgabe = GREATEST(letzte Issue via
+#    seo_topic_locks, letzter Fix-PR via seo_audits.pr_url). > 168h → Alarm.
+# Fallstrick: seo_topic_locks nutzt Spalte 'site', seo_insights/seo_audits 'site_name'.
+Environment="WATCHDOG_PG_QUERY=SELECT CASE WHEN (SELECT MAX(created_at) FROM seo_insights WHERE site_name='zerodox') > NOW() - INTERVAL '3 days' THEN EXTRACT(EPOCH FROM (NOW() - GREATEST(COALESCE((SELECT MAX(created_at) FROM seo_topic_locks WHERE site='zerodox' AND issue_number IS NOT NULL),'epoch'), COALESCE((SELECT MAX(completed_at) FROM seo_audits WHERE site_name='zerodox' AND pr_url IS NOT NULL),'epoch'))))/3600 ELSE 0 END"
 ExecStart=/home/cmdshadow/shadowops-bot/scripts/service-watchdog.sh
 SuccessExitStatus=0 1
 StandardOutput=journal
