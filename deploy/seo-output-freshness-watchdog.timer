@@ -1,0 +1,15 @@
+[Unit]
+Description=SEO Output-Freshness Watchdog Timer — stündlich (mit Jitter)
+Documentation=https://github.com/Commandershadow9/shadowops-bot
+
+[Timer]
+# Erster Lauf 9 Minuten nach Boot (versetzt zum Audit-Freshness-Watchdog auf 8 min).
+# Stündlich reicht: Schwelle ist 7 Tage (168h) — keine Eile bei der Prüfung.
+OnBootSec=9min
+OnUnitActiveSec=1h
+RandomizedDelaySec=5min
+AccuracySec=1min
+Persistent=false
+
+[Install]
+WantedBy=timers.target

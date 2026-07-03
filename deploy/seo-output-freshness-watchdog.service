@@ -1,0 +1,19 @@
+[Unit]
+Description=SEO Output-Freshness Watchdog — Insights erkannt, aber keine Ausgabe (Issue/PR) seit 7 Tagen
+Documentation=https://github.com/Commandershadow9/shadowops-bot
+After=network-online.target
+
+[Service]
+Type=oneshot
+EnvironmentFile=-/home/cmdshadow/.config/shadowops-watchdog.env
+Environment=WATCHDOG_SERVICE_NAME=seo-output-freshness
+Environment=WATCHDOG_MODE=pg-freshness
+Environment=WATCHDOG_PG_CONTAINER=guildscout-postgres
+Environment=WATCHDOG_PG_USER=seo_agent
+Environment=WATCHDOG_PG_DB=seo_agent
+Environment=WATCHDOG_MAX_AGE_HOURS=168
+Environment="WATCHDOG_PG_QUERY=WITH last_output AS (SELECT GREATEST(COALESCE((SELECT MAX(created_at) FROM seo_topic_locks WHERE site='zerodox' AND issue_number IS NOT NULL),'epoch'), COALESCE((SELECT MAX(completed_at) FROM seo_audits WHERE site_name='zerodox' AND pr_url IS NOT NULL),'epoch')) AS ts) SELECT COALESCE(EXTRACT(EPOCH FROM (NOW()-MIN(i.created_at)))/3600, 0) FROM seo_insights i, last_output lo WHERE i.site_name='zerodox' AND i.actioned=FALSE AND i.created_at < lo.ts"
+ExecStart=/home/cmdshadow/shadowops-bot/scripts/service-watchdog.sh
+SuccessExitStatus=0 1
+StandardOutput=journal
+StandardError=journal

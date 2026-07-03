@@ -59,6 +59,8 @@ paths:
 | `mayday-sim-watchdog.timer` | http | https://maydaysim.de/api/health | 5 min |
 | `mayday-scheduler-watchdog.timer` | container | leitstelle-scheduler (Docker-Health, Tick-Owner SB3) | 7 min |
 | `ai-agent-framework-watchdog.timer` | systemd | guildscout-feedback-agent, zerodox-support-agent, seo-agent | 6 min |
+| `seo-audit-freshness-watchdog.timer` | pg-freshness | seo_agent-DB: letzter erfolgreicher zerodox-Audit (`completed_at`) < 49h | 8 min |
+| `seo-output-freshness-watchdog.timer` | pg-freshness | seo_agent-DB: ältestes un-actioniertes Insight vs. letzter Ausgabe (Issue/PR) < 168h (#1683) | 9 min |
 | `memory-watchdog.timer` | meminfo | RAM ≥90% oder Swap ≥80% — Frühwarnung OOM (Throttle 60 min, seit Vorfall 2026-05-25) | 4 min |
 | `disk-hygiene-watchdog.timer` | disk + auto-prune | Auto-Prune (docker builder/image + journald) bei Disk >85%, Alarm >90% (stündlich, Selbstpflege seit 2026-05-30) | hourly |
 | `doku-drift-watchdog.timer` | doku-drift | Container-Ports vs. Port-Map + MEMORY.md-Limit (<200), nur Alarm (Selbstpflege seit 2026-05-30) | täglich 06:30 |
