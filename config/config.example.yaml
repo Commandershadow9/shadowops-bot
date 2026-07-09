@@ -138,14 +138,16 @@ ai:
     cli_path: "codex"
     # Modelle nach Geschwindigkeit
     models:
-      fast: "gpt-5.3-codex"       # Schnelle Analysen
-      standard: "gpt-5.3-codex"   # Standard-Analysen + Structured Output
+      fast: "gpt-5.5"       # Schnelle Analysen (ChatGPT-Abo: gpt-5.5, NICHT gpt-5.x-codex)
+      standard: "gpt-5.5"   # Standard-Analysen + Structured Output
       thinking: "o3"              # Komplexe Planungsaufgaben
 
   # === CLAUDE CLI (FALLBACK — Anthropic Claude via CLI) ===
   claude:
-    # Pfad zur Claude CLI
-    cli_path: "/home/cmdshadow/.local/bin/claude"
+    # Pfad zur Claude CLI. Wird zur Laufzeit robust aufgelöst (env CLAUDE_CLI_PATH →
+    # shutil.which('claude') → Fallback-Liste), daher optional. Nur setzen, wenn ein
+    # nicht im PATH liegender Pfad erzwungen werden soll.
+    cli_path: "/home/cmdshadow/.npm-global/bin/claude"
     # Modelle nach Geschwindigkeit
     models:
       fast: "claude-sonnet-4-6"    # Schnelle Analysen
@@ -165,7 +167,7 @@ security_analyst:
   enabled: true
   database_dsn: "postgresql://security_analyst:SICHERES_PASSWORT@127.0.0.1:5433/security_analyst"
   max_sessions_per_day: 1           # Basis-Limit (dynamisch erhoehbar bei Backlog)
-  model: "gpt-5.3-codex"            # Primaeres Modell fuer taegliche Scans (Codex mit Full-Access)
+  model: "gpt-5.5"                  # Primaeres Modell fuer taegliche Scans (Codex/ChatGPT-Abo: gpt-5.5)
   fallback_model: "claude-opus-4-6"  # Fallback + Weekly-Deep-Scan Modell (Claude)
   maintenance_scan_days: 1          # Tage zwischen Scans bei 0 Backlog (1 = taeglich)
   # Adaptive Steuerung: >=20 Findings → bis 3 Sessions, 5-19 → bis 2, 1-4 → 1, 0 → daily full_scan

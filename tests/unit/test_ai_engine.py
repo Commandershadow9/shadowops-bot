@@ -3,6 +3,7 @@ Unit Tests für AI Engine — Dual-Engine (Codex CLI + Claude CLI)
 Ersetzt das alte Ollama-basierte AIService.
 """
 
+import os
 import time
 import pytest
 import json
@@ -493,12 +494,21 @@ class TestClaudeProvider:
 
     @pytest.mark.asyncio
     async def test_claude_cli_path_used(self, ai_config):
-        """Claude CLI Pfad aus Config wird korrekt verwendet"""
+        """Konfigurierter Claude-CLI-Pfad wird verwendet, wenn die Datei existiert.
+
+        Neuer Contract seit der robusten Pfad-Aufloesung: ein konfigurierter Pfad wird
+        nur honoriert, wenn er tatsaechlich existiert (sonst greift which/Fallback).
+        """
         from src.integrations.ai_engine import ClaudeProvider
 
-        provider = ClaudeProvider(ai_config.ai['fallback'])
-        captured_args = []
+        configured = ai_config.ai['fallback'].get('cli_path', '/home/cmdshadow/.local/bin/claude')
 
+        # Pfad-Existenz simulieren, damit der konfigurierte Pfad honoriert wird.
+        # Konstruktion muss innerhalb des Patches passieren (Aufloesung geschieht in __init__).
+        with patch('src.integrations.ai_engine.os.path.isfile', lambda p: p == configured):
+            provider = ClaudeProvider(ai_config.ai['fallback'])
+
+        captured_args = []
         mock_proc = make_mock_process(stdout='{"result": "{}"}')
 
         async def capture_exec(*args, **kwargs):
@@ -508,7 +518,7 @@ class TestClaudeProvider:
         with patch('asyncio.create_subprocess_exec', side_effect=capture_exec):
             await provider.query("Test", model='standard')
 
-        assert captured_args[0] == '/home/cmdshadow/.local/bin/claude'
+        assert captured_args[0] == configured
 
     @pytest.mark.asyncio
     async def test_schema_in_prompt_for_claude(self, ai_config, schemas_dir):
@@ -972,3 +982,67 @@ class TestAIEngine:
 
         # Vorherige Versuche muessen erwaehnt werden
         assert 'Erster Versuch' in prompt or 'failed' in prompt.lower() or 'versuch' in prompt.lower()
+
+
+# ============================================================================
+# RESOLVE CLAUDE CLI PATH — Regressionstests (Bug: hartcodierter CLI-Pfad)
+# ============================================================================
+class TestResolveClaudeCliPath:
+    """Robuste Aufloesung des Claude-CLI-Pfads.
+
+    Regression: Der Pfad war hartcodiert auf /home/cmdshadow/.local/bin/claude; nach
+    dem npm-Umzug nach ~/.npm-global/bin lag die CLI woanders -> FileNotFoundError bei
+    jedem Claude-Fallback. resolve_claude_cli_path() loest zur Laufzeit robust auf.
+    """
+
+    def test_env_override_wins_when_file_exists(self):
+        from src.integrations.ai_engine import resolve_claude_cli_path
+        with patch.dict(os.environ, {'CLAUDE_CLI_PATH': '/custom/claude'}, clear=True):
+            with patch('src.integrations.ai_engine.os.path.isfile',
+                       lambda p: p == '/custom/claude'):
+                assert resolve_claude_cli_path('/ignored/config/path') == '/custom/claude'
+
+    def test_env_override_ignored_when_missing(self):
+        """Zeigt CLAUDE_CLI_PATH ins Leere, wird auf Auto-Aufloesung zurueckgefallen."""
+        from src.integrations.ai_engine import resolve_claude_cli_path
+        with patch.dict(os.environ, {'CLAUDE_CLI_PATH': '/nope/claude'}, clear=True):
+            with patch('src.integrations.ai_engine.os.path.isfile', return_value=False):
+                with patch('src.integrations.ai_engine.shutil.which',
+                           return_value='/usr/bin/claude'):
+                    assert resolve_claude_cli_path(None) == '/usr/bin/claude'
+
+    def test_configured_path_used_when_exists(self):
+        from src.integrations.ai_engine import resolve_claude_cli_path
+        with patch.dict(os.environ, {}, clear=True):
+            with patch('src.integrations.ai_engine.os.path.isfile',
+                       lambda p: p == '/opt/claude'):
+                assert resolve_claude_cli_path('/opt/claude') == '/opt/claude'
+
+    def test_which_used_when_config_missing(self):
+        from src.integrations.ai_engine import resolve_claude_cli_path
+        with patch.dict(os.environ, {}, clear=True):
+            with patch('src.integrations.ai_engine.os.path.isfile', return_value=False):
+                with patch('src.integrations.ai_engine.shutil.which',
+                           return_value='/usr/local/bin/claude'):
+                    assert resolve_claude_cli_path(None) == '/usr/local/bin/claude'
+
+    def test_fallback_list_used_when_which_none(self):
+        from src.integrations.ai_engine import (resolve_claude_cli_path,
+                                                _CLAUDE_CLI_FALLBACKS)
+        # Nur der zweite Fallback-Kandidat existiert
+        with patch.dict(os.environ, {}, clear=True):
+            with patch('src.integrations.ai_engine.os.path.isfile',
+                       lambda p: p == _CLAUDE_CLI_FALLBACKS[1]):
+                with patch('src.integrations.ai_engine.shutil.which', return_value=None):
+                    assert resolve_claude_cli_path(None) == _CLAUDE_CLI_FALLBACKS[1]
+
+    def test_last_resort_returns_npm_global_first(self):
+        """Findet nichts existierendes, wird der npm-global-Pfad (reale Location) geliefert."""
+        from src.integrations.ai_engine import (resolve_claude_cli_path,
+                                                _CLAUDE_CLI_FALLBACKS)
+        with patch.dict(os.environ, {}, clear=True):
+            with patch('src.integrations.ai_engine.os.path.isfile', return_value=False):
+                with patch('src.integrations.ai_engine.shutil.which', return_value=None):
+                    assert resolve_claude_cli_path(None) == _CLAUDE_CLI_FALLBACKS[0]
+        # npm-global MUSS vor .local/bin stehen (Regression: reale Location seit 2026-07)
+        assert _CLAUDE_CLI_FALLBACKS[0] == '/home/cmdshadow/.npm-global/bin/claude'

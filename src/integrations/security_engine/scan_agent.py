@@ -32,7 +32,7 @@ import discord
 from .activity_monitor import ActivityMonitor
 from .fingerprint import compute_finding_fingerprint
 from .prompts import (ANALYST_SYSTEM_PROMPT, ANALYST_CONTEXT_TEMPLATE, FIX_SESSION_PROMPT,
-                       WEEKLY_DEEP_PROMPT, REFLECTION_PROMPT)
+                       WEEKLY_DEEP_PROMPT, render_reflection_prompt)
 
 logger = logging.getLogger('shadowops.scan_agent')
 
@@ -2467,7 +2467,7 @@ von der ShadowOps Review-Pipeline reviewt — halte den Scope eng."""
             except Exception:
                 weekly_context = "(Wochen-Kontext nicht verfuegbar)"
 
-            prompt = REFLECTION_PROMPT.format(
+            prompt = render_reflection_prompt(
                 session_summary=session_summary,
                 weekly_context=weekly_context,
             )
