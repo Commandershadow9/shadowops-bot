@@ -168,14 +168,14 @@ class CodexProvider:
 
     Modelle:
         fast     -> gpt-4o (schnell, guenstig)
-        standard -> gpt-5.3-codex (ausgewogen)
+        standard -> gpt-5.5 (ausgewogen)
         thinking -> o3 (tiefe Analyse, laengerer Timeout)
     """
 
     def __init__(self, config: dict):
         self.models = config.get('models', {
             'fast': 'gpt-4o',
-            'standard': 'gpt-5.3-codex',
+            'standard': 'gpt-5.5',
             'thinking': 'o3',
         })
         self.timeout = config.get('timeout', 60)
@@ -1394,7 +1394,7 @@ class AIEngine:
         prompt: str,
         timeout: int = 1800,
         max_turns: int = 25,
-        codex_model: str = 'gpt-5.3-codex',
+        codex_model: str = 'gpt-5.5',
         claude_model: str = 'claude-opus-4-6',
     ) -> Optional[Dict]:
         """
@@ -1407,7 +1407,7 @@ class AIEngine:
             prompt: Analyse-Prompt mit Aufgabenbeschreibung
             timeout: Maximale Laufzeit fuer Claude-Fallback (Default: 30 Min)
             max_turns: Maximale Tool-Aufrufe fuer Claude-Fallback (Default: 25)
-            codex_model: Codex-Modell (Default: gpt-5.3-codex)
+            codex_model: Codex-Modell (Default: gpt-5.5)
             claude_model: Claude-Fallback-Modell (Default: claude-opus-4-6)
 
         Returns:
@@ -1662,7 +1662,7 @@ class AIEngine:
         self,
         prompt: str,
         schema_path: str,
-        model: str = 'gpt-5.3-codex',
+        model: str = 'gpt-5.5',
         timeout: int = 900,
     ) -> Optional[Dict]:
         """Analyst-Session via Codex CLI (primaer).
