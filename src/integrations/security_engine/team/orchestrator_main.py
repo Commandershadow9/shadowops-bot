@@ -14,10 +14,10 @@ import signal
 
 import redis.asyncio as aioredis
 
-try:
-    from utils.config import Config
-except ImportError:  # Tests importieren via src.-Praefix
-    from src.utils.config import Config
+try:  # pragma: no cover - Import-Pfad haengt von pythonpath ab
+    from utils.config import get_config
+except ImportError:  # pragma: no cover
+    from src.utils.config import get_config  # type: ignore[no-redef]
 
 from ..db import SecurityDB
 from .orchestrator import SecurityOrchestrator
@@ -33,7 +33,7 @@ async def handle_trigger_message(orchestrator, config, raw) -> list:
     try:
         payload = json.loads(raw) if raw else {}
         if isinstance(payload, dict):
-            trigger = str(payload.get("trigger", "manual"))
+            trigger = str(payload.get("trigger") or "manual")
     except (json.JSONDecodeError, TypeError):
         logger.warning("Ungueltige sec:trigger-Payload: %r", raw)
     jobs = await orchestrator.handle_trigger(
@@ -50,7 +50,7 @@ async def _amain() -> None:
         level=logging.INFO,
         format="%(asctime)s [%(levelname)s] %(name)s: %(message)s",
     )
-    config = Config()
+    config = get_config()
     if not config.security_team_enabled:
         logger.info("security_team disabled — orchestrator exit")
         return
