@@ -9,6 +9,8 @@ owner: CommanderShadow9
 
 ShadowOps ist ein vollstaendig autonomer Security Guardian fuer Debian-VPS-Infrastrukturen: ein Python-Discord-Bot mit Dual-Engine-AI (Codex + Claude), lernfaehigem Security-Analyst und KI-gesteuerter Auto-Remediation. Das System verbindet Trivy, CrowdSec, Fail2ban und AIDE mit einer PostgreSQL-Knowledge-DB, einer Patch-Notes-Pipeline (v6) und dem Jules-SecOps-Workflow zu einer durchgaengigen Sicherheitsautomatisierung. Diese Dokumentation ist der zentrale Einstiegspunkt fuer Betrieb, Architektur und Weiterentwicklung.
 
+> **Aktuell (2026-07-09):** Das Security-Agent-Team (#290) ist mit **W1 live** (7d-Soak). Maßgebliches Design: [design/2026-07-09-security-agent-team-v2-spec.md](design/2026-07-09-security-agent-team-v2-spec.md) (Fix-Kanal = Claude-CLI + PR-Gate — der Jules-Workflow ist operativ tot und wird abgelöst). Betrieb/Regeln: `.claude/rules/safety.md` → „Security-Agent-Team W1".
+
 ## Ich will...
 
 - **...das System verstehen** → [architecture/](architecture/) — wie funktioniert ShadowOps intern

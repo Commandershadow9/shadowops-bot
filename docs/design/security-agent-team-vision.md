@@ -1,6 +1,8 @@
 # Security-Agent-Team — Design-Skizze (Brainstorm-Grundlage)
 
-**Status:** DRAFT / Brainstorm-Grundlage · 2026-05-29
+> ⚠️ **SUPERSEDED (2026-07-09):** Nachfolger ist die **Spec v2** [`2026-07-09-security-agent-team-v2-spec.md`](2026-07-09-security-agent-team-v2-spec.md) — dort sind alle offenen Fragen entschieden (Fix-Kanal = Claude-CLI + PR-Gate statt Jules, Whitelist-Autonomie, read-only Host-Scanner, 5 Wellen). Die Ressourcen-Zahlen hier (8/21 GB RAM) sind obsolet — der Server hat seit dem Umzug 2026-06-07 **64 GB**. Diese Skizze bleibt als historischer Kontext erhalten.
+
+**Status:** SUPERSEDED · ursprünglich DRAFT 2026-05-29
 **Vorbild:** SEO-Multi-Agent-Team (`~/agents/projects/seo/`, LIVE seit 2026-05-14)
 **Auslöser:** User-Wunsch — den Security-Workflow „umfangreicher und besser" machen,
 „gerne als Team erweitern wie der SEO-Agent, nur für Security".

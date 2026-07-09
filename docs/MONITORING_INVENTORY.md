@@ -26,6 +26,10 @@
 | soak-monitor | `cron-soak-monitor.sh` | daily 07:30 | report | `report` | — | Phase-0-Entscheid (bleibt Cron) |
 | stale-pr-monitor | `cron-stale-pr-monitor.sh` | Mo 06:00 | report | `report` | — | bleibt Cron |
 | backup-monitor | `cron-backup-monitor.sh` | Mo 07:00 | report | `report` | — | bleibt Cron |
+| security-team-trigger | `security-trigger.sh daily` | daily 05:23 | trigger (W1, #290) | `script` | Exit 4 = 0 Subscriber (Team tot) | aktiv (seit 2026-07-09) |
+| security-job-reaper | `security-job-reaper.sh` | daily 06:41 | hygiene (W1, #290) | `script` | cancelt Zombie-`sec_jobs` >6h | aktiv (seit 2026-07-09) |
+| security-soak-compare | `security-soak-compare.sh` | daily 07:31 | report (W1-Soak, bis ~16.07.) | `report` | — | aktiv (temporär) |
+| trivy-daily-scan | `~/scripts/trivy-daily-scan.sh` | daily 04:15 | CVE-Scan (#328) | `script` | schreibt `/var/log/trivy-scans` (Bot-event_watcher konsumiert) | aktiv (seit 2026-07-09) |
 
 > **Phase-0-Entscheidung (Defaults):** Report-only-Crons (soak/stale-pr/backup-monitor) bleiben vorerst Cron — kein Health/Heal, niedrige Prio. ci-main-health kann als `http`-Check rein.
 
@@ -48,6 +52,7 @@
 | doku-drift-watchdog | doku-drift | Container-Ports vs Port-Map + MEMORY.md-Limit | `report` | bleibt (oder report) |
 | ki-cost-watchdog | ki-cost | Token/Kosten-Rollup Claude+Codex | `report` | bleibt (report) |
 | check-worker-drift | systemd | Worker-Daemon-Drift | `script` | → Engine |
+| security-freshness-watchdog | pg-freshness | security_analyst-DB: letzter `sec_jobs`-Lauf `ok/partial` < 26h (W1, #290, seit 2026-07-09) | `script` | Dead-Man (bleibt extern — überwacht das Security-Team selbst) |
 
 ## 3 · ShadowOps `project_monitor` — was schon zentral läuft
 
