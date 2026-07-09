@@ -427,8 +427,8 @@ class ServerAssistant:
         # EIN AI-Call
         prompt = (
             "Du bist Security-Analyst fuer einen Produktiv-VPS "
-            "(Debian 12, 6 Kerne, 8 GB RAM) mit GuildScout, ZERODOX, "
-            "und diversen Agents.\n\n"
+            "(Debian 13 trixie, Intel i7-6700 4C/8T, 64 GB RAM, NVMe RAID1) "
+            "mit GuildScout, ZERODOX, und diversen Agents.\n\n"
             "Analysiere diesen Wochenbericht und liefere:\n"
             "1. **Sicherheitsbewertung** (1-10, 10 = perfekt)\n"
             "2. **Top 3 Risiken** (konkret, mit Handlungsempfehlung)\n"
@@ -736,9 +736,13 @@ class ServerAssistant:
         """
         result: Dict[str, List] = {'info': []}
 
+        # Claude-CLI-Pfad robust auflösen (nicht hartcodieren — Location zog 2026-07 um).
+        from .ai_engine import resolve_claude_cli_path
+        claude_cli = resolve_claude_cli_path()
+
         checks = {
             'codex': 'codex --version 2>/dev/null',
-            'claude': '/home/cmdshadow/.local/bin/claude --version 2>/dev/null',
+            'claude': f'{claude_cli} --version 2>/dev/null',
         }
 
         for name, cmd in checks.items():

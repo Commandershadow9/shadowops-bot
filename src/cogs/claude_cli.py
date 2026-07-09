@@ -122,7 +122,7 @@ class ClaudeCLICog(commands.Cog):
         except FileNotFoundError:
             await interaction.followup.send(
                 "❌ `claude` CLI nicht gefunden. PATH prüfen "
-                "(`/home/cmdshadow/.local/bin/claude` erwartet).",
+                "(`which claude`) oder `CLAUDE_CLI_PATH` setzen.",
                 ephemeral=True,
             )
             return

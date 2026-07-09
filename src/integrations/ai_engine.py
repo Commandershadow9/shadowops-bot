@@ -18,6 +18,7 @@ import asyncio
 import json
 import logging
 import os
+import shutil
 import signal
 import re
 import tempfile
@@ -29,6 +30,48 @@ from pathlib import Path
 import jsonschema
 
 logger = logging.getLogger('shadowops')
+
+
+# Bekannte Fallback-Pfade zur Claude-CLI (npm-global zuerst — reale Location seit 2026-07,
+# nachdem die npm-Installation von ~/.local/bin nach ~/.npm-global/bin gewandert ist).
+_CLAUDE_CLI_FALLBACKS = [
+    '/home/cmdshadow/.npm-global/bin/claude',
+    '/home/cmdshadow/.local/bin/claude',
+]
+
+
+def resolve_claude_cli_path(configured_path: Optional[str] = None) -> str:
+    """Löst den Pfad zur Claude-CLI robust zur Laufzeit auf.
+
+    Ein hartcodierter Pfad brach den Claude-Fallback (FileNotFoundError), sobald die
+    npm-Installation umzog. Reihenfolge (erster Treffer gewinnt):
+      1. Env-Override ``CLAUDE_CLI_PATH`` (falls gesetzt und Datei existiert)
+      2. Explizit konfigurierter Pfad (falls Datei existiert)
+      3. ``shutil.which('claude')`` — nutzt den PATH des Bot-Prozesses
+      4. Bekannte Fallback-Pfade (erster existierender)
+      5. Letzter Ausweg: erster Fallback-Pfad, damit Fehlermeldungen einen Pfad zeigen
+    """
+    env_override = os.environ.get('CLAUDE_CLI_PATH')
+    if env_override:
+        if os.path.isfile(env_override):
+            return env_override
+        logger.warning(
+            "CLAUDE_CLI_PATH=%s gesetzt, aber Datei existiert nicht — nutze Auto-Auflösung",
+            env_override,
+        )
+
+    if configured_path and os.path.isfile(configured_path):
+        return configured_path
+
+    which_path = shutil.which('claude')
+    if which_path:
+        return which_path
+
+    for candidate in _CLAUDE_CLI_FALLBACKS:
+        if os.path.isfile(candidate):
+            return candidate
+
+    return _CLAUDE_CLI_FALLBACKS[0]
 
 # Basis-Pfad zu den JSON-Schemas
 SCHEMAS_DIR = Path(__file__).parent.parent / 'schemas'
@@ -386,7 +429,7 @@ class ClaudeProvider:
     """
 
     def __init__(self, config: dict):
-        self.cli_path = config.get('cli_path', '/home/cmdshadow/.local/bin/claude')
+        self.cli_path = resolve_claude_cli_path(config.get('cli_path'))
         self.models = config.get('models', {
             'fast': 'claude-sonnet-4-6',
             'standard': 'claude-sonnet-4-6',
@@ -873,7 +916,8 @@ class AIEngine:
             'timeout_thinking': 300,
         })
         fallback_cfg = ai_cfg.get('fallback', {
-            'cli_path': '/home/cmdshadow/.local/bin/claude',
+            # cli_path bewusst weggelassen — ClaudeProvider löst den Pfad via
+            # resolve_claude_cli_path() robust zur Laufzeit auf (env → which → Fallback-Liste).
             'models': {'fast': 'claude-sonnet-4-6', 'standard': 'claude-sonnet-4-6', 'thinking': 'claude-opus-4-6'},
             'timeout': 120,
         })
@@ -2196,7 +2240,7 @@ class AIEngine:
         details_str = json.dumps(details, indent=2, default=str) if details else "Keine Details verfuegbar"
 
         prompt_parts = [
-            f"Du bist ein Security-Analyst fuer Linux-Server (Debian 12).",
+            f"Du bist ein Security-Analyst fuer Linux-Server (Debian 13 trixie).",
             f"Analysiere das folgende Security-Event und erstelle eine Fix-Strategie.",
             f"",
             f"## Event-Details",

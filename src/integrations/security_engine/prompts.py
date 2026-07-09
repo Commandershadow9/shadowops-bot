@@ -23,9 +23,9 @@ dieses Produktiv-Servers durch. Sei systematisch und gruendlich.
 
 ## Server
 
-- Debian 12, 6 Kerne, 8 GB RAM, SSH Port 47822
+- Debian 13 (trixie), Intel i7-6700 (4C/8T), 64 GB RAM, NVMe RAID1, SSH Port 47822
 - WireGuard VPN (10.8.0.0/24), UFW aktiv, Traefik v3 (80/443)
-- Tools: CrowdSec, Fail2ban, AIDE, Trivy, earlyoom
+- Tools: CrowdSec, AIDE, Trivy, earlyoom (KEIN fail2ban — durch CrowdSec ersetzt, Issue #295)
 
 ## Projekte
 
@@ -138,9 +138,9 @@ gruendlicher als der taegliche Scan. Nimm dir Zeit, geh in die Tiefe.
 
 ## Server
 
-- Debian 12, 6 Kerne, 8 GB RAM, SSH Port 47822
+- Debian 13 (trixie), Intel i7-6700 (4C/8T), 64 GB RAM, NVMe RAID1, SSH Port 47822
 - WireGuard VPN (10.8.0.0/24), UFW aktiv, Traefik v3 (80/443)
-- Tools: CrowdSec, Fail2ban, AIDE, Trivy, earlyoom
+- Tools: CrowdSec, AIDE, Trivy, earlyoom (KEIN fail2ban — durch CrowdSec ersetzt, Issue #295)
 
 ## Projekte
 
@@ -278,6 +278,22 @@ Antworte als JSON:
 """
 
 
+def render_reflection_prompt(session_summary: str, weekly_context: str) -> str:
+    """Rendert den REFLECTION_PROMPT mit den Session-Werten.
+
+    Nutzt bewusst ``str.replace()`` statt ``str.format()``: Das Template enthält ein
+    JSON-Beispiel (``{"quality_score": ...}``), dessen geschweifte Klammern ``str.format()``
+    als Replacement-Field fehlinterpretiert — das warf reproduzierbar ``KeyError: '"quality_score"'``
+    und legte die Post-Scan-Reflection lahm. ``.replace()`` ist robust gegen die JSON-Klammern
+    und bleibt es auch, wenn das JSON-Beispiel später erweitert wird.
+    """
+    return (
+        REFLECTION_PROMPT
+        .replace('{session_summary}', session_summary)
+        .replace('{weekly_context}', weekly_context)
+    )
+
+
 # ─────────────────────────────────────────────────────────────────────
 # Fix-Session Prompt — Arbeitet Findings aus der DB ab
 # ─────────────────────────────────────────────────────────────────────
@@ -290,7 +306,7 @@ Du hast genug Zeit und Turns. Lass nichts aus.
 
 ## Server
 
-Debian 12, SSH 47822, UFW, Traefik v3.
+Debian 13 (trixie), Intel i7-6700 (4C/8T), 64 GB RAM, NVMe RAID1, SSH 47822, UFW, Traefik v3.
 Projekte: ~/GuildScout/, ~/ZERODOX/, ~/shadowops-bot/, ~/agents/
 
 ## Findings
