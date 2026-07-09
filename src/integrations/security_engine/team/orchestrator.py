@@ -53,6 +53,7 @@ class SecurityOrchestrator:
 
     async def handle_trigger(
         self, projects: dict[str, dict], active_workers: list[str],
+        trigger: str = "manual",
     ) -> list[SecurityJob]:
         """Fan-out: je aktivem Worker-Typ × Projekt (mit passendem <type>_path) ein Job."""
         jobs: list[SecurityJob] = []
@@ -63,6 +64,6 @@ class SecurityOrchestrator:
                     continue
                 jobs.append(await self.dispatch_job(
                     worker_type=worker_type, project=project,
-                    payload={"path": cfg[path_key]},
+                    payload={"path": cfg[path_key]}, trigger=trigger,
                 ))
         return jobs
