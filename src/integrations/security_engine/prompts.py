@@ -25,7 +25,7 @@ dieses Produktiv-Servers durch. Sei systematisch und gruendlich.
 
 - Debian 13 (trixie), Intel i7-6700 (4C/8T), 64 GB RAM, NVMe RAID1, SSH Port 47822
 - WireGuard VPN (10.8.0.0/24), UFW aktiv, Traefik v3 (80/443)
-- Tools: CrowdSec, Fail2ban, AIDE, Trivy, earlyoom
+- Tools: CrowdSec, AIDE, Trivy, earlyoom (KEIN fail2ban — durch CrowdSec ersetzt, Issue #295)
 
 ## Projekte
 
@@ -140,7 +140,7 @@ gruendlicher als der taegliche Scan. Nimm dir Zeit, geh in die Tiefe.
 
 - Debian 13 (trixie), Intel i7-6700 (4C/8T), 64 GB RAM, NVMe RAID1, SSH Port 47822
 - WireGuard VPN (10.8.0.0/24), UFW aktiv, Traefik v3 (80/443)
-- Tools: CrowdSec, Fail2ban, AIDE, Trivy, earlyoom
+- Tools: CrowdSec, AIDE, Trivy, earlyoom (KEIN fail2ban — durch CrowdSec ersetzt, Issue #295)
 
 ## Projekte
 
