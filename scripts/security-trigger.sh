@@ -8,6 +8,11 @@ set -euo pipefail
 
 # Gruppen-Session-Drift: falls docker-Gruppe nicht aktiv, re-exec via sg
 if ! docker ps >/dev/null 2>&1; then
+    if [ -n "${_SEC_SG_REEXEC:-}" ]; then
+        echo "FEHLER: docker weiterhin unerreichbar nach sg-Re-Exec — Abbruch." >&2
+        exit 3
+    fi
+    export _SEC_SG_REEXEC=1
     exec sg docker -c "$0 ${*:-}"
 fi
 
@@ -20,8 +25,20 @@ TRIGGER="${1:-daily}"
 # Passwort aus REDIS_URL extrahieren (Form redis://:PASS@host:port/db)
 PASS=$(printf '%s' "${REDIS_URL:-}" | sed -n 's|redis://:\([^@]*\)@.*|\1|p')
 
-SUBS=$(docker exec guildscout-redis redis-cli ${PASS:+-a "$PASS"} --no-auth-warning \
-    publish sec:trigger "{\"trigger\":\"${TRIGGER}\"}")
+# Passwort NICHT via argv (-a) uebergeben (sichtbar in ps/argv) — stattdessen
+# REDISCLI_AUTH nur setzen, wenn ein Passwort vorhanden ist.
+if [ -n "$PASS" ]; then
+    SUBS=$(docker exec -e REDISCLI_AUTH="$PASS" guildscout-redis redis-cli --no-auth-warning \
+        publish sec:trigger "{\"trigger\":\"${TRIGGER}\"}")
+else
+    SUBS=$(docker exec guildscout-redis redis-cli --no-auth-warning \
+        publish sec:trigger "{\"trigger\":\"${TRIGGER}\"}")
+fi
+
+if ! [[ "${SUBS:-}" =~ ^[0-9]+$ ]]; then
+    echo "FEHLER: unerwartete redis-cli-Antwort: ${SUBS:-<leer>}" >&2
+    exit 5
+fi
 
 if [ "${SUBS:-0}" -eq 0 ]; then
     echo "FEHLER: 0 Subscriber auf sec:trigger — Security-Orchestrator laeuft nicht?" >&2

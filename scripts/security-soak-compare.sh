@@ -5,6 +5,11 @@
 set -euo pipefail
 
 if ! docker ps >/dev/null 2>&1; then
+    if [ -n "${_SEC_SG_REEXEC:-}" ]; then
+        echo "FEHLER: docker weiterhin unerreichbar nach sg-Re-Exec — Abbruch." >&2
+        exit 3
+    fi
+    export _SEC_SG_REEXEC=1
     exec sg docker -c "$0 ${*:-}"
 fi
 
@@ -20,26 +25,26 @@ psql_q() {
 
 worker=$(psql_q "SELECT COUNT(DISTINCT finding_fingerprint) FROM findings
     WHERE category LIKE '%npm%' AND session_id IS NULL
-      AND created_at > NOW() - INTERVAL '24 hours'")
+      AND found_at > NOW() - INTERVAL '24 hours'")
 monolith=$(psql_q "SELECT COUNT(DISTINCT finding_fingerprint) FROM findings
     WHERE category LIKE '%npm%' AND session_id IS NOT NULL
-      AND created_at > NOW() - INTERVAL '24 hours'")
+      AND found_at > NOW() - INTERVAL '24 hours'")
 nur_worker=$(psql_q "SELECT COUNT(*) FROM (
     SELECT DISTINCT finding_fingerprint FROM findings
     WHERE category LIKE '%npm%' AND session_id IS NULL
-      AND created_at > NOW() - INTERVAL '24 hours'
+      AND found_at > NOW() - INTERVAL '24 hours'
     EXCEPT
     SELECT DISTINCT finding_fingerprint FROM findings
     WHERE category LIKE '%npm%' AND session_id IS NOT NULL
-      AND created_at > NOW() - INTERVAL '24 hours') d")
+      AND found_at > NOW() - INTERVAL '24 hours') d")
 nur_monolith=$(psql_q "SELECT COUNT(*) FROM (
     SELECT DISTINCT finding_fingerprint FROM findings
     WHERE category LIKE '%npm%' AND session_id IS NOT NULL
-      AND created_at > NOW() - INTERVAL '24 hours'
+      AND found_at > NOW() - INTERVAL '24 hours'
     EXCEPT
     SELECT DISTINCT finding_fingerprint FROM findings
     WHERE category LIKE '%npm%' AND session_id IS NULL
-      AND created_at > NOW() - INTERVAL '24 hours') d")
+      AND found_at > NOW() - INTERVAL '24 hours') d")
 
 echo "[$(date -Iseconds)] worker=${worker} monolith=${monolith} nur_worker=${nur_worker} nur_monolith=${nur_monolith}" \
     | tee -a "$LOG_FILE"

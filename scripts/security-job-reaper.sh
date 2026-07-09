@@ -5,6 +5,11 @@
 set -euo pipefail
 
 if ! docker ps >/dev/null 2>&1; then
+    if [ -n "${_SEC_SG_REEXEC:-}" ]; then
+        echo "FEHLER: docker weiterhin unerreichbar nach sg-Re-Exec — Abbruch." >&2
+        exit 3
+    fi
+    export _SEC_SG_REEXEC=1
     exec sg docker -c "$0 ${*:-}"
 fi
 
@@ -18,11 +23,14 @@ mkdir -p "$(dirname "$LOG_FILE")"
 log() { echo "[$(date -Iseconds)] $*" | tee -a "$LOG_FILE" >&2; }
 
 reaped=$(docker exec "$DB_CONTAINER" psql -U "$DB_USER" -d "$DB_NAME" -tAc \
-  "UPDATE sec_jobs
-   SET status='cancelled', completed_at=NOW(),
-       error_message='job-reaper: in_progress > ${STALE_HOURS}h (Zombie)'
-   WHERE status='in_progress'
-     AND started_at < NOW() - make_interval(hours => ${STALE_HOURS})
-   RETURNING 1" | wc -l)
+  "WITH d AS (
+     UPDATE sec_jobs
+     SET status='cancelled', completed_at=NOW(),
+         error_message='job-reaper: in_progress > ${STALE_HOURS}h (Zombie)'
+     WHERE status='in_progress'
+       AND started_at < NOW() - make_interval(hours => ${STALE_HOURS})
+     RETURNING 1
+   )
+   SELECT count(*) FROM d")
 
 log "Reaped: ${reaped} Zombie-Jobs (threshold=${STALE_HOURS}h)"
