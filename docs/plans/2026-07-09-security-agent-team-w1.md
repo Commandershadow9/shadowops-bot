@@ -534,8 +534,10 @@ cp ~/shadowops-bot/deploy/security-npm-audit-worker.service ~/.config/systemd/us
 cp ~/shadowops-bot/deploy/security-freshness-watchdog.service ~/.config/systemd/user/
 cp ~/shadowops-bot/deploy/security-freshness-watchdog.timer ~/.config/systemd/user/
 systemctl --user daemon-reload
-systemctl --user enable --now security-orchestrator security-npm-audit-worker security-freshness-watchdog.timer
+systemctl --user enable --now security-orchestrator security-npm-audit-worker
 ```
+
+> **Hinweis:** Der `security-freshness-watchdog.timer` wird hier bewusst NICHT mit-enabled — `sec_jobs` ist zu diesem Zeitpunkt noch leer, der Watchdog würde sofort einen Kaltstart-Alarm werfen (Alter „seit nie" → 999999h). Erst nach dem ersten erfolgreichen manuellen Trigger-Lauf aktivieren (siehe Step 7).
 
 - [ ] **Step 5: Smoke:** `systemctl --user status security-orchestrator security-npm-audit-worker` → beide `active (running)`, Journal zeigt `Orchestrator bereit — subscribed=sec:trigger` bzw. `npm_audit bereit`.
 - [ ] **Step 6: Manueller Trigger-Lauf:** `~/shadowops-bot/scripts/security-trigger.sh manual` → Ausgabe `an 1 Subscriber publiziert`; danach in der DB prüfen:
@@ -547,8 +549,9 @@ docker exec guildscout-postgres psql -U security_analyst -d security_analyst \
 
 Expected: 2 Rows (guildscout+zerodox), status `ok`/`partial`, completed_at gesetzt.
 
-- [ ] **Step 7: Watchdog-Staleness-Test:** einmalig mit `WATCHDOG_MAX_AGE_HOURS=0` laufen lassen (systemd-run oder env-Override) → Discord-Alarm in `#🩺-uptime-alerts` kommt; danach normaler Lauf → kein Alarm.
-- [ ] **Step 8: Crons eintragen** (Off-Minuten, bewusst NICHT :00/:30):
+- [ ] **Step 7: Watchdog-Timer erst jetzt aktivieren:** `systemctl --user enable --now security-freshness-watchdog.timer` (erst jetzt — Kaltstart-Alarm vermeiden, siehe Hinweis bei Step 4; `sec_jobs` hat durch Step 6 bereits frische Rows).
+- [ ] **Step 8: Watchdog-Staleness-Test:** einmalig mit `WATCHDOG_MAX_AGE_HOURS=0` laufen lassen (systemd-run oder env-Override) → Discord-Alarm in `#🩺-uptime-alerts` kommt; danach normaler Lauf → kein Alarm.
+- [ ] **Step 9: Crons eintragen** (Off-Minuten, bewusst NICHT :00/:30):
 
 ```
 23 5 * * * /home/cmdshadow/shadowops-bot/scripts/security-trigger.sh daily # Security-Team Daily-Trigger (W1, #290)
@@ -556,8 +559,8 @@ Expected: 2 Rows (guildscout+zerodox), status `ok`/`partial`, completed_at geset
 31 7 * * * /home/cmdshadow/shadowops-bot/scripts/security-soak-compare.sh # 7d-Soak Worker vs. Monolith (W1, #290)
 ```
 
-- [ ] **Step 9: Issue-#290-Kommentar** — W1 aktiv, Soak-Start-Datum + geplantes Soak-Ende (Start + 7 Tage), Verweis auf `logs/security-soak-w1.log`.
-- [ ] **Step 10: CLAUDE.md (shadowops-bot)** — Security-Team-Eintrag aktualisieren: W1 aktiv, Soak läuft, Flag-Standort, neue Crons + Watchdog dokumentieren.
+- [ ] **Step 10: Issue-#290-Kommentar** — W1 aktiv, Soak-Start-Datum + geplantes Soak-Ende (Start + 7 Tage), Verweis auf `logs/security-soak-w1.log`.
+- [ ] **Step 11: CLAUDE.md (shadowops-bot)** — Security-Team-Eintrag aktualisieren: W1 aktiv, Soak läuft, Flag-Standort, neue Crons + Watchdog dokumentieren.
 
 ---
 
