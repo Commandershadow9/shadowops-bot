@@ -1398,9 +1398,15 @@ class SecurityScanAgent:
             if deletion_warnings:
                 summary_extra = " | DELETION-WARNUNG: " + "; ".join(deletion_warnings)
 
+            summary_val = fix_result.get('summary', '')
+            if not isinstance(summary_val, str):
+                # LLM liefert summary gelegentlich als strukturiertes Objekt (dict) —
+                # Session #539 (2026-07-09): dict + str crashte die komplette Fix-Phase.
+                summary_val = json.dumps(summary_val, ensure_ascii=False, default=str)
+
             logger.info("Fix-Phase: %d gefixt, %d PRs (von %d)", fixed_count, pr_count, len(fixable))
             await self._notify_fix_phase_complete(fixed_count, pr_count, len(fixable),
-                                                   fix_result.get('summary', '') + summary_extra)
+                                                   summary_val + summary_extra)
         except Exception as e:
             logger.error("Fix-Phase Fehler: %s", e, exc_info=True)
         finally:

@@ -175,3 +175,25 @@ async def test_can_start_session_returns_false_when_disabled(agent):
     agent._consecutive_failures = MAX_CONSECUTIVE_FAILURES
 
     assert await agent.can_start_session() is False
+
+
+@pytest.mark.asyncio
+async def test_run_fix_phase_summary_als_dict_crasht_nicht(agent, mock_ai_engine):
+    """Session #539 (2026-07-09): LLM liefert summary manchmal als dict statt str —
+    fix_result['summary'] + summary_extra crashte mit TypeError, 0 Findings gefixt."""
+    agent._get_fixable_findings = AsyncMock(return_value=[{
+        'id': 1, 'severity': 'high', 'category': 'test', 'title': 'X',
+        'description': 'Y', 'affected_project': 'zerodox', 'affected_files': [],
+        'github_issue_url': None,
+    }])
+    agent._post_fix_integrity_check = AsyncMock(return_value=None)
+    agent._check_deletion_guard = AsyncMock(return_value=[])
+    agent._notify_fix_phase_complete = AsyncMock()
+    mock_ai_engine.run_fix_session = AsyncMock(return_value={
+        'results': [],
+        'summary': {'status': 'done', 'detail': 'x'},
+    })
+
+    await agent._run_fix_phase(scan_session_id=1)
+
+    agent._notify_fix_phase_complete.assert_awaited_once()
