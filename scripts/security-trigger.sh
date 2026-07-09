@@ -25,11 +25,16 @@ TRIGGER="${1:-daily}"
 # Passwort aus REDIS_URL extrahieren (Form redis://:PASS@host:port/db)
 PASS=$(printf '%s' "${REDIS_URL:-}" | sed -n 's|redis://:\([^@]*\)@.*|\1|p')
 
-# Passwort NICHT via argv (-a) uebergeben (sichtbar in ps/argv) — stattdessen
-# REDISCLI_AUTH nur setzen, wenn ein Passwort vorhanden ist.
+# Passwort NICHT via argv uebergeben (sichtbar in ps/argv) — auch nicht als
+# "-e REDISCLI_AUTH=$PASS" (der Wert landet dabei ebenfalls in der host-argv
+# des docker-exec-Aufrufs, empirisch belegt). Stattdessen Name-only-Form:
+# "-e REDISCLI_AUTH" reicht den Wert aus der Shell-Umgebung durch, ohne dass
+# er als Argument erscheint.
 if [ -n "$PASS" ]; then
-    SUBS=$(docker exec -e REDISCLI_AUTH="$PASS" guildscout-redis redis-cli --no-auth-warning \
+    export REDISCLI_AUTH="$PASS"
+    SUBS=$(docker exec -e REDISCLI_AUTH guildscout-redis redis-cli --no-auth-warning \
         publish sec:trigger "{\"trigger\":\"${TRIGGER}\"}")
+    unset REDISCLI_AUTH
 else
     SUBS=$(docker exec guildscout-redis redis-cli --no-auth-warning \
         publish sec:trigger "{\"trigger\":\"${TRIGGER}\"}")
