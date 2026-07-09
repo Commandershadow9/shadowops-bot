@@ -386,7 +386,7 @@ class SecurityScanAgent:
         self.max_sessions_per_day = analyst_cfg.get(
             'max_sessions_per_day', DEFAULT_MAX_SESSIONS_PER_DAY
         )
-        self.codex_model = analyst_cfg.get('model', 'gpt-5.3-codex')
+        self.codex_model = analyst_cfg.get('model', 'gpt-5.5')
         self.claude_model = analyst_cfg.get('fallback_model', 'claude-opus-4-6')
         self.maintenance_scan_days = analyst_cfg.get(
             'maintenance_scan_days', MAINTENANCE_SCAN_INTERVAL_DAYS

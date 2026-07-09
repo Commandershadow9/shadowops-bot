@@ -911,7 +911,7 @@ class AIEngine:
 
         # Provider erstellen
         primary_cfg = ai_cfg.get('primary', {
-            'models': {'fast': 'gpt-4o', 'standard': 'gpt-5.3-codex', 'thinking': 'o3'},
+            'models': {'fast': 'gpt-4o', 'standard': 'gpt-5.5', 'thinking': 'o3'},
             'timeout': 60,
             'timeout_thinking': 300,
         })
