@@ -144,7 +144,7 @@ class SecurityAnalyst:
         )
 
         # Modelle aus Config (Codex primaer, Claude Fallback)
-        self.codex_model = analyst_cfg.get('model', 'gpt-5.3-codex')
+        self.codex_model = analyst_cfg.get('model', 'gpt-5.5')
         self.claude_model = analyst_cfg.get('fallback_model', 'claude-opus-4-6')
 
         # Datenbank-DSN: Priorität Config → Umgebungsvariable → Fehler

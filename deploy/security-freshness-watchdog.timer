@@ -1,0 +1,14 @@
+[Unit]
+Description=Security-Team Freshness Watchdog Timer — stündlich (mit Jitter)
+Documentation=https://github.com/Commandershadow9/shadowops-bot
+
+[Timer]
+# Erster Lauf 11 Minuten nach Boot (versetzt zu den anderen Watchdogs).
+OnBootSec=11min
+OnUnitActiveSec=1h
+RandomizedDelaySec=5min
+AccuracySec=1min
+Persistent=false
+
+[Install]
+WantedBy=timers.target

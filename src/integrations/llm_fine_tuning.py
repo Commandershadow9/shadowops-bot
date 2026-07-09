@@ -289,7 +289,7 @@ Generated: {datetime.now(timezone.utc).isoformat()}
      primary:
        engine: codex
        models:
-         standard: gpt-5.3-codex
+         standard: gpt-5.5
    ```
 
 3. **Restart ShadowOps**:

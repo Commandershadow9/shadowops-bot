@@ -42,3 +42,18 @@ async def test_handle_trigger_fans_out_per_project_with_path():
     assert len(jobs) == 2
     assert {j.project for j in jobs} == {"guildscout", "zerodox"}
     assert redis.publish.await_count == 2
+
+
+@pytest.mark.asyncio
+async def test_handle_trigger_reicht_trigger_typ_durch():
+    """handle_trigger(trigger='daily') muss den Trigger-Typ in die Jobs schreiben."""
+    orch = SecurityOrchestrator(redis=_redis(), db=_db())
+
+    jobs = await orch.handle_trigger(
+        projects={"zerodox": {"npm_audit_path": "/tmp/x"}},
+        active_workers=["npm_audit"],
+        trigger="daily",
+    )
+
+    assert len(jobs) == 1
+    assert jobs[0].trigger == "daily"
