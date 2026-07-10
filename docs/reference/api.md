@@ -418,6 +418,9 @@ channels:
 # AI CONFIGURATION (Dual-Engine: Codex CLI Primary, Claude CLI Fallback)
 # Ollama wurde vollstaendig entfernt (v4.0).
 # Keys DISCORD_BOT_TOKEN, OPENAI_API_KEY, ANTHROPIC_API_KEY kommen aus Env-Vars, NICHT aus config.yaml.
+# Weiterer Env-Override: CLAUDE_CLI_PATH (absoluter Pfad zur Claude CLI, optional).
+#   Wenn gesetzt, hat dieser Pfad Vorrang vor ai.fallback.cli_path und shutil.which('claude').
+#   Nützlich wenn die Claude CLI ausserhalb des Bot-Prozess-PATH installiert ist.
 # ========================================
 ai:
   enabled: true
@@ -1193,6 +1196,28 @@ sudo ufw status
 
 # Verify GitHub webhook configuration
 # Check "Recent Deliveries" in GitHub webhook settings
+```
+
+**Claude CLI nicht gefunden (FileNotFoundError in Fallback-Engine):**
+
+`resolve_claude_cli_path()` in `ai_engine.py` sucht die Claude CLI in dieser Reihenfolge:
+1. Env-Variable `CLAUDE_CLI_PATH` (wenn gesetzt und Datei existiert)
+2. `ai.fallback.cli_path` aus `config.yaml` (wenn Datei existiert)
+3. `shutil.which('claude')` — PATH des Bot-Prozesses
+4. Bekannte Fallback-Pfade (`~/.npm-global/bin/claude`, `~/.local/bin/claude`)
+
+Wenn die Claude CLI nach einem npm-Update an einen anderen Pfad gewandert ist:
+```bash
+# Pfad ermitteln
+which claude
+
+# Env-Override setzen (in /etc/systemd/system/shadowops-bot.service oder ~/.bashrc)
+export CLAUDE_CLI_PATH=/home/cmdshadow/.npm-global/bin/claude
+
+# Oder direkt in config.yaml:
+# ai:
+#   fallback:
+#     cli_path: "/home/cmdshadow/.npm-global/bin/claude"
 ```
 
 ---
