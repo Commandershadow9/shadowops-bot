@@ -379,28 +379,37 @@ channels:
 ai:
   enabled: true
 
-  primary:
-    engine: codex
+  # === CODEX CLI (PRIMARY — OpenAI Codex via CLI) ===
+  codex:
+    cli_path: "codex"                        # Executable im PATH; kein absoluter Pfad noetig
     models:
-      fast: gpt-4o
-      standard: gpt-5.3-codex
-      thinking: o3
-    timeout: 300
+      fast: "gpt-5.5"                        # Schnelle Analysen
+      standard: "gpt-5.5"                    # Standard-Analysen + Structured Output
+      thinking: "o3"                         # Komplexe Planungsaufgaben
 
-  fallback:
-    engine: claude
-    cli_path: /home/user/.local/bin/claude
+  # === CLAUDE CLI (FALLBACK — Anthropic Claude via CLI) ===
+  claude:
+    # Pfad wird zur Laufzeit aufgeloest (env CLAUDE_CLI_PATH → shutil.which → Fallback-Liste).
+    # Nur setzen, wenn ein nicht-im-PATH-liegender Pfad erzwungen werden soll.
+    cli_path: "/home/cmdshadow/.npm-global/bin/claude"
     models:
-      fast: claude-sonnet-4-6
-      standard: claude-sonnet-4-6
-      thinking: claude-opus-4-6
-    timeout: 300
+      fast: "claude-sonnet-4-6"
+      standard: "claude-sonnet-4-6"
+      thinking: "claude-opus-4-6"
 
-  routing:
-    critical_analysis: { engine: codex, model: thinking }
-    high_analysis: { engine: codex, model: standard }
-    low_analysis: { engine: codex, model: fast }
-    critical_verify: { engine: claude, model: thinking }
+  # === TIMEOUTS ===
+  timeouts:
+    codex_seconds: 300      # 5 Min fuer Codex CLI
+    claude_seconds: 300     # 5 Min fuer Claude CLI
+    analyst_seconds: 1800   # 30 Min fuer Security Analyst Sessions
+
+  # === ROUTING (optional) ===
+  # Wenn nicht gesetzt, werden Severity-Defaults genutzt (CRITICAL→thinking, HIGH→standard, LOW→fast).
+  # routing:
+  #   critical_analysis: { engine: codex, model: thinking }
+  #   high_analysis: { engine: codex, model: standard }
+  #   low_analysis: { engine: codex, model: fast }
+  #   critical_verify: { engine: claude, model: thinking }
 
 # ========================================
 # AUTO-REMEDIATION CONFIGURATION
