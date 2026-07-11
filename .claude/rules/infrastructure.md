@@ -61,6 +61,7 @@ paths:
 | `ai-agent-framework-watchdog.timer` | systemd | guildscout-feedback-agent, zerodox-support-agent, seo-agent | 6 min |
 | `seo-audit-freshness-watchdog.timer` | pg-freshness | seo_agent-DB: letzter erfolgreicher zerodox-Audit (`completed_at`) < 49h | 8 min |
 | `seo-output-freshness-watchdog.timer` | pg-freshness | seo_agent-DB: bei aktiven Insights Alter der jüngsten Ausgabe (Issue/PR) < 168h — Ausgabe-Stau trotz laufendem Audit (#1683) | 9 min |
+| `security-freshness-watchdog.timer` | pg-freshness | security_analyst-DB: letzter erfolgreicher `sec_jobs`-Lauf < 26h — erkennt stale Security-Agent-Team (W1, seit 2026-07-09) | 10 min |
 | `memory-watchdog.timer` | meminfo | RAM ≥90% oder Swap ≥80% — Frühwarnung OOM (Throttle 60 min, seit Vorfall 2026-05-25) | 4 min |
 | `disk-hygiene-watchdog.timer` | disk + auto-prune | Auto-Prune (docker builder/image + journald) bei Disk >85%, Alarm >90% (stündlich, Selbstpflege seit 2026-05-30) | hourly |
 | `doku-drift-watchdog.timer` | doku-drift | Container-Ports vs. Port-Map + MEMORY.md-Limit (<200), nur Alarm (Selbstpflege seit 2026-05-30) | täglich 06:30 |
