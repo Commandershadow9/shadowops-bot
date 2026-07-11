@@ -360,6 +360,40 @@ projects:
       - "zerodox-support-agent"
       - "seo-agent"
 
+  # === ZERODOX ===
+  # Hinweis: dieses Beispiel zeigt nur den fuer den buildSha-Drift-Backstop
+  # (Issue #1720) relevanten Ausschnitt. Im echten (gitignored) config.yaml
+  # existiert der zerodox-Projektblock bereits (Webhook-Auto-Deploy laeuft
+  # ja schon) — hier nur den `checks:`-Eintrag unter dem bestehenden
+  # `monitor:`-Knoten ergaenzen, nicht den ganzen Block ersetzen.
+  zerodox:
+    enabled: true
+    tag: "[ZERODOX]"
+    path: "/home/cmdshadow/ZERODOX"
+    repo_url: "https://github.com/Commandershadow9/ZERODOX"
+    services:
+      - "zerodox-web"
+    critical: true
+    monitor:
+      enabled: true
+      checks:
+        # buildSha-Drift-Backstop (Issue #1720): Fallback-Netz FALLS der
+        # Re-Poll nach Deploy (ci_mixin.py, _repoll_after_deploy) das aktive
+        # Nachholen verpasst (z.B. Repoll-Rundenlimit erschoepft, Working-
+        # Tree-Guard bricht wiederholt ab). Meldet nur, deployt NICHT selbst
+        # (heal: alert-only) — Skript unterscheidet dabei benignen
+        # Docs-only-Drift (Allowlist identisch zu ZERODOX/scripts/deploy.sh
+        # Issue #1262: docs/**, .claude/**, Top-Level *.md) von echtem,
+        # deploy-relevantem Drift. flake_polls=7 * interval=300s ≈ 35 Min
+        # Persistenz vor Alert (liegt im Issue-Zielkorridor 30-45 Min).
+        - id: zerodox-build-drift
+          type: script
+          target: "/home/cmdshadow/shadowops-bot/scripts/zerodox-build-drift-check.py"
+          interval: 300
+          timeout: 30
+          flake_polls: 7
+          heal: { action: alert-only }
+
   # === MAYDAY SIM ===
   mayday_sim:
     enabled: true

@@ -6,6 +6,7 @@ import asyncio
 import logging
 import time
 from datetime import datetime, timezone
+from pathlib import Path
 from typing import Dict, List, Literal, Optional
 
 import aiohttp
@@ -20,6 +21,11 @@ _CI_FAILURE_CONCLUSIONS = frozenset({"failure", "cancelled", "timed_out", "actio
 # Stati, die als "running" gelten — alle anderen Werte fallen durch
 # `status != 'completed'` weiter in den Poll-Loop.
 _CI_RUNNING_STATI = frozenset({"queued", "in_progress", "requested", "waiting", "pending"})
+
+# ZERODOX#1720: Default-Obergrenze fuer Re-Poll-Runden nach einem erfolgreichen
+# Deploy (Schleifen-Schutz). Ueberschreibbar per Projekt via
+# deploy.repoll_max_rounds.
+_DEFAULT_REPOLL_MAX_ROUNDS = 2
 
 
 class CIMixin:
@@ -478,12 +484,21 @@ class CIMixin:
         commit_sha: str,
         repo_full_name: Optional[str] = None,
         full_sha: Optional[str] = None,
+        _repoll_round: int = 0,
     ):
         """
         Trigger deployment for a repository
 
         Welle 9.10 (2026-05-11): Wartet auf CI-Completion bevor deploy.sh
         getriggert wird. Verhindert Race Condition aus dem 58h-Vorfall.
+
+        ZERODOX#1720: Nach einem erfolgreichen (Nicht-Self-)Deploy prueft
+        `_repoll_after_deploy`, ob origin/<branch> inzwischen weiter ist als
+        der gerade deployte Commit — z.B. weil waehrend des Deploy-Fensters
+        ein zweiter Push/PR-Merge durch den "already in progress"-Guard in
+        deploy_project() stillschweigend verworfen wurde. Falls ja, wird
+        rekursiv ein weiterer Deploy angestossen (Schleifen-Schutz via
+        _repoll_round / deploy.repoll_max_rounds).
 
         Args:
             repo_name: Name of the repository (e.g. "ZERODOX")
@@ -492,6 +507,9 @@ class CIMixin:
             repo_full_name: e.g. "Commandershadow9/ZERODOX". Wenn None, wird Wait
                             uebersprungen (Backward-Compat fuer alte Caller).
             full_sha: 40-char SHA. Wenn None, wird Wait uebersprungen.
+            _repoll_round: Interner Zaehler fuer Re-Poll-Rekursion (ZERODOX#1720).
+                           Nicht von aussen setzen — wird nur von
+                           _repoll_after_deploy hochgezaehlt.
         """
         if not self.deployment_manager:
             self.logger.warning("⚠️ No deployment manager configured")
@@ -580,8 +598,104 @@ class CIMixin:
 
             if result['success']:
                 self.logger.info(f"✅ Deployment erfolgreich: {repo_name}")
+                # ZERODOX#1720: Re-Poll — self-deploy hat einen imminenten
+                # Prozess-Restart geplant (deployment_manager), daher hier bewusst
+                # ausgenommen (kein sinnvoller Folge-Check moeglich/noetig).
+                if not is_self_deploy:
+                    await self._repoll_after_deploy(
+                        repo_name=repo_name,
+                        branch=branch,
+                        project_config=project_config,
+                        repo_full_name=repo_full_name,
+                        repoll_round=_repoll_round,
+                    )
             else:
                 self.logger.warning(f"⚠️ Deployment fehlgeschlagen: {repo_name}")
 
         except Exception as e:
             self.logger.error(f"❌ Deployment Fehler: {e}", exc_info=True)
+
+    async def _repoll_after_deploy(
+        self,
+        repo_name: str,
+        branch: str,
+        project_config: Optional[Dict],
+        repo_full_name: Optional[str],
+        repoll_round: int,
+    ) -> None:
+        """
+        ZERODOX#1720: Re-Poll nach abgeschlossenem Deploy.
+
+        Prueft, ob origin/<branch> inzwischen weiter ist als der gerade
+        deployte Commit (deploy_project() hat das lokale Repo bereits per
+        `git pull` aktualisiert, HEAD ist also der deployte Stand). Ursache
+        eines solchen Drifts ist typischerweise der `active_deployments`-Guard
+        in deployment_manager.deploy_project(): ein zweiter Push/PR-Merge, der
+        waehrend eines laufenden Deploys eintrifft, wird dort mit
+        {'success': False, 'error': 'Deployment already in progress ...'}
+        stillschweigend verworfen (kein Retry, kein Discord-Alert). Der
+        Re-Poll heilt diesen Fall, indem er nach Abschluss des ersten Deploys
+        prueft, ob origin/<branch> vorausgelaufen ist, und in diesem Fall
+        einen weiteren, ganz normalen Deploy ueber _trigger_deployment
+        anstoesst (inkl. CI-Wait + Per-SHA-Dedup via _reserve_deploy).
+
+        Schleifen-Schutz: bricht nach `deploy.repoll_max_rounds` (Default
+        `_DEFAULT_REPOLL_MAX_ROUNDS`) Runden in Folge ab, statt endlos zu
+        re-pollen, falls origin/<branch> kontinuierlich weiterwaechst.
+        """
+        if not project_config:
+            return
+
+        deploy_config = project_config.get('deploy', {})
+        if not deploy_config.get('repoll_enabled', True):
+            return
+
+        repo_path_raw = project_config.get('path')
+        if not repo_path_raw:
+            return
+        repo_path = Path(repo_path_raw)
+        if not repo_path.exists():
+            return
+
+        max_rounds = int(deploy_config.get('repoll_max_rounds', _DEFAULT_REPOLL_MAX_ROUNDS))
+        if repoll_round >= max_rounds:
+            self.logger.warning(
+                f"⚠️ Re-Poll-Limit erreicht fuer {repo_name} ({max_rounds} Runde(n)) — "
+                f"breche ab. Falls origin/{branch} weiterhin voraus ist, greift "
+                f"spaetestens der buildSha-Drift-Watchdog als Backstop."
+            )
+            return
+
+        if not self._safe_git_fetch(repo_path):
+            return
+
+        deployed_sha = self._get_commit_sha(repo_path, 'HEAD')
+        remote_sha = self._get_commit_sha(repo_path, f'origin/{branch}')
+
+        if not deployed_sha or not remote_sha or deployed_sha == remote_sha:
+            return  # nichts verpasst, oder SHAs nicht ermittelbar
+
+        self.logger.info(
+            f"🔁 Re-Poll: origin/{branch} ({remote_sha[:7]}) ist weiter als der "
+            f"gerade deployte Stand ({deployed_sha[:7]}) fuer {repo_name} — "
+            f"starte Runde {repoll_round + 1}/{max_rounds}."
+        )
+
+        # Dieselbe Per-SHA-Dedup wie bei normalen Webhook-Triggern nutzen:
+        # falls der normale push/pull_request-Handler diesen SHA parallel
+        # bereits reserviert hat, hier NICHT doppelt deployen.
+        if not self._reserve_deploy(repo_name, remote_sha):
+            self.logger.info(
+                f"ℹ️ Re-Poll: {repo_name}@{remote_sha[:7]} bereits durch einen "
+                f"anderen Trigger reserviert — kein doppelter Re-Poll-Deploy."
+            )
+            return
+
+        await self._trigger_deployment(
+            repo_name=repo_name,
+            branch=branch,
+            commit_sha=remote_sha[:7],
+            repo_full_name=repo_full_name,
+            full_sha=remote_sha,
+            _repoll_round=repoll_round + 1,
+        )
