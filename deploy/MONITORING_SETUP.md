@@ -199,6 +199,7 @@ echo '{"last_status":"up","last_alert_at":"","consecutive_failures":0}' \
 | `ai-agent-framework` | systemd | guildscout-feedback-agent, zerodox-support-agent, seo-agent (nur Prozess-State) | 5 min | 6 min |
 | `seo-audit-freshness` | pg-freshness | seo_agent-DB: letzter erfolgreicher zerodox-Audit (`completed_at`) < 49h (Vorfall 2026-06-27: 7 Tage Audit-Crash trotz Service `active` — `systemd`-Mode blind, dieser prüft die Wirkung) | 1 h | 8 min |
 | `seo-output-freshness` | pg-freshness | seo_agent-DB: bei frischen Insights (Agent produziert, jüngstes < 3 Tage) Alter der jüngsten echten Ausgabe (letzte Issue via `seo_topic_locks` bzw. Fix-PR via `seo_audits.pr_url`) < 168h (7 Tage) — erkennt Ausgabe-Stau trotz laufendem Audit (Vorfall 19.06.–02.07., #1683). `actioned`-Status bewusst NICHT als Signal (wird kaum je gesetzt) | 1 h | 9 min |
+| `security-freshness` | pg-freshness | security_analyst-DB: letzter erfolgreicher `sec_jobs`-Lauf (`completed_at`, Status `ok`/`partial`) < 26h — erkennt stale Security-Agent-Team (W1, seit 2026-07-09) | 1 h | 10 min |
 | `cmdshadow-design` | systemd-result | cmdshadow-design-healthcheck.service (max_age=36h) | 1 h | 8 min |
 | `disk-hygiene` | disk + auto-prune | Auto-Prune (docker builder/image + journald) bei Disk >85%, Alarm >90% (Selbstpflege seit 2026-05-30) | 1 h | — |
 | `doku-drift` | doku-drift | Container-Ports vs. Port-Map + MEMORY.md-Limit (<200), nur Alarm (Selbstpflege seit 2026-05-30) | täglich 06:30 | — |

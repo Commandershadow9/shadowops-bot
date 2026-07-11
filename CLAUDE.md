@@ -132,7 +132,7 @@ shadowops-bot/
 
 ## Externes Monitoring (seit 2026-05-17 — Defense-in-Depth)
 
-Zusätzlich zum internen `project_monitor.py` laufen 17 unabhängige user-systemd Watchdogs (Zyklen: 5–15 min je nach Watchdog, cmdshadow-design 1h, Selbstpflege-Watchdogs stündlich/täglich, Backup-Test monatlich) und posten Down/Recovery direkt via Discord-Webhook in `#🩺-uptime-alerts` (NICHT über den Bot — funktioniert auch wenn shadowops-bot tot ist):
+Zusätzlich zum internen `project_monitor.py` laufen 18 unabhängige user-systemd Watchdogs (Zyklen: 5–15 min je nach Watchdog, cmdshadow-design 1h, Selbstpflege-Watchdogs stündlich/täglich, Backup-Test monatlich) und posten Down/Recovery direkt via Discord-Webhook in `#🩺-uptime-alerts` (NICHT über den Bot — funktioniert auch wenn shadowops-bot tot ist):
 
 | Watchdog | Mode | Target |
 |---|---|---|
@@ -148,6 +148,7 @@ Zusätzlich zum internen `project_monitor.py` laufen 17 unabhängige user-system
 | `ai-agent-framework-watchdog` | systemd | guildscout-feedback-agent, zerodox-support-agent, seo-agent (nur Prozess-State — prüft nicht ob die Arbeit gelingt) |
 | `seo-audit-freshness-watchdog` | pg-freshness | seo_agent-DB: letzter erfolgreicher zerodox-Audit (`completed_at`) < 49h — fängt Services die `active` sind aber deren Arbeit still scheitert (Vorfall 2026-06-27: 7 Tage Audit-Crash, stündlich) |
 | `seo-output-freshness-watchdog` | pg-freshness | seo_agent-DB: bei aktiven Insights (jüngstes < 3 Tage) Alter der jüngsten echten Ausgabe (Issue via `seo_topic_locks`, Fix-PR via `seo_audits.pr_url`) < 168h (7 Tage) — erkennt Ausgabe-Stau trotz laufendem Audit (#1683, 2026-07-03) |
+| `security-freshness-watchdog` | pg-freshness | security_analyst-DB: letzter erfolgreicher `sec_jobs`-Lauf (`completed_at`, Status `ok`/`partial`) < 26h — erkennt stale Security-Agent-Team (W1 Soak seit 2026-07-09, stündlich, deploy: `deploy/security-freshness-watchdog.{service,timer}`) |
 | `cmdshadow-design-watchdog` | systemd-result | cmdshadow-design-healthcheck.service (max_age=36h, 1h-Cycle) |
 | `memory-watchdog` | meminfo | RAM ≥90% oder Swap ≥80% auf VPS, Frühwarnung vor OOM-Cascade (seit 2026-05-25, Vorfall logind-Kill durch earlyoom) |
 | `disk-hygiene-watchdog` | disk + auto-prune | Auto-Prune (docker builder/image + journald) bei Disk >85%, Alarm >90% (stündlich, Selbstpflege seit 2026-05-30) |

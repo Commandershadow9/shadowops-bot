@@ -14,7 +14,7 @@ paths:
 ## Modelle
 | Engine | Fast | Standard | Thinking |
 |--------|------|----------|----------|
-| Codex | gpt-4o | gpt-5.3-codex | o3 |
+| Codex | gpt-4o | gpt-5.5 | o3 |
 | Claude | claude-sonnet-4-6 | claude-sonnet-4-6 | claude-opus-4-6 |
 
 ## Schema-Regeln (KRITISCH)
