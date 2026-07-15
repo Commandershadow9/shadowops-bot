@@ -63,6 +63,18 @@ STATE_FILE = os.environ.get(
 ANOMALY_FACTOR = float(os.environ.get("KICOST_ANOMALY_FACTOR", "2.5"))
 HISTORY_DAYS = 30
 AVG_WINDOW = 7
+# Absolute Kostendecke (opt-in): fängt einen dauerhaft teuren Pfad, den der rein
+# relative Anomalie-Alarm (ANOMALY_FACTOR x Schnitt) NIE sieht — ein seit Tag 1
+# laufender Block wird Teil der eigenen Baseline. Default 0 = deaktiviert, weil
+# notionale Abo-Kosten stark mit interaktiver Nutzung schwanken (ein fester
+# Gesamt-Schwellwert würde intensive Dev-Tage fälschlich alarmen). Der robuste
+# Dauer-Fix ist die Pro-Projekt-Sicht unten. Setze KICOST_ABSOLUTE_ALERT_USD=<x>
+# knapp über deiner aus dem Rollup abgelesenen Baseline, wenn du einen harten
+# Backstop willst.
+ABSOLUTE_ALERT_USD = float(os.environ.get("KICOST_ABSOLUTE_ALERT_USD", "0"))
+# Top-N teuerste Claude-Projekte im täglichen Rollup: Pro-Projekt-Sicht statt
+# Flat-Total macht einen dominanten Hintergrund-Verbraucher sofort sichtbar.
+TOP_PROJECTS_N = int(os.environ.get("KICOST_TOP_PROJECTS", "4"))
 
 # Claude-Quellen (keydev best-effort)
 CLAUDE_GLOBS = [
@@ -179,6 +191,16 @@ def ts_to_day(ts) -> str:
 
 
 # ─── Claude-Aggregation ──────────────────────────────────────────────────────
+def _project_from_path(path):
+    """~/.claude/projects/<projekt>/<session>.jsonl -> <projekt> (Pro-Projekt-Sicht)."""
+    parts = path.replace("\\", "/").split("/")
+    try:
+        idx = parts.index("projects")
+    except ValueError:
+        return "?"
+    return parts[idx + 1] if idx + 1 < len(parts) else "?"
+
+
 def collect_claude(day: str):
     """Summiert Claude-Token+Kosten fuer den Tag.
 
@@ -191,7 +213,7 @@ def collect_claude(day: str):
 
     Returns: dict(tokens_in, tokens_out, cost, calls, keydev_readable)
     """
-    agg = {"tokens_in": 0, "tokens_out": 0, "cost": 0.0, "calls": 0}
+    agg = {"tokens_in": 0, "tokens_out": 0, "cost": 0.0, "calls": 0, "by_project": {}}
     keydev_readable = False
     seen_ids = set()
 
@@ -251,6 +273,14 @@ def collect_claude(day: str):
                         agg["tokens_out"] += out_tok
                         agg["cost"] += cost
                         agg["calls"] += 1
+
+                        proj = _project_from_path(path)
+                        bp = agg["by_project"].setdefault(
+                            proj, {"cost": 0.0, "tokens": 0, "calls": 0}
+                        )
+                        bp["cost"] += cost
+                        bp["tokens"] += in_tok + out_tok
+                        bp["calls"] += 1
             except (OSError, PermissionError):
                 # keydev oft kein Lesezugriff -> best-effort ueberspringen
                 continue
@@ -462,10 +492,17 @@ def send_discord(webhook, payload) -> bool:
     return False
 
 
-def build_payload(day, claude, codex, total_cost, total_tokens, avg, anomaly):
+def build_payload(day, claude, codex, total_cost, total_tokens, avg, anomaly,
+                  top_projects=None, anomaly_absolute=False):
     color = 15158332 if anomaly else 3447003  # rot vs. blau
     title = "🚨 KI-Kosten-Anomalie!" if anomaly else "🤖 KI-Kosten Tages-Rollup"
-    if anomaly:
+    if anomaly_absolute:
+        desc = (
+            f"Tageskosten **${total_cost:.2f}** überschreiten die absolute Kostendecke "
+            f"(${ABSOLUTE_ALERT_USD:.0f}). Prüfe die Top-Projekte unten — ein dauerhaft "
+            f"teurer Hintergrund-Pfad, den der relative Schnitt nicht sieht?"
+        )
+    elif anomaly:
         desc = (
             f"Tageskosten **${total_cost:.2f}** liegen ueber dem "
             f"{ANOMALY_FACTOR:g}x 7-Tage-Schnitt (${avg:.2f})."
@@ -504,6 +541,17 @@ def build_payload(day, claude, codex, total_cost, total_tokens, avg, anomaly):
         },
     ]
 
+    if top_projects:
+        proj_lines = "\n".join(
+            f"`{name}` — ${d['cost']:.2f} ({d['calls']} Calls)"
+            for name, d in top_projects
+        )
+        fields.append({
+            "name": f"Top Claude-Projekte (Kosten)",
+            "value": proj_lines,
+            "inline": False,
+        })
+
     return {
         "username": "ShadowOps KI-Kosten Watchdog",
         "embeds": [
@@ -536,7 +584,16 @@ def main() -> int:
     state = load_state()
     avg = update_history(state, day, total_cost, total_tokens)
 
-    anomaly = avg > 0 and total_cost > ANOMALY_FACTOR * avg
+    anomaly_relative = avg > 0 and total_cost > ANOMALY_FACTOR * avg
+    anomaly_absolute = ABSOLUTE_ALERT_USD > 0 and total_cost > ABSOLUTE_ALERT_USD
+    anomaly = anomaly_relative or anomaly_absolute
+    # Top-Projekte nach Kosten — macht einen dominanten Hintergrund-Verbraucher
+    # (z.B. einen server-seitigen KI-Dienst) im täglichen Rollup sofort sichtbar.
+    top_projects = sorted(
+        claude.get("by_project", {}).items(),
+        key=lambda kv: kv[1]["cost"],
+        reverse=True,
+    )[:TOP_PROJECTS_N]
 
     # stdout-Rollup (immer, auch ohne Webhook) — Verifikations-relevant
     print(
@@ -550,6 +607,9 @@ def main() -> int:
         f"anomaly={anomaly} "
         f"keydev_readable={claude['keydev_readable']}"
     )
+    if top_projects:
+        proj_str = ", ".join(f"{name}=${d['cost']:.2f}" for name, d in top_projects)
+        print(f"[ki-cost-watchdog] top_projects: {proj_str}")
 
     try:
         save_state(state)
@@ -560,7 +620,9 @@ def main() -> int:
         print("[ki-cost-watchdog] Kein Webhook konfiguriert — nur stdout.")
         return 0
 
-    payload = build_payload(day, claude, codex, total_cost, total_tokens, avg, anomaly)
+    payload = build_payload(
+        day, claude, codex, total_cost, total_tokens, avg, anomaly, top_projects, anomaly_absolute
+    )
     send_discord(webhook, payload)  # Fehler werden geloggt, kein Crash
     return 0
 
