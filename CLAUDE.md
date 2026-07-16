@@ -153,7 +153,7 @@ Zusätzlich zum internen `project_monitor.py` laufen 18 unabhängige user-system
 | `memory-watchdog` | meminfo | RAM ≥90% oder Swap ≥80% auf VPS, Frühwarnung vor OOM-Cascade (seit 2026-05-25, Vorfall logind-Kill durch earlyoom) |
 | `disk-hygiene-watchdog` | disk + auto-prune | Auto-Prune (docker builder/image + journald) bei Disk >85%, Alarm >90% (stündlich, Selbstpflege seit 2026-05-30) |
 | `doku-drift-watchdog` | doku-drift | Container-Ports vs. Port-Map + MEMORY.md-Limit (<200), nur Alarm (täglich 06:30, Selbstpflege seit 2026-05-30) |
-| `ki-cost-watchdog` | ki-cost | Token/Kosten-Rollup Claude+Codex aus JSONL + Anomalie-Alarm (täglich 07:15, Selbstpflege seit 2026-05-30) |
+| `ki-cost-watchdog` | ki-cost | Token/Kosten-Rollup Claude+Codex aus JSONL + relativer Anomalie-Alarm (2.5× 7-Tage-Schnitt) + optionale absolute Kostendecke (`KICOST_ABSOLUTE_ALERT_USD`, default 0/aus) + Pro-Projekt-Aufschlüsselung (Top-`KICOST_TOP_PROJECTS` Claude-Projekte nach Kosten, 2026-07-15) im täglichen Embed (täglich 07:15, Selbstpflege seit 2026-05-30) |
 | `shadowops-backup-test` | — | monatlich 1. d. Monats, Wrapper um `~/ZERODOX/scripts/backup-test.sh` |
 
 **GitHub Actions Externer Backstop (seit 2026-06-10, #277-Folge):** `.github/workflows/external-uptime.yml` läuft auf GitHub-hosted `ubuntu-latest` (VPS-unabhängig), pingt `zerodox.de/api/health` + `guildscout.eu/health` alle 5 min, alarmiert via Repo-Secret `UPTIME_DISCORD_WEBHOOK` in `#🩺-uptime-alerts`. Drei Alert-Klassen: UNREACHABLE (DNS/Totalausfall), ERROR (5xx), DEGRADED (200 + status≠ok). Reiner Backstop bei VPS-Totalausfall — schnelle Erkennung machen die internen Watchdogs.
@@ -292,6 +292,8 @@ Worker-Konventionen:
 - [config/DO-NOT-TOUCH.md](./config/DO-NOT-TOUCH.md)
 
 ## Letztes Update dieser Datei
+
+2026-07-15 — ki-cost-watchdog Pro-Projekt-Aufschlüsselung + absolute Kostendecke (Commit `07e5845`): `collect_claude()` aggregiert jetzt zusätzlich `by_project` über den JSONL-Pfad. Tägliches Embed zeigt Top-`KICOST_TOP_PROJECTS` (default 4) Claude-Projekte nach Kosten. Neues ENV `KICOST_ABSOLUTE_ALERT_USD` (default 0/deaktiviert) als opt-in Backstop für dauerhaft teure Hintergrund-Pfade, die Teil der eigenen Baseline sind und den relativen Anomalie-Alarm (2.5× Schnitt) nie auslösen. Verifiziert: Erstlauf zeigt zerodox-akquise-ai=$122.73 als Top-Projekt.
 
 2026-07-11 — ZERODOX-Deploy Re-Poll + buildSha-Drift-Backstop (PR #350, ZERODOX-Issue #1720): (1) `_repoll_after_deploy` in `ci_mixin.py`: nach jedem erfolgreichen Deploy prueft eine Schleife ob `origin/branch` weitergelaufen ist und stoesst weiteren Deploy an — gleiche gehaertete Pipeline (CI-Wait + Per-SHA-Dedup), max `deploy.repoll_max_rounds` Runden (default 2). (2) `scripts/zerodox-build-drift-check.py`: stdlib-only Backstop als `type:script`-Check (eingehaengt unter `projects.zerodox.monitor.checks`, interval 300s, flake_polls 7), vergleicht live `buildSha` aus `/api/health` mit `origin/main`-HEAD; Docs-only-Allowlist identisch zu `ZERODOX/scripts/deploy.sh` (#1262). Fail-Open bei Health-Endpoint-Fehler (redundant zu `zerodox-watchdog`), Fail-Safe bei lokalem Git-Fehler. 19 neue Unit-Tests.
 
