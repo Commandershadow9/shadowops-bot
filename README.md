@@ -34,9 +34,9 @@ Automatisierter Security-Fix-Workflow mit Google Jules + Claude Opus Review:
 - ✅ **Projekt-Security-Profile**: Angriffsoberflächen, Auth-Mechanismen, Secrets-Orte pro Projekt
 
 ### 🤖 **Dual-Engine AI System (v4.0)**
-- ✅ **Codex CLI (Primary, 97%)**: gpt-4o (fast), gpt-5.3-codex (standard), o3 (thinking)
+- ✅ **Codex CLI (Primary, 97%)**: gpt-4o (fast), gpt-5.5 (standard), o3 (thinking)
 - ✅ **Claude CLI (Fallback + Verify, 3%)**: claude-sonnet-4-6 (standard), claude-opus-4-6 (thinking)
-- ✅ **Config-basierter TaskRouter**: Routing nach Severity (CRITICAL→o3, HIGH→gpt-5.3-codex, LOW→gpt-4o)
+- ✅ **Config-basierter TaskRouter**: Routing nach Severity (CRITICAL→o3, HIGH→gpt-5.5, LOW→gpt-4o)
 - ✅ **Quota-aware Failover**: Provider-Limits werden aus CLI-Output erkannt; Weekly-Deep scannt bei Claude-Limit automatisch via Codex weiter
 - ✅ **SmartQueue**: 3 parallele Analysen (Semaphore), serieller Fix-Lock, Circuit Breaker, Batch-Erkennung
 - ✅ **VerificationPipeline**: 4-Stufen Pre-Push (Confidence ≥85% → Tests → Claude-Verify → KB-Check)
@@ -215,29 +215,17 @@ discord:
 
 ai:
   enabled: true
-
-  primary:
-    engine: codex
+  codex:
     models:
       fast: gpt-4o
-      standard: gpt-5.3-codex
+      standard: gpt-5.5
       thinking: o3
-    timeout: 300
-
-  fallback:
-    engine: claude
-    cli_path: /home/user/.local/bin/claude
+  claude:
+    # cli_path wird dynamisch aufgeloest (env CLAUDE_CLI_PATH → which claude → npm-global)
     models:
       fast: claude-sonnet-4-6
       standard: claude-sonnet-4-6
       thinking: claude-opus-4-6
-    timeout: 300
-
-  routing:
-    critical_analysis: { engine: codex, model: thinking }
-    high_analysis: { engine: codex, model: standard }
-    low_analysis: { engine: codex, model: fast }
-    critical_verify: { engine: claude, model: thinking }
 
 auto_remediation:
   enabled: true
@@ -418,7 +406,7 @@ shadowops-bot/
 │   └── logrotate.conf                  # Log-Rotation
 ├── deploy/                             # Deployment + Watchdogs
 │   ├── shadowops-bot.service           # systemd Bot-Service
-│   ├── *-watchdog.{service,timer}      # Externe Uptime-Watchdogs (15 Watchdogs: HTTP/systemd/container/jq-filter/build-drift/state-drift)
+│   ├── *-watchdog.{service,timer}      # Externe Uptime-Watchdogs (18 Watchdogs: HTTP/systemd/container/pg-freshness/jq-filter/build-drift/state-drift)
 │   ├── shadowops-watchdog.env.example  # Webhook-Env Template
 │   └── MONITORING_SETUP.md             # Setup-Anleitung Watchdogs
 ├── .github/
@@ -480,7 +468,7 @@ See [CHANGELOG.md](./CHANGELOG.md) for the full version history.
 
 - **Total Lines of Code**: 20,000+
 - **AI Engines**: 2 (Codex CLI + Claude CLI)
-- **AI Models**: 6 (gpt-4o, gpt-5.3-codex, o3, claude-sonnet-4-6, claude-opus-4-6)
+- **AI Models**: 6 (gpt-4o, gpt-5.5, o3, claude-sonnet-4-6, claude-opus-4-6)
 - **Security Integrations**: 4 (Fail2ban, CrowdSec, AIDE, Trivy)
 - **PostgreSQL Databases**: 3 (security_analyst: 21 Tabellen, agent_learning: 8 Tabellen, seo_agent: 11 Tabellen)
 - **Learning Pipeline Tables**: 11 (Security: fix_attempts, fix_verifications, finding_quality, scan_coverage · Shared: agent_feedback, agent_quality_scores, agent_knowledge · Patch Notes: pn_generations, pn_variants, pn_examples · SEO: seo_fix_impact)
@@ -521,7 +509,7 @@ python3 -c "from src.utils.config import get_config; get_config()"
 codex --version
 
 # Claude CLI prüfen
-~/.local/bin/claude --version
+claude --version
 
 # AI Stats in Discord
 /get-ai-stats
