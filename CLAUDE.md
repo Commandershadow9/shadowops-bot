@@ -20,7 +20,7 @@
 | Discord | discord.py | siehe requirements.txt |
 | Datenbank | PostgreSQL | 3 DBs: security_analyst, agent_learning, seo_agent |
 | Cache | Redis | — |
-| AI Primary | Codex CLI | gpt-4o / gpt-5.3-codex / o3 |
+| AI Primary | Codex CLI | gpt-4o / gpt-5.5 / o3 |
 | AI Fallback | Claude CLI | claude-sonnet-4-6 / claude-opus-4-6 |
 | Container | Docker | mit Trivy fuer Scans |
 | Service | systemd | `/etc/systemd/system/shadowops-bot.service` |
