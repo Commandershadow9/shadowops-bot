@@ -1,0 +1,14 @@
+[Unit]
+Description=SEO Deep-Audit-Freshness Watchdog Timer — 6-stündlich (Wochen-Schwelle 195h, keine Eile)
+Documentation=https://github.com/Commandershadow9/shadowops-bot
+
+[Timer]
+# Versetzt zu den anderen SEO-Watchdogs (8/9 min): erster Lauf 11 min nach Boot.
+OnBootSec=11min
+OnUnitActiveSec=6h
+RandomizedDelaySec=15min
+AccuracySec=5min
+Persistent=false
+
+[Install]
+WantedBy=timers.target

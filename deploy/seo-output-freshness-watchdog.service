@@ -1,5 +1,5 @@
 [Unit]
-Description=SEO Output-Freshness Watchdog — Insights erkannt, aber keine Ausgabe (Issue/PR) seit 7 Tagen
+Description=SEO Output-Freshness Watchdog — Insights erkannt, aber keine Ausgabe (Issue/PR) seit 9 Tagen
 Documentation=https://github.com/Commandershadow9/shadowops-bot
 After=network-online.target
 
@@ -11,7 +11,9 @@ Environment=WATCHDOG_MODE=pg-freshness
 Environment=WATCHDOG_PG_CONTAINER=guildscout-postgres
 Environment=WATCHDOG_PG_USER=seo_agent
 Environment=WATCHDOG_PG_DB=seo_agent
-Environment=WATCHDOG_MAX_AGE_HOURS=168
+# 216h = 9 Tage (Wochen-Strategie 2026-07-17): Output kommt 1×/Woche sonntags —
+# exakt 168h wäre eine Garantie-Falschmeldung.
+Environment=WATCHDOG_MAX_AGE_HOURS=216
 # Ausgabe-Freshness statt Insight-Status: 'actioned' wird vom Agent kaum je gesetzt
 # (25 von 988 Insights) und taugt daher NICHT als Stau-Signal. Stattdessen:
 #  - Gate: nur pruefen, wenn der Agent ueberhaupt frische Insights produziert
