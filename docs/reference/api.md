@@ -1,7 +1,7 @@
 ---
 title: 🔧 ShadowOps API Documentation v5.1
 status: active
-last_reviewed: 2026-05-18
+last_reviewed: 2026-06-26
 owner: CommanderShadow9
 ---
 
@@ -176,7 +176,7 @@ Shows auto-remediation statistics and performance metrics.
 ```
 
 #### `/stop-all-fixes`
-🛑 EMERGENCY: Stops all running auto-fix processes immediately.
+EMERGENCY: Stops all running auto-fix processes immediately.
 
 **Permissions:** Administrator
 **Parameters:** None
@@ -187,7 +187,7 @@ Shows auto-remediation statistics and performance metrics.
 /stop-all-fixes
 ```
 
-**⚠️ Warning:** Only use in emergency situations. May leave fixes in incomplete state.
+**Warning:** Only use in emergency situations. May leave fixes in incomplete state.
 
 #### `/set-approval-mode [mode]`
 Changes the auto-remediation approval mode.
@@ -210,6 +210,33 @@ Changes the auto-remediation approval mode.
 - **Paranoid**: Maximum safety, approve every fix manually
 - **Auto**: Balanced, only critical fixes need approval
 - **Dry-Run**: Test mode, no actual execution
+
+---
+
+### Monitoring Engine Commands
+
+#### `/maintenance`
+Pauses or resumes Auto-Heal for a project or globally. Checks continue running; only the healing step is suppressed while maintenance is active.
+
+**Permissions:** Administrator
+**Parameters:**
+- `scope` (required): Project name (e.g., `zerodox`) or `global` to affect all projects
+- `state` (required): `on` to pause healing, `off` to resume
+- `minutes` (optional): Duration in minutes before auto-expiry (default: 60)
+- `reason` (optional): Free-text reason logged for audit purposes
+
+**Returns:** Confirmation message with scope, state, and expiry time
+
+**Example:**
+```
+/maintenance scope:zerodox state:on minutes:30 reason:"Schema-Migration"
+/maintenance scope:global state:off
+```
+
+**Notes:**
+- Requires `MaintenanceGate` to be initialized (i.e., `project_monitor.py` must be running)
+- Expiry is best-effort; the gate is checked on every heal attempt
+- State is in-memory only -- a bot restart resets all maintenance windows
 
 ---
 
@@ -323,20 +350,36 @@ Starts a headless Claude CLI session on the server and returns the output as Dis
 **Permissions:** Owner-only (user ID check, not role-based)
 **Parameters:**
 - `prompt` (required): The task for Claude
-- `project` (optional): Working directory — one of `home`, `zerodox`, `guildscout`, `shadowops`, `agents`, `sharedui`, `design` (default: `home`)
+- `project` (optional): Working directory -- one of `home`, `zerodox`, `guildscout`, `shadowops`, `agents`, `sharedui`, `design` (default: `home`)
 - `model` (optional): `sonnet` (default), `opus`, `haiku`
 - `timeout` (optional): Seconds until abort (default: 300, max: 600)
 
-**Returns:** Header embed (model, elapsed, exit code) followed by Claude's output in code-block chunks (≤1900 chars each)
+**Returns:** Header embed (model, elapsed, exit code) followed by Claude's output in code-block chunks (<=1900 chars each)
 
 **Security notes:**
-- Project paths are a fixed whitelist — no path traversal possible
+- Project paths are a fixed whitelist -- no path traversal possible
 - Any user other than the owner receives an ephemeral error
 - Requires `claude` CLI at `~/.local/bin/claude`
 
 **Example:**
 ```
 /claude prompt:"run tests in shadowops" project:shadowops model:sonnet
+```
+
+---
+
+### Server Setup Commands
+
+#### `/setup-customer-server`
+Creates monitoring channels with correct permission overwrites on a customer Discord server.
+
+**Permissions:** Administrator
+**Parameters:** None
+**Returns:** Confirmation with created channel list per project category
+
+**Example:**
+```
+/setup-customer-server
 ```
 
 ---
@@ -375,6 +418,9 @@ channels:
 # AI CONFIGURATION (Dual-Engine: Codex CLI Primary, Claude CLI Fallback)
 # Ollama wurde vollstaendig entfernt (v4.0).
 # Keys DISCORD_BOT_TOKEN, OPENAI_API_KEY, ANTHROPIC_API_KEY kommen aus Env-Vars, NICHT aus config.yaml.
+# Weiterer Env-Override: CLAUDE_CLI_PATH (absoluter Pfad zur Claude CLI, optional).
+#   Wenn gesetzt, hat dieser Pfad Vorrang vor ai.fallback.cli_path und shutil.which('claude').
+#   Nützlich wenn die Claude CLI ausserhalb des Bot-Prozess-PATH installiert ist.
 # ========================================
 ai:
   enabled: true
@@ -427,14 +473,55 @@ projects:
     enabled: true                           # Enable this project
     path: /home/user/shadowops-bot          # Absolute path to project
     branch: main                            # Git branch for deployments
+    # Optional: explicit GitHub repo URL (e.g. https://github.com/owner/repo).
+    # Used by github_integration to create/verify webhooks and by /release-notes to link the repo.
+    # Falls back to auto-detection from git remote when omitted.
+    # repo_url: "https://github.com/Commandershadow9/shadowops-bot"
+    # If true, GitHub webhook events (push, PR, releases, auto-deploy) are silently skipped
+    # for this project. Health checks via project_monitor still run.
+    # Use for externally-tracked services that ShadowOps monitors but does not deploy.
+    monitor_only: false                     # default false
 
-    # Health monitoring (v3.1)
+    # Health monitoring (v3.1 + Monitoring Engine 2026-06, #277)
     monitor:
       enabled: true                         # Enable health checks
-      url: http://localhost:5000/health     # Health check endpoint
+      url: http://localhost:5000/health     # Health check endpoint (simple liveness)
       expected_status: 200                  # Expected HTTP status
       check_interval: 60                    # Check every N seconds
       timeout: 10                           # Request timeout (seconds)
+
+      # Optional TCP port checks (project_monitor._check_tcp_ports).
+      # Checked independently of the HTTP health check above.
+      # DOWN = connection refused or timed out.
+      tcp_ports:
+        - host: "127.0.0.1"               # host to connect to
+          port: 5432                       # TCP port
+          label: "PostgreSQL"              # human-readable label for alerts
+
+      # Declarative checks: deklaratives Check-Schema (Monitoring Engine #277).
+      # Runs alongside the simple url-check above. Each entry is a CheckDefinition
+      # (see src/integrations/check_definitions.py).
+      checks:
+        - id: my-check                     # unique per project, 1-100 chars
+          type: http                       # http | script | container | resource
+          target: "http://localhost:5000/api/status"  # URL / script path / container name
+          interval: 60                     # seconds between runs
+          timeout: 10                      # request/process timeout (default 10)
+          flake_polls: 3                   # consecutive failures before alerting (default 1)
+          method: GET                      # GET or POST (http type only, default GET)
+          headers:                         # HTTP headers; $VAR values resolved from env
+            X-Agent-Key: "$MY_API_KEY"
+          body: {}                         # POST body as JSON (http type only)
+          expect:
+            status: 200                   # expected HTTP status (http type)
+            # json_path: ".status"        # jmespath expression; assert value == json_value
+            # json_value: "ok"
+          heal:
+            action: alert-only            # alert-only | restart-container | restart-service |
+                                          # network-reconnect | disk-prune | deploy | code-fix
+            # target: "my-container"      # container/service name (required for non-alert actions)
+          # For type: script — exit 0 = ok, exit 1 = fail, "SYNTHETIC|..." on stdout = metric
+          # For type: container — target is Docker container name; DOWN if missing/unhealthy
 
     # Deployment configuration (v3.1)
     deploy:
@@ -442,6 +529,17 @@ projects:
       test_command: pytest tests/           # Test command
       post_deploy_command: pip install -r requirements.txt  # Post-deploy command
       service_name: shadowops-bot           # Systemd service name
+      allow_direct_push: false              # Direct push to deploy branch triggers deploy (opt-in, default off)
+
+    # External deploy notifications -- posted to customer Discord servers on each deploy.
+    # Handled by DeploymentManager._forward_deploy_to_external.
+    # Config-key lookup is dash/underscore-tolerant (mayday-sim <-> mayday_sim).
+    # Without this block, only the internal DEV-server deployment-log channel receives posts.
+    external_notifications:
+      - enabled: true
+        deploy_channel_id: 0               # Discord channel ID on the customer server
+        notify_on:
+          deployments: true                # Send on successful and failed deploys
 
   guildscout:
     enabled: true
@@ -457,6 +555,9 @@ projects:
 
 # ========================================
 # GITHUB INTEGRATION (v3.1)
+# GITHUB_TOKEN (Env-Var, optional): GitHub API-Token fuer Webhook-Erstellung,
+#   Label-Anlage und Auto-Merge-Calls. GH_TOKEN wird als Fallback akzeptiert
+#   (webhook_mixin.py: os.getenv('GITHUB_TOKEN') or os.getenv('GH_TOKEN')).
 # ========================================
 github:
   enabled: false                            # Enable GitHub webhooks
@@ -496,6 +597,32 @@ log_paths:
   crowdsec: /var/log/crowdsec/crowdsec.log
   docker: /var/log/docker.log
   shadowops: logs/shadowops.log
+
+# ========================================
+# MONITORING SECRETS SOURCE (Single-Source, seit 2026-06-10, #277-Folge)
+# Bot laedt CRON_API_KEY, ZERODOX_AGENT_API_KEY, AKQUISE_AI_BEARER_TOKEN beim
+# Start aus einer externen .env-Datei (src/utils/config.py:_load_monitoring_secrets).
+# FAIL-CLOSED: fehlt Quelle oder Key -> Self-Check feuert Discord-Alert.
+#
+# Operator-ENV (z.B. in shadowops-bot.service.d/zerodox-env.conf):
+#   ZERODOX_ENV_PATH   Pfad zur .env-Quelldatei
+#                      (default: /home/cmdshadow/ZERODOX/.env)
+#                      Bei Server-Umzug diesen Wert anpassen, sonst alarmieren
+#                      alle ZERODOX-Monitoring-Checks (gewollt, kein stiller Verlust).
+# ========================================
+
+# ========================================
+# SECURITY AGENT TEAM (P1, default OFF)
+# Env-Override: SECURITY_TEAM_ENABLED=true
+#
+# Worker-ENV (nur relevant wenn enabled=true, werden von runner.py gelesen):
+#   SECURITY_ANALYST_DB_URL  PostgreSQL-DSN fuer SecurityDB (Pflicht fuer Worker)
+#                            Fallback: DATABASE_URL
+#   REDIS_URL                Redis-URL fuer Job-Channels (default: redis://127.0.0.1:6379/0)
+# ========================================
+security_team:
+  enabled: false   # Schaltet Worker-Architektur (security_engine/team/) ein
+                   # Monolith scan_agent.py bleibt Source-of-Truth bis Cutover
 ```
 
 ---
@@ -507,7 +634,7 @@ ShadowOps can receive GitHub webhook events for auto-deployment.
 ### Setup
 
 1. **Configure webhook in GitHub:**
-   - Repository → Settings → Webhooks → Add webhook
+   - Repository -> Settings -> Webhooks -> Add webhook
    - Payload URL: `http://your-server:8080/webhook`
    - Content type: `application/json`
    - Secret: (from `github.webhook_secret` in config.yaml)
@@ -528,7 +655,7 @@ ShadowOps can receive GitHub webhook events for auto-deployment.
 #### Push Events
 Triggers when code is pushed to repository.
 
-**Auto-Deploy Trigger:** If push is to a deploy branch (e.g., `main`)
+**Auto-Deploy Trigger:** If push is to a deploy branch (e.g., `main`) and `monitor_only: false`
 
 **Discord Notification:** Always sent with:
 - Repository name
@@ -539,12 +666,12 @@ Triggers when code is pushed to repository.
 #### Pull Request Events
 Triggers when PRs are opened, closed, or updated.
 
-**Auto-Deploy Trigger:** If PR is merged to a deploy branch
+**Auto-Deploy Trigger:** If PR is merged to a deploy branch and `monitor_only: false`
 
 **Discord Notification:** Always sent with:
 - PR number and title
 - Author
-- Source → Target branch
+- Source -> Target branch
 - Action (opened/closed/merged)
 
 #### Release Events
@@ -627,10 +754,10 @@ Der Jules-Workflow reagiert auf folgende GitHub-Webhook-Events:
 
 | Event | Action | Reaktion |
 |-------|--------|----------|
-| `pull_request` | `opened` | Jules-PR erkannt → Claude-Review starten |
-| `pull_request` | `synchronize` | Neuer Commit → Re-Review (wenn neuer SHA) |
-| `pull_request` | `ready_for_review` | Draft→Ready → Review starten |
-| `pull_request` | `closed` | Merged → Finding resolved / Abandoned → Terminal |
+| `pull_request` | `opened` | Jules-PR erkannt -> Claude-Review starten |
+| `pull_request` | `synchronize` | Neuer Commit -> Re-Review (wenn neuer SHA) |
+| `pull_request` | `ready_for_review` | Draft->Ready -> Review starten |
+| `pull_request` | `closed` | Merged -> Finding resolved / Abandoned -> Terminal |
 | `issue_comment` | `created` | Nur `/review` Command vom Repo-Owner |
 
 **Blockierte Events (Loop-Schutz):**
@@ -638,7 +765,7 @@ Alle `issue_comment`, `pull_request_review`, `pull_request_review_comment` Event
 
 ### Konfiguration
 
-Siehe `config/config.example.yaml` → `jules_workflow:` Block.
+Siehe `config/config.example.yaml` -> `jules_workflow:` Block.
 
 | Parameter | Default | Beschreibung |
 |-----------|---------|-------------|
@@ -674,7 +801,7 @@ Siehe `config/config.example.yaml` → `jules_workflow:` Block.
 Der Bot waehlt automatisch Opus oder Sonnet basierend auf PR-Charakteristik:
 
 | Kriterium | Modell | Timeout |
-|-----------|--------|---------|
+|-----------|--------|--------|
 | Security-Keywords (xss/cve/injection/dos/auth/csrf) | **Opus (thinking)** | 180s |
 | Diff > 3000 Zeichen | **Opus (thinking)** | 180s |
 | Alles andere | **Sonnet (standard)** | 120s |
@@ -907,7 +1034,7 @@ event = SecurityEvent(
 
 ## Database Schema
 
-### Knowledge Base (PostgreSQL — `security_analyst` DB)
+### Knowledge Base (PostgreSQL -- `security_analyst` DB)
 
 Die Knowledge Base nutzt PostgreSQL, nicht SQLite. Haupttabellen:
 
@@ -921,6 +1048,21 @@ Die Knowledge Base nutzt PostgreSQL, nicht SQLite. Haupttabellen:
 | `jules_pr_reviews` | PR-State, Lock-Claim, Iteration-Counter fuer Jules Workflow |
 
 DSN kommt aus `config.security_analyst_dsn` (Env: `SECURITY_ANALYST_DB_URL`).
+
+### Agent Learning (PostgreSQL -- `agent_learning` DB)
+
+| Tabelle | Zweck |
+|---------|-------|
+| `agent_feedback` | User-Feedback zu Patch Notes (Reactions, Ratings) |
+| `agent_quality_scores` | Qualitaets-Scores pro Patch-Notes-Generation |
+| `agent_knowledge` | Persistiertes Agent-Wissen (Decay-basiert) |
+| `jules_review_examples` | Few-Shot-Beispiele fuer Jules-PR-Reviews |
+| `pn_generations` | Patch-Notes-Generierungen (Input, Output, Modell) |
+| `pn_variants` | A/B-Test-Varianten fuer Prompt-Optimierung |
+| `pn_examples` | Kuratierte Trainingsbeispiele (Quality-Score-gefiltert) |
+| `seo_fix_impact` | Impact-Tracking fuer SEO-Agent-Fixes |
+
+DSN kommt aus `config.agent_learning_dsn` (Env: `AGENT_LEARNING_DB_URL`).
 
 ### Project Monitor State (JSON)
 
@@ -959,7 +1101,7 @@ DSN kommt aus `config.security_analyst_dsn` (Env: `SECURITY_ANALYST_DB_URL`).
       },
       {
         "timestamp": "2025-11-21T10:15:00Z",
-        "event": "Status changed: open → in_progress",
+        "event": "Status changed: open -> in_progress",
         "author": "admin"
       }
     ],
@@ -1089,6 +1231,28 @@ sudo ufw status
 # Check "Recent Deliveries" in GitHub webhook settings
 ```
 
+**Claude CLI nicht gefunden (FileNotFoundError in Fallback-Engine):**
+
+`resolve_claude_cli_path()` in `ai_engine.py` sucht die Claude CLI in dieser Reihenfolge:
+1. Env-Variable `CLAUDE_CLI_PATH` (wenn gesetzt und Datei existiert)
+2. `ai.fallback.cli_path` aus `config.yaml` (wenn Datei existiert)
+3. `shutil.which('claude')` — PATH des Bot-Prozesses
+4. Bekannte Fallback-Pfade (`~/.npm-global/bin/claude`, `~/.local/bin/claude`)
+
+Wenn die Claude CLI nach einem npm-Update an einen anderen Pfad gewandert ist:
+```bash
+# Pfad ermitteln
+which claude
+
+# Env-Override setzen (in /etc/systemd/system/shadowops-bot.service oder ~/.bashrc)
+export CLAUDE_CLI_PATH=/home/cmdshadow/.npm-global/bin/claude
+
+# Oder direkt in config.yaml:
+# ai:
+#   fallback:
+#     cli_path: "/home/cmdshadow/.npm-global/bin/claude"
+```
+
 ---
 
-**API Documentation v5.1** | Last Updated: 2026-05-18
+**API Documentation v5.1** | Last Updated: 2026-06-26
