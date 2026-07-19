@@ -482,13 +482,46 @@ projects:
     # Use for externally-tracked services that ShadowOps monitors but does not deploy.
     monitor_only: false                     # default false
 
-    # Health monitoring (v3.1)
+    # Health monitoring (v3.1 + Monitoring Engine 2026-06, #277)
     monitor:
       enabled: true                         # Enable health checks
-      url: http://localhost:5000/health     # Health check endpoint
+      url: http://localhost:5000/health     # Health check endpoint (simple liveness)
       expected_status: 200                  # Expected HTTP status
       check_interval: 60                    # Check every N seconds
       timeout: 10                           # Request timeout (seconds)
+
+      # Optional TCP port checks (project_monitor._check_tcp_ports).
+      # Checked independently of the HTTP health check above.
+      # DOWN = connection refused or timed out.
+      tcp_ports:
+        - host: "127.0.0.1"               # host to connect to
+          port: 5432                       # TCP port
+          label: "PostgreSQL"              # human-readable label for alerts
+
+      # Declarative checks: deklaratives Check-Schema (Monitoring Engine #277).
+      # Runs alongside the simple url-check above. Each entry is a CheckDefinition
+      # (see src/integrations/check_definitions.py).
+      checks:
+        - id: my-check                     # unique per project, 1-100 chars
+          type: http                       # http | script | container | resource
+          target: "http://localhost:5000/api/status"  # URL / script path / container name
+          interval: 60                     # seconds between runs
+          timeout: 10                      # request/process timeout (default 10)
+          flake_polls: 3                   # consecutive failures before alerting (default 1)
+          method: GET                      # GET or POST (http type only, default GET)
+          headers:                         # HTTP headers; $VAR values resolved from env
+            X-Agent-Key: "$MY_API_KEY"
+          body: {}                         # POST body as JSON (http type only)
+          expect:
+            status: 200                   # expected HTTP status (http type)
+            # json_path: ".status"        # jmespath expression; assert value == json_value
+            # json_value: "ok"
+          heal:
+            action: alert-only            # alert-only | restart-container | restart-service |
+                                          # network-reconnect | disk-prune | deploy | code-fix
+            # target: "my-container"      # container/service name (required for non-alert actions)
+          # For type: script — exit 0 = ok, exit 1 = fail, "SYNTHETIC|..." on stdout = metric
+          # For type: container — target is Docker container name; DOWN if missing/unhealthy
 
     # Deployment configuration (v3.1)
     deploy:
