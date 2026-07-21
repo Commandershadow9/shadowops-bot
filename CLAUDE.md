@@ -59,7 +59,7 @@ shadowops-bot/
 │   └── PROJECT_*.md              # Per-projekt-Notizen
 ├── deploy/
 │   ├── shadowops-bot.service          # systemd Bot-Service
-│   ├── *-watchdog.{service,timer}     # Externe Uptime-Watchdogs (18 Watchdogs: HTTP/systemd/container/pg-freshness/jq-filter/build-drift/state-drift + Backup-Test)
+│   ├── *-watchdog.{service,timer}     # Externe Uptime-Watchdogs (19 Watchdogs: HTTP/systemd/container/pg-freshness/jq-filter/build-drift/state-drift + Backup-Test)
 │   ├── shadowops-watchdog.env.example # Webhook-Env Template
 │   └── MONITORING_SETUP.md            # Setup-Anleitung Watchdogs
 ├── .github/
@@ -132,7 +132,7 @@ shadowops-bot/
 
 ## Externes Monitoring (seit 2026-05-17 — Defense-in-Depth)
 
-Zusätzlich zum internen `project_monitor.py` laufen 18 unabhängige user-systemd Watchdogs (Zyklen: 5–15 min je nach Watchdog, cmdshadow-design 1h, Selbstpflege-Watchdogs stündlich/täglich, Backup-Test monatlich) und posten Down/Recovery direkt via Discord-Webhook in `#🩺-uptime-alerts` (NICHT über den Bot — funktioniert auch wenn shadowops-bot tot ist):
+Zusätzlich zum internen `project_monitor.py` laufen 19 unabhängige user-systemd Watchdogs (Zyklen: 5–15 min je nach Watchdog, cmdshadow-design 1h, Selbstpflege-Watchdogs stündlich/täglich, Backup-Test monatlich) und posten Down/Recovery direkt via Discord-Webhook in `#🩺-uptime-alerts` (NICHT über den Bot — funktioniert auch wenn shadowops-bot tot ist):
 
 | Watchdog | Mode | Target |
 |---|---|---|
@@ -147,7 +147,8 @@ Zusätzlich zum internen `project_monitor.py` laufen 18 unabhängige user-system
 | `mayday-scheduler-watchdog` | container | leitstelle-scheduler (Docker-Health) — Game-Tick-Owner seit SB3 (#mayday-sim#498), unüberwachter SPOF ohne diesen Watchdog |
 | `ai-agent-framework-watchdog` | systemd | guildscout-feedback-agent, zerodox-support-agent, seo-agent (nur Prozess-State — prüft nicht ob die Arbeit gelingt) |
 | `seo-audit-freshness-watchdog` | pg-freshness | seo_agent-DB: letzter erfolgreicher zerodox-Audit (`completed_at`) < 49h — fängt Services die `active` sind aber deren Arbeit still scheitert (Vorfall 2026-06-27: 7 Tage Audit-Crash, stündlich) |
-| `seo-output-freshness-watchdog` | pg-freshness | seo_agent-DB: bei aktiven Insights (jüngstes < 3 Tage) Alter der jüngsten echten Ausgabe (Issue via `seo_topic_locks`, Fix-PR via `seo_audits.pr_url`) < 168h (7 Tage) — erkennt Ausgabe-Stau trotz laufendem Audit (#1683, 2026-07-03) |
+| `seo-deep-audit-freshness-watchdog` | pg-freshness | seo_agent-DB: letzter zerodox-Deep-Audit (mode='deep', status='completed') älter als 195h (8+ Tage) — unabhängige Schicht zu seo-audit-freshness (Daily, 49h); prüft ob wöchentlicher Deep-Audit tatsächlich durchläuft (Wochen-Strategie 2026-07-17) |
+| `seo-output-freshness-watchdog` | pg-freshness | seo_agent-DB: bei aktiven Insights (jüngstes < 3 Tage) Alter der jüngsten echten Ausgabe (Issue via `seo_topic_locks`, Fix-PR via `seo_audits.pr_url`) < 216h (9 Tage) — erkennt Ausgabe-Stau trotz laufendem Audit; Schwelle 168h→216h 2026-07-18 (1×/Woche sonntags, 7 Tage waren Garantie-Falschmeldung) |
 | `security-freshness-watchdog` | pg-freshness | security_analyst-DB: letzter erfolgreicher `sec_jobs`-Lauf (`completed_at`, Status `ok`/`partial`) < 26h — erkennt stale Security-Agent-Team (W1 Soak seit 2026-07-09, stündlich, deploy: `deploy/security-freshness-watchdog.{service,timer}`) |
 | `cmdshadow-design-watchdog` | systemd-result | cmdshadow-design-healthcheck.service (max_age=36h, 1h-Cycle) |
 | `memory-watchdog` | meminfo | RAM ≥90% oder Swap ≥80% auf VPS, Frühwarnung vor OOM-Cascade (seit 2026-05-25, Vorfall logind-Kill durch earlyoom) |
@@ -292,6 +293,8 @@ Worker-Konventionen:
 - [config/DO-NOT-TOUCH.md](./config/DO-NOT-TOUCH.md)
 
 ## Letztes Update dieser Datei
+
+2026-07-18 — seo-deep-audit-freshness-watchdog neu + seo-output-freshness-watchdog Schwelle 168h→216h (Commit `6038da5`): Wochen-Strategie für SEO Deep-Audit: `seo-deep-audit-freshness-watchdog` (pg-freshness, Schwelle 195h, mode='deep') prüft ob wöchentlicher ZERODOX-Deep-Audit tatsächlich abgeschlossen wurde — unabhängige Schicht zu `seo-audit-freshness-watchdog` (Daily, 49h). `seo-output-freshness-watchdog` Schwelle 168h→216h (9 Tage): SEO-Ausgabe kommt 1×/Woche sonntags, 168h = Garantie-Falschmeldung. Watchdog-Count: 18 → 19.
 
 2026-07-15 — ki-cost-watchdog Pro-Projekt-Aufschlüsselung + absolute Kostendecke (Commit `07e5845`): `collect_claude()` aggregiert jetzt zusätzlich `by_project` über den JSONL-Pfad. Tägliches Embed zeigt Top-`KICOST_TOP_PROJECTS` (default 4) Claude-Projekte nach Kosten. Neues ENV `KICOST_ABSOLUTE_ALERT_USD` (default 0/deaktiviert) als opt-in Backstop für dauerhaft teure Hintergrund-Pfade, die Teil der eigenen Baseline sind und den relativen Anomalie-Alarm (2.5× Schnitt) nie auslösen. Verifiziert: Erstlauf zeigt zerodox-akquise-ai=$122.73 als Top-Projekt.
 
