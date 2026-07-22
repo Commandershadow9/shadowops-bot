@@ -60,7 +60,7 @@ Drei System-Selbstpflege-Watchdogs ergänzen die Service-Watchdogs um automatisc
 
 - **`disk-hygiene-watchdog`** (stündlich): Zweistufig — Stufe 1 macht Auto-Prune (`docker builder prune` + alte Images + `journalctl --vacuum`) bei Disk > 85 %, Stufe 2 alarmt bei Disk > 90 %. State: `data/watchdog_state_disk-hygiene.json`. (Bugfix: `du|head` unter `set -e+pipefail` → SIGPIPE 141 → `|| true`.)
 - **`doku-drift-watchdog`** (täglich 06:30): Vergleicht laufende Container-Ports gegen die Port-Maps in CLAUDE.md/infrastructure.md und prüft MEMORY.md-Zeilenlimit (<200). Nur Alarm, keine Auto-Korrektur. State: `data/watchdog_state_doku-drift.json`.
-- **`ki-cost-watchdog`** (täglich 07:15): Rollup von Token/Kosten aus Claude- + Codex-JSONL + Anomalie-Alarm bei Ausreißern. Postet bevorzugt in `#💰-ki-kosten` (Fallback: `SHADOWOPS_WATCHDOG_WEBHOOK`). State: `data/watchdog_state_ki-cost.json`.
+- **`ki-cost-watchdog`** (täglich 07:15): Rollup von Token/Kosten aus Claude- + Codex-JSONL. Zwei Alarm-Pfade: (a) relativer Anomalie-Alarm wenn Tageskosten > `KICOST_ANOMALY_FACTOR` × 7-Tage-Schnitt (default 2.5×); (b) optionale absolute Kostendecke via `KICOST_ABSOLUTE_ALERT_USD` (default 0/deaktiviert) — fängt dauerhaft teure Hintergrund-Pfade, die Teil der eigenen Baseline geworden sind und den relativen Alarm nie auslösen. Discord-Embed enthält täglich eine Pro-Projekt-Aufschlüsselung der Top-`KICOST_TOP_PROJECTS` (default 4) teuersten Claude-Projekte. Postet bevorzugt in `#💰-ki-kosten` (Fallback: `SHADOWOPS_WATCHDOG_WEBHOOK`). State: `data/watchdog_state_ki-cost.json`.
 
 State-Files sind pro Service getrennt (`data/watchdog_state_<service>.json`),
 damit Failure-Counter und Alert-Status sich nicht beeinflussen.
@@ -198,11 +198,13 @@ echo '{"last_status":"up","last_alert_at":"","consecutive_failures":0}' \
 | `mayday-scheduler` | container | leitstelle-scheduler (Docker-Health, Game-Tick-Owner SB3 #mayday-sim#498) | 5 min | 7 min |
 | `ai-agent-framework` | systemd | guildscout-feedback-agent, zerodox-support-agent, seo-agent (nur Prozess-State) | 5 min | 6 min |
 | `seo-audit-freshness` | pg-freshness | seo_agent-DB: letzter erfolgreicher zerodox-Audit (`completed_at`) < 49h (Vorfall 2026-06-27: 7 Tage Audit-Crash trotz Service `active` — `systemd`-Mode blind, dieser prüft die Wirkung) | 1 h | 8 min |
-| `seo-output-freshness` | pg-freshness | seo_agent-DB: bei frischen Insights (Agent produziert, jüngstes < 3 Tage) Alter der jüngsten echten Ausgabe (letzte Issue via `seo_topic_locks` bzw. Fix-PR via `seo_audits.pr_url`) < 168h (7 Tage) — erkennt Ausgabe-Stau trotz laufendem Audit (Vorfall 19.06.–02.07., #1683). `actioned`-Status bewusst NICHT als Signal (wird kaum je gesetzt) | 1 h | 9 min |
+| `seo-deep-audit-freshness` | pg-freshness | seo_agent-DB: letzter zerodox-Deep-Audit (mode='deep', status='completed') < 195h (8+ Tage) — unabhängige Schicht zu `seo-audit-freshness` (Daily, 49h); prüft ob wöchentlicher Deep-Audit tatsächlich durchläuft (Wochen-Strategie seit 2026-07-17) | 1 h | 8 min |
+| `seo-output-freshness` | pg-freshness | seo_agent-DB: bei frischen Insights (Agent produziert, jüngstes < 3 Tage) Alter der jüngsten echten Ausgabe (letzte Issue via `seo_topic_locks` bzw. Fix-PR via `seo_audits.pr_url`) < 216h (9 Tage) — erkennt Ausgabe-Stau trotz laufendem Audit (Vorfall 19.06.–02.07., #1683); Schwelle 168h→216h 2026-07-18 da Ausgabe 1×/Woche sonntags kommt. `actioned`-Status bewusst NICHT als Signal (wird kaum je gesetzt) | 1 h | 9 min |
+| `security-freshness` | pg-freshness | security_analyst-DB: letzter erfolgreicher `sec_jobs`-Lauf (`completed_at`, Status `ok`/`partial`) < 26h — erkennt stale Security-Agent-Team (W1, seit 2026-07-09) | 1 h | 10 min |
 | `cmdshadow-design` | systemd-result | cmdshadow-design-healthcheck.service (max_age=36h) | 1 h | 8 min |
 | `disk-hygiene` | disk + auto-prune | Auto-Prune (docker builder/image + journald) bei Disk >85%, Alarm >90% (Selbstpflege seit 2026-05-30) | 1 h | — |
 | `doku-drift` | doku-drift | Container-Ports vs. Port-Map + MEMORY.md-Limit (<200), nur Alarm (Selbstpflege seit 2026-05-30) | täglich 06:30 | — |
-| `ki-cost` | ki-cost | Token/Kosten-Rollup Claude+Codex aus JSONL + Anomalie-Alarm (Selbstpflege seit 2026-05-30) | täglich 07:15 | — |
+| `ki-cost` | ki-cost | Token/Kosten-Rollup Claude+Codex aus JSONL + relativer Anomalie-Alarm + opt-in absolute Kostendecke (`KICOST_ABSOLUTE_ALERT_USD`) + Pro-Projekt-Aufschlüsselung im Embed (Selbstpflege seit 2026-05-30; Pro-Projekt + absolute Decke seit 2026-07-15) | täglich 07:15 | — |
 
 Pro Service:
 - **🔴 \<service\> DOWN** — nach 2 konsekutiven Failures (= ~10 Minuten Downtime).

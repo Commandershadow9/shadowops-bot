@@ -20,7 +20,7 @@
 | Discord | discord.py | siehe requirements.txt |
 | Datenbank | PostgreSQL | 3 DBs: security_analyst, agent_learning, seo_agent |
 | Cache | Redis | — |
-| AI Primary | Codex CLI | gpt-4o / gpt-5.3-codex / o3 |
+| AI Primary | Codex CLI | gpt-4o / gpt-5.5 / o3 |
 | AI Fallback | Claude CLI | claude-sonnet-4-6 / claude-opus-4-6 |
 | Container | Docker | mit Trivy fuer Scans |
 | Service | systemd | `/etc/systemd/system/shadowops-bot.service` |
@@ -42,9 +42,9 @@
 shadowops-bot/
 ├── src/
 │   ├── bot.py                    # Haupt-Bot
-│   ├── cogs/                     # Slash-Commands (admin, inspector, monitoring)
+│   ├── cogs/                     # Slash-Commands (admin, inspector, monitoring, claude_cli, cron_heartbeat, customer_setup_commands, phase_5e_health_aggregator)
 │   ├── integrations/             # Externe Systeme (siehe unten)
-│   ├── patch_notes/              # Patch Notes Pipeline v6 (5-Stufen State Machine, ~2100 Zeilen)
+│   ├── patch_notes/              # Patch Notes Pipeline v6 + Editorial Layer v7 (editorial.py, seit 2026-06-25) — 5-Stufen State Machine + Pre-Context-Builder (~2300 Zeilen)
 │   ├── schemas/                  # JSON-Schemas fuer Structured Output (fix_strategy, patch_notes, incident_analysis, jules_review)
 │   └── utils/                    # config, logging, embeds, state, alert_humanizer, health_server, message_handler, circuit_breaker, changelog_parser, process_lock
 ├── tests/
@@ -59,19 +59,20 @@ shadowops-bot/
 │   └── PROJECT_*.md              # Per-projekt-Notizen
 ├── deploy/
 │   ├── shadowops-bot.service          # systemd Bot-Service
-│   ├── *-watchdog.{service,timer}     # Externe Uptime-Watchdogs (14 Watchdogs: HTTP/systemd/jq-filter/build-drift/state-drift + Backup-Test)
+│   ├── *-watchdog.{service,timer}     # Externe Uptime-Watchdogs (19 Watchdogs: HTTP/systemd/container/pg-freshness/jq-filter/build-drift/state-drift + Backup-Test)
 │   ├── shadowops-watchdog.env.example # Webhook-Env Template
 │   └── MONITORING_SETUP.md            # Setup-Anleitung Watchdogs
 ├── .github/
 │   └── workflows/
 │       ├── ci.yml                     # Test-Pipeline (pytest)
 │       ├── worker-dedup-gate.yml      # Verhindert Duplikat-Worker-PRs
-│       └── auto-label-pr.yml          # Auto-Labeling nach Conventional Commits
+│       ├── auto-label-pr.yml          # Auto-Labeling nach Conventional Commits
+│       └── external-uptime.yml        # Externer Uptime-Backstop (GitHub-hosted, VPS-unabhängig) — pingt zerodox.de + guildscout.eu alle 5 min, Discord-Alert via Repo-Secret UPTIME_DISCORD_WEBHOOK (seit #277-Folge)
 ├── scripts/                      # Wartungs-Skripte
 ├── docs/
-│   ├── SECURITY_ANALYST.md
-│   ├── SETUP_GUIDE.md
-│   ├── reference/api.md
+│   ├── reference/api.md          # API-Referenz
+│   ├── architecture/             # Tiefen-Doku (security-engine/, jules-workflow/, multi-agent-review/)
+│   ├── operations/               # Setup, Rollout, Daily-Ops (setup.md, quickstart.md, ...)
 │   ├── adr/                      # Architecture Decision Records
 │   ├── design/                   # Design-Dokumente (aktuelle Planung)
 │   └── plans/                    # Aeltere Design-Dokumente (archiviert)
@@ -84,6 +85,7 @@ shadowops-bot/
 ### Module unter `src/integrations/`
 
 - `ai_engine.py` — Dual-Engine Router (Codex Primary, Claude Fallback)
+- `ai_learning/` — Kontinuierlicher Lernagent: Echtzeit-Systemanalyse, Git-Commit-Mustererkennung, Code-Struktur-Analyse, Security-Event-Korrelation via AI Engine. Klassen: ContinuousLearningAgent, LearningInsight, LearningSession (continuous_learning_agent.py); knowledge_db.py, knowledge_synthesizer.py.
 - `smart_queue.py` — Analyse-Pool (Semaphore=3) + serieller Fix-Lock + Circuit Breaker
 - `verification.py` — Pre-Push Pipeline (Confidence ≥85% → Tests → Claude-Verify → KB-Check)
 - `orchestrator/` — Multi-Event-Batching (10s Fenster) + Approval-Flow (Package: core, batch_mixin, planner_mixin, executor_mixin, recovery_mixin, discord_mixin, models)
@@ -96,7 +98,7 @@ shadowops-bot/
 - `security_engine/team/` — Security-Agent-Team (**W1 LIVE seit 2026-07-09, 7d-Soak läuft**, #290/PR #339): `contracts.py` (SecurityJob/JobResult), `base_worker.py` (Lifecycle/Exception-Isolation), `orchestrator.py` (Fan-out + trigger-Durchreichung), `orchestrator_main.py` (**echter `sec:trigger`-Subscribe-Loop**), `runner.py`, `workers/npm_audit_worker.py`. **Betrieb:** systemd-User-Units `security-orchestrator` + `security-npm-audit-worker` (env: `~/.config/shadowops-security-team.env`, chmod 600, Redis-Auth!), `SECURITY_TEAM_ENABLED=true`, Live-Config-Sektion `security_team:` (guildscout+zerodox, npm_audit). Crons: Trigger 05:23, `scripts/security-job-reaper.sh` 06:41, `scripts/security-soak-compare.sh` 07:31 (`logs/security-soak-w1.log`). Selbstüberwachung: `security-freshness-watchdog` (pg-freshness auf `sec_jobs`, 26h). Monolith bleibt bis Soak-Ende (~2026-07-16) Source-of-Truth für LLM-Scans. Spec v2: `docs/design/2026-07-09-security-agent-team-v2-spec.md` (Fix-Kanal = Claude-CLI + PR-Gate, Jules tot; 5 Wellen), Plan: `docs/plans/2026-07-09-security-agent-team-w1.md`.
 - `fixers/` — Konkrete Fix-Implementierungen: fail2ban_fixer.py, crowdsec_fixer.py, aide_fixer.py, trivy_fixer.py, walg_fixer.py
 - `project_monitor.py` — Multi-Project Health-Checks + **Zentrale Monitoring-Engine** (2026-06, #277): deklaratives `checks:`-Inventar pro Projekt in config.yaml via `check_definitions.py`/`check_runner.py`/`heal_executor.py`/`maintenance_gate.py`. Check-Typen `http` (+header/POST/json_path/json_schema), `script`, `container` (network-attached). Gestuftes Heal (reversibel-autonom / approval / alert-only) + Circuit-Breaker + Maintenance-Gate (`/maintenance`-Command). 6 ZERODOX-Checks live (analytics-bridge mit Auto-Heal real verifiziert), Watchdogs bleiben als externer Dead-Man (Defense-in-Depth). **Import-Regel:** paket-intern relativ (`from .x`), NICHT `from src.integrations.x` (Bot läuft PYTHONPATH=src). Spec: `docs/2026-06-09-zentrales-monitoring-auto-health-design.md`, Inventar: `docs/MONITORING_INVENTORY.md`, Pläne: `docs/plans/2026-06-{09,10}-monitoring-*.md`.
-- `deployment_manager.py` — Auto-Deploy mit Backup/Rollback. **WICHTIG:** Project-Name-Lookup ist dash↔underscore-tolerant (`mayday-sim` ↔ `mayday_sim`, seit 2026-05-25 — siehe `.claude/rules/safety.md`). Gleiche Logik in `github_integration/ci_mixin.py:_trigger_deployment()`.
+- `deployment_manager.py` — Auto-Deploy mit Backup/Rollback. **WICHTIG:** Project-Name-Lookup ist dash↔underscore-tolerant (`mayday-sim` ↔ `mayday_sim`, seit 2026-05-25 — siehe `.claude/rules/safety.md`). Gleiche Logik in `github_integration/ci_mixin.py:_trigger_deployment()`. `_repoll_after_deploy` (seit 2026-07-11, PR #350): nach jedem erfolgreichen Deploy prueft `ci_mixin.py` ob `origin/branch` weitergelaufen ist und stoesst weiteren Deploy an — gleiche gehaertete Pipeline (CI-Wait + Per-SHA-Dedup), max `deploy.repoll_max_rounds` Runden (default 2).
 - `incident_manager.py` — Incident Threads in Discord
 - `customer_notifications.py` — Customer-Facing Alerts (Multi-Guild)
 - `fail2ban.py` / `crowdsec.py` / `aide.py` / `docker.py` — Security-Event-Quellen (Monitoring-Integrationen)
@@ -130,7 +132,7 @@ shadowops-bot/
 
 ## Externes Monitoring (seit 2026-05-17 — Defense-in-Depth)
 
-Zusätzlich zum internen `project_monitor.py` laufen 14 unabhängige user-systemd Watchdogs (Zyklen: 5–15 min je nach Watchdog, cmdshadow-design 1h, Selbstpflege-Watchdogs stündlich/täglich, Backup-Test monatlich) und posten Down/Recovery direkt via Discord-Webhook in `#🩺-uptime-alerts` (NICHT über den Bot — funktioniert auch wenn shadowops-bot tot ist):
+Zusätzlich zum internen `project_monitor.py` laufen 19 unabhängige user-systemd Watchdogs (Zyklen: 5–15 min je nach Watchdog, cmdshadow-design 1h, Selbstpflege-Watchdogs stündlich/täglich, Backup-Test monatlich) und posten Down/Recovery direkt via Discord-Webhook in `#🩺-uptime-alerts` (NICHT über den Bot — funktioniert auch wenn shadowops-bot tot ist):
 
 | Watchdog | Mode | Target |
 |---|---|---|
@@ -143,15 +145,21 @@ Zusätzlich zum internen `project_monitor.py` laufen 14 unabhängige user-system
 | `mayday-ci-runner-watchdog` | http + jq-filter | http://10.8.0.10:9100/health, filter=`.components.ci_runner.ok` (#mayday-sim#425) |
 | `mayday-sim-build-drift-watchdog` | build-drift | https://maydaysim.de/api/build-id vs. origin/main HEAD — Alert bei >30 min Drift, Zyklus 15 min (#mayday-sim#416) |
 | `mayday-scheduler-watchdog` | container | leitstelle-scheduler (Docker-Health) — Game-Tick-Owner seit SB3 (#mayday-sim#498), unüberwachter SPOF ohne diesen Watchdog |
-| `ai-agent-framework-watchdog` | systemd | guildscout-feedback-agent, zerodox-support-agent, seo-agent |
+| `ai-agent-framework-watchdog` | systemd | guildscout-feedback-agent, zerodox-support-agent, seo-agent (nur Prozess-State — prüft nicht ob die Arbeit gelingt) |
+| `seo-audit-freshness-watchdog` | pg-freshness | seo_agent-DB: letzter erfolgreicher zerodox-Audit (`completed_at`) < 49h — fängt Services die `active` sind aber deren Arbeit still scheitert (Vorfall 2026-06-27: 7 Tage Audit-Crash, stündlich) |
+| `seo-deep-audit-freshness-watchdog` | pg-freshness | seo_agent-DB: letzter zerodox-Deep-Audit (mode='deep', status='completed') älter als 195h (8+ Tage) — unabhängige Schicht zu seo-audit-freshness (Daily, 49h); prüft ob wöchentlicher Deep-Audit tatsächlich durchläuft (Wochen-Strategie 2026-07-17) |
+| `seo-output-freshness-watchdog` | pg-freshness | seo_agent-DB: bei aktiven Insights (jüngstes < 3 Tage) Alter der jüngsten echten Ausgabe (Issue via `seo_topic_locks`, Fix-PR via `seo_audits.pr_url`) < 216h (9 Tage) — erkennt Ausgabe-Stau trotz laufendem Audit; Schwelle 168h→216h 2026-07-18 (1×/Woche sonntags, 7 Tage waren Garantie-Falschmeldung) |
+| `security-freshness-watchdog` | pg-freshness | security_analyst-DB: letzter erfolgreicher `sec_jobs`-Lauf (`completed_at`, Status `ok`/`partial`) < 26h — erkennt stale Security-Agent-Team (W1 Soak seit 2026-07-09, stündlich, deploy: `deploy/security-freshness-watchdog.{service,timer}`) |
 | `cmdshadow-design-watchdog` | systemd-result | cmdshadow-design-healthcheck.service (max_age=36h, 1h-Cycle) |
 | `memory-watchdog` | meminfo | RAM ≥90% oder Swap ≥80% auf VPS, Frühwarnung vor OOM-Cascade (seit 2026-05-25, Vorfall logind-Kill durch earlyoom) |
 | `disk-hygiene-watchdog` | disk + auto-prune | Auto-Prune (docker builder/image + journald) bei Disk >85%, Alarm >90% (stündlich, Selbstpflege seit 2026-05-30) |
 | `doku-drift-watchdog` | doku-drift | Container-Ports vs. Port-Map + MEMORY.md-Limit (<200), nur Alarm (täglich 06:30, Selbstpflege seit 2026-05-30) |
-| `ki-cost-watchdog` | ki-cost | Token/Kosten-Rollup Claude+Codex aus JSONL + Anomalie-Alarm (täglich 07:15, Selbstpflege seit 2026-05-30) |
+| `ki-cost-watchdog` | ki-cost | Token/Kosten-Rollup Claude+Codex aus JSONL + relativer Anomalie-Alarm (2.5× 7-Tage-Schnitt) + optionale absolute Kostendecke (`KICOST_ABSOLUTE_ALERT_USD`, default 0/aus) + Pro-Projekt-Aufschlüsselung (Top-`KICOST_TOP_PROJECTS` Claude-Projekte nach Kosten, 2026-07-15) im täglichen Embed (täglich 07:15, Selbstpflege seit 2026-05-30) |
 | `shadowops-backup-test` | — | monatlich 1. d. Monats, Wrapper um `~/ZERODOX/scripts/backup-test.sh` |
 
-**Script:** `scripts/service-watchdog.sh` (generisch, parametrisiert) und `scripts/bot-watchdog.sh` (Backward-Compat). **Service-Files:** `deploy/<name>-watchdog.{service,timer}`. **Webhook-Config:** `~/.config/shadowops-watchdog.env` (chmod 600). **Setup-Anleitung:** [`deploy/MONITORING_SETUP.md`](./deploy/MONITORING_SETUP.md).
+**GitHub Actions Externer Backstop (seit 2026-06-10, #277-Folge):** `.github/workflows/external-uptime.yml` läuft auf GitHub-hosted `ubuntu-latest` (VPS-unabhängig), pingt `zerodox.de/api/health` + `guildscout.eu/health` alle 5 min, alarmiert via Repo-Secret `UPTIME_DISCORD_WEBHOOK` in `#🩺-uptime-alerts`. Drei Alert-Klassen: UNREACHABLE (DNS/Totalausfall), ERROR (5xx), DEGRADED (200 + status≠ok). Reiner Backstop bei VPS-Totalausfall — schnelle Erkennung machen die internen Watchdogs.
+
+**Skripte:** `scripts/service-watchdog.sh` (generisch, parametrisiert), `scripts/bot-watchdog.sh` (Backward-Compat), `scripts/sync-watchdog-units.sh` (IaC-Sync: spiegelt `deploy/*-watchdog.{service,timer}` als Symlinks in `~/.config/systemd/user/`, idempotent, `--dry-run`/`--prune`/`--strict`-Flags, `--strict` exit 1 bei Orphans fuer CI-Drift-Gate, seit #294). **Service-Files:** `deploy/<name>-watchdog.{service,timer}`. **Webhook-Config:** `~/.config/shadowops-watchdog.env` (chmod 600). **Setup-Anleitung:** [`deploy/MONITORING_SETUP.md`](./deploy/MONITORING_SETUP.md).
 
 **Regel beim Hinzufügen eines neuen kritischen Services:** Watchdog-Service-File aus `deploy/` kopieren, Env-Vars anpassen, Symlink in `~/.config/systemd/user/`, `daemon-reload + enable + start`, Recovery-Alert testen. Tabelle hier UND in `MONITORING_SETUP.md` erweitern.
 
@@ -249,7 +257,7 @@ sudo journalctl -u shadowops-bot -f
 2. Im `event_watcher.py` registrieren.
 3. Config-Key in `config.example.yaml` ergaenzen.
 4. Test mit Mock-Subprocess-Output.
-5. README + `docs/SECURITY_ANALYST.md` updaten.
+5. README + `docs/architecture/security-engine/README.md` updaten.
 
 ### Neuen AI-Provider als Engine
 1. Klasse in `ai_engine.py` analog zu `CodexEngine` / `ClaudeEngine`.
@@ -273,20 +281,34 @@ Worker-Konventionen:
 
 ## Statistik (Stand v5.1)
 
-20.000+ LoC, 700+ Tests, 3 PostgreSQL DBs (21+7+11 Tabellen), 4 Security-Integrationen, 15 Discord-Commands, 3 Monitored Projects (GuildScout, ZERODOX, AI Agents).
+20.000+ LoC, 700+ Tests, 3 PostgreSQL DBs (21+8+11 Tabellen), 4 Security-Integrationen, 21 Discord-Commands, 3 Monitored Projects (GuildScout, ZERODOX, AI Agents).
 
 ## Aktuelle Doku
 
 - [README.md](./README.md)
-- [docs/SECURITY_ANALYST.md](./docs/SECURITY_ANALYST.md)
-- [docs/SETUP_GUIDE.md](./docs/SETUP_GUIDE.md)
+- [docs/architecture/security-engine/README.md](./docs/architecture/security-engine/README.md)
+- [docs/operations/setup.md](./docs/operations/setup.md)
 - [docs/reference/api.md](./docs/reference/api.md)
-- [DOCS_OVERVIEW.md](./DOCS_OVERVIEW.md)
+- [docs/README.md](./docs/README.md)
 - [config/DO-NOT-TOUCH.md](./config/DO-NOT-TOUCH.md)
 
 ## Letztes Update dieser Datei
 
+2026-07-18 — seo-deep-audit-freshness-watchdog neu + seo-output-freshness-watchdog Schwelle 168h→216h (Commit `6038da5`): Wochen-Strategie für SEO Deep-Audit: `seo-deep-audit-freshness-watchdog` (pg-freshness, Schwelle 195h, mode='deep') prüft ob wöchentlicher ZERODOX-Deep-Audit tatsächlich abgeschlossen wurde — unabhängige Schicht zu `seo-audit-freshness-watchdog` (Daily, 49h). `seo-output-freshness-watchdog` Schwelle 168h→216h (9 Tage): SEO-Ausgabe kommt 1×/Woche sonntags, 168h = Garantie-Falschmeldung. Watchdog-Count: 18 → 19.
+
+2026-07-15 — ki-cost-watchdog Pro-Projekt-Aufschlüsselung + absolute Kostendecke (Commit `07e5845`): `collect_claude()` aggregiert jetzt zusätzlich `by_project` über den JSONL-Pfad. Tägliches Embed zeigt Top-`KICOST_TOP_PROJECTS` (default 4) Claude-Projekte nach Kosten. Neues ENV `KICOST_ABSOLUTE_ALERT_USD` (default 0/deaktiviert) als opt-in Backstop für dauerhaft teure Hintergrund-Pfade, die Teil der eigenen Baseline sind und den relativen Anomalie-Alarm (2.5× Schnitt) nie auslösen. Verifiziert: Erstlauf zeigt zerodox-akquise-ai=$122.73 als Top-Projekt.
+
+2026-07-11 — ZERODOX-Deploy Re-Poll + buildSha-Drift-Backstop (PR #350, ZERODOX-Issue #1720): (1) `_repoll_after_deploy` in `ci_mixin.py`: nach jedem erfolgreichen Deploy prueft eine Schleife ob `origin/branch` weitergelaufen ist und stoesst weiteren Deploy an — gleiche gehaertete Pipeline (CI-Wait + Per-SHA-Dedup), max `deploy.repoll_max_rounds` Runden (default 2). (2) `scripts/zerodox-build-drift-check.py`: stdlib-only Backstop als `type:script`-Check (eingehaengt unter `projects.zerodox.monitor.checks`, interval 300s, flake_polls 7), vergleicht live `buildSha` aus `/api/health` mit `origin/main`-HEAD; Docs-only-Allowlist identisch zu `ZERODOX/scripts/deploy.sh` (#1262). Fail-Open bei Health-Endpoint-Fehler (redundant zu `zerodox-watchdog`), Fail-Safe bei lokalem Git-Fehler. 19 neue Unit-Tests.
+
 2026-07-09 — Security-Agent-Team Phase 0 + W1 (#290 / PRs #333, #338, #339 — alle gemerged + live): **Phase 0:** AI-Kern des Monolithen war seit 07.07. komplett tot — Doppel-Ursache: `security_analyst.model gpt-5.3-codex` vom ChatGPT-Abo nicht mehr unterstützt (HTTP 400) + hartcodierter Claude-CLI-Pfad `~/.local/bin/claude` existiert seit npm-Umzug nicht mehr (FileNotFoundError in Fallback UND Fix-Phase). Fixes: `resolve_claude_cli_path()` (env `CLAUDE_CLI_PATH` → configured → which → Fallback-Liste), Live-Config auf `gpt-5.5` (real getestet; `gpt-5.5-codex` → 400), Reflection-KeyError `'"quality_score"'` = `str.format()` auf Template mit JSON-Beispiel → `render_reflection_prompt()` mit `.replace()`, stale Server-Fakten (Debian 12/8 GB → Debian 13/64 GB) in 7 Prompt-Stellen, fail2ban aus Tool-Listen (nicht installiert, #295). **Live verifiziert:** Session #539 OK via codex/gpt-5.5 (6 Findings/6 Issues) — dabei nächsten verdeckten Bug gefangen: Fix-Phase crashte bei LLM-`summary` als dict (`dict + str`) → #338. **W1 (PR #339, zweistufig subagent-reviewt):** `orchestrator_main` = echter `sec:trigger`-Subscribe-Loop, `trigger`-Durchreichung, Trigger-/Reaper-/Soak-Scripts, `security-freshness-watchdog`, Modell-Default-Hygiene repo-weit. Reviews fingen CRITICAL (`findings` hat `found_at`, NICHT `created_at` — Soak-Script wäre stumm gewesen) + IMPORTANT (psql-Command-Tag-Off-by-one bei `RETURNING 1 | wc -l` → CTE-Zählung; gleicher Bug im SEO-Reaper gefixt, agents@a472627). **Ops:** Units + env-Datei (600) + 3 Crons (05:23/06:41/07:31) installiert, erster E2E-Lauf 2×`ok`/14 Findings (GuildScout: 1 CRITICAL + 4 HIGH npm!), Watchdog getestet + Timer aktiv. **7d-Soak bis ~2026-07-16**, dann W2. Dazu Phase-0-Ops: Trivy 0.72.0 + Daily-Scan 04:15 reaktiviert (`~/scripts/trivy-daily-scan.sh`, Bot-Format; Erstlauf 15 Images: 15 CRITICAL/242 HIGH), kptr_restrict=1, Backup-Dirs 700/750, Dashboard-Binding 127.0.0.1, 9 obsolete Issues geschlossen (#313 #314 #295 #310 #311 #327 #328 #330 #331). Spec v2: `docs/design/2026-07-09-security-agent-team-v2-spec.md`.
+
+2026-07-04 — seo-output-freshness-watchdog in CLAUDE.md ergänzt (Commits `31e354c`, `c6402c6`, 2026-07-03): neuer pg-freshness-Watchdog erkennt Ausgabe-Stau — der SEO-Agent produziert Insights, aber über 7 Tage kein GitHub-Issue/PR. Gate: nur prüfen wenn jüngstes Insight < 3 Tage (Agent aktiv). Metrik: Alter (h) der jüngsten echten Ausgabe (`seo_topic_locks.issue` oder `seo_audits.pr_url`). Schwelle 168h, Boot-Offset 9 min, Zyklus 1h. `MONITORING_SETUP.md` + `.claude/rules/infrastructure.md` wurden bereits in den Commits aktualisiert — CLAUDE.md war vergessen. Watchdog-Count: 16 → 17.
+
+2026-06-27 — seo-audit-freshness-watchdog + pg-freshness Mode (Commits `4775d4e`, `fda1bff`): Vorfall 2026-06-21..27 — seo-agent crashte 7 Tage täglich nach GSC/AI-Calls VOR `save_score`, aber der Prozess blieb `active`. `ai-agent-framework-watchdog` (Mode systemd) blieb blind. Neuer Mode `WATCHDOG_MODE=pg-freshness` in `scripts/service-watchdog.sh`: führt `WATCHDOG_PG_QUERY` gegen einen Postgres-Container aus, die Query muss Alter in Stunden liefern, DOWN wenn > `WATCHDOG_MAX_AGE_HOURS`. Prüft die **Wirkung** (frischer DB-Eintrag), nicht Prozess-Existenz. `seo-audit-freshness-watchdog.{service,timer}`: stündlich, Schwelle 49h. Zweite unabhängige Schicht neben SEO-Crontab `check-staleness.sh` (25h).
+
+2026-06-25 — Patch Notes v7 Editorial Layer (Commit `23df6d0`): `src/patch_notes/editorial.py` (neues Modul) baut aus Commit-Gruppen einen deterministischen Prompt-Kontext (Hero-Kandidaten, Kanalplan, Qualitaetsbar) vor der AI-Generierung. Kein neuer Stage. Neue optionale Felder in `src/schemas/patch_notes.json`: `title`, `impact`, `before`, `after`, `why`, `user_action`, `is_hero`, `source_commits`. README, CHANGELOG und `docs/design/patch-notes-v6.md` aktualisiert. Safety-Regeln in `.claude/rules/safety.md` ergaenzt.
+
+2026-06-25 — Restschulden `notifications_mixin.py` (#317) geschlossen (Commit `41b3197`): `_get_last_version_from_git`, `_get_version_from_commit_tags`, `_send_push_notification` normalisieren jetzt dash→underscore. 64 neue Tests.
 
 2026-06-14 — Externer Deploy-Post erreichte Kunden-Channel nicht (#316 / Issue mayday-sim#504): `_forward_deploy_to_external` (in `deployment_manager.py`) schlug die Projekt-Config mit dem **rohen** GitHub-Repo-Namen `mayday-sim` (Bindestrich) nach — Config-Key ist `mayday_sim` (Underscore) → leere `external_notifications` → der externe Deploy-Post im `#🚀-deploy-log` (mayday-sim Kunden-Discord, `1486899717362421840`) kam **nie** an, obwohl `deploy_channel_id` korrekt war. Der **interne** `#🚀-deployment-log` bekam Posts, weil `_send_deployment_success` den **globalen** `deployment_channel_id` nutzt (kein Projekt-Lookup) — nur der externe Forward hing am kaputten Lookup. **Gleicher dash/underscore-Bug wie 2026-05-25** (PR #449/#450) — `deploy_project`/`_trigger_deployment` waren damals gefixt, `_forward_deploy_to_external` übersehen. Fix: identischer Fallback-Lookup. 3 neue Tests (`test_deployment_external_forward.py`), 41 Deploy/GitHub-Tests grün. **In Produktion verifiziert:** erster Post im bis dahin leeren Channel exakt zum Deploy `ac4af87` (16:04:25). Restschulden (gleiches Muster) in `notifications_mixin.py` → #317. Doku: `docs/runbooks/discord-routing.md` um externe Kunden-Deploy-Posts ergänzt.
 

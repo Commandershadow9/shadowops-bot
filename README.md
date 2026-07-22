@@ -1,14 +1,13 @@
 # 🗡️ ShadowOps - Active Security Guardian v5.1 🚀
 
-**Status:** AKTIV | **Version:** 5.1.0 | **Letzte Aktualisierung:** 18.05.2026
+**Status:** AKTIV | **Version:** 5.1.0 | **Letzte Aktualisierung:** 10.06.2026
 
 **ShadowOps** ist ein **vollständig autonomer Security Guardian** mit lernfähigem AI Security Analyst, KI-gesteuerter Auto-Remediation, adaptiver Session-Steuerung und wachsender Knowledge-DB — kein statischer Scanner, sondern ein **System das aus seinen Erfahrungen lernt und immer besser wird**.
 
-> 📖 **Security Analyst Doku:** [docs/SECURITY_ANALYST.md](./docs/SECURITY_ANALYST.md)
-> 📚 **Dokumentations-Übersicht:** [DOCS_OVERVIEW.md](./DOCS_OVERVIEW.md)
-> 🔧 **API Dokumentation:** [docs/reference/api.md](./docs/reference/api.md)
-> 🚀 **Setup Guide:** [docs/SETUP_GUIDE.md](./docs/SETUP_GUIDE.md)
-> 📐 **Learning Pipeline Design:** [docs/plans/2026-03-18-analyst-learning-pipeline-design.md](./docs/plans/2026-03-18-analyst-learning-pipeline-design.md)
+> **Security Engine Doku:** [docs/architecture/security-engine/README.md](./docs/architecture/security-engine/README.md)
+> **Dokumentations-Uebersicht:** [docs/README.md](./docs/README.md)
+> **API Dokumentation:** [docs/reference/api.md](./docs/reference/api.md)
+> **Setup Guide:** [docs/operations/setup.md](./docs/operations/setup.md)
 
 ## ⚡ Highlights v5.1
 
@@ -35,9 +34,9 @@ Automatisierter Security-Fix-Workflow mit Google Jules + Claude Opus Review:
 - ✅ **Projekt-Security-Profile**: Angriffsoberflächen, Auth-Mechanismen, Secrets-Orte pro Projekt
 
 ### 🤖 **Dual-Engine AI System (v4.0)**
-- ✅ **Codex CLI (Primary, 97%)**: gpt-4o (fast), gpt-5.3-codex (standard), o3 (thinking)
+- ✅ **Codex CLI (Primary, 97%)**: gpt-4o (fast), gpt-5.5 (standard), o3 (thinking)
 - ✅ **Claude CLI (Fallback + Verify, 3%)**: claude-sonnet-4-6 (standard), claude-opus-4-6 (thinking)
-- ✅ **Config-basierter TaskRouter**: Routing nach Severity (CRITICAL→o3, HIGH→gpt-5.3-codex, LOW→gpt-4o)
+- ✅ **Config-basierter TaskRouter**: Routing nach Severity (CRITICAL→o3, HIGH→gpt-5.5, LOW→gpt-4o)
 - ✅ **Quota-aware Failover**: Provider-Limits werden aus CLI-Output erkannt; Weekly-Deep scannt bei Claude-Limit automatisch via Codex weiter
 - ✅ **SmartQueue**: 3 parallele Analysen (Semaphore), serieller Fix-Lock, Circuit Breaker, Batch-Erkennung
 - ✅ **VerificationPipeline**: 4-Stufen Pre-Push (Confidence ≥85% → Tests → Claude-Verify → KB-Check)
@@ -216,29 +215,17 @@ discord:
 
 ai:
   enabled: true
-
-  primary:
-    engine: codex
+  codex:
     models:
       fast: gpt-4o
-      standard: gpt-5.3-codex
+      standard: gpt-5.5
       thinking: o3
-    timeout: 300
-
-  fallback:
-    engine: claude
-    cli_path: /home/user/.local/bin/claude
+  claude:
+    # cli_path wird dynamisch aufgeloest (env CLAUDE_CLI_PATH → which claude → npm-global)
     models:
       fast: claude-sonnet-4-6
       standard: claude-sonnet-4-6
       thinking: claude-opus-4-6
-    timeout: 300
-
-  routing:
-    critical_analysis: { engine: codex, model: thinking }
-    high_analysis: { engine: codex, model: standard }
-    low_analysis: { engine: codex, model: fast }
-    critical_verify: { engine: claude, model: thinking }
 
 auto_remediation:
   enabled: true
@@ -369,7 +356,7 @@ shadowops-bot/
 │   │   ├── code_analyzer.py            # Code Structure Analyzer
 │   │   ├── context_manager.py          # RAG Context Manager
 │   │   ├── github_integration/         # GitHub Webhooks + Jules Workflow (Package)
-│   │   ├── security_engine/            # Autonomer SecurityScanAgent + CircuitBreaker + DB
+│   │   ├── security_engine/            # Autonomer SecurityScanAgent + CircuitBreaker + DB + Agent-Team (team/)
 │   │   ├── project_monitor.py          # Multi-Project Monitoring
 │   │   ├── deployment_manager.py       # Auto-Deployment
 │   │   ├── incident_manager.py         # Incident Tracking
@@ -419,7 +406,7 @@ shadowops-bot/
 │   └── logrotate.conf                  # Log-Rotation
 ├── deploy/                             # Deployment + Watchdogs
 │   ├── shadowops-bot.service           # systemd Bot-Service
-│   ├── *-watchdog.{service,timer}      # Externe Uptime-Watchdogs (14 Watchdogs: HTTP/systemd/jq-filter/build-drift/state-drift)
+│   ├── *-watchdog.{service,timer}      # Externe Uptime-Watchdogs (19 Watchdogs: HTTP/systemd/container/pg-freshness/jq-filter/build-drift/state-drift)
 │   ├── shadowops-watchdog.env.example  # Webhook-Env Template
 │   └── MONITORING_SETUP.md             # Setup-Anleitung Watchdogs
 ├── .github/
@@ -481,12 +468,12 @@ See [CHANGELOG.md](./CHANGELOG.md) for the full version history.
 
 - **Total Lines of Code**: 20,000+
 - **AI Engines**: 2 (Codex CLI + Claude CLI)
-- **AI Models**: 6 (gpt-4o, gpt-5.3-codex, o3, claude-sonnet-4-6, claude-opus-4-6)
+- **AI Models**: 6 (gpt-4o, gpt-5.5, o3, claude-sonnet-4-6, claude-opus-4-6)
 - **Security Integrations**: 4 (Fail2ban, CrowdSec, AIDE, Trivy)
-- **PostgreSQL Databases**: 3 (security_analyst: 21 Tabellen, agent_learning: 7 Tabellen, seo_agent: 11 Tabellen)
+- **PostgreSQL Databases**: 3 (security_analyst: 21 Tabellen, agent_learning: 8 Tabellen, seo_agent: 11 Tabellen)
 - **Learning Pipeline Tables**: 11 (Security: fix_attempts, fix_verifications, finding_quality, scan_coverage · Shared: agent_feedback, agent_quality_scores, agent_knowledge · Patch Notes: pn_generations, pn_variants, pn_examples · SEO: seo_fix_impact)
 - **Scan Areas**: 10 (firewall, ssh, docker, permissions, packages, services, logs, network, credentials, dependencies)
-- **Discord Commands**: 16 (inkl. /agent-stats, /claude)
+- **Discord Commands**: 21 (inkl. /agent-stats, /claude, /security-engine, /setup-customer-server, /maintenance)
 - **Monitored Projects**: 3 (GuildScout, ZERODOX, AI Agents)
 - **Auto Discord-Posts**: Session-Summaries, Feedback-Auswertungen, Weekly Summary, Meilensteine
 
@@ -522,7 +509,7 @@ python3 -c "from src.utils.config import get_config; get_config()"
 codex --version
 
 # Claude CLI prüfen
-~/.local/bin/claude --version
+claude --version
 
 # AI Stats in Discord
 /get-ai-stats
@@ -548,9 +535,9 @@ tail -f logs/shadowops.log | grep deployment
 
 ### Vollständige Dokumentation
 
-- 📖 [Setup Guide](./docs/SETUP_GUIDE.md) - Schritt-für-Schritt Installation
-- 🔧 [API Documentation](./docs/reference/api.md) - Vollständige API-Referenz
-- 📚 [Docs Overview](./DOCS_OVERVIEW.md) - Dokumentations-Index
+- [Setup Guide](./docs/operations/setup.md) - Schritt-fuer-Schritt Installation
+- [API Documentation](./docs/reference/api.md) - Vollstaendige API-Referenz
+- [Docs Overview](./docs/README.md) - Dokumentations-Index
 
 ### Bei Problemen
 

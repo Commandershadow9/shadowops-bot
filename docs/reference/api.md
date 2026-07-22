@@ -1,7 +1,7 @@
 ---
 title: 🔧 ShadowOps API Documentation v5.1
 status: active
-last_reviewed: 2026-05-18
+last_reviewed: 2026-06-03
 owner: CommanderShadow9
 ---
 
@@ -341,6 +341,50 @@ Starts a headless Claude CLI session on the server and returns the output as Dis
 
 ---
 
+### Monitoring Engine Commands
+
+#### `/maintenance`
+Pauses or resumes the Auto-Heal for a specific project or globally.
+
+**Permissions:** Administrator
+**Parameters:**
+- `scope` (required): Project name (e.g., `zerodox`) or `global` to affect all projects
+- `state` (required): `on` to pause Auto-Heal, `off` to resume
+- `minutes` (optional): Auto-expiry in minutes (default: 60)
+- `reason` (optional): Free-text audit note (logged and posted to Discord)
+
+**Returns:** Confirmation embed with scope, state, and expiry
+
+**Example:**
+```
+/maintenance scope:zerodox state:on minutes:30 reason:"Deploying schema migration"
+```
+
+**Behaviour:**
+- While paused: `heal_executor.py` skips all Auto-Heal actions for the affected scope
+- `MaintenanceGate` checks the state before every heal attempt
+- Expiry resets automatically; `/maintenance scope:X state:off` resets immediately
+
+### Customer Server Setup Commands
+
+#### `/setup-customer-server`
+Creates monitoring channels with correct permissions on a customer Discord server.
+
+**Permissions:** Administrator
+**Parameters:** None (reads project list from config)
+**Returns:** Confirmation with channel IDs created
+
+**Example:**
+```
+/setup-customer-server
+```
+
+**Creates per project:**
+- `#🚀-deploy-log` — customer-facing deployment notifications
+- `#📊-project-status` — uptime and health updates
+
+---
+
 ## Configuration Reference
 
 ### Complete `config/config.yaml` Structure
@@ -379,28 +423,37 @@ channels:
 ai:
   enabled: true
 
-  primary:
-    engine: codex
+  # === CODEX CLI (PRIMARY — OpenAI Codex via CLI) ===
+  codex:
+    cli_path: "codex"                        # Executable im PATH; kein absoluter Pfad noetig
     models:
-      fast: gpt-4o
-      standard: gpt-5.3-codex
-      thinking: o3
-    timeout: 300
+      fast: "gpt-5.5"                        # Schnelle Analysen
+      standard: "gpt-5.5"                    # Standard-Analysen + Structured Output
+      thinking: "o3"                         # Komplexe Planungsaufgaben
 
-  fallback:
-    engine: claude
-    cli_path: /home/user/.local/bin/claude
+  # === CLAUDE CLI (FALLBACK — Anthropic Claude via CLI) ===
+  claude:
+    # Pfad wird zur Laufzeit aufgeloest (env CLAUDE_CLI_PATH → shutil.which → Fallback-Liste).
+    # Nur setzen, wenn ein nicht-im-PATH-liegender Pfad erzwungen werden soll.
+    cli_path: "/home/cmdshadow/.npm-global/bin/claude"
     models:
-      fast: claude-sonnet-4-6
-      standard: claude-sonnet-4-6
-      thinking: claude-opus-4-6
-    timeout: 300
+      fast: "claude-sonnet-4-6"
+      standard: "claude-sonnet-4-6"
+      thinking: "claude-opus-4-6"
 
-  routing:
-    critical_analysis: { engine: codex, model: thinking }
-    high_analysis: { engine: codex, model: standard }
-    low_analysis: { engine: codex, model: fast }
-    critical_verify: { engine: claude, model: thinking }
+  # === TIMEOUTS ===
+  timeouts:
+    codex_seconds: 300      # 5 Min fuer Codex CLI
+    claude_seconds: 300     # 5 Min fuer Claude CLI
+    analyst_seconds: 1800   # 30 Min fuer Security Analyst Sessions
+
+  # === ROUTING (optional) ===
+  # Wenn nicht gesetzt, werden Severity-Defaults genutzt (CRITICAL→thinking, HIGH→standard, LOW→fast).
+  # routing:
+  #   critical_analysis: { engine: codex, model: thinking }
+  #   high_analysis: { engine: codex, model: standard }
+  #   low_analysis: { engine: codex, model: fast }
+  #   critical_verify: { engine: claude, model: thinking }
 
 # ========================================
 # AUTO-REMEDIATION CONFIGURATION
@@ -427,8 +480,11 @@ projects:
     enabled: true                           # Enable this project
     path: /home/user/shadowops-bot          # Absolute path to project
     branch: main                            # Git branch for deployments
+    repo_url: ""                            # GitHub repo URL (optional; used for webhook setup and /release-notes link)
+    monitor_only: false                     # If true: GitHub webhook events (push/PR/deploy) are silently skipped;
+                                            # health checks via project_monitor still run. For externally-managed services.
 
-    # Health monitoring (v3.1)
+    # Health monitoring (v3.1 + declarative Check Engine)
     monitor:
       enabled: true                         # Enable health checks
       url: http://localhost:5000/health     # Health check endpoint
@@ -442,6 +498,20 @@ projects:
       test_command: pytest tests/           # Test command
       post_deploy_command: pip install -r requirements.txt  # Post-deploy command
       service_name: shadowops-bot           # Systemd service name
+      allow_direct_push: false              # Opt-in: Auto-Deploy auch bei direktem Push (Solo-Operator)
+      repoll_max_rounds: 2                  # Max Re-Poll Runden nach Deploy (default 2, 0 = deaktiviert)
+                                            # _repoll_after_deploy (ci_mixin.py): nach erfolgreichem Deploy
+                                            # prueft Schleife ob origin/branch weitergelaufen ist, stoesst
+                                            # ggf. weiteren Deploy an (CI-Wait + Per-SHA-Dedup).
+
+    # Kunden-Discord-Server Benachrichtigungen (optional)
+    external_notifications:
+      - enabled: true
+        deploy_channel_id: 0               # Channel-ID auf dem Kunden-Discord-Server
+        notify_on:
+          deployments: true               # Kunden-sichtbarer Deploy-Post nach erfolgreichem Deploy
+    # Hinweis: Config-Key-Lookup ist dash/underscore-tolerant (mayday-sim ↔ mayday_sim).
+    # Ohne diesen Fallback erreichen externe Deploy-Posts den Kunden-Channel nicht (Vorfall #316).
 
   guildscout:
     enabled: true
@@ -456,13 +526,32 @@ projects:
       service_name: guildscout
 
 # ========================================
+# SECURITY TEAM (W1)
+# Env-Override: SECURITY_TEAM_ENABLED=true/false
+# ========================================
+security_team:
+  enabled: false                            # Master-Switch (W1 Soak: true, default: false)
+  active_workers: ["npm_audit"]
+  projects:
+    guildscout:
+      npm_audit_path: "/home/cmdshadow/GuildScout/web"
+    zerodox:
+      npm_audit_path: "/home/cmdshadow/ZERODOX/web"
+# Worker-ENV (nur relevant wenn enabled=true):
+#   SECURITY_ANALYST_DB_URL   DSN fuer security_analyst DB (Pflicht, Fallback: DATABASE_URL)
+#   REDIS_URL                 Redis-Verbindung (default: redis://127.0.0.1:6379/0)
+
+# ========================================
 # GITHUB INTEGRATION (v3.1)
+# GH_TOKEN wird als stiller Fallback fuer GITHUB_TOKEN akzeptiert (webhook_mixin.py:292).
 # ========================================
 github:
   enabled: false                            # Enable GitHub webhooks
   webhook_secret: "your_webhook_secret_here"  # HMAC secret for verification
   webhook_port: 8080                        # Webhook server port
-  auto_deploy: false                        # Auto-deploy on push (RECOMENDED: false for security)
+  auto_deploy: false                        # Auto-deploy bei PR-Merge auf deploy_branches (default false)
+                                            # Direkter Push deployt NIE automatisch (nur Discord-Alert)
+                                            # Ausnahme: per-Projekt deploy.allow_direct_push: true (opt-in)
   deploy_branches:                          # Branches that trigger deployments
     - main
     - master
@@ -496,6 +585,14 @@ log_paths:
   crowdsec: /var/log/crowdsec/crowdsec.log
   docker: /var/log/docker.log
   shadowops: logs/shadowops.log
+
+# ========================================
+# MONITORING SECRETS SOURCE (optional)
+# ZERODOX_ENV_PATH: Pfad zu einer externen .env-Datei fuer Monitoring-Secrets
+# (geladen von config.py:_load_monitoring_secrets, seit Commit eab7919).
+# Fail-closed: wenn gesetzt und Datei fehlt, startet der Bot NICHT.
+# ========================================
+# ZERODOX_ENV_PATH=/home/cmdshadow/.config/zerodox-monitoring.env  # Env-Var oder config.yaml-Key
 ```
 
 ---
@@ -528,7 +625,7 @@ ShadowOps can receive GitHub webhook events for auto-deployment.
 #### Push Events
 Triggers when code is pushed to repository.
 
-**Auto-Deploy Trigger:** If push is to a deploy branch (e.g., `main`)
+**Auto-Deploy Trigger:** Nur wenn `deploy.allow_direct_push: true` fuer das Projekt gesetzt ist (per-Projekt opt-in, default false). Ohne dieses Flag: Discord-Alert, kein Deploy. Ausnahme: `monitor_only: true` — dann werden alle Webhook-Events fuer das Projekt still uebersprungen.
 
 **Discord Notification:** Always sent with:
 - Repository name
@@ -539,7 +636,7 @@ Triggers when code is pushed to repository.
 #### Pull Request Events
 Triggers when PRs are opened, closed, or updated.
 
-**Auto-Deploy Trigger:** If PR is merged to a deploy branch
+**Auto-Deploy Trigger:** If PR is merged to a deploy branch. Nach jedem erfolgreichen Deploy prueft `_repoll_after_deploy` ob `origin/branch` weitergelaufen ist und triggert ggf. einen weiteren Deploy (max `deploy.repoll_max_rounds` Runden).
 
 **Discord Notification:** Always sent with:
 - PR number and title
@@ -674,7 +771,7 @@ Siehe `config/config.example.yaml` → `jules_workflow:` Block.
 Der Bot waehlt automatisch Opus oder Sonnet basierend auf PR-Charakteristik:
 
 | Kriterium | Modell | Timeout |
-|-----------|--------|---------|
+|-----------|--------|--------|
 | Security-Keywords (xss/cve/injection/dos/auth/csrf) | **Opus (thinking)** | 180s |
 | Diff > 3000 Zeichen | **Opus (thinking)** | 180s |
 | Alles andere | **Sonnet (standard)** | 120s |
@@ -698,8 +795,10 @@ Fallback auf das jeweils andere Modell bei Timeout oder leerer Response.
 ```python
 from src.integrations.knowledge_base import KnowledgeBase
 
-# Initialize
-kb = KnowledgeBase(db_path="data/knowledge_base.db")
+# Initialize (reads DSN from config.security_analyst_dsn / SECURITY_ANALYST_DB_URL)
+kb = KnowledgeBase()
+# Or pass DSN explicitly:
+# kb = KnowledgeBase(dsn="postgresql://user:pass@127.0.0.1:5433/security_analyst")
 
 # Record a fix
 kb.record_fix(
@@ -919,8 +1018,26 @@ Die Knowledge Base nutzt PostgreSQL, nicht SQLite. Haupttabellen:
 | `scan_coverage` | Coverage-Tracking pro Scan-Area und Projekt |
 | `remediation_status` | Cross-Mode Lock fuer laufende Fixes |
 | `jules_pr_reviews` | PR-State, Lock-Claim, Iteration-Counter fuer Jules Workflow |
+| `sec_jobs` | Security-Agent-Team Job-Queue (status, project, worker_type, token_cost) |
+| `findings.finding_fingerprint` | Dedup-Index auf `findings` (hinzugefuegt als idempotente Migration) |
 
 DSN kommt aus `config.security_analyst_dsn` (Env: `SECURITY_ANALYST_DB_URL`).
+
+### `agent_learning` DB (PostgreSQL)
+
+Cross-Agent Feedback, Patch Notes Learning, Jules Review Examples, SEO Agent.
+DSN kommt aus `config.agent_learning_dsn` (Env: `AGENT_LEARNING_DB_URL`).
+
+| Tabelle | Zweck |
+|---------|-------|
+| `agent_feedback` | Generisches Agent-Feedback (Reactions, Ratings) |
+| `agent_quality_scores` | Quality-Scores pro Agent-Output |
+| `agent_knowledge` | Persistentes Agent-Wissen (Key-Value) |
+| `jules_review_examples` | Few-Shot-Beispiele fuer Jules-PR-Reviews |
+| `pn_generations` | Patch-Notes-Generierungen (Prompt, Response, Scores) |
+| `pn_variants` | A/B-Varianten fuer Prompts |
+| `pn_examples` | Few-Shot-Beispiele fuer Patch Notes |
+| `seo_fix_impact` | Impact-Tracking fuer SEO-Agent-Fixes |
 
 ### Project Monitor State (JSON)
 
@@ -1091,4 +1208,4 @@ sudo ufw status
 
 ---
 
-**API Documentation v5.1** | Last Updated: 2026-05-18
+**API Documentation v5.1** | Last Updated: 2026-07-12
