@@ -48,7 +48,7 @@ Shows overall security status across all systems.
 #### `/scan`
 Triggers a manual Docker security scan using Trivy.
 
-**Permissions:** None
+**Permissions:** Administrator
 **Parameters:** None
 **Returns:** Scan results with vulnerabilities by severity
 
@@ -161,7 +161,7 @@ Marks a security finding as a duplicate of another for Learning-Feedback.
 #### `/remediation-stats`
 Shows auto-remediation statistics and performance metrics.
 
-**Permissions:** None
+**Permissions:** Administrator
 **Parameters:** None
 **Returns:** Embed with:
 - Total fixes executed
