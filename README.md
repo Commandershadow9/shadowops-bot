@@ -85,6 +85,7 @@ Event → TaskRouter → Codex CLI (Primary)
 - `/aide` - AIDE Integrity Check Status
 
 #### Auto-Remediation
+- `/maintenance [scope] [state] [minutes] [reason]` - Auto-Heal pausieren/fortsetzen global oder pro Projekt (Admin)
 - `/remediation-stats` - Auto-Remediation Statistiken (Admin)
 - `/stop-all-fixes` - EMERGENCY: Stoppt alle laufenden Fixes (Admin)
 - `/set-approval-mode [mode]` - Ändere Approval Mode (paranoid/auto/dry-run) (Admin)
@@ -283,25 +284,38 @@ deployment:
 ### Commands in Discord
 
 ```
-Security Commands:
+Security & Monitoring:
   /status              - Gesamt-Sicherheitsstatus
-  /scan                - Docker Security Scan
+  /scan                - Docker Security Scan (Admin)
   /threats [hours]     - Bedrohungen der letzten X Stunden
   /bans [limit]        - Gebannte IPs
+  /docker              - Docker Scan Ergebnisse
   /aide                - AIDE Check-Status
 
-Auto-Remediation:
+Auto-Remediation (alle Admin):
+  /maintenance [scope] [state] [minutes] [reason]  - Auto-Heal pausieren/fortsetzen
   /remediation-stats             - Statistiken
   /stop-all-fixes                - Emergency Stop
-  /set-approval-mode [mode]      - Approval Mode ändern
+  /set-approval-mode [mode]      - Approval Mode aendern
 
-AI System:
+Patch Notes (alle Admin):
+  /release-notes [project]       - Commits als Patch Notes veroeffentlichen
+  /pending-notes                 - Ausstehende Commit-Batches
+  /mark-duplicate                - Finding als Duplikat markieren
+
+AI & Learning System:
   /get-ai-stats                  - AI Provider Status
-  /reload-context                - Context neu laden
+  /reload-context                - Context neu laden (Admin)
+  /agent-stats                   - Agent-Learning Statistiken
+  /security-engine               - Security Engine Status
 
 Multi-Project:
   /projekt-status [name]         - Detaillierter Projekt-Status
-  /alle-projekte                 - Übersicht aller Projekte
+  /alle-projekte                 - Uebersicht aller Projekte
+
+Erweitert:
+  /claude [prompt] ...           - Headless Claude-Session (owner-only)
+  /setup-customer-server         - Monitoring-Channels einrichten (Admin)
 ```
 
 ### GitHub Webhook Setup
