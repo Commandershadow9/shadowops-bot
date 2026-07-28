@@ -5,11 +5,12 @@ Unit Tests for GitHub Integration
 import asyncio
 import hashlib
 import hmac
-from unittest.mock import Mock, AsyncMock, MagicMock
+from unittest.mock import AsyncMock, MagicMock, Mock
 
 import pytest
 
 from src.integrations.github_integration import GitHubIntegration
+from src.integrations.github_integration.ci_mixin import _paths_are_docs_only
 from src.utils.config import Config
 
 
@@ -647,6 +648,56 @@ class TestWelle910WaitForCI:
         )
         assert result == 'no_workflows'
 
+    @pytest.mark.parametrize(
+        ('paths', 'expected'),
+        [
+            (['README.md', 'CLAUDE.md', 'docs/runbook.md', '.claude/settings.json'], True),
+            (['web/README.md'], False),
+            (['.github/workflows/web-quality.yml'], False),
+            (['docs/runbook.md', 'src/bot.py'], False),
+            ([], False),
+        ],
+    )
+    def test_docs_only_paths_match_zerodox_deploy_allowlist(self, paths, expected):
+        assert _paths_are_docs_only(paths) is expected
+
+    @pytest.mark.asyncio
+    async def test_fetch_commit_files_paginates_complete_file_list(
+        self, mock_bot, cfg_with_projects, monkeypatch,
+    ):
+        integration = GitHubIntegration(mock_bot, cfg_with_projects)
+        first_page = [{'filename': f'docs/page-{index}.md'} for index in range(100)]
+        second_page = [{'filename': 'README.md'}]
+
+        response_contexts = []
+        for files in (first_page, second_page):
+            response = MagicMock(status=200)
+            response.json = AsyncMock(return_value={'files': files})
+            response_context = MagicMock()
+            response_context.__aenter__ = AsyncMock(return_value=response)
+            response_context.__aexit__ = AsyncMock(return_value=None)
+            response_contexts.append(response_context)
+
+        session = MagicMock()
+        session.get = MagicMock(side_effect=response_contexts)
+        session_context = MagicMock()
+        session_context.__aenter__ = AsyncMock(return_value=session)
+        session_context.__aexit__ = AsyncMock(return_value=None)
+        monkeypatch.setattr(
+            'integrations.github_integration.ci_mixin.aiohttp.ClientSession',
+            lambda **_kwargs: session_context,
+        )
+
+        paths = await integration._fetch_commit_files(
+            'Commandershadow9/ZERODOX',
+            'a' * 40,
+        )
+
+        assert paths == [item['filename'] for item in first_page + second_page]
+        assert session.get.call_count == 2
+        assert 'page=1' in session.get.call_args_list[0].args[0]
+        assert 'page=2' in session.get.call_args_list[1].args[0]
+
     @pytest.mark.asyncio
     async def test_wait_returns_success_when_all_completed(self, mock_bot, cfg_with_projects):
         integration = GitHubIntegration(mock_bot, cfg_with_projects)
@@ -766,12 +817,10 @@ class TestWelle910WaitForCI:
         assert result == 'timeout'
 
     @pytest.mark.asyncio
-    async def test_wait_returns_no_workflows_after_admin_merge_grace(
+    async def test_wait_returns_docs_only_after_admin_merge_grace(
         self, mock_bot, cfg_with_projects, monkeypatch,
     ):
-        """Welle 9.16 (Issue #243): wenn nach admin_merge_grace_min weiter KEIN
-        Workflow für den SHA gesichtet wurde, gilt es als admin-merge ohne CI
-        → "no_workflows" (Caller deployt direkt) statt 30min Timeout."""
+        """Ein nachweislicher Docs-only-Commit darf ohne CI weiterlaufen."""
         integration = GitHubIntegration(mock_bot, cfg_with_projects)
         # API liefert konstant einen Workflow-Run, der NICHT zum Filter passt
         # (anderes Repo / anderer Name). Damit bleibt `relevant` immer leer.
@@ -786,6 +835,11 @@ class TestWelle910WaitForCI:
                 },
             ],
         })
+        integration._fetch_commit_files = AsyncMock(return_value=[
+            'README.md',
+            'docs/runbook.md',
+            '.claude/settings.json',
+        ])
 
         sleep_calls = []
 
@@ -795,7 +849,7 @@ class TestWelle910WaitForCI:
         monkeypatch.setattr('integrations.github_integration.ci_mixin.asyncio.sleep', fast_sleep)
 
         # time.monotonic: 0 (started_at), 0 (Loop-Eintritt) ⇒ in Grace,
-        # dann 400 (>5*60=300) ⇒ Grace abgelaufen ⇒ no_workflows
+        # dann 400 (>5*60=300) ⇒ Grace abgelaufen ⇒ Docs-Pruefung
         times = iter([0.0, 0.0, 400.0])
 
         def fake_monotonic():
@@ -813,7 +867,50 @@ class TestWelle910WaitForCI:
             max_wait_min=30,
             admin_merge_grace_min=5,
         )
-        assert result == 'no_workflows'
+        assert result == 'docs_only'
+        integration._fetch_commit_files.assert_awaited_once_with(
+            'Commandershadow9/ZERODOX',
+            'b' * 40,
+        )
+
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize('changed_paths', [['src/bot.py'], None])
+    async def test_wait_blocks_missing_ci_for_code_or_unknown_commit(
+        self, mock_bot, cfg_with_projects, monkeypatch, changed_paths,
+    ):
+        """Code und API-unklare Commits warten voll und enden fail-closed."""
+        integration = GitHubIntegration(mock_bot, cfg_with_projects)
+        integration._fetch_workflow_runs_for_sha = AsyncMock(return_value={
+            'workflow_runs': [],
+        })
+        integration._fetch_commit_files = AsyncMock(return_value=changed_paths)
+
+        async def fast_sleep(_seconds):
+            return None
+
+        monkeypatch.setattr('integrations.github_integration.ci_mixin.asyncio.sleep', fast_sleep)
+
+        # 0: started_at, 0: erste Loop, 400: Grace abgelaufen,
+        # 2000: volles 30min-Fenster abgelaufen.
+        times = iter([0.0, 0.0, 400.0, 2000.0])
+
+        def fake_monotonic():
+            try:
+                return next(times)
+            except StopIteration:
+                return 2000.0
+
+        monkeypatch.setattr('integrations.github_integration.ci_mixin.time.monotonic', fake_monotonic)
+
+        result = await integration._wait_for_ci_completion(
+            repo_full_name='Commandershadow9/ZERODOX',
+            merged_sha='d' * 40,
+            workflow_names=['Web Quality'],
+            max_wait_min=30,
+            admin_merge_grace_min=5,
+        )
+        assert result == 'missing'
+        integration._fetch_commit_files.assert_awaited_once()
 
     @pytest.mark.asyncio
     async def test_wait_does_not_short_circuit_when_workflow_was_seen(
@@ -917,6 +1014,29 @@ class TestWelle910WaitForCI:
         assert kwargs['outcome'] == 'timeout'
 
     @pytest.mark.asyncio
+    async def test_trigger_deployment_blocks_and_alerts_when_ci_is_missing(
+        self, mock_bot, cfg_with_projects,
+    ):
+        """Code-Commit ohne gestartete CI darf deploy.sh nicht erreichen."""
+        integration = GitHubIntegration(mock_bot, cfg_with_projects)
+        integration.deployment_manager = MagicMock()
+        integration.deployment_manager.deploy_project = AsyncMock(return_value={'success': True})
+        integration._wait_for_ci_completion = AsyncMock(return_value='missing')
+        integration._send_ci_wait_alert = AsyncMock()
+
+        await integration._trigger_deployment(
+            repo_name='zerodox',
+            branch='main',
+            commit_sha='abc1234',
+            repo_full_name='Commandershadow9/ZERODOX',
+            full_sha='a' * 40,
+        )
+
+        integration.deployment_manager.deploy_project.assert_not_called()
+        integration._send_ci_wait_alert.assert_awaited_once()
+        assert integration._send_ci_wait_alert.call_args.kwargs['outcome'] == 'missing'
+
+    @pytest.mark.asyncio
     async def test_trigger_deployment_proceeds_on_success(self, mock_bot, cfg_with_projects):
         """deploy.sh MUSS laufen wenn CI success."""
         integration = GitHubIntegration(mock_bot, cfg_with_projects)
@@ -935,6 +1055,27 @@ class TestWelle910WaitForCI:
 
         integration.deployment_manager.deploy_project.assert_called_once_with('zerodox', 'main')
         integration._send_ci_wait_alert.assert_not_called()
+
+    @pytest.mark.asyncio
+    async def test_trigger_deployment_proceeds_for_verified_docs_only_commit(
+        self, mock_bot, cfg_with_projects,
+    ):
+        integration = GitHubIntegration(mock_bot, cfg_with_projects)
+        integration.deployment_manager = MagicMock()
+        integration.deployment_manager.deploy_project = AsyncMock(return_value={'success': True})
+        integration._wait_for_ci_completion = AsyncMock(return_value='docs_only')
+        integration._send_ci_wait_alert = AsyncMock()
+
+        await integration._trigger_deployment(
+            repo_name='zerodox',
+            branch='main',
+            commit_sha='abc1234',
+            repo_full_name='Commandershadow9/ZERODOX',
+            full_sha='a' * 40,
+        )
+
+        integration.deployment_manager.deploy_project.assert_awaited_once_with('zerodox', 'main')
+        integration._send_ci_wait_alert.assert_not_awaited()
 
     @pytest.mark.asyncio
     async def test_trigger_deployment_skips_wait_when_no_full_args(self, mock_bot, cfg_with_projects):
