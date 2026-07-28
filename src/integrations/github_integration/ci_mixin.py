@@ -27,6 +27,24 @@ _CI_RUNNING_STATI = frozenset({"queued", "in_progress", "requested", "waiting", 
 # deploy.repoll_max_rounds.
 _DEFAULT_REPOLL_MAX_ROUNDS = 2
 
+# ZERODOX#1985: Muss mit der Docs-only-Allowlist in ZERODOX/scripts/deploy.sh
+# uebereinstimmen. Nur diese Pfade veraendern die Runtime garantiert nicht.
+_COMMIT_FILES_PER_PAGE = 100
+_COMMIT_FILES_MAX_PAGES = 30
+
+
+def _paths_are_docs_only(paths: list[str]) -> bool:
+    """Return True only for a non-empty, entirely non-runtime path list."""
+    normalized_paths = [str(path).strip() for path in paths if str(path).strip()]
+    if not normalized_paths:
+        return False
+
+    return all(
+        path.startswith(("docs/", ".claude/"))
+        or ("/" not in path and path.endswith(".md"))
+        for path in normalized_paths
+    )
+
 
 class CIMixin:
 
@@ -213,6 +231,75 @@ class CIMixin:
             )
             return None
 
+    async def _fetch_commit_files(
+        self,
+        repo_full_name: str,
+        head_sha: str,
+    ) -> Optional[list[str]]:
+        """Load every changed path for a commit, failing closed on API errors."""
+        if not repo_full_name or not head_sha:
+            return None
+
+        headers = {"Accept": "application/vnd.github+json"}
+        token = self._get_github_token()
+        if token:
+            headers["Authorization"] = f"token {token}"
+
+        changed_paths: list[str] = []
+        try:
+            async with aiohttp.ClientSession(headers=headers) as session:
+                for page in range(1, _COMMIT_FILES_MAX_PAGES + 1):
+                    url = (
+                        f"https://api.github.com/repos/{repo_full_name}/commits/{head_sha}"
+                        f"?per_page={_COMMIT_FILES_PER_PAGE}&page={page}"
+                    )
+                    async with session.get(url, timeout=20) as resp:
+                        if resp.status != 200:
+                            body = await resp.text()
+                            self.logger.warning(
+                                f"⚠️ Commit-Dateien fuer {repo_full_name}@{head_sha[:7]} "
+                                f"konnten nicht geladen werden ({resp.status}): {body[:200]}"
+                            )
+                            return None
+
+                        payload = await resp.json()
+                        files = payload.get("files")
+                        if not isinstance(files, list):
+                            self.logger.warning(
+                                f"⚠️ Commit-Dateien fuer {repo_full_name}@{head_sha[:7]} "
+                                "fehlen in der GitHub-Antwort."
+                            )
+                            return None
+
+                        page_paths = [
+                            str(item.get("filename") or "").strip()
+                            for item in files
+                            if isinstance(item, dict)
+                        ]
+                        if any(not path for path in page_paths) or len(page_paths) != len(files):
+                            self.logger.warning(
+                                f"⚠️ Commit-Dateien fuer {repo_full_name}@{head_sha[:7]} "
+                                "enthalten ungueltige Eintraege."
+                            )
+                            return None
+                        changed_paths.extend(page_paths)
+
+                        if len(files) < _COMMIT_FILES_PER_PAGE:
+                            return changed_paths
+
+            self.logger.warning(
+                f"⚠️ Commit-Dateiliste fuer {repo_full_name}@{head_sha[:7]} "
+                f"ueberschreitet {_COMMIT_FILES_MAX_PAGES * _COMMIT_FILES_PER_PAGE} Dateien."
+            )
+            return None
+        except Exception as e:
+            self.logger.error(
+                f"❌ Fehler beim Laden der Commit-Dateien fuer "
+                f"{repo_full_name}@{head_sha[:7]}: {e}",
+                exc_info=True,
+            )
+            return None
+
     async def _wait_for_ci_completion(
         self,
         repo_full_name: str,
@@ -220,7 +307,7 @@ class CIMixin:
         workflow_names: List[str],
         max_wait_min: int = 30,
         admin_merge_grace_min: int = 5,
-    ) -> Literal["success", "failure", "timeout", "no_workflows"]:
+    ) -> Literal["success", "failure", "timeout", "missing", "docs_only", "no_workflows"]:
         """
         Wait for required CI workflows on a given commit to complete.
 
@@ -228,12 +315,10 @@ class CIMixin:
         58h-Vorfall: Bot triggert deploy.sh sofort bei PR-merge → deploy.sh
         Pre-Flight-Gate sieht pending CI auf dem neuen SHA → exit 1.
 
-        Welle 9.16 (Issue #243): Admin-merged PRs triggern oft keinen CI-Run
-        (Required-Checks bleiben leer). Wenn nach `admin_merge_grace_min`
-        Minuten KEIN relevanter Workflow fuer den SHA gesichtet wurde,
-        gilt das als "kein CI vorhanden" → return "no_workflows" (Caller
-        deployt direkt). Sobald aber EIN Workflow gesehen wurde, gilt der
-        normale Timeout-Pfad (max_wait_min).
+        ZERODOX#1985: Wenn nach `admin_merge_grace_min` Minuten kein relevanter
+        Workflow sichtbar ist, darf nur ein nachweislich reiner Docs-Commit
+        ohne Deployment weiterlaufen. Code- oder unklare Commits warten bis
+        `max_wait_min` und werden danach fail-closed als "missing" gemeldet.
 
         Exponential backoff: 60s → 120s → 240s → cap 300s.
 
@@ -249,9 +334,10 @@ class CIMixin:
         Returns:
             "success"      — alle required Workflows haben conclusion=success
             "failure"      — mind. 1 Workflow ist failed/cancelled/timed_out
-            "timeout"      — nach max_wait_min noch nicht alle completed
-            "no_workflows" — kein workflow_names konfiguriert ODER admin-merge
-                             ohne CI-Trigger erkannt → caller entscheidet
+            "timeout"      — gesichtete Workflows nach max_wait_min nicht completed
+            "missing"      — nach max_wait_min kein relevanter Workflow sichtbar
+            "docs_only"    — nur nicht-deploy-relevante Pfade geaendert
+            "no_workflows" — kein workflow_names konfiguriert → caller entscheidet
         """
         if not workflow_names:
             self.logger.info(
@@ -274,6 +360,7 @@ class CIMixin:
         poll_interval_s = 60
         max_poll_interval_s = 300  # 5 min cap
         saw_any_relevant = False
+        commit_paths_checked = False
 
         self.logger.info(
             f"⏳ Welle 9.10: warte auf CI-Completion fuer {repo_full_name}@{merged_sha[:7]} "
@@ -308,17 +395,30 @@ class CIMixin:
                         break
 
             if not relevant:
-                # Welle 9.16 (Issue #243): admin-merged Detection. Wenn nach
-                # admin_merge_grace_min weiter KEIN Workflow fuer den SHA gesichtet
-                # wurde, ist es vermutlich ein admin-merge ohne CI-Trigger →
-                # weiter deployen (Caller behandelt "no_workflows" als OK).
-                if not saw_any_relevant and time.monotonic() >= admin_merge_deadline:
-                    self.logger.info(
-                        f"ℹ️ _wait_for_ci_completion: nach {admin_merge_grace_min}min "
-                        f"keine relevanten Workflows fuer {merged_sha[:7]} sichtbar — "
-                        f"admin-merge ohne CI-Trigger vermutet, fahre fort."
+                # ZERODOX#1985: Nach der Grace-Period genau einmal die Commit-
+                # Pfade pruefen. Nur die identische Allowlist aus deploy.sh darf
+                # ohne Workflow weiterlaufen; API-Fehler bleiben fail-closed.
+                if (
+                    not saw_any_relevant
+                    and not commit_paths_checked
+                    and time.monotonic() >= admin_merge_deadline
+                ):
+                    commit_paths_checked = True
+                    changed_paths = await self._fetch_commit_files(repo_full_name, merged_sha)
+                    if changed_paths is not None and _paths_are_docs_only(changed_paths):
+                        self.logger.info(
+                            f"ℹ️ _wait_for_ci_completion: Docs-only-Commit "
+                            f"{merged_sha[:7]} mit {len(changed_paths)} Datei(en) erkannt — "
+                            "kein Runtime-Deployment noetig."
+                        )
+                        return "docs_only"
+
+                    classification = "Code-Commit" if changed_paths is not None else "unklarer Commit"
+                    self.logger.warning(
+                        f"⚠️ _wait_for_ci_completion: {classification} {merged_sha[:7]} "
+                        f"nach {admin_merge_grace_min}min ohne relevanten Workflow — "
+                        f"warte fail-closed bis zum {max_wait_min}min-Limit."
                     )
-                    return "no_workflows"
                 self.logger.info(
                     f"⏳ _wait_for_ci_completion: noch keine relevanten Workflows "
                     f"fuer {merged_sha[:7]} sichtbar — weiter pollen ({poll_interval_s}s)..."
@@ -381,6 +481,13 @@ class CIMixin:
             await asyncio.sleep(poll_interval_s)
             poll_interval_s = min(poll_interval_s * 2, max_poll_interval_s)
 
+        if not saw_any_relevant:
+            self.logger.warning(
+                f"🛑 _wait_for_ci_completion: CI FEHLT nach {max_wait_min}min "
+                f"fuer {repo_full_name}@{merged_sha[:7]}"
+            )
+            return "missing"
+
         self.logger.warning(
             f"⏰ _wait_for_ci_completion: TIMEOUT nach {max_wait_min}min "
             f"fuer {repo_full_name}@{merged_sha[:7]}"
@@ -389,7 +496,7 @@ class CIMixin:
 
     async def _send_ci_wait_alert(
         self,
-        outcome: Literal["failure", "timeout"],
+        outcome: Literal["failure", "timeout", "missing"],
         repo_name: str,
         repo_full_name: str,
         branch: str,
@@ -431,7 +538,7 @@ class CIMixin:
                     f"`{merged_sha[:7]}` mit Failure/Cancelled/TimedOut abgeschlossen.\n\n"
                     f"**deploy.sh wurde NICHT getriggert.** Manueller Check noetig."
                 )
-            else:  # timeout
+            elif outcome == "timeout":
                 title = f"⏰ {repo_name}: Deploy zurueckgestellt — CI nicht durch"
                 color = 0xF1C40F
                 description = (
@@ -440,6 +547,16 @@ class CIMixin:
                     f"noch nicht alle completed.\n\n"
                     f"**deploy.sh wurde NICHT getriggert.** Sobald CI gruen ist, "
                     f"deploy.sh manuell triggern."
+                )
+            else:  # missing
+                title = f"🛑 {repo_name}: Deploy ABGEBROCHEN — CI fehlt"
+                color = 0xE67E22
+                description = (
+                    f"Fail-closed-Schutz: Fuer den Code-Commit `{merged_sha[:7]}` ist "
+                    f"nach {max_wait_min} Minuten keiner der erwarteten CI-Workflows "
+                    f"({', '.join(workflow_names) or '—'}) aufgetaucht.\n\n"
+                    f"**deploy.sh wurde NICHT getriggert.** Workflow-Trigger und "
+                    f"Required-Checks pruefen; danach Deployment manuell anstossen."
                 )
 
             embed = discord.Embed(
@@ -559,9 +676,9 @@ class CIMixin:
                         max_wait_min=max_wait_min,
                     )
                     return
-                if outcome == "timeout":
+                if outcome in {"timeout", "missing"}:
                     await self._send_ci_wait_alert(
-                        outcome="timeout",
+                        outcome=outcome,
                         repo_name=repo_name,
                         repo_full_name=repo_full_name,
                         branch=branch,
@@ -570,7 +687,8 @@ class CIMixin:
                         max_wait_min=max_wait_min,
                     )
                     return
-                # outcome == "success" oder "no_workflows" → weiter unten deployen
+                # success/docs_only/no_workflows → weiter unten deployen. Bei docs_only
+                # beendet deploy.sh selbst ohne Runtime-Aenderung (identische Allowlist).
             else:
                 self.logger.info(
                     f"ℹ️ _trigger_deployment: kein ci_workflows fuer {repo_name} "
