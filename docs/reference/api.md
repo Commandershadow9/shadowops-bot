@@ -576,6 +576,12 @@ deployment:
   max_backups: 5                            # Max backups per project
   health_check_timeout: 30                  # Post-deploy health check timeout (s)
   test_timeout: 300                         # Test execution timeout (s)
+  ci_wait_admin_merge_grace_min: 5          # Grace-period (min) before checking commit paths
+                                            # when no CI workflow appears after PR merge.
+                                            # docs-only commits (docs/, .claude/, top-level *.md)
+                                            # skip the CI wait ("docs_only") → deploy proceeds.
+                                            # Code commits or API errors stay fail-closed until
+                                            # ci_wait_max_min → "missing" → no deploy.sh.
 
 # ========================================
 # INCIDENT MANAGEMENT (v3.1)
