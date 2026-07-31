@@ -1,0 +1,78 @@
+# Postfach-Routing — welcher Watchdog darf zusätzlich ans ZERODOX-Team-Postfach?
+
+> Zusatz-Dokument zu #1983 (Team-Postfach-Anbindung, Spec
+> `docs/superpowers/specs/2026-07-24-admin-cockpit-finanzen-postfach-design.md`, Stufe E4).
+> Klärt, **warum** ein Watchdog zusätzlich ans Postfach melden darf oder dauerhaft
+> Discord-only bleibt — nicht nur, welche Liste welchen Namen trägt. Discord bleibt in
+> jedem Fall der bestehende Kanal; das Postfach kommt additiv hinzu (siehe
+# lib/postfach-send.sh).
+
+## Das Prinzip (Spec, Abschnitt 3 — "Zwingende Einschränkung zu „Alles ins Postfach"")
+
+> Meldungen, die den **Ausfall von ZERODOX selbst** betreffen, dürfen nicht ausschließlich
+> in ein Postfach laufen, das in ZERODOX gehostet wird — genau im Alarmfall wäre der
+> Empfänger nicht erreichbar. Für diese Klasse (Erreichbarkeits-Wächter,
+> Datenbank-/Speicher-Alarme, externer GitHub-Actions-Wächter) bleibt Discord als bewusst
+> unabhängiger Zweitkanal bestehen. Alles Übrige — Backups, Buchungen, Zahlungen, Akquise,
+> Support, Post, SEO — zieht vollständig um.
+
+Kurz: Das Postfach lebt **in** ZERODOX. Ein Wächter, dessen Meldung lautet "ZERODOX (oder
+eine tragende Säule davon: Datenbank, Speicherplatz, der Bot, der das Postfach befüllt)
+ist gerade nicht ansprechbar", darf sich nicht selbst den einzigen Übertragungsweg
+abschneiden. Ein Wächter, dessen Meldung ein **fachlicher/redaktioneller** Befund ist
+(Doku ist veraltet, ein Score ist gesunken, ein Datensatz ist überfällig) hat dieses
+Problem nicht — ZERODOX war beim Erzeugen der Meldung nachweislich online, sonst gäbe es
+den Befund gar nicht.
+
+**Prüffrage pro Watchdog:** *Kann die Meldung selbst genau dann verloren gehen, wenn sie am
+wichtigsten wäre — weil ZERODOX, seine Datenbank oder der meldende Bot in diesem Moment
+nicht erreichbar sind?* Ja → Discord-only. Nein → postfach-fähig.
+
+## Dauerhaft Discord-only (Erreichbarkeit / DB-Speicher-Alarm / Selbstüberwachung)
+
+| Watchdog | Warum Discord-only |
+|---|---|
+| `zerodox-watchdog` | Meldet, dass zerodox.de nicht antwortet — genau dann wäre ein dort gehostetes Postfach ebenfalls nicht erreichbar. Der Klassiker aus Abschnitt 3. |
+| `memory-watchdog` | RAM-/Swap-Druck auf demselben Server, auf dem auch die ZERODOX-DB und -Web-App laufen — ein Speicher-Alarm im Sinne von Abschnitt 3, Vorstufe zu genau dem Ausfall, den `zerodox-watchdog` erst danach sähe. |
+| `disk-hygiene-watchdog` | Eine volle Platte reißt zuerst die Datenbank mit (Schreibfehler), danach die Web-App — der Datenbank-/Speicher-Alarm aus Abschnitt 3 in Reinform. |
+| `shadowops-watchdog` | Überwacht den ShadowOps-Bot selbst (`:8766/health`) — der Bot ist der Absender, der Postfach-Meldungen überhaupt erst verschickt. Fällt der Absender aus, kann er auch keine Postfach-Meldung über seinen eigenen Ausfall mehr abliefern. |
+| `shadowops-drift-watchdog` | Ergänzt den vorigen um Service-State + Restart-Loop-Erkennung — dieselbe Selbstüberwachungs-Logik, derselbe Grund. |
+| `shadowops-backup-test` (`backup-restore-test.sh`, monatlich) | Prüft die Wiederherstellbarkeit **desselben Systems**, das im Ernstfall auch das Postfach trägt. Eine Aussage über "können wir ZERODOX aus dem Backup retten" gehört in den Kanal, der einen bereits durch ZERODOX kaputten Zustand überlebt. |
+
+Zusätzlich außerhalb dieses Repos, aber derselben Klasse: der externe GitHub-Actions-Cron
+(`external-uptime.yml`, hosted `ubuntu-latest`), der zerodox.de + guildscout.eu von
+**außerhalb** des VPS anpingt — genau der Fall, den kein VPS-interner Wächter (auch kein
+Postfach-Eintrag) abdecken kann, wenn der VPS selbst komplett tot ist. Bleibt beim
+externen Discord-Webhook, nicht Teil dieser Umstellung.
+
+## Postfach-fähig (redaktionell/fachlich, keine Aussage über Erreichbarkeit)
+
+| Watchdog | Kategorie/Befund | Warum unbedenklich |
+|---|---|---|
+| `doku-drift-watchdog` | Doku vs. Realität (Port-Map, MEMORY.md-Länge) | **Pilot, bereits umgesetzt** (dieser PR). Rein redaktionell — ZERODOX lief nachweislich, als der Wächter den Vergleich zog. |
+| `ki-cost-watchdog` | Token-/Kosten-Rollup Claude+Codex, Anomalie-Alarm | Reine Kostenbeobachtung, keine Verfügbarkeitsaussage. |
+| `security-freshness-watchdog` | Alter des letzten `sec_jobs`-Laufs in der security_analyst-DB | Eine **stehende** DB-Zeile fehlt/ist alt — das ist ein fachlicher Rückstand, kein Ausfall von ZERODOX selbst (ZERODOX-Web und die security_analyst-DB sind getrennte Komponenten). |
+| `seo-audit-freshness-watchdog`, `seo-deep-audit-freshness-watchdog`, `seo-output-freshness-watchdog` | Alter des letzten SEO-Audits/-Outputs in der seo_agent-DB | Dieselbe Begründung wie oben: Frische-Prüfung gegen eine Fach-DB, keine Erreichbarkeitsaussage über ZERODOX selbst. |
+| `mayday-sim-build-drift-watchdog` | Build-ID auf maydaysim.de vs. `origin/main` HEAD | Redaktioneller Drift (Deploy hinkt Git hinterher), keine Ausfallmeldung — maydaysim.de antwortet ja, nur mit altem Stand. |
+
+## Noch nicht entschieden — braucht Owner-/Lead-Entscheidung vor Umstellung
+
+Diese Watchdogs prüfen **andere** Projekte oder Komponenten als ZERODOX selbst. Die
+Prüffrage von oben lässt sich für sie beantworten, aber #1983 hat dafür keinen
+Auftrag — sie werden hier nur benannt, damit niemand sie in einer künftigen Welle
+stillschweigend falsch einsortiert:
+
+| Watchdog | Vorläufige Einschätzung nach der Prüffrage | Offene Frage |
+|---|---|---|
+| `zerodox-akquise-ai-watchdog` | Prüft `172.19.0.1:9300/health` — die Akquise-AI-Bridge, eine ZERODOX-Nachbarkomponente im selben Docker-Netz. Nach Wortlaut von Abschnitt 3 ("Ausfall von ZERODOX selbst") knapp außerhalb, da eine eigene Komponente — aber dieselbe VPS/Netz-Korrelation wie bei `zerodox-watchdog` ist plausibel. | Zählt eine Nachbarkomponente im selben Docker-Netz als "ZERODOX selbst"? |
+| `guildscout-watchdog`, `mayday-sim-watchdog`, `mayday-ci-runner-watchdog`, `mayday-scheduler-watchdog` | Reine Erreichbarkeits-Wächter — aber für **andere** Projekte (GuildScout, mayday-sim), nicht ZERODOX. Nach Wortlaut greift die Einschränkung nicht (das ZERODOX-Postfach bliebe ja erreichbar, wenn nur GuildScout/mayday-sim ausfällt). | Gehören Ausfall-Meldungen fremder Projekte überhaupt ins ZERODOX-Postfach, oder ist das Postfach bewusst ZERODOX-Scope? Reine Scope-Frage, keine Erreichbarkeits-Frage. |
+| `ai-agent-framework-watchdog` | Prozess-State von `zerodox-support-agent`/`seo-agent` (ZERODOX-Agents) **und** `guildscout-feedback-agent` (fremdes Projekt) in einem Wächter gemischt. | Müsste ggf. aufgeteilt werden, bevor der ZERODOX-Anteil postfach-fähig würde. |
+| `cmdshadow-design-watchdog` | Prüft `cmdshadow-design-healthcheck.service` — ein eigenständiges Tool-Projekt, keine ZERODOX-Komponente. | Reine Scope-Frage wie bei GuildScout/mayday-sim oben. |
+
+## Referenz
+
+- Sende-Helfer: `scripts/lib/postfach-send.sh`
+- Pilot-Umsetzung: `scripts/doku-drift-watchdog.sh`
+- Vertrag ZERODOX-Seite: `web/src/app/api/internal/notifications/ingest/route.ts`
+- Vollständige Watchdog-Übersicht (Ports/Cycles): `deploy/MONITORING_SETUP.md`,
+  `~/.claude/rules/infrastructure.md` (ZERODOX-Repo, Tabelle "Externes Service-Monitoring")
