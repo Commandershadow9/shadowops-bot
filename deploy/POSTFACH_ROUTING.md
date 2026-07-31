@@ -28,6 +28,37 @@ den Befund gar nicht.
 wichtigsten wäre — weil ZERODOX, seine Datenbank oder der meldende Bot in diesem Moment
 nicht erreichbar sind?* Ja → Discord-only. Nein → postfach-fähig.
 
+## Nur bei Befund ins Postfach — keine Kenntnisnahme ohne Anlass
+
+**Diese Regel gilt für jede künftige Umstellung, nicht nur den Piloten** (Korrektur
+während der Review des Piloten, #1983):
+
+> Wiederkehrende Prüfungen melden **nur bei Befund** ins Postfach. Ein Lauf ohne Befund
+> erzeugt keinen Eintrag.
+>
+> **Ausnahme:** Läufe, deren Erfolg selbst ein Nachweis ist — Sicherungsläufe etwa, wo
+> „Sicherung um 03:00 erfolgreich" eine aufbewahrungswürdige Tatsache ist. Dort ist die
+> Kenntnisnahme gewollt.
+
+**Warum:** Ein Wächter, der täglich läuft und auch bei "alles in Ordnung" einen
+`KENNTNISNAHME`-Eintrag schreibt, erzeugt 365 Zeilen im Jahr, die niemand liest und die
+nichts auslösen. Die Standardansicht des Postfachs filtert auf "offen und ungelesen" —
+eine Kenntnisnahme ist zunächst ebenfalls ungelesen und würde dort erscheinen. Die erste
+Ansicht, die morgens jemand öffnet, wäre dann voll mit "nichts zu tun"-Meldungen: genau
+die zweite Flut, die dieses Vorhaben verhindern soll. Das Postfach zeigt **Arbeitsvorrat**,
+kein Betriebsprotokoll — für "lief durch" gibt es weiterhin Discord und die Log-Dateien.
+
+**Der Unterschied zur Ausnahme:** Bei einem Sicherungslauf ist die **Abwesenheit** der
+Meldung das Alarmsignal (kein Lauf = etwas ist kaputt) — deshalb muss die Anwesenheit
+dokumentiert sein, damit ihr Fehlen überhaupt auffällt. Bei einer Doku-Prüfung, einer
+Frische-Prüfung oder einem Drift-Check interessiert dagegen nur der Befund selbst; ihr
+Ausbleiben ist der Normalfall und braucht keinen Beleg.
+
+**Praktisch:** Der `postfach_post`-Aufruf gehört ausschließlich in den Befund-Zweig
+(`if [ Befund vorhanden ]`), nicht in einen `else`-Zweig für den Normalfall. Der
+Discord-Weg bleibt davon unberührt — er darf weiterhin jeden Lauf melden, dort ist der
+Throttle/Fingerprint-Mechanismus bereits eingespielt.
+
 ## Dauerhaft Discord-only (Erreichbarkeit / DB-Speicher-Alarm / Selbstüberwachung)
 
 | Watchdog | Warum Discord-only |
@@ -49,7 +80,7 @@ externen Discord-Webhook, nicht Teil dieser Umstellung.
 
 | Watchdog | Kategorie/Befund | Warum unbedenklich |
 |---|---|---|
-| `doku-drift-watchdog` | Doku vs. Realität (Port-Map, MEMORY.md-Länge) | **Pilot, bereits umgesetzt** (dieser PR). Rein redaktionell — ZERODOX lief nachweislich, als der Wächter den Vergleich zog. |
+| `doku-drift-watchdog` | Doku vs. Realität (Port-Map, MEMORY.md-Länge) | **Pilot, bereits umgesetzt** (dieser PR). Rein redaktionell — ZERODOX lief nachweislich, als der Wächter den Vergleich zog. Meldet **nur bei Befund** (siehe Abschnitt oben) — ein Lauf ohne Drift erzeugt keinen Postfach-Eintrag. |
 | `ki-cost-watchdog` | Token-/Kosten-Rollup Claude+Codex, Anomalie-Alarm | Reine Kostenbeobachtung, keine Verfügbarkeitsaussage. |
 | `security-freshness-watchdog` | Alter des letzten `sec_jobs`-Laufs in der security_analyst-DB | Eine **stehende** DB-Zeile fehlt/ist alt — das ist ein fachlicher Rückstand, kein Ausfall von ZERODOX selbst (ZERODOX-Web und die security_analyst-DB sind getrennte Komponenten). |
 | `seo-audit-freshness-watchdog`, `seo-deep-audit-freshness-watchdog`, `seo-output-freshness-watchdog` | Alter des letzten SEO-Audits/-Outputs in der seo_agent-DB | Dieselbe Begründung wie oben: Frische-Prüfung gegen eine Fach-DB, keine Erreichbarkeitsaussage über ZERODOX selbst. |
