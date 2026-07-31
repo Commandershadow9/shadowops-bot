@@ -49,7 +49,7 @@ paths:
 
 ## Watchdog-Familie (seit 2026-05-17 — Defense-in-Depth gegen shadowops-bot-Down)
 
-5 user-systemd Watchdogs pruefen alle 5 Minuten ihren Service und alerten bei Down/Recovery direkt via Discord-Webhook. **Webhook-URL:** in `~/.config/shadowops-watchdog.env` (chmod 600). **Setup-Anleitung:** `deploy/MONITORING_SETUP.md`.
+15 user-systemd Watchdogs pruefen ihren jeweiligen Service und alerten bei Down/Recovery direkt via Discord-Webhook. **Webhook-URL:** in `~/.config/shadowops-watchdog.env` (chmod 600). **Setup-Anleitung:** `deploy/MONITORING_SETUP.md`.
 
 | Timer | Mode | Endpoint/Units | Boot-Offset |
 |-------|------|----------------|-------------|
@@ -60,7 +60,8 @@ paths:
 | `mayday-scheduler-watchdog.timer` | container | leitstelle-scheduler (Docker-Health, Tick-Owner SB3) | 7 min |
 | `ai-agent-framework-watchdog.timer` | systemd | guildscout-feedback-agent, zerodox-support-agent, seo-agent | 6 min |
 | `seo-audit-freshness-watchdog.timer` | pg-freshness | seo_agent-DB: letzter erfolgreicher zerodox-Audit (`completed_at`) < 49h | 8 min |
-| `seo-output-freshness-watchdog.timer` | pg-freshness | seo_agent-DB: bei aktiven Insights Alter der jüngsten Ausgabe (Issue/PR) < 168h — Ausgabe-Stau trotz laufendem Audit (#1683) | 9 min |
+| `seo-deep-audit-freshness-watchdog.timer` | pg-freshness | seo_agent-DB: letzter zerodox-Deep-Audit (mode='deep', status='completed') < 195h — unabhaengige Schicht zu seo-audit-freshness; prueft ob woechentlicher Deep-Scan abgeschlossen (Wochen-Strategie 2026-07-17) | 11 min (6h-Zyklus) |
+| `seo-output-freshness-watchdog.timer` | pg-freshness | seo_agent-DB: bei aktiven Insights Alter der jüngsten Ausgabe (Issue/PR) < 216h — Ausgabe-Stau trotz laufendem Audit (#1683); Schwelle 168h→216h 2026-07-18 (Ausgabe 1x/Woche sonntags) | 9 min |
 | `security-freshness-watchdog.timer` | pg-freshness | security_analyst-DB: letzter erfolgreicher `sec_jobs`-Lauf < 26h — erkennt stale Security-Agent-Team (W1, seit 2026-07-09) | 10 min |
 | `memory-watchdog.timer` | meminfo | RAM ≥90% oder Swap ≥80% — Frühwarnung OOM (Throttle 60 min, seit Vorfall 2026-05-25) | 4 min |
 | `disk-hygiene-watchdog.timer` | disk + auto-prune | Auto-Prune (docker builder/image + journald) bei Disk >85%, Alarm >90% (stündlich, Selbstpflege seit 2026-05-30) | hourly |
