@@ -86,19 +86,38 @@ externen Discord-Webhook, nicht Teil dieser Umstellung.
 | `seo-audit-freshness-watchdog`, `seo-deep-audit-freshness-watchdog`, `seo-output-freshness-watchdog` | Alter des letzten SEO-Audits/-Outputs in der seo_agent-DB | Dieselbe Begründung wie oben: Frische-Prüfung gegen eine Fach-DB, keine Erreichbarkeitsaussage über ZERODOX selbst. |
 | `mayday-sim-build-drift-watchdog` | Build-ID auf maydaysim.de vs. `origin/main` HEAD | Redaktioneller Drift (Deploy hinkt Git hinterher), keine Ausfallmeldung — maydaysim.de antwortet ja, nur mit altem Stand. |
 
-## Noch nicht entschieden — braucht Owner-/Lead-Entscheidung vor Umstellung
+## Postfach-fähig, aber erst nach dem Soak des Piloten (Fremdprojekt-Wächter)
 
-Diese Watchdogs prüfen **andere** Projekte oder Komponenten als ZERODOX selbst. Die
-Prüffrage von oben lässt sich für sie beantworten, aber #1983 hat dafür keinen
-Auftrag — sie werden hier nur benannt, damit niemand sie in einer künftigen Welle
-stillschweigend falsch einsortiert:
+Diese Watchdogs prüfen **andere** Projekte oder Komponenten als ZERODOX selbst. Bis zum
+Abschluss der Pilot-Review stand hier "noch nicht entschieden" — die Frage ist jetzt geklärt
+(Team-Lead-Entscheidung nach Review des Piloten, #1983):
 
-| Watchdog | Vorläufige Einschätzung nach der Prüffrage | Offene Frage |
+> **Fremdprojekt-Wächter (GuildScout, MayDay, cmdshadow-design, AI-Agent-Framework, Akquise-AI):**
+> postfach-fähig, aber **erst nach dem Soak des Piloten**. Das Selbstüberwachungs-Paradox greift bei
+> ihnen nicht — sie überwachen andere Systeme, ihre Zustellung hängt nicht am überwachten Objekt.
+> Umstellung als eigener, kleiner Schritt pro Projekt, nicht als Sammelaktion.
+
+**Begründung:** Ein Wächter, der meldet "GuildScout antwortet nicht", ist nicht von ZERODOX'
+Verfügbarkeit betroffen — ZERODOX läuft, das Postfach ist erreichbar, die Meldung kommt an.
+Die Prüffrage von oben beantwortet sich für diese ganze Klasse mit "Nein" (kein
+Discord-only-Zwang). Dazu kommt die ausdrückliche Owner-Vorgabe: ZERODOX soll die zentrale
+Sammelstelle für die Infrastruktur werden, weil dort Oberfläche, Nutzer und Push-System liegen
+— Fremdprojekt-Wächter gehören also grundsätzlich dazu.
+
+**Warum trotzdem nicht in dieser Welle:** #1983 hat bewusst nur den Piloten umgestellt. Erst
+muss sich im Betrieb zeigen, dass die Entdopplung greift und das Postfach nicht flutet — sieben
+weitere Wächter gleichzeitig scharf zu schalten wäre genau die Sammelauslieferung, die dieses
+Konzept vermeiden will. Jede Umstellung erfolgt danach als eigener, kleiner Schritt pro Projekt.
+
+Die Tabelle bleibt als Ausgangspunkt für die jeweilige Einzel-Umstellung erhalten — sie war
+zuvor als offene Erlaubnis-Frage formuliert, ist jetzt als Vorbereitungsnotiz zu lesen:
+
+| Watchdog | Warum postfach-fähig (Prüffrage) | Vorbereitung vor der Einzel-Umstellung |
 |---|---|---|
-| `zerodox-akquise-ai-watchdog` | Prüft `172.19.0.1:9300/health` — die Akquise-AI-Bridge, eine ZERODOX-Nachbarkomponente im selben Docker-Netz. Nach Wortlaut von Abschnitt 3 ("Ausfall von ZERODOX selbst") knapp außerhalb, da eine eigene Komponente — aber dieselbe VPS/Netz-Korrelation wie bei `zerodox-watchdog` ist plausibel. | Zählt eine Nachbarkomponente im selben Docker-Netz als "ZERODOX selbst"? |
-| `guildscout-watchdog`, `mayday-sim-watchdog`, `mayday-ci-runner-watchdog`, `mayday-scheduler-watchdog` | Reine Erreichbarkeits-Wächter — aber für **andere** Projekte (GuildScout, mayday-sim), nicht ZERODOX. Nach Wortlaut greift die Einschränkung nicht (das ZERODOX-Postfach bliebe ja erreichbar, wenn nur GuildScout/mayday-sim ausfällt). | Gehören Ausfall-Meldungen fremder Projekte überhaupt ins ZERODOX-Postfach, oder ist das Postfach bewusst ZERODOX-Scope? Reine Scope-Frage, keine Erreichbarkeits-Frage. |
-| `ai-agent-framework-watchdog` | Prozess-State von `zerodox-support-agent`/`seo-agent` (ZERODOX-Agents) **und** `guildscout-feedback-agent` (fremdes Projekt) in einem Wächter gemischt. | Müsste ggf. aufgeteilt werden, bevor der ZERODOX-Anteil postfach-fähig würde. |
-| `cmdshadow-design-watchdog` | Prüft `cmdshadow-design-healthcheck.service` — ein eigenständiges Tool-Projekt, keine ZERODOX-Komponente. | Reine Scope-Frage wie bei GuildScout/mayday-sim oben. |
+| `zerodox-akquise-ai-watchdog` | Prüft `172.19.0.1:9300/health` — die Akquise-AI-Bridge, eine ZERODOX-Nachbarkomponente im selben Docker-Netz. Fällt sie aus, bleiben ZERODOX-Web, -DB und Postfach trotzdem erreichbar — die Prüffrage greift nicht. | Keine besondere — folgt demselben Muster wie der Pilot. |
+| `guildscout-watchdog`, `mayday-sim-watchdog`, `mayday-ci-runner-watchdog`, `mayday-scheduler-watchdog` | Reine Erreichbarkeits-Wächter für **andere** Projekte (GuildScout, mayday-sim) — das ZERODOX-Postfach bliebe erreichbar, wenn nur GuildScout/mayday-sim ausfällt. | Keine besondere — folgt demselben Muster wie der Pilot. |
+| `ai-agent-framework-watchdog` | Meldet Prozess-State, keine ZERODOX-Verfügbarkeitsaussage. | Prüft **gemischt** `zerodox-support-agent`/`seo-agent` (ZERODOX) **und** `guildscout-feedback-agent` (fremd) — vor der Umstellung klären, ob eine Aufteilung sinnvoll ist, damit ZERODOX- und Fremdprojekt-Anteil getrennt zuordenbar bleiben. |
+| `cmdshadow-design-watchdog` | Prüft `cmdshadow-design-healthcheck.service` — ein eigenständiges Tool-Projekt, keine ZERODOX-Verfügbarkeitsaussage. | Keine besondere — folgt demselben Muster wie der Pilot. |
 
 ## Referenz
 
