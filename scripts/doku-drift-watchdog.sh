@@ -37,6 +37,12 @@ if ! declare -f discord_post >/dev/null 2>&1; then
     -H 'Content-Type: application/json' --data "$2" --max-time 10 "$1" 2>/dev/null || echo 000; }
 fi
 
+# Zusätzlich additiv ans ZERODOX-Team-Postfach (#1983) — rein additiv, Discord
+# oben bleibt unverändert der Hauptkanal. Fehlt der Schlüssel oder die Lib,
+# bleibt postfach_post schlicht ungenutzt (kein Fallback nötig, kein Fehler).
+# shellcheck source=lib/postfach-send.sh
+source "$(dirname "${BASH_SOURCE[0]}")/lib/postfach-send.sh" 2>/dev/null || true
+
 drift_lines=()
 
 # (a) Container-Host-Ports, die in keiner Port-Map-Datei stehen.
@@ -96,6 +102,23 @@ if [ "${#drift_lines[@]}" -gt 0 ]; then
   echo "[doku-drift] ${#drift_lines[@]} Drift(s) erkannt"
 else
   echo "[doku-drift] OK — keine Abweichung"
+fi
+
+# Postfach-Eintrag: ein Eintrag pro Tag (dedupKey rotiert täglich), unabhängig
+# vom Discord-Throttle oben — das Postfach führt den Tages-Status als Verlauf,
+# Discord alarmiert nur bei tatsächlichem (nicht bereits gemeldetem) Drift.
+if declare -f postfach_post >/dev/null 2>&1; then
+  postfach_dedup="shadowops:doku-drift-watchdog:$(date -u +%Y-%m-%d)"
+  if [ "${#drift_lines[@]}" -gt 0 ]; then
+    postfach_body="$(printf '• %s\n' "${drift_lines[@]}")"
+    postfach_post --category=system --type=watchdog.doku-drift.finding \
+      --severity=WARNING --kind=VORGANG --title="Doku-Drift erkannt" \
+      --body="$postfach_body" --dedup-key="$postfach_dedup" || true
+  else
+    postfach_post --category=system --type=watchdog.doku-drift.ok \
+      --severity=INFO --kind=KENNTNISNAHME --title="Doku-Drift-Check: keine Abweichung" \
+      --dedup-key="$postfach_dedup" || true
+  fi
 fi
 
 jq -nc --arg fp "$fp" --arg a "$new_alert_at" --arg c "$now_iso" --argjson n "${#drift_lines[@]}" \
