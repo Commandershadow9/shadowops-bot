@@ -104,21 +104,18 @@ else
   echo "[doku-drift] OK — keine Abweichung"
 fi
 
-# Postfach-Eintrag: ein Eintrag pro Tag (dedupKey rotiert täglich), unabhängig
-# vom Discord-Throttle oben — das Postfach führt den Tages-Status als Verlauf,
-# Discord alarmiert nur bei tatsächlichem (nicht bereits gemeldetem) Drift.
-if declare -f postfach_post >/dev/null 2>&1; then
+# Postfach-Eintrag: NUR bei Befund (Team-Lead-Korrektur #1983). Ein Lauf ohne
+# Drift erzeugt KEINEN Eintrag — sonst würde die Postfach-Übersicht mit
+# "geprüft, alles ok"-Kenntnisnahmen volllaufen, die niemand abarbeiten muss.
+# Begründung + Ausnahme (Sicherungsläufe) siehe deploy/POSTFACH_ROUTING.md
+# Abschnitt "Nur bei Befund ins Postfach". Discord oben bleibt unverändert —
+# dort ist der Throttle bereits eingespielt und meldet weiterhin jeden Lauf.
+if declare -f postfach_post >/dev/null 2>&1 && [ "${#drift_lines[@]}" -gt 0 ]; then
   postfach_dedup="shadowops:doku-drift-watchdog:$(date -u +%Y-%m-%d)"
-  if [ "${#drift_lines[@]}" -gt 0 ]; then
-    postfach_body="$(printf '• %s\n' "${drift_lines[@]}")"
-    postfach_post --category=system --type=watchdog.doku-drift.finding \
-      --severity=WARNING --kind=VORGANG --title="Doku-Drift erkannt" \
-      --body="$postfach_body" --dedup-key="$postfach_dedup" || true
-  else
-    postfach_post --category=system --type=watchdog.doku-drift.ok \
-      --severity=INFO --kind=KENNTNISNAHME --title="Doku-Drift-Check: keine Abweichung" \
-      --dedup-key="$postfach_dedup" || true
-  fi
+  postfach_body="$(printf '• %s\n' "${drift_lines[@]}")"
+  postfach_post --category=system --type=watchdog.doku-drift.finding \
+    --severity=WARNING --kind=VORGANG --title="Doku-Drift erkannt" \
+    --body="$postfach_body" --dedup-key="$postfach_dedup" || true
 fi
 
 jq -nc --arg fp "$fp" --arg a "$new_alert_at" --arg c "$now_iso" --argjson n "${#drift_lines[@]}" \
