@@ -46,6 +46,7 @@ paths:
 | `service-watchdog.sh` | Generischer Watchdog (HTTP- oder systemd-Mode), parametrisiert via Env-Vars |
 | `backup-restore-test.sh` | Wrapper um `~/ZERODOX/scripts/backup-test.sh` mit Discord-Alert |
 | `lib/discord-send.sh` | Geteilte `discord_post()`-Funktion mit 429-Resilienz (Jitter + Retry-After, #293). Gesourct von service-/disk-hygiene-/doku-drift-/memory-watchdog (Fallback-Guard hält altes Inline-Curl). `bot-watchdog.sh` bleibt unberührt (Backward-Compat). |
+| `lib/postfach-send.sh` | Additiver Sender ans ZERODOX-Team-Postfach (POST an `/api/internal/notifications/ingest`, Header `X-Notify-Key: NOTIFY_INGEST_KEY`). Kein Request bei fehlendem Key, NIE fatal. Nur bei Befund aufrufen (nicht im Normalfall-Zweig). Routing-Klassifikation: `deploy/POSTFACH_ROUTING.md`. |
 
 ## Watchdog-Familie (seit 2026-05-17 — Defense-in-Depth gegen shadowops-bot-Down)
 
@@ -65,7 +66,7 @@ paths:
 | `security-freshness-watchdog.timer` | pg-freshness | security_analyst-DB: letzter erfolgreicher `sec_jobs`-Lauf < 26h — erkennt stale Security-Agent-Team (W1, seit 2026-07-09) | 10 min |
 | `memory-watchdog.timer` | meminfo | RAM ≥90% oder Swap ≥80% — Frühwarnung OOM (Throttle 60 min, seit Vorfall 2026-05-25) | 4 min |
 | `disk-hygiene-watchdog.timer` | disk + auto-prune | Auto-Prune (docker builder/image + journald) bei Disk >85%, Alarm >90% (stündlich, Selbstpflege seit 2026-05-30) | hourly |
-| `doku-drift-watchdog.timer` | doku-drift | Container-Ports vs. Port-Map + MEMORY.md-Limit (<200), nur Alarm (Selbstpflege seit 2026-05-30) | täglich 06:30 |
+| `doku-drift-watchdog.timer` | doku-drift | Container-Ports vs. Port-Map + MEMORY.md-Limit (<200), nur Alarm (Selbstpflege seit 2026-05-30) — meldet bei Befund zusätzlich ans ZERODOX-Team-Postfach (Pilot #1983) | täglich 06:30 |
 | `ki-cost-watchdog.timer` | ki-cost | Token/Kosten-Rollup Claude+Codex aus JSONL + Anomalie-Alarm (Selbstpflege seit 2026-05-30) | täglich 07:15 |
 | `shadowops-backup-test.timer` | — | monatlich 1. d. Monats 04:50, Wrapper um ZERODOX backup-test.sh | OnCalendar |
 
