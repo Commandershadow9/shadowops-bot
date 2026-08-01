@@ -61,7 +61,8 @@ shadowops-bot/
 │   ├── shadowops-bot.service          # systemd Bot-Service
 │   ├── *-watchdog.{service,timer}     # Externe Uptime-Watchdogs (19 Watchdogs: HTTP/systemd/container/pg-freshness/jq-filter/build-drift/state-drift + Backup-Test)
 │   ├── shadowops-watchdog.env.example # Webhook-Env Template
-│   └── MONITORING_SETUP.md            # Setup-Anleitung Watchdogs
+│   ├── MONITORING_SETUP.md            # Setup-Anleitung Watchdogs
+│   └── POSTFACH_ROUTING.md            # Routing-Klassifikation: welche Watchdogs zusätzlich ans ZERODOX-Team-Postfach melden dürfen (Pilot #1983)
 ├── .github/
 │   └── workflows/
 │       ├── ci.yml                     # Test-Pipeline (pytest)
@@ -153,13 +154,13 @@ Zusätzlich zum internen `project_monitor.py` laufen 19 unabhängige user-system
 | `cmdshadow-design-watchdog` | systemd-result | cmdshadow-design-healthcheck.service (max_age=36h, 1h-Cycle) |
 | `memory-watchdog` | meminfo | RAM ≥90% oder Swap ≥80% auf VPS, Frühwarnung vor OOM-Cascade (seit 2026-05-25, Vorfall logind-Kill durch earlyoom) |
 | `disk-hygiene-watchdog` | disk + auto-prune | Auto-Prune (docker builder/image + journald) bei Disk >85%, Alarm >90% (stündlich, Selbstpflege seit 2026-05-30) |
-| `doku-drift-watchdog` | doku-drift | Container-Ports vs. Port-Map + MEMORY.md-Limit (<200), nur Alarm (täglich 06:30, Selbstpflege seit 2026-05-30) |
+| `doku-drift-watchdog` | doku-drift | Container-Ports vs. Port-Map + MEMORY.md-Limit (<200), nur Alarm (täglich 06:30, Selbstpflege seit 2026-05-30) — meldet bei Befund zusätzlich ans ZERODOX-Team-Postfach (Pilot #1983, via `scripts/lib/postfach-send.sh`, Routing: `deploy/POSTFACH_ROUTING.md`) |
 | `ki-cost-watchdog` | ki-cost | Token/Kosten-Rollup Claude+Codex aus JSONL + relativer Anomalie-Alarm (2.5× 7-Tage-Schnitt) + optionale absolute Kostendecke (`KICOST_ABSOLUTE_ALERT_USD`, default 0/aus) + Pro-Projekt-Aufschlüsselung (Top-`KICOST_TOP_PROJECTS` Claude-Projekte nach Kosten, 2026-07-15) im täglichen Embed (täglich 07:15, Selbstpflege seit 2026-05-30) |
 | `shadowops-backup-test` | — | monatlich 1. d. Monats, Wrapper um `~/ZERODOX/scripts/backup-test.sh` |
 
 **GitHub Actions Externer Backstop (seit 2026-06-10, #277-Folge):** `.github/workflows/external-uptime.yml` läuft auf GitHub-hosted `ubuntu-latest` (VPS-unabhängig), pingt `zerodox.de/api/health` + `guildscout.eu/health` alle 5 min, alarmiert via Repo-Secret `UPTIME_DISCORD_WEBHOOK` in `#🩺-uptime-alerts`. Drei Alert-Klassen: UNREACHABLE (DNS/Totalausfall), ERROR (5xx), DEGRADED (200 + status≠ok). Reiner Backstop bei VPS-Totalausfall — schnelle Erkennung machen die internen Watchdogs.
 
-**Skripte:** `scripts/service-watchdog.sh` (generisch, parametrisiert), `scripts/bot-watchdog.sh` (Backward-Compat), `scripts/sync-watchdog-units.sh` (IaC-Sync: spiegelt `deploy/*-watchdog.{service,timer}` als Symlinks in `~/.config/systemd/user/`, idempotent, `--dry-run`/`--prune`/`--strict`-Flags, `--strict` exit 1 bei Orphans fuer CI-Drift-Gate, seit #294). **Service-Files:** `deploy/<name>-watchdog.{service,timer}`. **Webhook-Config:** `~/.config/shadowops-watchdog.env` (chmod 600). **Setup-Anleitung:** [`deploy/MONITORING_SETUP.md`](./deploy/MONITORING_SETUP.md).
+**Skripte:** `scripts/service-watchdog.sh` (generisch, parametrisiert), `scripts/bot-watchdog.sh` (Backward-Compat), `scripts/sync-watchdog-units.sh` (IaC-Sync: spiegelt `deploy/*-watchdog.{service,timer}` als Symlinks in `~/.config/systemd/user/`, idempotent, `--dry-run`/`--prune`/`--strict`-Flags, `--strict` exit 1 bei Orphans fuer CI-Drift-Gate, seit #294), `scripts/lib/discord-send.sh` (429-resilientes Discord-Webhook-Senden, Jitter + Retry-After, #293), `scripts/lib/postfach-send.sh` (additiver Sender ans ZERODOX-Team-Postfach: POST an `/api/internal/notifications/ingest`, Header `X-Notify-Key: NOTIFY_INGEST_KEY`; kein Request bei fehlendem Key, NIE fatal — Discord-Pfad bleibt primär, Routing-Klassifikation: `deploy/POSTFACH_ROUTING.md`). **Service-Files:** `deploy/<name>-watchdog.{service,timer}`. **Webhook-Config:** `~/.config/shadowops-watchdog.env` (chmod 600). **Setup-Anleitung:** [`deploy/MONITORING_SETUP.md`](./deploy/MONITORING_SETUP.md).
 
 **Regel beim Hinzufügen eines neuen kritischen Services:** Watchdog-Service-File aus `deploy/` kopieren, Env-Vars anpassen, Symlink in `~/.config/systemd/user/`, `daemon-reload + enable + start`, Recovery-Alert testen. Tabelle hier UND in `MONITORING_SETUP.md` erweitern.
 
@@ -293,6 +294,8 @@ Worker-Konventionen:
 - [config/DO-NOT-TOUCH.md](./config/DO-NOT-TOUCH.md)
 
 ## Letztes Update dieser Datei
+
+2026-07-31 — ZERODOX-Team-Postfach-Anbindung Pilot (Commit `c9eb601`, #388 / ZERODOX#1983): `scripts/lib/postfach-send.sh` neuer additiver Sender ans ZERODOX-Team-Postfach — POST an `/api/internal/notifications/ingest` (Header `X-Notify-Key: NOTIFY_INGEST_KEY`), silent-return bei fehlendem Key oder Netzwerkfehler (NIE fatal, NIE `exit`). `doku-drift-watchdog.sh` als Pilot: meldet nur bei Befund ans Postfach (dedupKey rotiert täglich). `deploy/POSTFACH_ROUTING.md` klassifiziert alle Watchdogs: Erreichbarkeits-Wächter (zerodox-watchdog, memory, disk, shadowops-*, backup-test) → Discord-only; redaktionelle/fachliche Wächter (doku-drift, ki-cost, seo-*-freshness, security-freshness, mayday-build-drift) → postfach-fähig. Fremdprojekt-Wächter (GuildScout, mayday-sim, cmdshadow-design, AI-Agent) erst nach Soak-Ende als eigene Einzel-Umstellung. Regel: nur bei Befund — keine Kenntnisnahme ohne Anlass. `deploy/POSTFACH_ROUTING.md` im Verzeichnis-Baum ergänzt. `scripts/lib/postfach-send.sh` + `scripts/lib/discord-send.sh` im Skripte-Abschnitt explizit aufgeführt.
 
 2026-07-28 — ZERODOX#1985: Fail-closed Blocking fuer Code-Commits ohne CI (Commit `543cd87`): `_wait_for_ci_completion` in `ci_mixin.py` prueft nach `ci_wait_admin_merge_grace_min` (default 5 min) ohne sichtbaren Workflow ob der Merge-Commit nur Doku-Pfade aendert. Neu: `_fetch_commit_files()` (GitHub-Commits-API, paginiert, fail-closed bei API-Fehler) + `_paths_are_docs_only()` — erlaubte Pfade: `docs/`, `.claude/`, Top-Level-`*.md`. Nur bei nachweislich reinem Docs-Commit: return `"docs_only"` → deploy.sh wird getriggert (kein Runtime-Impact, identische Allowlist wie `ZERODOX/scripts/deploy.sh`). Code-Commits oder API-Fehler: warten das volle Zeitfenster ab, return `"missing"` → `_send_ci_wait_alert(outcome="missing")` → KEIN deploy.sh. Neue Config-Key: `ci_wait_admin_merge_grace_min` (default 5). 148 neue Tests in `test_github_integration.py`.
 
