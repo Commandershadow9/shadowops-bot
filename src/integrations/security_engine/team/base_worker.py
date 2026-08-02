@@ -27,9 +27,24 @@ class BaseSecurityWorker(abc.ABC):
 
     @abc.abstractmethod
     async def process(self, job: SecurityJob) -> JobResult:
+        """Fuehre den Worker-spezifischen Scan aus.
+
+        Subclasses MUESSEN diese Methode implementieren. Exceptions werden von
+        handle_request abgefangen — process darf (und soll) werfen statt FAILED
+        selbst zu bauen.
+
+        Returns:
+            JobResult mit Status OK, PARTIAL oder FAILED sowie optionalen findings/errors.
+        """
         raise NotImplementedError
 
     async def handle_request(self, job: SecurityJob) -> JobResult:
+        """Fuehre process() aus mit Lifecycle-Persistierung, Exception-Isolation und Timing.
+
+        Setzt job-Status in sec_jobs auf in_progress vor dem Aufruf und auf
+        completed/failed danach. Gibt immer ein JobResult zurueck — auch bei
+        unerwarteten Exceptions (dann Status FAILED, Traceback in errors).
+        """
         t0 = time.monotonic()
         await self._persist_in_progress(job)
         try:

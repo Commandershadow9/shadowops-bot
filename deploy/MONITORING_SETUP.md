@@ -135,7 +135,15 @@ cp ~/shadowops-bot/deploy/shadowops-watchdog.env.example \
 
 # Webhook-URL eintragen
 nano ~/.config/shadowops-watchdog.env
-# → SHADOWOPS_WATCHDOG_WEBHOOK=https://discord.com/api/webhooks/...
+# Pflicht:
+# SHADOWOPS_WATCHDOG_WEBHOOK=https://discord.com/api/webhooks/...
+#
+# Optional — ZERODOX-Team-Postfach-Integration (Pilot #1983, scripts/lib/postfach-send.sh):
+# NOTIFY_INGEST_KEY=<API-Key>
+#   Wenn gesetzt: doku-drift-watchdog meldet bei Befund zusaetzlich ans ZERODOX-Postfach
+#   (POST an zerodox.de/api/internal/notifications/ingest, Header X-Notify-Key).
+#   Fehlt der Key: kein Request, stille Rueckkehr (never fatal). Discord bleibt Hauptkanal.
+#   Routing-Regeln: deploy/POSTFACH_ROUTING.md.
 
 # Rechte: nur du darfst lesen (enthält Token!)
 chmod 600 ~/.config/shadowops-watchdog.env

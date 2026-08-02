@@ -28,6 +28,19 @@ class SecurityOrchestrator:
         trigger: str = "manual",
         token_cost: int = 0,
     ) -> SecurityJob:
+        """Persistiere einen Job in sec_jobs und publiziere ihn auf sec:job:<type>:request.
+
+        Args:
+            worker_type: Worker-Kennung (z.B. "npm_audit").
+            project: Projekt-Name (muss in security_team.config der Bot-Config vorhanden sein).
+            payload: Beliebige worker-spezifische Daten (Pfade, Optionen).
+            trigger: Herkunft des Jobs — "manual", "cron" oder "sec:trigger".
+            token_cost: Erwartete Token-Kosten (P2-Seam fuer Cap-Enforcement; aktuell 0 fuer npm_audit).
+
+        Returns:
+            SecurityJob mit vergebener job_id, unabhaengig davon ob die DB-Persistierung
+            erfolgreich war (Fehler werden nur geloggt, nicht re-raised).
+        """
         job = SecurityJob(
             worker_type=worker_type, project=project,
             payload=payload or {}, trigger=trigger, token_cost=token_cost,
