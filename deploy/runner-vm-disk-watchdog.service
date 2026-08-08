@@ -1,0 +1,43 @@
+[Unit]
+# Zweite Luecke aus ZERODOX #2148: Die Retention auf der Runner-VM laeuft
+# (Cron 04:37, /usr/local/bin/zerodox-build-cache-prune), aber ihre Fruehwarnung
+# schreibt nur in ein lokales Log auf der VM — dort liest sie niemand.
+#
+# Am 2026-08-05 lief / auf 10.8.0.10 auf 100 %. Alle 8 ZERODOX-Runner und die
+# mayday-sim-Runner fielen bei GitHub auf "offline", die CI aller Projekte stand
+# ueber eine Stunde. `systemctl` meldete die Dienste dabei als "active running" —
+# der Prozess-Status war also wertlos, die Disk war das Signal.
+#
+# Der disk-hygiene-watchdog auf dem Hauptserver deckt diese VM nicht ab; er misst
+# nur lokale Mountpoints. Dieser Watchdog schliesst genau diese Luecke ueber den
+# ohnehin vorhandenen Health-Endpunkt.
+Description=Runner-VM Disk Watchdog — Alarm bevor die CI stillsteht (ZERODOX #2148)
+Documentation=https://github.com/Commandershadow9/ZERODOX/issues/2148
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+EnvironmentFile=-/home/cmdshadow/.config/shadowops-watchdog.env
+Environment=WATCHDOG_SERVICE_NAME=runner-vm-disk
+Environment=WATCHDOG_HEALTH_URL=http://10.8.0.10:9100/health
+Environment=WATCHDOG_MODE=http
+Environment=WATCHDOG_REQUIRE_BOT_READY=0
+# Schwelle 85 %: Die Retention haelt die VM normal bei 56-71 %. 85 % laesst
+# genug Vorlauf, um zu reagieren, bevor Runner ausfallen — und liegt weit genug
+# ueber dem Normalband, dass kein Rauschen entsteht.
+# Anfuehrungszeichen sind PFLICHT: systemd bricht `Environment=KEY=wert mit
+# leerzeichen` am Leerzeichen um. Ohne sie kam nur `.components.disk.used_percent`
+# an, jq lieferte die Zahl statt eines Wahrheitswerts, und der Watchdog wertete
+# das als ungueltigen Filter — ein Fehlalarm bei voellig gesunder VM (08.08.2026).
+Environment="WATCHDOG_HEALTH_JQ_FILTER=.components.disk.used_percent < 85"
+Environment=WATCHDOG_STATE_FILE=/home/cmdshadow/shadowops-bot/data/watchdog_state_runner-vm-disk.json
+ExecStart=/home/cmdshadow/shadowops-bot/scripts/service-watchdog.sh
+StandardOutput=journal
+StandardError=journal
+SyslogIdentifier=runner-vm-disk-watchdog
+NoNewPrivileges=true
+PrivateTmp=true
+
+[Install]
+WantedBy=default.target

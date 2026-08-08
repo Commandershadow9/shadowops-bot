@@ -1,0 +1,15 @@
+[Unit]
+# 30 Minuten statt 5: Eine Platte laeuft nicht in Minuten voll, und der Cache
+# waechst pro CI-Lauf. Haeufigeres Fragen brachte nur Last ohne frueheres Wissen.
+Description=Timer: Runner-VM Disk-Check alle 30 Min (ZERODOX #2148)
+
+[Timer]
+OnBootSec=9min
+OnUnitActiveSec=30min
+RandomizedDelaySec=90s
+AccuracySec=1min
+Persistent=false
+Unit=runner-vm-disk-watchdog.service
+
+[Install]
+WantedBy=timers.target
