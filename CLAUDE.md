@@ -59,7 +59,7 @@ shadowops-bot/
 │   └── PROJECT_*.md              # Per-projekt-Notizen
 ├── deploy/
 │   ├── shadowops-bot.service          # systemd Bot-Service
-│   ├── *-watchdog.{service,timer}     # Externe Uptime-Watchdogs (19 Watchdogs: HTTP/systemd/container/pg-freshness/jq-filter/build-drift/state-drift + Backup-Test)
+│   ├── *-watchdog.{service,timer}     # Externe Uptime-Watchdogs (20 Watchdogs: HTTP/systemd/container/pg-freshness/jq-filter/build-drift/state-drift + Backup-Test)
 │   ├── shadowops-watchdog.env.example # Webhook-Env Template
 │   ├── MONITORING_SETUP.md            # Setup-Anleitung Watchdogs
 │   └── POSTFACH_ROUTING.md            # Routing-Klassifikation: welche Watchdogs zusätzlich ans ZERODOX-Team-Postfach melden dürfen (Pilot #1983)
@@ -133,7 +133,7 @@ shadowops-bot/
 
 ## Externes Monitoring (seit 2026-05-17 — Defense-in-Depth)
 
-Zusätzlich zum internen `project_monitor.py` laufen 19 unabhängige user-systemd Watchdogs (Zyklen: 5–15 min je nach Watchdog, cmdshadow-design 1h, Selbstpflege-Watchdogs stündlich/täglich, Backup-Test monatlich) und posten Down/Recovery direkt via Discord-Webhook in `#🩺-uptime-alerts` (NICHT über den Bot — funktioniert auch wenn shadowops-bot tot ist):
+Zusätzlich zum internen `project_monitor.py` laufen 20 unabhängige user-systemd Watchdogs (Zyklen: 5–15 min je nach Watchdog, cmdshadow-design 1h, Selbstpflege-Watchdogs stündlich/täglich, Backup-Test monatlich) und posten Down/Recovery direkt via Discord-Webhook in `#🩺-uptime-alerts` (NICHT über den Bot — funktioniert auch wenn shadowops-bot tot ist):
 
 | Watchdog | Mode | Target |
 |---|---|---|
@@ -144,6 +144,7 @@ Zusätzlich zum internen `project_monitor.py` laufen 19 unabhängige user-system
 | `guildscout-watchdog` | http | http://localhost:8765/health |
 | `mayday-sim-watchdog` | http | https://maydaysim.de/api/health |
 | `mayday-ci-runner-watchdog` | http + jq-filter | http://10.8.0.10:9100/health, filter=`.components.ci_runner.ok` (#mayday-sim#425) |
+| `runner-vm-disk-watchdog` | http + jq-filter | http://10.8.0.10:9100/health, filter=`.components.disk.used_percent > 85` — Alarm bei Disk ≥85% auf Runner-VM; Anlass 2026-08-05: / voll → CI aller Projekte 1h offline, Prozess-Status wertlos (ZERODOX#2148, Zyklus 30 min, PR #404) |
 | `mayday-sim-build-drift-watchdog` | build-drift | https://maydaysim.de/api/build-id vs. origin/main HEAD — Alert bei >30 min Drift, Zyklus 15 min (#mayday-sim#416) |
 | `mayday-scheduler-watchdog` | container | leitstelle-scheduler (Docker-Health) — Game-Tick-Owner seit SB3 (#mayday-sim#498), unüberwachter SPOF ohne diesen Watchdog |
 | `ai-agent-framework-watchdog` | systemd | guildscout-feedback-agent, zerodox-support-agent, seo-agent (nur Prozess-State — prüft nicht ob die Arbeit gelingt) |
@@ -153,7 +154,7 @@ Zusätzlich zum internen `project_monitor.py` laufen 19 unabhängige user-system
 | `security-freshness-watchdog` | pg-freshness | security_analyst-DB: letzter erfolgreicher `sec_jobs`-Lauf (`completed_at`, Status `ok`/`partial`) < 26h — erkennt stale Security-Agent-Team (W1 Soak seit 2026-07-09, stündlich, deploy: `deploy/security-freshness-watchdog.{service,timer}`) |
 | `cmdshadow-design-watchdog` | systemd-result | cmdshadow-design-healthcheck.service (max_age=36h, 1h-Cycle) |
 | `memory-watchdog` | meminfo | RAM ≥90% oder Swap ≥80% auf VPS, Frühwarnung vor OOM-Cascade (seit 2026-05-25, Vorfall logind-Kill durch earlyoom) |
-| `disk-hygiene-watchdog` | disk + auto-prune | Auto-Prune (docker builder/image + journald) bei Disk >85%, Alarm >90% (stündlich, Selbstpflege seit 2026-05-30) |
+| `disk-hygiene-watchdog` | disk + auto-prune | Auto-Prune (docker builder/image + journald) bei Disk >85%, Alarm >90%; Inode-Monitoring (`inode_pct()`) + konfigurierbare `DISK_EXTRA_MOUNTS` (default `/tmp`, nur Alarm — kein Prune auf fremde Prozess-Dateien) — Anlass 2026-08-08: /tmp 100% Inodes bei 6,8 GB freiem Platz, Watchdog meldete OK (stündlich, Selbstpflege seit 2026-05-30, PR #403) |
 | `doku-drift-watchdog` | doku-drift | Container-Ports vs. Port-Map + MEMORY.md-Limit (<200), nur Alarm (täglich 06:30, Selbstpflege seit 2026-05-30) — meldet bei Befund zusätzlich ans ZERODOX-Team-Postfach (Pilot #1983, via `scripts/lib/postfach-send.sh`, Routing: `deploy/POSTFACH_ROUTING.md`) |
 | `ki-cost-watchdog` | ki-cost | Token/Kosten-Rollup Claude+Codex aus JSONL + relativer Anomalie-Alarm (2.5× 7-Tage-Schnitt) + optionale absolute Kostendecke (`KICOST_ABSOLUTE_ALERT_USD`, default 0/aus) + Pro-Projekt-Aufschlüsselung (Top-`KICOST_TOP_PROJECTS` Claude-Projekte nach Kosten, 2026-07-15) im täglichen Embed (täglich 07:15, Selbstpflege seit 2026-05-30) |
 | `shadowops-backup-test` | — | monatlich 1. d. Monats, Wrapper um `~/ZERODOX/scripts/backup-test.sh` |
@@ -294,6 +295,8 @@ Worker-Konventionen:
 - [config/DO-NOT-TOUCH.md](./config/DO-NOT-TOUCH.md)
 
 ## Letztes Update dieser Datei
+
+2026-08-08 — runner-vm-disk-watchdog neu + disk-hygiene-watchdog Inode-Monitoring (PRs #403, #404, ZERODOX#2148): (1) `runner-vm-disk-watchdog` neu: http+jq-filter auf `http://10.8.0.10:9100/health`, filter=`.components.disk.used_percent > 85`, Schwelle 85%, Zyklus 30 min. Anlass: / auf Runner-VM voll am 2026-08-05 → CI aller Projekte 1h offline; Prozess-Status blieb `active running`. Kein neues Skript — gleicher `service-watchdog.sh`-Mechanismus wie `mayday-ci-runner-watchdog`. (2) `disk-hygiene-watchdog` erweitert: `inode_pct()` + konfigurierbare `DISK_EXTRA_MOUNTS` (default `/tmp`, nur Alarm, kein Prune). Anlass: /tmp am 08.08.2026 bei 100% Inodes (3.755/1.048.576 frei) trotz 6,8 GB freiem Byte-Platz — Watchdog meldete OK. Für Extra-Mounts kein Auto-Prune (fremde Prozesse). OK-Zeile nennt jetzt beide Vorräte: Bytes + Inodes. Watchdog-Count: 19 → 20.
 
 2026-07-31 — ZERODOX-Team-Postfach-Anbindung Pilot (Commit `c9eb601`, #388 / ZERODOX#1983): `scripts/lib/postfach-send.sh` neuer additiver Sender ans ZERODOX-Team-Postfach — POST an `/api/internal/notifications/ingest` (Header `X-Notify-Key: NOTIFY_INGEST_KEY`), silent-return bei fehlendem Key oder Netzwerkfehler (NIE fatal, NIE `exit`). `doku-drift-watchdog.sh` als Pilot: meldet nur bei Befund ans Postfach (dedupKey rotiert täglich). `deploy/POSTFACH_ROUTING.md` klassifiziert alle Watchdogs: Erreichbarkeits-Wächter (zerodox-watchdog, memory, disk, shadowops-*, backup-test) → Discord-only; redaktionelle/fachliche Wächter (doku-drift, ki-cost, seo-*-freshness, security-freshness, mayday-build-drift) → postfach-fähig. Fremdprojekt-Wächter (GuildScout, mayday-sim, cmdshadow-design, AI-Agent) erst nach Soak-Ende als eigene Einzel-Umstellung. Regel: nur bei Befund — keine Kenntnisnahme ohne Anlass. `deploy/POSTFACH_ROUTING.md` im Verzeichnis-Baum ergänzt. `scripts/lib/postfach-send.sh` + `scripts/lib/discord-send.sh` im Skripte-Abschnitt explizit aufgeführt.
 
