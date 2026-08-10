@@ -50,7 +50,7 @@ paths:
 
 ## Watchdog-Familie (seit 2026-05-17 — Defense-in-Depth gegen shadowops-bot-Down)
 
-15 user-systemd Watchdogs pruefen ihren jeweiligen Service und alerten bei Down/Recovery direkt via Discord-Webhook. **Webhook-URL:** in `~/.config/shadowops-watchdog.env` (chmod 600). **Setup-Anleitung:** `deploy/MONITORING_SETUP.md`.
+16 user-systemd Watchdogs pruefen ihren jeweiligen Service und alerten bei Down/Recovery direkt via Discord-Webhook. **Webhook-URL:** in `~/.config/shadowops-watchdog.env` (chmod 600). **Setup-Anleitung:** `deploy/MONITORING_SETUP.md`.
 
 | Timer | Mode | Endpoint/Units | Boot-Offset |
 |-------|------|----------------|-------------|
@@ -65,7 +65,8 @@ paths:
 | `seo-output-freshness-watchdog.timer` | pg-freshness | seo_agent-DB: bei aktiven Insights Alter der jüngsten Ausgabe (Issue/PR) < 216h — Ausgabe-Stau trotz laufendem Audit (#1683); Schwelle 168h→216h 2026-07-18 (Ausgabe 1x/Woche sonntags) | 9 min |
 | `security-freshness-watchdog.timer` | pg-freshness | security_analyst-DB: letzter erfolgreicher `sec_jobs`-Lauf < 26h — erkennt stale Security-Agent-Team (W1, seit 2026-07-09) | 10 min |
 | `memory-watchdog.timer` | meminfo | RAM ≥90% oder Swap ≥80% — Frühwarnung OOM (Throttle 60 min, seit Vorfall 2026-05-25) | 4 min |
-| `disk-hygiene-watchdog.timer` | disk + auto-prune | Auto-Prune (docker builder/image + journald) bei Disk >85%, Alarm >90% (stündlich, Selbstpflege seit 2026-05-30) | hourly |
+| `runner-vm-disk-watchdog.timer` | http + jq-filter | http://10.8.0.10:9100/health, filter `.components.disk.used_percent > 85` — Disk-Fruehwarnung Runner-VM (Anlass 2026-08-05: CI 1h offline, Prozess-Status wertlos; PR #404 / ZERODOX#2148; 30 min-Zyklus) | 3 min |
+| `disk-hygiene-watchdog.timer` | disk + auto-prune + inode | Auto-Prune (docker builder/image + journald) bei Disk >85%, Alarm >90%; Inode-Alarm fuer `/` + `DISK_EXTRA_MOUNTS` (default `/tmp`), kein Auto-Prune fuer Extra-Mounts (Anlass 2026-08-08: /tmp 100 % Inodes; Selbstpflege seit 2026-05-30) | hourly |
 | `doku-drift-watchdog.timer` | doku-drift | Container-Ports vs. Port-Map + MEMORY.md-Limit (<200), nur Alarm (Selbstpflege seit 2026-05-30) — meldet bei Befund zusätzlich ans ZERODOX-Team-Postfach (Pilot #1983) | täglich 06:30 |
 | `ki-cost-watchdog.timer` | ki-cost | Token/Kosten-Rollup Claude+Codex aus JSONL + Anomalie-Alarm (Selbstpflege seit 2026-05-30) | täglich 07:15 |
 | `shadowops-backup-test.timer` | — | monatlich 1. d. Monats 04:50, Wrapper um ZERODOX backup-test.sh | OnCalendar |
