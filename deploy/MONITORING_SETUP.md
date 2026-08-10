@@ -58,7 +58,7 @@ Discord-Embed mit 5 Feldern: RAM (used/total/%), Available, Swap (used/total/%),
 
 Drei System-Selbstpflege-Watchdogs ergänzen die Service-Watchdogs um automatische Hygiene und Drift-/Kosten-Erkennung. Nutzen eigene Skripte (nicht `service-watchdog.sh`), weil Datenquelle Disk/Doku/JSONL statt HTTP/systemd ist. Details auch in `~/.claude/rules/self-maintenance.md`.
 
-- **`disk-hygiene-watchdog`** (stündlich): Zweistufig — Stufe 1 macht Auto-Prune (`docker builder prune` + alte Images + `journalctl --vacuum`) bei Disk > 85 %, Stufe 2 alarmt bei Disk > 90 %. State: `data/watchdog_state_disk-hygiene.json`. (Bugfix: `du|head` unter `set -e+pipefail` → SIGPIPE 141 → `|| true`.)
+- **`disk-hygiene-watchdog`** (stündlich): Zweistufig — Stufe 1 macht Auto-Prune (`docker builder prune` + dangling Images + `journalctl --vacuum`) bei Disk > 85 %, Stufe 2 alarmt bei Disk > 90 %. Zusaetzlich: Inode-Pruefung via `inode_pct()` und Zusatz-Mountpoints via `DISK_EXTRA_MOUNTS` (default `/tmp`) — bei Erschoepfung eines Extra-Mounts nur Alarm, kein Auto-Prune (fremde Prozesse). Anlass 2026-08-08: /tmp bei 100 % Inodes trotz 6,8 GB freiem Platz. State: `data/watchdog_state_disk-hygiene.json`. (Bugfix: `du|head` unter `set -e+pipefail` → SIGPIPE 141 → `|| true`.)
 - **`doku-drift-watchdog`** (täglich 06:30): Vergleicht laufende Container-Ports gegen die Port-Maps in CLAUDE.md/infrastructure.md und prüft MEMORY.md-Zeilenlimit (<200). Nur Alarm, keine Auto-Korrektur. State: `data/watchdog_state_doku-drift.json`.
 - **`ki-cost-watchdog`** (täglich 07:15): Rollup von Token/Kosten aus Claude- + Codex-JSONL. Zwei Alarm-Pfade: (a) relativer Anomalie-Alarm wenn Tageskosten > `KICOST_ANOMALY_FACTOR` × 7-Tage-Schnitt (default 2.5×); (b) optionale absolute Kostendecke via `KICOST_ABSOLUTE_ALERT_USD` (default 0/deaktiviert) — fängt dauerhaft teure Hintergrund-Pfade, die Teil der eigenen Baseline geworden sind und den relativen Alarm nie auslösen. Discord-Embed enthält täglich eine Pro-Projekt-Aufschlüsselung der Top-`KICOST_TOP_PROJECTS` (default 4) teuersten Claude-Projekte. Postet bevorzugt in `#💰-ki-kosten` (Fallback: `SHADOWOPS_WATCHDOG_WEBHOOK`). State: `data/watchdog_state_ki-cost.json`.
 
@@ -194,6 +194,7 @@ echo '{"last_status":"up","last_alert_at":"","consecutive_failures":0}' \
 | `guildscout` | http | http://localhost:8765/health | 5 min | 4 min |
 | `mayday-sim` | http | https://maydaysim.de/api/health | 5 min | 5 min |
 | `mayday-ci-runner` | http + jq-filter | http://10.8.0.10:9100/health, filter `.components.ci_runner.ok` (#mayday-sim#425) | 5 min | 7 min |
+| `runner-vm-disk` | http + jq-filter | http://10.8.0.10:9100/health, filter `.components.disk.used_percent > 85` — Runner-VM-Disk (Anlass 2026-08-05: 100 % auf `/` → alle CI-Runner offline; `disk-hygiene-watchdog` deckt nur lokale Mounts ab, WATCHDOG_HEALTH_JQ_FILTER kein neues Skript noetig, PR #404 / ZERODOX#2148) | 30 min | 3 min |
 | `mayday-sim-build-drift` | build-drift | https://maydaysim.de/api/build-id vs. origin/main HEAD (max. 30 min Drift, #mayday-sim#416) | 15 min | 2 min |
 | `mayday-scheduler` | container | leitstelle-scheduler (Docker-Health, Game-Tick-Owner SB3 #mayday-sim#498) | 5 min | 7 min |
 | `ai-agent-framework` | systemd | guildscout-feedback-agent, zerodox-support-agent, seo-agent (nur Prozess-State) | 5 min | 6 min |
@@ -202,7 +203,7 @@ echo '{"last_status":"up","last_alert_at":"","consecutive_failures":0}' \
 | `seo-output-freshness` | pg-freshness | seo_agent-DB: bei frischen Insights (Agent produziert, jüngstes < 3 Tage) Alter der jüngsten echten Ausgabe (letzte Issue via `seo_topic_locks` bzw. Fix-PR via `seo_audits.pr_url`) < 216h (9 Tage) — erkennt Ausgabe-Stau trotz laufendem Audit (Vorfall 19.06.–02.07., #1683); Schwelle 168h→216h 2026-07-18 da Ausgabe 1×/Woche sonntags kommt. `actioned`-Status bewusst NICHT als Signal (wird kaum je gesetzt) | 1 h | 9 min |
 | `security-freshness` | pg-freshness | security_analyst-DB: letzter erfolgreicher `sec_jobs`-Lauf (`completed_at`, Status `ok`/`partial`) < 26h — erkennt stale Security-Agent-Team (W1, seit 2026-07-09) | 1 h | 10 min |
 | `cmdshadow-design` | systemd-result | cmdshadow-design-healthcheck.service (max_age=36h) | 1 h | 8 min |
-| `disk-hygiene` | disk + auto-prune | Auto-Prune (docker builder/image + journald) bei Disk >85%, Alarm >90% (Selbstpflege seit 2026-05-30) | 1 h | — |
+| `disk-hygiene` | disk + auto-prune + inode | Auto-Prune (docker builder/image + journald) bei Disk >85%, Alarm >90%; Inode-Alarm fuer `/` und `DISK_EXTRA_MOUNTS` (default `/tmp`), kein Auto-Prune fuer Extra-Mounts (Anlass 2026-08-08: /tmp Inode-Erschoepfung; Selbstpflege seit 2026-05-30) | 1 h | — |
 | `doku-drift` | doku-drift | Container-Ports vs. Port-Map + MEMORY.md-Limit (<200), nur Alarm (Selbstpflege seit 2026-05-30) | täglich 06:30 | — |
 | `ki-cost` | ki-cost | Token/Kosten-Rollup Claude+Codex aus JSONL + relativer Anomalie-Alarm + opt-in absolute Kostendecke (`KICOST_ABSOLUTE_ALERT_USD`) + Pro-Projekt-Aufschlüsselung im Embed (Selbstpflege seit 2026-05-30; Pro-Projekt + absolute Decke seit 2026-07-15) | täglich 07:15 | — |
 
