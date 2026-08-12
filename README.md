@@ -274,6 +274,16 @@ deployment:
 
 > **Welle 9.10 / ZERODOX #1985 — Wait-for-CI vor Auto-Deploy:** Sobald ein PR auf einen `deploy_branches`-Branch gemergt wird, wartet der Bot vor dem Trigger von `deploy.sh` auf den Abschluss der in `projects.<name>.ci_workflows` konfigurierten Workflows (z.B. `["Web Quality"]`). Bei `failure`/`timeout` wird `deploy.sh` NICHT aufgerufen — stattdessen erscheint ein Alert im projekt-`ci_channel_id` oder `deployment_log`. Taucht innerhalb der Grace-Period kein Workflow auf, darf nur ein über die GitHub-Commit-Dateiliste verifizierter Docs-only-Commit (Top-Level `*.md`, `docs/**`, `.claude/**`) weiterlaufen. Code- und nicht eindeutig klassifizierbare Commits warten das volle Zeitfenster ab und werden danach mit einem „CI fehlt“-Alert fail-closed blockiert. Hard-Timeout 30 min (überschreibbar via `projects.<name>.ci_wait_max_min`). Exponential backoff 60s → 120s → 240s → cap 300s.
 
+> **ZERODOX #2267 / ShadowOps PR #410 — Reconciliation nach grünem CI:**
+> Für Projekte mit `deploy.reconcile_on_ci_success: true` startet ein später
+> eintreffendes erfolgreiches `workflow_run` einen deduplizierten Nachholpfad.
+> Vor jedem Versuch müssen erfolgreicher SHA und aktueller Branch-HEAD exakt
+> übereinstimmen; der Health-Endpoint muss einen abweichenden `buildSha` melden,
+> und es darf kein Deployment aktiv oder reserviert sein. Stale Events und
+> bereits live befindliche SHAs enden ohne Aktion. Default: 120 s Delay, 30 s
+> Poll, 1800 s Timeout und höchstens zwei Versuche. Der Mechanismus wurde mit
+> dem produktiven ZERODOX-Deploy `f709a34e` Ende-zu-Ende belegt.
+
 **AI komplett deaktivieren (Monitoring + Patch Notes ohne KI):**
 - `ai.enabled: false`
 - `ai_learning.enabled: false`

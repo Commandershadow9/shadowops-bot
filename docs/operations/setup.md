@@ -1,7 +1,7 @@
 ---
 title: 🚀 ShadowOps Setup Guide v3.1
 status: active
-last_reviewed: 2026-04-15
+last_reviewed: 2026-08-12
 owner: CommanderShadow9
 ---
 
@@ -409,11 +409,17 @@ github:
   enabled: true
   webhook_secret: "YOUR_GENERATED_SECRET_HERE"
   webhook_port: 8080
-  auto_deploy: false
+  auto_deploy: true
   deploy_branches:
     - main
     - master
 ```
+
+Für Projekte, deren CI nach dem Push asynchron fertig wird, konfiguriere
+zusätzlich `projects.<name>.ci_workflows`, einen Health-Endpoint mit `buildSha`
+und `projects.<name>.deploy.reconcile_on_ci_success: true`. Vollständiger
+Vertrag und Retry-Grenzen:
+[`github-push-notifications.md`](github-push-notifications.md#auto-deploy-optional).
 
 ### Step 3: Configure Firewall
 

@@ -2,6 +2,31 @@
 
 ## [Unreleased]
 
+### Fixed — CI-Success Deployment-Reconciliation (2026-08-12, PR #410)
+
+- **Verspätet grüne Main-CI holt ausgebliebene Deployments nach:** Ein
+  erfolgreich abgeschlossenes, erlaubtes `workflow_run` kann jetzt einen
+  begrenzten Reconciliation-Task starten. Vorher blieb ein Commit dauerhaft
+  undeployed, wenn der initiale Push-Handler die CI noch als fehlend oder
+  unvollständig gesehen hatte.
+- **Head-/Live-Abgleich vor jedem Versuch:** Der Bot liest den aktuellen
+  Branch-HEAD über GitHub und `buildSha` aus dem produktiven Health-Endpoint.
+  Ein veraltetes CI-Ereignis wird ignoriert; ein bereits live befindlicher SHA
+  beendet den Task ohne Restart.
+- **Konkurrenz- und Retry-Grenzen:** Pro Repo/Branch/SHA läuft nur ein Task.
+  Aktive Deployments und Reservierungen werden abgewartet, fehlgeschlagene
+  Reservierungen werden freigegeben. Default: 120 s Startverzögerung, 30 s
+  Polling, 30 min Timeout, maximal zwei Nachholversuche.
+- **Fail-closed Workflow-Filter:** Nur `main`-Pushes mit `conclusion=success`
+  und Namen aus `projects.<name>.ci_workflows` dürfen reconciliert werden.
+  Notification-, Nightly-, PR-, Failure- und fremde Workflow-Events bleiben
+  ausgeschlossen.
+- **Produktionsbeleg:** Der ZERODOX-Rollout `f709a34e` wurde nach vollständiger
+  Main-CI automatisch gestartet und endete mit verifiziertem Live-SHA, Health,
+  sieben Functional-Smokes, fünf CSP-Smokes und SHIELD-Smoke erfolgreich.
+- **Tests:** Gezielte GitHub-Integration-Tests decken Scheduling, Stale-SHA,
+  bereits-live, Reservierungen, Retry-Grenzen und Eventfilter ab.
+
 ### Fixed — Operational Follow-ups (2026-06-25)
 
 - **Changelog-DB/API-Tests entblockt**: `ChangelogDB` nutzt wieder stdlib-`sqlite3` hinter async-kompatiblen Methoden. Damit entfaellt der Sandbox-Haenger durch `aiosqlite.connect()`. Die aiohttp-API-Tests laufen socketfrei direkt gegen Handler/Middleware statt ueber `TestServer`.
