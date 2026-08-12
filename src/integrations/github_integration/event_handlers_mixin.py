@@ -325,6 +325,30 @@ class EventHandlersMixin:
                     )
                     return
 
+            # ZERODOX#2267: Der urspruengliche PR-/Push-Trigger kann bereits
+            # aufgegeben haben, wenn ein CI-Lauf cancelled/rot war und ein
+            # spaeterer Re-Run gruen wird. Das erfolgreiche main-workflow_run
+            # ist deshalb ein zweiter, zustandsloser Weg zum Deploy. Der
+            # eigentliche Reconcile laeuft im Hintergrund, verifiziert vorher
+            # Branch-HEAD und live buildSha und dedupliziert Doppel-Events.
+            if (
+                self.auto_deploy_enabled
+                and is_completed
+                and str(conclusion).lower() == 'success'
+                and branch in self.deploy_branches
+                and event_name == 'push'
+                and bool((project_config.get('deploy') or {}).get('reconcile_on_ci_success', False))
+            ):
+                full_sha = workflow.get('head_sha') or payload.get('sha') or ''
+                repo_full_name = repo.get('full_name') or ''
+                self._schedule_ci_success_reconcile(
+                    repo_name=repo_name,
+                    branch=branch,
+                    successful_sha=full_sha,
+                    repo_full_name=repo_full_name,
+                    project_config=project_config,
+                )
+
             allow_jobs_fetch = jobs_url and (is_completed or status in ('in_progress', 'queued'))
             if allow_jobs_fetch:
                 jobs_response = await self._fetch_workflow_jobs(jobs_url)

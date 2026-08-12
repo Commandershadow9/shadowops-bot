@@ -374,6 +374,17 @@ projects:
     services:
       - "zerodox-web"
     critical: true
+    ci_workflows:
+      - "Web Quality"
+    deploy:
+      # ZERODOX#2267: Ein erfolgreicher push-CI-Lauf auf main gleicht nach
+      # 120 s den produktiven buildSha mit dem aktuellen Branch-HEAD ab und
+      # holt einen zuvor wegen roter/pending CI abgebrochenen Deploy nach.
+      reconcile_on_ci_success: true
+      ci_success_reconcile_delay_sec: 120
+      ci_success_reconcile_poll_sec: 30
+      ci_success_reconcile_timeout_sec: 1800
+      ci_success_reconcile_max_attempts: 2
     monitor:
       enabled: true
       checks:
