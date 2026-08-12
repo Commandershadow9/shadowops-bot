@@ -1,7 +1,7 @@
 ---
 title: GitHub Push Notifications Setup Guide
 status: active
-last_reviewed: 2026-04-15
+last_reviewed: 2026-08-12
 owner: CommanderShadow9
 ---
 
@@ -265,9 +265,47 @@ Dann in GitHub: `https://webhook.yourdomain.com/webhook`
   - Beispiel: ZERODOX Patch Notes werden auf dem ZERODOX-Server in `📋patch-notes` (öffentlich) und `🔧dev-updates` (intern) gepostet
 
 ### Auto-Deploy (optional)
-- Setze `github.auto_deploy: false`
+- Setze `github.auto_deploy: true`
 - Pushs zu main/master Branch triggern automatisches Deployment
 - Erfordert `DeploymentManager` Konfiguration
+
+Für CI-gesteuerte Deployments muss das Projekt zusätzlich die erlaubten
+Workflow-Namen und den Reconciliation-Pfad deklarieren:
+
+```yaml
+projects:
+  zerodox:
+    ci_workflows:
+      - Web Quality
+    ci_wait_max_min: 30
+    monitor:
+      url: https://zerodox.de/api/health  # liefert buildSha
+    deploy:
+      reconcile_on_ci_success: true
+      ci_success_reconcile_delay_sec: 120
+      ci_success_reconcile_poll_sec: 30
+      ci_success_reconcile_timeout_sec: 1800
+      ci_success_reconcile_max_attempts: 2
+```
+
+#### Ablauf und Sicherheitsgrenzen
+
+1. Der normale Push-/Merge-Pfad reserviert den Commit und wartet auf alle
+   `ci_workflows`.
+2. Ein späteres erfolgreiches `workflow_run` auf `main` kann genau einen
+   Reconciliation-Task pro Repo/Branch/SHA planen.
+3. GitHub-Branch-HEAD, erfolgreicher Workflow-SHA und produktiver `buildSha`
+   werden vor jedem Versuch neu gelesen.
+4. Ist der SHA veraltet oder bereits live, endet der Task ohne Deploy.
+5. Aktive Deployments und Reservierungen werden abgewartet. Nach Failure oder
+   Exception wird die Reservierung freigegeben, damit ein echter Retry möglich
+   bleibt.
+6. Nach Timeout/Versuchslimit übernimmt der bestehende Build-SHA-Drift-Wächter
+   als Alarm-Backstop; es gibt keinen unbegrenzten Restart-Loop.
+
+Nur erlaubte erfolgreiche `push`-Workflows auf `main` lösen diesen Pfad aus.
+PR-, Nightly-, Notification-, Failure- und unbekannte Workflow-Events bleiben
+fail-closed ausgeschlossen.
 
 ## Nächste Schritte
 
