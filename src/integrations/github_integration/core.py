@@ -186,6 +186,10 @@ class GitHubIntegration(JulesWorkflowMixin,
         self.local_polling_task = None
         self._inflight_commits: Dict[str, float] = self._load_inflight_state()
         self._ci_polling_tasks: Dict[str, asyncio.Task] = {}
+        # ZERODOX#2267: Ein erfolgreicher main-CI-Lauf startet einen verzögerten
+        # Reconcile. Pro Repo/Branch/SHA darf nur einer gleichzeitig laufen,
+        # auch wenn GitHub denselben workflow_run per Webhook und Poll liefert.
+        self._ci_reconcile_tasks: Dict[str, asyncio.Task] = {}
         # #478: Hintergrund-Tasks fuer Auto-Deploy. Der Webhook-Handler darf nicht
         # synchron auf den (minutenlangen) Deploy warten — sonst 504 (GitHub-Timeout).
         self._deploy_tasks: set = set()

@@ -48,6 +48,196 @@ def _paths_are_docs_only(paths: list[str]) -> bool:
 
 class CIMixin:
 
+    def _schedule_ci_success_reconcile(
+        self,
+        repo_name: str,
+        branch: str,
+        successful_sha: str,
+        repo_full_name: str,
+        project_config: Dict,
+    ) -> bool:
+        """Startet genau einen Reconcile pro Repo/Branch/SHA im Hintergrund."""
+        if not successful_sha or not repo_full_name:
+            self.logger.warning(
+                "⚠️ CI-Reconcile uebersprungen: repo_full_name oder head_sha fehlt "
+                f"({repo_name}/{branch})."
+            )
+            return False
+
+        key = f"{self._normalize_repo_name(repo_name)}:{branch}:{successful_sha}"
+        existing = self._ci_reconcile_tasks.get(key)
+        if existing and not existing.done():
+            self.logger.info(
+                f"ℹ️ CI-Reconcile {repo_name}@{successful_sha[:7]} laeuft bereits."
+            )
+            return False
+
+        task = asyncio.create_task(
+            self._reconcile_ci_success_deployment(
+                repo_name=repo_name,
+                branch=branch,
+                successful_sha=successful_sha,
+                repo_full_name=repo_full_name,
+                project_config=project_config,
+            )
+        )
+        self._ci_reconcile_tasks[key] = task
+
+        def _cleanup(finished: asyncio.Task) -> None:
+            if self._ci_reconcile_tasks.get(key) is finished:
+                self._ci_reconcile_tasks.pop(key, None)
+
+        task.add_done_callback(_cleanup)
+        return True
+
+    async def _fetch_branch_head_sha(
+        self,
+        repo_full_name: str,
+        branch: str,
+    ) -> Optional[str]:
+        """Liest den aktuellen Branch-HEAD ueber GitHub, ohne den Deploy-Tree anzufassen."""
+        if not repo_full_name or not branch:
+            return None
+        headers = {"Accept": "application/vnd.github+json"}
+        token = self._get_github_token()
+        if token:
+            headers["Authorization"] = f"token {token}"
+        url = f"https://api.github.com/repos/{repo_full_name}/commits/{branch}"
+        try:
+            async with aiohttp.ClientSession(headers=headers) as session:
+                async with session.get(url, timeout=20) as resp:
+                    if resp.status != 200:
+                        self.logger.warning(
+                            f"⚠️ Branch-HEAD fuer {repo_full_name}/{branch} nicht lesbar "
+                            f"(HTTP {resp.status})."
+                        )
+                        return None
+                    payload = await resp.json()
+                    sha = str(payload.get('sha') or '')
+                    return sha or None
+        except Exception as e:
+            self.logger.warning(
+                f"⚠️ Branch-HEAD fuer {repo_full_name}/{branch} nicht lesbar: {e}"
+            )
+            return None
+
+    async def _fetch_live_build_sha(self, health_url: str) -> Optional[str]:
+        """Liest buildSha aus dem produktiven Health-Endpoint (fail-open)."""
+        if not health_url:
+            return None
+        try:
+            async with aiohttp.ClientSession() as session:
+                async with session.get(health_url, timeout=15) as resp:
+                    if resp.status != 200:
+                        self.logger.warning(
+                            f"⚠️ CI-Reconcile: Health-Endpoint HTTP {resp.status}."
+                        )
+                        return None
+                    payload = await resp.json()
+                    sha = str(payload.get('buildSha') or '')
+                    if not sha or sha == 'unknown':
+                        return None
+                    return sha
+        except Exception as e:
+            self.logger.warning(f"⚠️ CI-Reconcile: buildSha nicht lesbar: {e}")
+            return None
+
+    def _deployment_is_active(self, repo_name: str) -> bool:
+        manager = self.deployment_manager
+        if not manager:
+            return False
+        active = getattr(manager, 'active_deployments', {}) or {}
+        normalized = repo_name.lower().replace('-', '_')
+        return any(
+            bool(value)
+            for key, value in active.items()
+            if key.lower() == repo_name.lower() or key.lower().replace('-', '_') == normalized
+        )
+
+    async def _reconcile_ci_success_deployment(
+        self,
+        repo_name: str,
+        branch: str,
+        successful_sha: str,
+        repo_full_name: str,
+        project_config: Dict,
+    ) -> None:
+        """Deployt einen gruenen main-HEAD nach, falls Produktion hinterherlaeuft.
+
+        Der Reconcile wartet zunaechst auf den normalen PR-/Push-Deploy. Bleibt
+        live danach hinter dem weiterhin aktuellen, gruenen Branch-HEAD, wird
+        maximal zweimal ueber die normale CI-/Deploy-Pipeline nachgezogen.
+        """
+        deploy_config = project_config.get('deploy') or {}
+        delay_sec = max(0, int(deploy_config.get('ci_success_reconcile_delay_sec', 120)))
+        poll_sec = max(1, int(deploy_config.get('ci_success_reconcile_poll_sec', 30)))
+        timeout_sec = max(poll_sec, int(deploy_config.get('ci_success_reconcile_timeout_sec', 1800)))
+        max_attempts = max(1, int(deploy_config.get('ci_success_reconcile_max_attempts', 2)))
+        health_url = (project_config.get('monitor') or {}).get('url') or ''
+        deadline = time.monotonic() + timeout_sec
+        attempts = 0
+
+        if delay_sec:
+            await asyncio.sleep(delay_sec)
+
+        while time.monotonic() < deadline:
+            branch_sha = await self._fetch_branch_head_sha(repo_full_name, branch)
+            if not branch_sha:
+                await asyncio.sleep(poll_sec)
+                continue
+            if branch_sha != successful_sha:
+                self.logger.info(
+                    f"ℹ️ CI-Reconcile {repo_name}@{successful_sha[:7]} veraltet: "
+                    f"{branch} steht bereits auf {branch_sha[:7]}. Der neuere CI-Lauf ist zustaendig."
+                )
+                return
+
+            live_sha = await self._fetch_live_build_sha(health_url)
+            if not live_sha:
+                await asyncio.sleep(poll_sec)
+                continue
+            if live_sha == branch_sha:
+                self.logger.info(
+                    f"✅ CI-Reconcile: {repo_name} live bereits aktuell ({live_sha[:7]})."
+                )
+                return
+
+            if self._deployment_is_active(repo_name):
+                await asyncio.sleep(poll_sec)
+                continue
+
+            if not self._reserve_deploy(repo_name, branch_sha):
+                # Der normale PR-/Push-Trigger wartet oder deployt noch. Sobald
+                # er scheitert, gibt _trigger_deployment die Reservierung frei.
+                await asyncio.sleep(poll_sec)
+                continue
+
+            attempts += 1
+            self.logger.warning(
+                f"🔁 CI-Reconcile: live {live_sha[:7]} != {branch} {branch_sha[:7]} "
+                f"nach gruener CI — Nachhol-Deploy {attempts}/{max_attempts}."
+            )
+            await self._trigger_deployment(
+                repo_name=repo_name,
+                branch=branch,
+                commit_sha=branch_sha[:7],
+                repo_full_name=repo_full_name,
+                full_sha=branch_sha,
+            )
+            # Der Reconcile selbst dedupliziert Tasks. Fuer einen zweiten,
+            # tatsaechlich noetigen Versuch muss die generische 1h-Reservierung
+            # nach Abschluss dieses Versuchs wieder frei sein; vor dem naechsten
+            # Deploy werden Branch-HEAD und live buildSha erneut geprueft.
+            self._release_deploy(repo_name, branch_sha)
+            if attempts >= max_attempts:
+                break
+            await asyncio.sleep(poll_sec)
+
+        self.logger.warning(
+            f"⚠️ CI-Reconcile fuer {repo_name}@{successful_sha[:7]} ohne Gleichstand beendet; "
+            "der buildSha-Drift-Waechter bleibt als Alarm-Backstop aktiv."
+        )
+
     async def _send_or_update_ci_message(
         self,
         channel: discord.abc.Messageable,
@@ -675,6 +865,7 @@ class CIMixin:
                         workflow_names=workflow_names,
                         max_wait_min=max_wait_min,
                     )
+                    self._release_deploy(repo_name, full_sha)
                     return
                 if outcome in {"timeout", "missing"}:
                     await self._send_ci_wait_alert(
@@ -686,6 +877,7 @@ class CIMixin:
                         workflow_names=workflow_names,
                         max_wait_min=max_wait_min,
                     )
+                    self._release_deploy(repo_name, full_sha)
                     return
                 # success/docs_only/no_workflows → weiter unten deployen. Bei docs_only
                 # beendet deploy.sh selbst ohne Runtime-Aenderung (identische Allowlist).
@@ -729,8 +921,10 @@ class CIMixin:
                     )
             else:
                 self.logger.warning(f"⚠️ Deployment fehlgeschlagen: {repo_name}")
+                self._release_deploy(repo_name, full_sha or '')
 
         except Exception as e:
+            self._release_deploy(repo_name, full_sha or '')
             self.logger.error(f"❌ Deployment Fehler: {e}", exc_info=True)
 
     async def _repoll_after_deploy(

@@ -1120,6 +1120,175 @@ class TestReleaseHandling:
         integration._send_release_notification.assert_called_once()
 
 
+class TestCiSuccessDeployReconcile:
+    """ZERODOX#2267: Gruene main-CI holt einen ausgefallenen Deploy nach."""
+
+    @staticmethod
+    def _project_config():
+        return {
+            'ci_workflows': ['Web Quality'],
+            'deploy': {
+                'reconcile_on_ci_success': True,
+                'ci_success_reconcile_delay_sec': 0,
+                'ci_success_reconcile_poll_sec': 1,
+                'ci_success_reconcile_timeout_sec': 10,
+                'ci_success_reconcile_max_attempts': 1,
+            },
+            'monitor': {'url': 'https://zerodox.de/api/health'},
+        }
+
+    @pytest.mark.asyncio
+    async def test_successful_main_workflow_schedules_reconcile(
+        self, mock_bot, enabled_config,
+    ):
+        integration = GitHubIntegration(mock_bot, enabled_config)
+        integration.config.projects = {'zerodox': self._project_config()}
+        integration._schedule_ci_success_reconcile = Mock(return_value=True)
+        mock_bot.get_channel.return_value = None
+
+        await integration.handle_workflow_run_event({
+            'action': 'completed',
+            'repository': {
+                'name': 'ZERODOX',
+                'full_name': 'Commandershadow9/ZERODOX',
+                'html_url': 'https://github.com/Commandershadow9/ZERODOX',
+            },
+            'workflow_run': {
+                'id': 123,
+                'name': 'Web Quality',
+                'path': '.github/workflows/web-quality.yml',
+                'status': 'completed',
+                'conclusion': 'success',
+                'head_branch': 'main',
+                'head_sha': 'a' * 40,
+                'event': 'push',
+            },
+        })
+
+        integration._schedule_ci_success_reconcile.assert_called_once_with(
+            repo_name='ZERODOX',
+            branch='main',
+            successful_sha='a' * 40,
+            repo_full_name='Commandershadow9/ZERODOX',
+            project_config=integration.config.projects['zerodox'],
+        )
+
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize(
+        ('branch', 'conclusion', 'event_name'),
+        [
+            ('feature/test', 'success', 'push'),
+            ('main', 'failure', 'push'),
+            ('main', 'success', 'pull_request'),
+        ],
+    )
+    async def test_non_green_main_push_does_not_schedule(
+        self, mock_bot, enabled_config, branch, conclusion, event_name,
+    ):
+        integration = GitHubIntegration(mock_bot, enabled_config)
+        integration.config.projects = {'zerodox': self._project_config()}
+        integration._schedule_ci_success_reconcile = Mock(return_value=True)
+        mock_bot.get_channel.return_value = None
+
+        await integration.handle_workflow_run_event({
+            'action': 'completed',
+            'repository': {
+                'name': 'ZERODOX',
+                'full_name': 'Commandershadow9/ZERODOX',
+            },
+            'workflow_run': {
+                'id': 124,
+                'name': 'Web Quality',
+                'path': '.github/workflows/web-quality.yml',
+                'status': 'completed',
+                'conclusion': conclusion,
+                'head_branch': branch,
+                'head_sha': 'b' * 40,
+                'event': event_name,
+            },
+        })
+
+        integration._schedule_ci_success_reconcile.assert_not_called()
+
+    @pytest.mark.asyncio
+    async def test_reconcile_deploys_when_live_is_behind(
+        self, mock_bot, enabled_config,
+    ):
+        integration = GitHubIntegration(mock_bot, enabled_config)
+        project_config = self._project_config()
+        integration.config.projects = {'zerodox': project_config}
+        integration.deployment_manager = MagicMock()
+        integration.deployment_manager.active_deployments = {'zerodox': False}
+        integration._fetch_branch_head_sha = AsyncMock(return_value='c' * 40)
+        integration._fetch_live_build_sha = AsyncMock(return_value='d' * 40)
+        integration._trigger_deployment = AsyncMock()
+        integration._reserve_deploy = Mock(return_value=True)
+        integration._release_deploy = Mock()
+
+        await integration._reconcile_ci_success_deployment(
+            repo_name='ZERODOX',
+            branch='main',
+            successful_sha='c' * 40,
+            repo_full_name='Commandershadow9/ZERODOX',
+            project_config=project_config,
+        )
+
+        integration._trigger_deployment.assert_awaited_once_with(
+            repo_name='ZERODOX',
+            branch='main',
+            commit_sha='c' * 7,
+            repo_full_name='Commandershadow9/ZERODOX',
+            full_sha='c' * 40,
+        )
+        integration._release_deploy.assert_called_once_with('ZERODOX', 'c' * 40)
+
+    @pytest.mark.asyncio
+    async def test_reconcile_ignores_obsolete_successful_sha(
+        self, mock_bot, enabled_config,
+    ):
+        integration = GitHubIntegration(mock_bot, enabled_config)
+        project_config = self._project_config()
+        integration.config.projects = {'zerodox': project_config}
+        integration.deployment_manager = MagicMock()
+        integration._fetch_branch_head_sha = AsyncMock(return_value='e' * 40)
+        integration._fetch_live_build_sha = AsyncMock()
+        integration._trigger_deployment = AsyncMock()
+
+        await integration._reconcile_ci_success_deployment(
+            repo_name='ZERODOX',
+            branch='main',
+            successful_sha='f' * 40,
+            repo_full_name='Commandershadow9/ZERODOX',
+            project_config=project_config,
+        )
+
+        integration._fetch_live_build_sha.assert_not_awaited()
+        integration._trigger_deployment.assert_not_awaited()
+
+    @pytest.mark.asyncio
+    async def test_failed_ci_releases_sha_for_later_success(
+        self, mock_bot, enabled_config,
+    ):
+        integration = GitHubIntegration(mock_bot, enabled_config)
+        integration.config.projects = {'zerodox': self._project_config()}
+        integration.deployment_manager = MagicMock()
+        integration.deployment_manager.deploy_project = AsyncMock()
+        integration._wait_for_ci_completion = AsyncMock(return_value='failure')
+        integration._send_ci_wait_alert = AsyncMock()
+        integration._release_deploy = Mock()
+
+        await integration._trigger_deployment(
+            repo_name='ZERODOX',
+            branch='main',
+            commit_sha='1' * 7,
+            repo_full_name='Commandershadow9/ZERODOX',
+            full_sha='1' * 40,
+        )
+
+        integration._release_deploy.assert_called_once_with('ZERODOX', '1' * 40)
+        integration.deployment_manager.deploy_project.assert_not_awaited()
+
+
 class TestNotificationsProjectLookup:
     """Regressionstests fuer dash/underscore-Projektnamen in Notifications."""
 

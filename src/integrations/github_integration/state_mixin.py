@@ -151,3 +151,16 @@ class StateMixin:
             return False
         self._reserved_deploy_shas[key] = now
         return True
+
+    def _release_deploy(self, repo_name: str, full_sha: str) -> None:
+        """Gibt eine fehlgeschlagene Deploy-Reservierung fuer einen Retry frei.
+
+        Erfolgreiche Deploys behalten ihre TTL-Reservierung als Schutz gegen
+        doppelte GitHub-Events. Nur Fehler-/Abbruchpfade rufen diese Methode auf,
+        damit ein spaeter gruen werdender workflow_run denselben SHA erneut
+        anstossen kann (ZERODOX#2267).
+        """
+        if not full_sha or not hasattr(self, '_reserved_deploy_shas'):
+            return
+        key = (self._normalize_repo_name(repo_name), full_sha)
+        self._reserved_deploy_shas.pop(key, None)
