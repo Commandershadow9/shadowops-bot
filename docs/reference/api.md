@@ -503,6 +503,21 @@ projects:
                                             # _repoll_after_deploy (ci_mixin.py): nach erfolgreichem Deploy
                                             # prueft Schleife ob origin/branch weitergelaufen ist, stoesst
                                             # ggf. weiteren Deploy an (CI-Wait + Per-SHA-Dedup).
+      reconcile_on_ci_success: false        # ZERODOX#2267: Opt-in CI-Success-Reconciliation.
+                                            # Bei true: erfolgreicher workflow_run auf dem deploy-Branch
+                                            # loest _reconcile_ci_success_deployment aus. Der Task gleicht
+                                            # live buildSha mit Branch-HEAD ab; falls Drift: Nachhol-Deploy.
+                                            # Schutzt vor dem Fall: CI war rot, Reservierung freigegeben,
+                                            # spaeterer Re-Run gruen — normaler Trigger sieht das Event nicht.
+      ci_success_reconcile_delay_sec: 120   # Wartezeit nach gruener CI vor erstem buildSha-Check (s)
+      ci_success_reconcile_poll_sec: 30     # Polling-Intervall waehrend Reconcile (s)
+      ci_success_reconcile_timeout_sec: 1800  # Maximale Laufzeit des Reconcile-Tasks (s)
+      ci_success_reconcile_max_attempts: 2  # Maximale Nachhol-Deploy-Versuche
+
+    # CI-Workflow-Filter (optional) — schraenkt beobachtete Workflow-Namen ein
+    ci_workflows:                           # Wenn gesetzt: nur diese Workflows gelten als "CI" fuer
+      - "Web Quality"                       # _wait_for_ci_completion + CI-Success-Reconciliation.
+                                            # Leer oder nicht gesetzt = alle Workflows auf dem Branch.
 
     # Kunden-Discord-Server Benachrichtigungen (optional)
     external_notifications:
