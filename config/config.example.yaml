@@ -370,6 +370,22 @@ projects:
     enabled: true
     tag: "[ZERODOX]"
     path: "/home/cmdshadow/ZERODOX"
+    # Optional: eigener Baum nur fuer den Deploy (ZERODOX #2344).
+    #
+    # Ohne diesen Schluessel deployt der Bot aus `path` — also aus demselben
+    # Verzeichnis, in dem Menschen und parallele Sessions arbeiten. Sein
+    # Git-Schritt scheitert dort an allem, was der Baum gerade ist:
+    # uncommittete Dateien ebenso wie ein nicht gepushter lokaler Commit
+    # ("Not possible to fast-forward"). Beides ist am 15.08.2026 passiert und
+    # hat sechs Merges stundenlang blockiert — ohne Selbstheilung, weil es
+    # nach einem fehlgeschlagenen Deploy keinen Retry gibt.
+    #
+    # `path` bleibt bewusst der Arbeitsbaum: Es steuert auch Backup-Monitoring,
+    # Disk-Schwellwerte, Kontext, Verifikation und GitHub-Polling.
+    #
+    # ⚠️ Der Deploy-Baum wird bei jedem Lauf per `reset --hard` auf den
+    # Remote-Stand gezwungen. Dort darf niemand arbeiten.
+    deploy_path: "/home/cmdshadow/ZERODOX-deploy"
     repo_url: "https://github.com/Commandershadow9/ZERODOX"
     services:
       - "zerodox-web"

@@ -121,6 +121,13 @@ class DeploymentManager:
             projects[project_name] = {
                 'name': project_name,
                 'path': Path(project_config.get('path', '')),
+                # Optionaler eigener Baum fuer den Deploy (ZERODOX #2344).
+                # Ohne diesen Eintrag bleibt alles wie bisher — `_deploy_path`
+                # faellt dann auf 'path' zurueck. Bewusst getrennt gehalten:
+                # 'path' steuert ausserdem Backup-Monitoring, Disk-Checks,
+                # Kontext, Verifikation und Polling; es umzubiegen laegte fuenf
+                # Funktionen um, um eine zu reparieren.
+                'deploy_path': project_config.get('deploy_path'),
                 'branch': project_config.get('branch', 'main'),
                 'deploy_enabled': deploy_enabled,  # NEW: Track if deploy is enabled
                 'run_tests': deploy_config.get('run_tests', False),
@@ -464,45 +471,73 @@ class DeploymentManager:
             self.logger.info(f"🗑️ Removing old backup: {old_backup.name}")
             shutil.rmtree(old_backup)
 
-    async def _git_pull(self, project: Dict, branch: str):
+    def _deploy_path(self, project: Dict) -> Path:
         """
-        Pull latest code from git
+        Verzeichnis, aus dem deployt wird.
+
+        Bewusst getrennt von `project['path']`: Dieses Feld steuert ausserdem
+        Backup-Monitoring (`Path(path)/'backups'/'daily'`), Disk-Schwellwerte,
+        Kontext, Verifikation und GitHub-Polling — acht Dateien insgesamt. Wer
+        einfach `path` auf einen Deploy-Baum umbiegt, lenkt fuenf Funktionen um,
+        um eine zu reparieren, und macht dabei das Backup-Monitoring blind.
+
+        Ohne `deploy_path` bleibt alles wie bisher; die Umstellung ist damit
+        fuer jedes andere Projekt ein No-op.
 
         Args:
             project: Project configuration
-            branch: Branch to pull
+
+        Returns:
+            Pfad, in dem Git-Schritt, Tests und post-deploy laufen sollen
         """
-        # Fetch latest
-        fetch_cmd = ['git', 'fetch', 'origin', branch]
+        return Path(project.get('deploy_path') or project['path'])
+
+    async def _git_pull(self, project: Dict, branch: str):
+        """
+        Bringt den Deploy-Baum hart auf den Stand von origin/<branch>.
+
+        Frueher: fetch + checkout + `git pull`. Das hat Merge-Semantik und
+        scheitert deshalb an dem, was der Arbeitsbaum gerade ist — in der Nacht
+        zum 15.08.2026 zweimal (ZERODOX #2344):
+
+          "local changes ... would be overwritten by merge ... Aborting"
+          "Not possible to fast-forward, aborting"
+
+        Sechs Merges blieben dadurch stundenlang undeployt, ohne Selbstheilung:
+        Nach fehlgeschlagenem deploy.sh gibt es keinen Retry, und der Reconcile
+        scheitert an derselben Stelle.
+
+        `fetch --prune` + `reset --hard` ist idempotent und immun gegen dirty,
+        divergiert und abgebrochenen Rebase gleichermassen. Man kann nicht fuer
+        jeden Zustand einen eigenen Guard bauen — die Abhaengigkeit muss weg.
+
+        ⚠️ Verwirft lokale Aenderungen im Deploy-Baum. Genau deshalb gehoert
+        dorthin ein Verzeichnis, in dem kein Mensch arbeitet (`deploy_path`).
+
+        Args:
+            project: Project configuration
+            branch: Branch to deploy
+        """
+        cwd = str(self._deploy_path(project))
+
+        # Fetch latest (--prune raeumt entfernte Branches mit ab)
+        fetch_cmd = ['git', 'fetch', '--prune', 'origin', branch]
         process = await asyncio.create_subprocess_exec(
             *fetch_cmd,
-            cwd=str(project['path']),
+            cwd=cwd,
             stdout=asyncio.subprocess.PIPE,
             stderr=asyncio.subprocess.PIPE
         )
-        await process.communicate()
+        _, stderr = await process.communicate()
 
         if process.returncode != 0:
-            raise DeploymentError("Git fetch failed")
+            raise DeploymentError(f"Git fetch failed: {stderr.decode()}")
 
-        # Checkout branch
-        checkout_cmd = ['git', 'checkout', branch]
+        # Hart auf den Remote-Stand setzen — kein checkout, kein merge.
+        reset_cmd = ['git', 'reset', '--hard', f'origin/{branch}']
         process = await asyncio.create_subprocess_exec(
-            *checkout_cmd,
-            cwd=str(project['path']),
-            stdout=asyncio.subprocess.PIPE,
-            stderr=asyncio.subprocess.PIPE
-        )
-        await process.communicate()
-
-        if process.returncode != 0:
-            raise DeploymentError(f"Git checkout {branch} failed")
-
-        # Pull latest
-        pull_cmd = ['git', 'pull', 'origin', branch]
-        process = await asyncio.create_subprocess_exec(
-            *pull_cmd,
-            cwd=str(project['path']),
+            *reset_cmd,
+            cwd=cwd,
             stdout=asyncio.subprocess.PIPE,
             stderr=asyncio.subprocess.PIPE
         )
@@ -510,7 +545,7 @@ class DeploymentManager:
         stdout, stderr = await process.communicate()
 
         if process.returncode != 0:
-            raise DeploymentError(f"Git pull failed: {stderr.decode()}")
+            raise DeploymentError(f"Git reset --hard origin/{branch} failed: {stderr.decode()}")
 
     async def _run_tests(self, project: Dict) -> bool:
         """
@@ -526,7 +561,7 @@ class DeploymentManager:
 
         process = await asyncio.create_subprocess_exec(
             *test_cmd,
-            cwd=str(project['path']),
+            cwd=str(self._deploy_path(project)),
             stdout=asyncio.subprocess.PIPE,
             stderr=asyncio.subprocess.PIPE
         )
@@ -558,7 +593,7 @@ class DeploymentManager:
                 'bash',
                 '-lc',
                 raw_cmd,
-                cwd=str(project['path']),
+                cwd=str(self._deploy_path(project)),
                 stdout=asyncio.subprocess.PIPE,
                 stderr=asyncio.subprocess.PIPE
             )
@@ -566,7 +601,7 @@ class DeploymentManager:
             cmd = shlex.split(raw_cmd)
             process = await asyncio.create_subprocess_exec(
                 *cmd,
-                cwd=str(project['path']),
+                cwd=str(self._deploy_path(project)),
                 stdout=asyncio.subprocess.PIPE,
                 stderr=asyncio.subprocess.PIPE
             )
