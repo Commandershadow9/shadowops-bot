@@ -1,7 +1,7 @@
 ---
 title: 🔧 ShadowOps API Documentation v5.1
 status: active
-last_reviewed: 2026-06-03
+last_reviewed: 2026-08-16
 owner: CommanderShadow9
 ---
 
@@ -479,6 +479,13 @@ projects:
   shadowops-bot:
     enabled: true                           # Enable this project
     path: /home/user/shadowops-bot          # Absolute path to project
+    deploy_path: ""                         # Optionaler Deploy-Baum (PR #418, ZERODOX#2344).
+                                            # Falls gesetzt: git-Schritt, Tests und post_deploy_command
+                                            # laufen in diesem Verzeichnis statt in `path`. `path` bleibt
+                                            # das Arbeitsverzeichnis (Backup-Monitoring, Disk-Checks,
+                                            # Kontext, Verifikation, Polling). Kein Eintrag = Fallback auf
+                                            # `path` (kein Verhaltensunterschied fuer bestehende Projekte).
+                                            # ⚠️ Deploy-Baum wird per reset --hard ueberschrieben.
     branch: main                            # Git branch for deployments
     repo_url: ""                            # GitHub repo URL (optional; used for webhook setup and /release-notes link)
     monitor_only: false                     # If true: GitHub webhook events (push/PR/deploy) are silently skipped;
