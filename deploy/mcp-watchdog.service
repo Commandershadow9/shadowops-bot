@@ -1,0 +1,19 @@
+[Unit]
+Description=ZERODOX MCP Health Watchdog — Erreichbarkeit von mcp.zerodox.de + Discord-Alert
+Documentation=https://github.com/Commandershadow9/shadowops-bot
+After=network-online.target
+
+[Service]
+Type=oneshot
+EnvironmentFile=-/home/cmdshadow/.config/shadowops-watchdog.env
+Environment=WATCHDOG_SERVICE_NAME=zerodox-mcp
+# Bewusst NICHT /mcp geprüft: Dort sind 403 (IP-Sperre greift) und 401 (kein
+# Token) der Normalzustand — ein Statuscode-Vergleich wäre dort entweder
+# dauerhaft rot oder blind. Dieser Pfad läuft über den zweiten, offenen Router
+# und beweist, dass die Anwendung selbst antwortet, nicht nur Traefik.
+Environment=WATCHDOG_HEALTH_URL=https://mcp.zerodox.de/.well-known/oauth-authorization-server
+Environment=WATCHDOG_REQUIRE_BOT_READY=0
+ExecStart=/home/cmdshadow/shadowops-bot/scripts/service-watchdog.sh
+SuccessExitStatus=0 1
+StandardOutput=journal
+StandardError=journal

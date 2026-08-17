@@ -1,0 +1,14 @@
+[Unit]
+Description=ZERODOX MCP Drift Watchdog — laeuft der Container mit dem Code aus HEAD, schreibt das Audit-Protokoll?
+Documentation=https://github.com/Commandershadow9/shadowops-bot
+After=network-online.target
+
+[Service]
+Type=oneshot
+EnvironmentFile=-/home/cmdshadow/.config/shadowops-watchdog.env
+Environment=MCP_REPO_DIR=/home/cmdshadow/mcp
+ExecStart=/home/cmdshadow/shadowops-bot/scripts/mcp-drift-watchdog.sh
+# Exit 1 heisst "Drift gemeldet" — ein erwartetes Ergebnis, kein Unit-Fehler.
+SuccessExitStatus=0 1
+StandardOutput=journal
+StandardError=journal

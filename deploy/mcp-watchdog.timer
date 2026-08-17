@@ -1,0 +1,15 @@
+[Unit]
+Description=ZERODOX MCP Watchdog Timer — alle 5 Minuten (mit Jitter)
+Documentation=https://github.com/Commandershadow9/shadowops-bot
+
+[Timer]
+# 4 Minuten nach Boot — versetzt zu shadowops (2min) und zerodox (3min),
+# damit die Watchdogs nicht im Pulk auf dieselbe Sekunde laufen.
+OnBootSec=4min
+OnUnitActiveSec=5min
+RandomizedDelaySec=45s
+AccuracySec=15s
+Persistent=false
+
+[Install]
+WantedBy=timers.target
