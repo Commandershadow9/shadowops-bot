@@ -77,12 +77,35 @@ build_iso="$(date -u -d "@$build_epoch" +%Y-%m-%dT%H:%M:%SZ 2>/dev/null || echo 
 # ─── Jüngsten origin/main-Commit holen ───────────────────────────────
 # `gh` nutzt den eingeloggten Token — keine extra Auth-Konfig noetig
 head_commit_iso="$(gh api "repos/$REPO/commits/main" --jq '.commit.committer.date' 2>/dev/null || echo "")"
-if [[ -z "$head_commit_iso" ]]; then
-    log "GitHub-API nicht erreichbar oder Repo $REPO nicht zugaenglich — skip"
+
+# Auf VERWERTBARKEIT pruefen, nicht auf "nicht leer". `gh api` gibt bei einem
+# Fehler die JSON-Fehlermeldung aus statt nichts — eine reine Leer-Pruefung
+# laesst sie durch, und `date -d '{"message":"Not Found"...}'` bricht unter
+# `set -e` das ganze Skript ab. Genau das lief am 17.08.2026 ab 15:36 alle
+# 15 Minuten: Der Watchdog starb vor jeder Messung, systemd meldete "failed",
+# und weil niemand die Ursache las, war der Build-Drift stundenlang unbewacht.
+# Bei privaten Repos heisst GitHubs 404 ausserdem "nicht berechtigt", nicht
+# "existiert nicht" — der Dienst hat schlicht keinen gueltigen Token.
+head_epoch="$(date -u -d "$head_commit_iso" +%s 2>/dev/null || echo "")"
+if [[ -z "$head_commit_iso" || -z "$head_epoch" ]]; then
+    log "GitHub-Antwort ist kein verwertbares Datum (Repo $REPO privat und Dienst ohne gueltigen gh-Token?): ${head_commit_iso:0:140}"
+
+    # Nicht still aussteigen. Ein Watchdog, der nicht messen kann, sieht von
+    # aussen aus wie einer, der nichts zu melden hat — das ist derselbe
+    # Fehlermodus, den er selbst verhindern soll. Nach vier Fehlversuchen in
+    # Folge (eine Stunde bei 15-Minuten-Takt) wird das gemeldet.
+    fehl_zaehler=$(( $(read_state | jq -r '.probe_failures // 0') + 1 ))
+    write_state "$(jq -n --arg ts "$TS" --argjson f "$fehl_zaehler" \
+        '{last_status:"probe_failed", last_alert_at:"", drift_minutes:0, updated_at:$ts, probe_failures:$f}')"
+
+    if (( fehl_zaehler == 4 )) && [[ -n "$WEBHOOK_URL" ]]; then
+        curl -sS -m 10 -X POST -H "Content-Type: application/json" --data "$(jq -n --arg repo "$REPO" --arg host "$HOSTNAME_SHORT" \
+            '{content: "⚠️ **Build-Drift-Watchdog kann nicht messen** — `\($repo)`: GitHub-Abfrage liefert kein Datum (Token/Berechtigung pruefen). Der Build-Drift ist seit ~1 Stunde unbewacht.",
+              embeds:[{title:"MayDay-Sim Build-Drift: Messung unmoeglich", color:16753920, footer:{text:("Host: " + $host)}}]}')" \
+            "$WEBHOOK_URL" >/dev/null 2>&1 || log "Meldung ueber Messausfall konnte nicht zugestellt werden"
+    fi
     exit 0
 fi
-
-head_epoch="$(date -u -d "$head_commit_iso" +%s)"
 
 # ─── Drift berechnen ─────────────────────────────────────────────────
 # Negative drift = Build neuer als HEAD (sollte nie passieren) → 0
