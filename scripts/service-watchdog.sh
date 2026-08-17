@@ -54,6 +54,10 @@ CURL_TIMEOUT_S="${WATCHDOG_TIMEOUT_S:-${SHADOWOPS_WATCHDOG_TIMEOUT:-10}}"
 # Inline-Curl-Verhalten, falls die Lib bei kaputtem Deploy fehlt (Resilienz first).
 # shellcheck source=lib/discord-send.sh
 source "$(dirname "${BASH_SOURCE[0]}")/lib/discord-send.sh" 2>/dev/null || true
+# Statusmeldung an den ZERODOX-Systemstatus (#2441). Optional: Fehlt die Datei,
+# laeuft der Watchdog unveraendert weiter — die Meldung ist Beiwerk, nicht Zweck.
+# shellcheck source=lib/watchdog-report.sh
+source "$(dirname "${BASH_SOURCE[0]}")/lib/watchdog-report.sh" 2>/dev/null || true
 if ! declare -f discord_post >/dev/null 2>&1; then
     discord_post() { curl -sS -o /dev/null -w '%{http_code}' -X POST \
         -H 'Content-Type: application/json' --data "$2" --max-time 10 "$1" 2>/dev/null || echo 000; }
@@ -457,6 +461,23 @@ main() {
     result=$(check_health || true)
     local status="${result%%:*}"
     local reason="${result#*:}"
+
+    # Meldung an den ZERODOX-Systemstatus (#2441). Bewusst hier, an der einen
+    # Stelle, an der das Ergebnis feststeht — nicht verteilt auf die vier
+    # Ausgaenge darunter, wo ein Pfad beim naechsten Umbau vergessen wuerde.
+    #
+    # Fail-soft per Konstruktion: melde_status schluckt jeden Fehler und gibt
+    # immer 0 zurueck (siehe lib/watchdog-report.sh). Die `declare -f`-Pruefung
+    # haelt den Watchdog zusaetzlich lauffaehig, falls die Bibliothek fehlt —
+    # gleiches Muster wie bei discord_post oben. Ein ZERODOX-Ausfall darf die
+    # Alarmierung niemals mitreissen.
+    if declare -f melde_status >/dev/null 2>&1; then
+        if [[ "$status" == "UP" ]]; then
+            melde_status "$SERVICE_NAME" "OK" "" "${WATCHDOG_TAKT_SEK:-300}"
+        else
+            melde_status "$SERVICE_NAME" "AUFFAELLIG" "$reason" "${WATCHDOG_TAKT_SEK:-300}"
+        fi
+    fi
 
     if [[ "$status" == "UP" ]]; then
         if [[ "$last_status" == "down" ]]; then
