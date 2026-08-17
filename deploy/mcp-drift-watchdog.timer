@@ -1,0 +1,15 @@
+[Unit]
+Description=MCP Drift Watchdog Timer — stuendlich
+Documentation=https://github.com/Commandershadow9/shadowops-bot
+
+[Timer]
+OnBootSec=7min
+OnUnitActiveSec=1h
+# Grosszuegiger Jitter: Ein Drift ist kein Notfall, der auf die Minute
+# gemeldet werden muss. Die Streuung haelt die Last von der vollen Stunde weg.
+RandomizedDelaySec=5min
+AccuracySec=1min
+Persistent=true
+
+[Install]
+WantedBy=timers.target
