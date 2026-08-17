@@ -1243,16 +1243,31 @@ class TestCiSuccessDeployReconcile:
         integration._release_deploy.assert_called_once_with('ZERODOX', 'c' * 40)
 
     @pytest.mark.asyncio
-    async def test_reconcile_ignores_obsolete_successful_sha(
+    async def test_reconcile_targets_current_head_not_obsolete_sha(
         self, mock_bot, enabled_config,
     ):
+        """Zieht `main` waehrend des Reconcile weiter, gilt der neue HEAD.
+
+        Frueher stieg der Reconcile hier aus ("der neuere CI-Lauf ist
+        zustaendig") und dieser Test hielt das fest. Die Annahme traegt nur,
+        solange jener Lauf auch deployt — am 17.08.2026 scheiterte er an einer
+        belegten Deploy-Sperre, und danach war niemand mehr zustaendig: Der
+        Live-Stand blieb drei Commits hinter `main`, darunter eine
+        kundensichtbare Portal-Aenderung.
+
+        Was bleibt und hier geprueft wird: Der veraltete `successful_sha` darf
+        NICHT deployt werden. Ausgeliefert wird der aktuelle HEAD.
+        """
         integration = GitHubIntegration(mock_bot, enabled_config)
         project_config = self._project_config()
         integration.config.projects = {'zerodox': project_config}
         integration.deployment_manager = MagicMock()
+        integration.deployment_manager.active_deployments = {'zerodox': False}
         integration._fetch_branch_head_sha = AsyncMock(return_value='e' * 40)
-        integration._fetch_live_build_sha = AsyncMock()
-        integration._trigger_deployment = AsyncMock()
+        integration._fetch_live_build_sha = AsyncMock(return_value='d' * 40)
+        integration._trigger_deployment = AsyncMock(return_value='deployed')
+        integration._reserve_deploy = Mock(return_value=True)
+        integration._release_deploy = Mock()
 
         await integration._reconcile_ci_success_deployment(
             repo_name='ZERODOX',
@@ -1262,8 +1277,13 @@ class TestCiSuccessDeployReconcile:
             project_config=project_config,
         )
 
-        integration._fetch_live_build_sha.assert_not_awaited()
-        integration._trigger_deployment.assert_not_awaited()
+        integration._trigger_deployment.assert_awaited_once_with(
+            repo_name='ZERODOX',
+            branch='main',
+            commit_sha='e' * 7,
+            repo_full_name='Commandershadow9/ZERODOX',
+            full_sha='e' * 40,
+        )
 
     @pytest.mark.asyncio
     async def test_failed_ci_releases_sha_for_later_success(
