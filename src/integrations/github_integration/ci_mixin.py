@@ -497,7 +497,15 @@ class CIMixin:
         workflow_names: List[str],
         max_wait_min: int = 30,
         admin_merge_grace_min: int = 5,
-    ) -> Literal["success", "failure", "timeout", "missing", "docs_only", "no_workflows"]:
+    ) -> Literal[
+        "success",
+        "failure",
+        "timeout",
+        "missing",
+        "docs_only",
+        "no_workflows",
+        "api_unavailable",
+    ]:
         """
         Wait for required CI workflows on a given commit to complete.
 
@@ -528,6 +536,15 @@ class CIMixin:
             "missing"      — nach max_wait_min kein relevanter Workflow sichtbar
             "docs_only"    — nur nicht-deploy-relevante Pfade geaendert
             "no_workflows" — kein workflow_names konfiguriert → caller entscheidet
+            "api_unavailable" — die GitHub-API war waehrend der gesamten Frist
+                nicht lesbar; ueber die CI ist NICHTS bekannt
+
+        Zu "api_unavailable" (17.08.2026): Bei einem GitHub-Ausfall lieferte
+        jede Abfrage 404, und der Ausgang lautete trotzdem "missing" — also
+        "fuer diesen Commit existiert kein Workflow". Die CI war laengst
+        gelaufen. Der Unterschied ist nicht kosmetisch: "missing" gilt als
+        endgueltiges Urteil und loest einen entsprechenden Alert aus, waehrend
+        eine Stoerung vorbeigeht und einen neuen Versuch verdient.
         """
         if not workflow_names:
             self.logger.info(
@@ -551,6 +568,12 @@ class CIMixin:
         max_poll_interval_s = 300  # 5 min cap
         saw_any_relevant = False
         commit_paths_checked = False
+        # 17.08.2026: Wurde die API waehrend der gesamten Frist nie gelesen, ist
+        # die CI-Lage unbekannt — das darf nicht als "kein Workflow vorhanden"
+        # aus der Schleife kommen. Gezaehlt werden beide Seiten, damit sich der
+        # Unterschied am Ende belegen laesst statt geraten werden zu muessen.
+        api_fehler_runden = 0
+        api_erfolg_runden = 0
 
         self.logger.info(
             f"⏳ Welle 9.10: warte auf CI-Completion fuer {repo_full_name}@{merged_sha[:7]} "
@@ -562,10 +585,12 @@ class CIMixin:
             data = await self._fetch_workflow_runs_for_sha(repo_full_name, merged_sha)
             if data is None:
                 # API-Fehler / Rate-Limit — weiter pollen
+                api_fehler_runden += 1
                 await asyncio.sleep(poll_interval_s)
                 poll_interval_s = min(poll_interval_s * 2, max_poll_interval_s)
                 continue
 
+            api_erfolg_runden += 1
             all_runs = data.get("workflow_runs") or []
 
             # Filter auf relevant: name matched workflow_names (case-insensitive, substring)
@@ -672,6 +697,16 @@ class CIMixin:
             poll_interval_s = min(poll_interval_s * 2, max_poll_interval_s)
 
         if not saw_any_relevant:
+            # Nur wenn die API mindestens einmal geantwortet hat, ist "es gibt
+            # keinen Workflow" eine Beobachtung. Sonst ist es eine Vermutung.
+            if api_erfolg_runden == 0 and api_fehler_runden > 0:
+                self.logger.warning(
+                    f"🌐 _wait_for_ci_completion: GitHub-API nach {max_wait_min}min "
+                    f"unverändert nicht lesbar ({api_fehler_runden} Versuche) fuer "
+                    f"{repo_full_name}@{merged_sha[:7]} — CI-Lage unbekannt, "
+                    f"kein Deploy. Prüfen: https://www.githubstatus.com"
+                )
+                return "api_unavailable"
             self.logger.warning(
                 f"🛑 _wait_for_ci_completion: CI FEHLT nach {max_wait_min}min "
                 f"fuer {repo_full_name}@{merged_sha[:7]}"
@@ -686,7 +721,7 @@ class CIMixin:
 
     async def _send_ci_wait_alert(
         self,
-        outcome: Literal["failure", "timeout", "missing"],
+        outcome: Literal["failure", "timeout", "missing", "api_unavailable"],
         repo_name: str,
         repo_full_name: str,
         branch: str,
@@ -737,6 +772,18 @@ class CIMixin:
                     f"noch nicht alle completed.\n\n"
                     f"**deploy.sh wurde NICHT getriggert.** Sobald CI gruen ist, "
                     f"deploy.sh manuell triggern."
+                )
+            elif outcome == "api_unavailable":
+                title = f"🌐 {repo_name}: Deploy zurueckgestellt — GitHub nicht erreichbar"
+                color = 0x95A5A6
+                description = (
+                    f"Die GitHub-API war ueber die gesamten {max_wait_min} Minuten nicht "
+                    f"lesbar, deshalb ist ueber die CI von Commit `{merged_sha[:7]}` "
+                    f"**nichts bekannt** — weder gruen noch rot noch fehlend.\n\n"
+                    f"**deploy.sh wurde NICHT getriggert** (fail-closed). Das ist keine "
+                    f"Aussage ueber den Code: Sobald die API wieder antwortet, ist der "
+                    f"Deploy einen erneuten Versuch wert.\n\n"
+                    f"Stoerungen pruefen: https://www.githubstatus.com"
                 )
             else:  # missing
                 title = f"🛑 {repo_name}: Deploy ABGEBROCHEN — CI fehlt"
@@ -867,7 +914,10 @@ class CIMixin:
                     )
                     self._release_deploy(repo_name, full_sha)
                     return
-                if outcome in {"timeout", "missing"}:
+                # "api_unavailable" gehoert zwingend in diese Menge: faellt der
+                # Wert durch, landet er unten im Weiter-deployen-Zweig — ein
+                # Deploy ohne jede CI-Pruefung. Ein Test haelt das fest.
+                if outcome in {"timeout", "missing", "api_unavailable"}:
                     await self._send_ci_wait_alert(
                         outcome=outcome,
                         repo_name=repo_name,
@@ -920,7 +970,16 @@ class CIMixin:
                         repoll_round=_repoll_round,
                     )
             else:
-                self.logger.warning(f"⚠️ Deployment fehlgeschlagen: {repo_name}")
+                # 2026-08-17: Der Grund stand bereits in result['error'] und wurde
+                # hier verworfen — vier Fehlschlaege an einem Tag hinterliessen im
+                # Log nur "Deployment fehlgeschlagen: ZERODOX". Ohne Grund ist ein
+                # Abbruch nicht von einer Infrastrukturstoerung unterscheidbar.
+                reason = str(result.get('error') or '').strip()
+                if not reason:
+                    reason = "ohne Fehlergrund in der deploy_project-Antwort"
+                self.logger.warning(
+                    f"⚠️ Deployment fehlgeschlagen: {repo_name} — {reason}"
+                )
                 self._release_deploy(repo_name, full_sha or '')
 
         except Exception as e:
