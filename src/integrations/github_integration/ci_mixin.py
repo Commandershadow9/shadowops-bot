@@ -22,6 +22,13 @@ _CI_FAILURE_CONCLUSIONS = frozenset({"failure", "cancelled", "timed_out", "actio
 # `status != 'completed'` weiter in den Poll-Loop.
 _CI_RUNNING_STATI = frozenset({"queued", "in_progress", "requested", "waiting", "pending"})
 
+# deploy.sh beendet sich mit EX_TEMPFAIL (75), wenn bereits ein anderer Deploy
+# die Sperre haelt — ein Wartegrund, kein Fehlschlag. Der Marker taucht so im
+# Fehlertext von _run_post_deploy_command auf ("Post-deploy command failed
+# (exit=75): ..."). Ueber den Code statt ueber deutsche Meldungstexte zu gehen
+# haelt die Erkennung stabil, wenn jemand den Hinweis umformuliert.
+_DEPLOY_TEMPFAIL_MARKER = "exit=75"
+
 # ZERODOX#1720: Default-Obergrenze fuer Re-Poll-Runden nach einem erfolgreichen
 # Deploy (Schleifen-Schutz). Ueberschreibbar per Projekt via
 # deploy.repoll_max_rounds.
@@ -165,8 +172,14 @@ class CIMixin:
         """Deployt einen gruenen main-HEAD nach, falls Produktion hinterherlaeuft.
 
         Der Reconcile wartet zunaechst auf den normalen PR-/Push-Deploy. Bleibt
-        live danach hinter dem weiterhin aktuellen, gruenen Branch-HEAD, wird
-        maximal zweimal ueber die normale CI-/Deploy-Pipeline nachgezogen.
+        live danach hinter dem Branch-HEAD, wird maximal zweimal ueber die
+        normale CI-/Deploy-Pipeline nachgezogen.
+
+        Zieht `main` waehrenddessen weiter (Merge-Serie), gilt der Auftrag dem
+        neuen HEAD — nicht mehr dem Commit, fuer den der Reconcile gestartet
+        wurde. Bis zum 17.08.2026 wurde hier abgebrochen mit der Begruendung,
+        der neuere CI-Lauf sei zustaendig; scheitert dessen Deploy, ist danach
+        niemand mehr zustaendig und der Stand bleibt liegen.
         """
         deploy_config = project_config.get('deploy') or {}
         delay_sec = max(0, int(deploy_config.get('ci_success_reconcile_delay_sec', 120)))
@@ -176,6 +189,7 @@ class CIMixin:
         health_url = (project_config.get('monitor') or {}).get('url') or ''
         deadline = time.monotonic() + timeout_sec
         attempts = 0
+        head_wechsel_gemeldet = False
 
         if delay_sec:
             await asyncio.sleep(delay_sec)
@@ -185,12 +199,23 @@ class CIMixin:
             if not branch_sha:
                 await asyncio.sleep(poll_sec)
                 continue
-            if branch_sha != successful_sha:
+            if branch_sha != successful_sha and not head_wechsel_gemeldet:
+                # Frueher wurde hier mit "der neuere CI-Lauf ist zustaendig"
+                # ausgestiegen. Die Annahme traegt nur, solange jener Lauf auch
+                # deployt — scheitert er (Sperre, rote CI, API-Stoerung), ist
+                # anschliessend niemand mehr zustaendig. Am 17.08.2026 blieb der
+                # Live-Stand deshalb drei Commits hinter main zurueck.
+                #
+                # Weiterlaufen ist gefahrlos: Die Schleife arbeitet ohnehin mit
+                # dem AKTUELLEN branch_sha, _trigger_deployment wartet fuer den
+                # auf dessen eigene CI, und _reserve_deploy verhindert, dass
+                # zwei Reconciles denselben Stand doppelt ausliefern.
                 self.logger.info(
-                    f"ℹ️ CI-Reconcile {repo_name}@{successful_sha[:7]} veraltet: "
-                    f"{branch} steht bereits auf {branch_sha[:7]}. Der neuere CI-Lauf ist zustaendig."
+                    f"ℹ️ CI-Reconcile {repo_name}@{successful_sha[:7]}: {branch} steht "
+                    f"inzwischen auf {branch_sha[:7]} — nachgezogen wird der aktuelle "
+                    f"Stand. Der neuere CI-Lauf darf zuvorkommen (Reservierung)."
                 )
-                return
+                head_wechsel_gemeldet = True
 
             live_sha = await self._fetch_live_build_sha(health_url)
             if not live_sha:
@@ -212,12 +237,11 @@ class CIMixin:
                 await asyncio.sleep(poll_sec)
                 continue
 
-            attempts += 1
             self.logger.warning(
                 f"🔁 CI-Reconcile: live {live_sha[:7]} != {branch} {branch_sha[:7]} "
-                f"nach gruener CI — Nachhol-Deploy {attempts}/{max_attempts}."
+                f"nach gruener CI — Nachhol-Deploy {attempts + 1}/{max_attempts}."
             )
-            await self._trigger_deployment(
+            ergebnis = await self._trigger_deployment(
                 repo_name=repo_name,
                 branch=branch,
                 commit_sha=branch_sha[:7],
@@ -229,8 +253,15 @@ class CIMixin:
             # nach Abschluss dieses Versuchs wieder frei sein; vor dem naechsten
             # Deploy werden Branch-HEAD und live buildSha erneut geprueft.
             self._release_deploy(repo_name, branch_sha)
-            if attempts >= max_attempts:
-                break
+            # "transient" heisst: der Deploy hat gar nicht stattgefunden (belegte
+            # Sperre, unlesbare CI-Lage). Das gegen die Versuche zu rechnen, hat
+            # am 17.08.2026 einen Stand liegen lassen, den blosses Abwarten
+            # ausgeliefert haette. Begrenzt bleibt es trotzdem — ueber die
+            # Deadline (timeout_sec), nicht ueber max_attempts.
+            if ergebnis != "transient":
+                attempts += 1
+                if attempts >= max_attempts:
+                    break
             await asyncio.sleep(poll_sec)
 
         self.logger.warning(
@@ -497,7 +528,15 @@ class CIMixin:
         workflow_names: List[str],
         max_wait_min: int = 30,
         admin_merge_grace_min: int = 5,
-    ) -> Literal["success", "failure", "timeout", "missing", "docs_only", "no_workflows"]:
+    ) -> Literal[
+        "success",
+        "failure",
+        "timeout",
+        "missing",
+        "docs_only",
+        "no_workflows",
+        "api_unavailable",
+    ]:
         """
         Wait for required CI workflows on a given commit to complete.
 
@@ -528,6 +567,15 @@ class CIMixin:
             "missing"      — nach max_wait_min kein relevanter Workflow sichtbar
             "docs_only"    — nur nicht-deploy-relevante Pfade geaendert
             "no_workflows" — kein workflow_names konfiguriert → caller entscheidet
+            "api_unavailable" — die GitHub-API war waehrend der gesamten Frist
+                nicht lesbar; ueber die CI ist NICHTS bekannt
+
+        Zu "api_unavailable" (17.08.2026): Bei einem GitHub-Ausfall lieferte
+        jede Abfrage 404, und der Ausgang lautete trotzdem "missing" — also
+        "fuer diesen Commit existiert kein Workflow". Die CI war laengst
+        gelaufen. Der Unterschied ist nicht kosmetisch: "missing" gilt als
+        endgueltiges Urteil und loest einen entsprechenden Alert aus, waehrend
+        eine Stoerung vorbeigeht und einen neuen Versuch verdient.
         """
         if not workflow_names:
             self.logger.info(
@@ -551,6 +599,12 @@ class CIMixin:
         max_poll_interval_s = 300  # 5 min cap
         saw_any_relevant = False
         commit_paths_checked = False
+        # 17.08.2026: Wurde die API waehrend der gesamten Frist nie gelesen, ist
+        # die CI-Lage unbekannt — das darf nicht als "kein Workflow vorhanden"
+        # aus der Schleife kommen. Gezaehlt werden beide Seiten, damit sich der
+        # Unterschied am Ende belegen laesst statt geraten werden zu muessen.
+        api_fehler_runden = 0
+        api_erfolg_runden = 0
 
         self.logger.info(
             f"⏳ Welle 9.10: warte auf CI-Completion fuer {repo_full_name}@{merged_sha[:7]} "
@@ -562,10 +616,12 @@ class CIMixin:
             data = await self._fetch_workflow_runs_for_sha(repo_full_name, merged_sha)
             if data is None:
                 # API-Fehler / Rate-Limit — weiter pollen
+                api_fehler_runden += 1
                 await asyncio.sleep(poll_interval_s)
                 poll_interval_s = min(poll_interval_s * 2, max_poll_interval_s)
                 continue
 
+            api_erfolg_runden += 1
             all_runs = data.get("workflow_runs") or []
 
             # Filter auf relevant: name matched workflow_names (case-insensitive, substring)
@@ -672,6 +728,16 @@ class CIMixin:
             poll_interval_s = min(poll_interval_s * 2, max_poll_interval_s)
 
         if not saw_any_relevant:
+            # Nur wenn die API mindestens einmal geantwortet hat, ist "es gibt
+            # keinen Workflow" eine Beobachtung. Sonst ist es eine Vermutung.
+            if api_erfolg_runden == 0 and api_fehler_runden > 0:
+                self.logger.warning(
+                    f"🌐 _wait_for_ci_completion: GitHub-API nach {max_wait_min}min "
+                    f"unverändert nicht lesbar ({api_fehler_runden} Versuche) fuer "
+                    f"{repo_full_name}@{merged_sha[:7]} — CI-Lage unbekannt, "
+                    f"kein Deploy. Prüfen: https://www.githubstatus.com"
+                )
+                return "api_unavailable"
             self.logger.warning(
                 f"🛑 _wait_for_ci_completion: CI FEHLT nach {max_wait_min}min "
                 f"fuer {repo_full_name}@{merged_sha[:7]}"
@@ -686,7 +752,7 @@ class CIMixin:
 
     async def _send_ci_wait_alert(
         self,
-        outcome: Literal["failure", "timeout", "missing"],
+        outcome: Literal["failure", "timeout", "missing", "api_unavailable"],
         repo_name: str,
         repo_full_name: str,
         branch: str,
@@ -737,6 +803,18 @@ class CIMixin:
                     f"noch nicht alle completed.\n\n"
                     f"**deploy.sh wurde NICHT getriggert.** Sobald CI gruen ist, "
                     f"deploy.sh manuell triggern."
+                )
+            elif outcome == "api_unavailable":
+                title = f"🌐 {repo_name}: Deploy zurueckgestellt — GitHub nicht erreichbar"
+                color = 0x95A5A6
+                description = (
+                    f"Die GitHub-API war ueber die gesamten {max_wait_min} Minuten nicht "
+                    f"lesbar, deshalb ist ueber die CI von Commit `{merged_sha[:7]}` "
+                    f"**nichts bekannt** — weder gruen noch rot noch fehlend.\n\n"
+                    f"**deploy.sh wurde NICHT getriggert** (fail-closed). Das ist keine "
+                    f"Aussage ueber den Code: Sobald die API wieder antwortet, ist der "
+                    f"Deploy einen erneuten Versuch wert.\n\n"
+                    f"Stoerungen pruefen: https://www.githubstatus.com"
                 )
             else:  # missing
                 title = f"🛑 {repo_name}: Deploy ABGEBROCHEN — CI fehlt"
@@ -820,7 +898,7 @@ class CIMixin:
         """
         if not self.deployment_manager:
             self.logger.warning("⚠️ No deployment manager configured")
-            return
+            return "blocked"
 
         # Check if deployment is enabled for this project (case-insensitive lookup,
         # mit dash/underscore-Fallback fuer GitHub-Repos wie "mayday-sim" ↔ Config-Key
@@ -837,7 +915,7 @@ class CIMixin:
             deploy_config = project_config.get('deploy', {})
             if not deploy_config.get('enabled', True):
                 self.logger.info(f"⏭️ Deployment disabled for {repo_name} - handled by CI/CD pipeline")
-                return
+                return "blocked"
 
         # Welle 9.10: Wait-for-CI BEFORE deploy.sh-Call (falls Args vollstaendig).
         # Caller (handle_pr_event) MUSS repo_full_name + full_sha mitgeben um zu profitieren.
@@ -866,8 +944,11 @@ class CIMixin:
                         max_wait_min=max_wait_min,
                     )
                     self._release_deploy(repo_name, full_sha)
-                    return
-                if outcome in {"timeout", "missing"}:
+                    return "blocked"
+                # "api_unavailable" gehoert zwingend in diese Menge: faellt der
+                # Wert durch, landet er unten im Weiter-deployen-Zweig — ein
+                # Deploy ohne jede CI-Pruefung. Ein Test haelt das fest.
+                if outcome in {"timeout", "missing", "api_unavailable"}:
                     await self._send_ci_wait_alert(
                         outcome=outcome,
                         repo_name=repo_name,
@@ -878,7 +959,10 @@ class CIMixin:
                         max_wait_min=max_wait_min,
                     )
                     self._release_deploy(repo_name, full_sha)
-                    return
+                    # "api_unavailable" ist ausdruecklich transient: Die CI-Lage
+                    # war nur nicht lesbar. Der Reconcile soll es spaeter erneut
+                    # versuchen duerfen, ohne dafuer einen Versuch zu verbrauchen.
+                    return "transient" if outcome == "api_unavailable" else "blocked"
                 # success/docs_only/no_workflows → weiter unten deployen. Bei docs_only
                 # beendet deploy.sh selbst ohne Runtime-Aenderung (identische Allowlist).
             else:
@@ -919,13 +1003,35 @@ class CIMixin:
                         repo_full_name=repo_full_name,
                         repoll_round=_repoll_round,
                     )
+                return "deployed"
             else:
-                self.logger.warning(f"⚠️ Deployment fehlgeschlagen: {repo_name}")
+                # 2026-08-17: Der Grund stand bereits in result['error'] und wurde
+                # hier verworfen — vier Fehlschlaege an einem Tag hinterliessen im
+                # Log nur "Deployment fehlgeschlagen: ZERODOX". Ohne Grund ist ein
+                # Abbruch nicht von einer Infrastrukturstoerung unterscheidbar.
+                reason = str(result.get('error') or '').strip()
+                if not reason:
+                    reason = "ohne Fehlergrund in der deploy_project-Antwort"
+                self.logger.warning(
+                    f"⚠️ Deployment fehlgeschlagen: {repo_name} — {reason}"
+                )
                 self._release_deploy(repo_name, full_sha or '')
+                # deploy.sh meldet eine belegte Deploy-Sperre seit dem 17.08.2026
+                # mit EX_TEMPFAIL (75). Am selben Tag scheiterten drei Auto-Deploys
+                # daran, weil parallel ein manueller Lauf mit --migrate lief — die
+                # Sperre arbeitete korrekt, verbrauchte aber die Nachhol-Versuche.
+                if _DEPLOY_TEMPFAIL_MARKER in reason:
+                    self.logger.info(
+                        f"↻ {repo_name}: Deploy war vorübergehend verhindert "
+                        f"(EX_TEMPFAIL) — zählt nicht als verbrauchter Versuch."
+                    )
+                    return "transient"
+                return "failed"
 
         except Exception as e:
             self._release_deploy(repo_name, full_sha or '')
             self.logger.error(f"❌ Deployment Fehler: {e}", exc_info=True)
+            return "failed"
 
     async def _repoll_after_deploy(
         self,
