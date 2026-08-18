@@ -32,6 +32,11 @@ REPO="${MAYDAY_REPO:-Commandershadow9/mayday-sim}"
 MAX_MIN="${BUILD_DRIFT_MAX_MIN:-30}"
 WEBHOOK_URL="${BUILD_DRIFT_WEBHOOK:-}"
 STATE_FILE="${BUILD_DRIFT_STATE:-/home/cmdshadow/shadowops-bot/data/build-drift-state.json}"
+
+# Statusmeldung an den ZERODOX-Systemstatus (#2451). Optional: Fehlt die Datei,
+# laeuft der Watchdog unveraendert weiter — die Meldung ist Beiwerk, nicht Zweck.
+# shellcheck source=lib/watchdog-report.sh
+source "$(dirname "${BASH_SOURCE[0]}")/lib/watchdog-report.sh" 2>/dev/null || true
 TIMEOUT_S="${BUILD_DRIFT_TIMEOUT_S:-10}"
 HOSTNAME_SHORT="$(hostname -s 2>/dev/null || echo vServer)"
 TS="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
@@ -119,6 +124,17 @@ log "Build $build_iso vs HEAD $head_commit_iso → drift=$drift_min min (limit $
 
 state="$(read_state)"
 last_status="$(echo "$state" | jq -r '.last_status' 2>/dev/null || echo in_sync)"
+
+# Meldung an den ZERODOX-Systemstatus (#2451) — hier, wo die Drift feststeht
+# und BEVOR die Dedup-Logik darunter greift. Die unterdrueckt die wiederholte
+# Discord-Nachricht bei anhaltender Drift bewusst; die Seite braucht den Wert
+# trotzdem jedes Mal, sonst gilt der Watchdog nach zwei Takten als stumm.
+if [[ "$drift_min" -gt "$MAX_MIN" ]]; then
+    melde_befund "mayday-sim-build-drift" auffaellig \
+        "Live-Build ${drift_min} min hinter origin/main (Grenze ${MAX_MIN} min)"
+else
+    melde_befund "mayday-sim-build-drift" ok
+fi
 
 if [[ "$drift_min" -gt "$MAX_MIN" ]]; then
     # Drift over limit

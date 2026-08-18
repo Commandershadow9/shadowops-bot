@@ -26,6 +26,11 @@ set -euo pipefail
 # ─── Konfiguration ─────────────────────────────────────────────────────
 WEBHOOK_URL="${SHADOWOPS_WATCHDOG_WEBHOOK:-}"
 STATE_FILE="${SHADOWOPS_DRIFT_STATE:-/home/cmdshadow/shadowops-bot/data/watchdog_state_drift.json}"
+
+# Statusmeldung an den ZERODOX-Systemstatus (#2451). Optional: Fehlt die Datei,
+# laeuft der Watchdog unveraendert weiter — die Meldung ist Beiwerk, nicht Zweck.
+# shellcheck source=lib/watchdog-report.sh
+source "$(dirname "${BASH_SOURCE[0]}")/lib/watchdog-report.sh" 2>/dev/null || true
 USER_UNIT_PATH="${SHADOWOPS_USER_UNIT_PATH:-/home/cmdshadow/.config/systemd/user/shadowops-bot.service}"
 # NRestarts-Delta-Threshold pro 5-Min-Window: >= 3 deutet auf Restart-Loop hin
 RESTART_DELTA_THRESHOLD="${SHADOWOPS_RESTART_DELTA_THRESHOLD:-3}"
@@ -225,11 +230,15 @@ main() {
         issues=$((issues + 1))
     fi
 
+    # Meldung an den ZERODOX-Systemstatus (#2451) — an der einen Stelle, an der
+    # das Gesamturteil feststeht, vor beiden Ausgaengen.
     if (( issues == 0 )); then
+        melde_befund "shadowops-drift" ok
         echo "[drift-watchdog] OK — keine Drift, Service active, keine Restart-Loops"
         exit 0
     fi
 
+    melde_befund "shadowops-drift" auffaellig "$issues Befund(e): Unit-Drift, Service-State oder Restart-Loop"
     echo "[drift-watchdog] $issues Issue(s) detektiert"
     exit 0
 }
