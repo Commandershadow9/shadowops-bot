@@ -81,6 +81,10 @@ def _run_watchdog(env_extra: dict, expect_alert: bool = False) -> subprocess.Com
             "WATCHDOG_WEBHOOK": webhook_url,
             "WATCHDOG_REQUIRE_BOT_READY": "0",
             "WATCHDOG_TIMEOUT_S": "5",
+            # Testlaeufe duerfen nicht an den echten Systemstatus melden —
+            # siehe KEIN_ECHTES_MELDEN in test_service_watchdog_erinnerung.py
+            # (Phantom-Eintraege in der Produktionsdatenbank, 18.08.2026).
+            "ZERODOX_AGENT_API_KEY": "",
             **env_extra,
         }
         try:
