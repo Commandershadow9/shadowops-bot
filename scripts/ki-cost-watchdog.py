@@ -568,6 +568,86 @@ def build_payload(day, claude, codex, total_cost, total_tokens, avg, anomaly,
 
 
 # ─── Main ────────────────────────────────────────────────────────────────────
+def _takt_sek() -> int:
+    """
+    Melderhythmus aus dem eigenen systemd-Timer (ZERODOX #2452).
+
+    Gleiches Prinzip wie in scripts/lib/watchdog-report.sh: Der Wert kommt aus
+    dem Timer, der diesen Watchdog startet, nicht aus einer Konstante, die beim
+    naechsten Zeitplanwechsel niemand mitzieht.
+    """
+    import subprocess
+
+    try:
+        roh = subprocess.run(
+            ["systemctl", "--user", "show", "ki-cost-watchdog.timer",
+             "-p", "TimersCalendar", "-p", "TimersMonotonic"],
+            capture_output=True, text=True, timeout=5,
+        ).stdout
+        for zeile in roh.splitlines():
+            if "OnUnitActiveUSec=" in zeile:
+                wert = zeile.split("OnUnitActiveUSec=")[1].split(";")[0].strip()
+                usec = subprocess.run(["systemd-analyze", "timespan", wert],
+                                      capture_output=True, text=True, timeout=5).stdout
+                for z in usec.splitlines():
+                    if "μs:" in z:
+                        return int(z.split("μs:")[1].strip()) // 1_000_000
+            if "OnCalendar=" in zeile:
+                spec = zeile.split("OnCalendar=")[1].split(";")[0].strip()
+                aus = subprocess.run(
+                    ["systemd-analyze", "calendar", "--iterations=2", spec],
+                    capture_output=True, text=True, timeout=5).stdout
+                zeiten = [z.split("(in UTC):")[1].strip()
+                          for z in aus.splitlines() if "(in UTC):" in z]
+                if len(zeiten) >= 2:
+                    fmt = "%a %Y-%m-%d %H:%M:%S %Z"
+                    t1 = datetime.strptime(zeiten[0], fmt)
+                    t2 = datetime.strptime(zeiten[1], fmt)
+                    abstand = int((t2 - t1).total_seconds())
+                    if abstand > 0:
+                        return abstand
+    except Exception:  # noqa: BLE001 — die Meldung ist Beiwerk, nie ein Grund zu sterben
+        pass
+
+    return int(os.environ.get("WATCHDOG_TAKT_SEK", "86400"))
+
+
+def melde_status_zerodox(status: str, detail: str = "") -> None:
+    """
+    Statusmeldung an den ZERODOX-Systemstatus (#2451).
+
+    Dieser Watchdog fehlte auf der Uebersicht bisher vollstaendig — und zwar
+    unsichtbar: Wer nie gemeldet hat, erscheint dort nicht einmal als 'stumm',
+    weil die stumm-Erkennung das Alter der letzten Meldung vergleicht und es
+    keine gibt.
+
+    Wie die Bash-Fassung schluckt diese Funktion jeden Fehler. Der Zweck des
+    Watchdogs ist der Kosten-Rollup; ein ZERODOX-Ausfall darf ihn nicht
+    mitreissen.
+    """
+    key = os.environ.get("ZERODOX_AGENT_API_KEY", "")
+    if not key:
+        return
+    url = os.environ.get("ZERODOX_WATCHDOG_URL",
+                         "https://zerodox.de/api/internal/watchdog-status")
+    try:
+        nutzlast = json.dumps({
+            "name": "ki-cost",
+            "status": status,
+            "detail": detail or None,
+            "gemessenAm": datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ"),
+            "erwarteterTaktSek": _takt_sek(),
+        }).encode()
+        req = request.Request(url, data=nutzlast, method="POST", headers={
+            "Content-Type": "application/json",
+            "X-Agent-Key": key,
+        })
+        request.urlopen(req, timeout=5).close()
+    except Exception as exc:  # noqa: BLE001
+        print(f"[ki-cost-watchdog] Statusmeldung fehlgeschlagen (ignoriert): {exc}",
+              file=sys.stderr)
+
+
 def main() -> int:
     day = target_day()
     webhook = load_webhook()
@@ -615,6 +695,14 @@ def main() -> int:
         save_state(state)
     except OSError as exc:
         print(f"[ki-cost-watchdog] WARN: State nicht speicherbar: {exc}", file=sys.stderr)
+
+    # An der einen Stelle melden, an der das Urteil feststeht — vor den beiden
+    # Ausgaengen darunter, damit auch der Lauf ohne Webhook auf der Seite
+    # erscheint.
+    melde_status_zerodox(
+        "AUFFAELLIG" if anomaly else "OK",
+        f"Tageskosten ${total_cost:.2f} bei Schnitt ${avg:.2f}" if anomaly else "",
+    )
 
     if not webhook:
         print("[ki-cost-watchdog] Kein Webhook konfiguriert — nur stdout.")

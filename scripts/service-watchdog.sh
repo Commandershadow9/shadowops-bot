@@ -92,17 +92,60 @@ read_state() {
     if [[ -f "$STATE_FILE" ]]; then
         cat "$STATE_FILE"
     else
-        echo '{"last_status":"up","last_alert_at":"","consecutive_failures":0}'
+        echo '{"last_status":"up","last_alert_at":"","consecutive_failures":0,"down_since":""}'
     fi
+}
+
+# Liest ein Textfeld aus dem State. Toleriert Leerzeichen nach dem Doppelpunkt:
+# `write_state` schreibt kompakt, aber eine von Hand bearbeitete oder von einem
+# anderen Werkzeug geschriebene Datei sieht anders aus — und ein grep, der dann
+# nichts findet, beendet das Skript unter `set -e` vor jeder Ausgabe.
+#
+# ⚠️ Beide Helfer schlucken den grep-Fehlschlag (`|| true`). Ohne das beendet
+# `set -euo pipefail` das Skript, sobald ein Feld fehlt — und fehlen wird es:
+# Eine State-Datei, die vor dieser Aenderung geschrieben wurde, kennt
+# `down_since` nicht. Der Watchdog waere nach dem Deploy bei jedem Dienst,
+# der gerade unten ist, wortlos mit Exit 1 gestorben.
+state_feld() {
+    { grep -oE "\"$2\"[[:space:]]*:[[:space:]]*\"[^\"]*\"" <<<"$1" || true; } \
+        | head -1 | cut -d'"' -f4
+}
+
+state_zahl() {
+    { grep -oE "\"$2\"[[:space:]]*:[[:space:]]*[0-9]+" <<<"$1" || true; } \
+        | head -1 | grep -oE '[0-9]+$' || true
 }
 
 write_state() {
     local status="$1"
     local consecutive="$2"
     local alert_ts="$3"
+    # Beginn des laufenden Ausfalls — Grundlage der Dauerangabe in der
+    # Erinnerung (ZERODOX #2425). Leer, solange der Dienst oben ist.
+    local down_since="${4:-}"
     cat > "$STATE_FILE" <<EOF
-{"last_status":"$status","last_alert_at":"$alert_ts","consecutive_failures":$consecutive,"updated_at":"$TS","service":"$SERVICE_NAME"}
+{"last_status":"$status","last_alert_at":"$alert_ts","consecutive_failures":$consecutive,"down_since":"$down_since","updated_at":"$TS","service":"$SERVICE_NAME"}
 EOF
+}
+
+# Sekunden seit einem ISO-Zeitstempel. 0, wenn er fehlt oder unlesbar ist.
+sekunden_seit() {
+    local ts="$1" epoch
+    [[ -z "$ts" ]] && { echo 0; return 0; }
+    epoch="$(date -d "$ts" +%s 2>/dev/null)" || { echo 0; return 0; }
+    [[ -z "$epoch" ]] && { echo 0; return 0; }
+    echo $(( $(date -u +%s) - epoch ))
+}
+
+# "4 h 12 min" statt "15120 Sekunden" — die Dauer ist die Information, die in
+# der Erinnerung zur Eskalation fuehrt, und sie muss auf einen Blick lesbar sein.
+dauer_lesbar() {
+    local s="$1"
+    if (( s < 60 )); then echo "${s} s"
+    elif (( s < 3600 )); then echo "$(( s / 60 )) min"
+    elif (( s < 86400 )); then echo "$(( s / 3600 )) h $(( (s % 3600) / 60 )) min"
+    else echo "$(( s / 86400 )) d $(( (s % 86400) / 3600 )) h"
+    fi
 }
 
 # ─── Discord-Alert ─────────────────────────────────────────────────────
@@ -452,8 +495,11 @@ check_health() {
 main() {
     local state last_status consecutive
     state=$(read_state)
-    last_status=$(echo "$state" | grep -oE '"last_status":"[^"]*"' | cut -d'"' -f4)
-    consecutive=$(echo "$state" | grep -oE '"consecutive_failures":[0-9]+' | cut -d':' -f2)
+    last_status="$(state_feld "$state" last_status)"
+    consecutive="$(state_zahl "$state" consecutive_failures)"
+    local last_alert_at down_since
+    last_alert_at="$(state_feld "$state" last_alert_at)"
+    down_since="$(state_feld "$state" down_since)"
     last_status="${last_status:-up}"
     consecutive="${consecutive:-0}"
 
@@ -471,11 +517,23 @@ main() {
     # haelt den Watchdog zusaetzlich lauffaehig, falls die Bibliothek fehlt —
     # gleiches Muster wie bei discord_post oben. Ein ZERODOX-Ausfall darf die
     # Alarmierung niemals mitreissen.
+    # Der Takt kommt aus dem eigenen Timer, nicht aus einer Env-Variablen,
+    # die jemand vergessen kann (ZERODOX #2452 — sieben Watchdogs meldeten
+    # den Default 300 s statt ihres echten 30-Minuten- bis 6-Stunden-Rhythmus
+    # und standen dadurch die meiste Zeit falsch auf "stumm"). Er wird einmal
+    # ermittelt und dient zugleich als Grundlage der Erinnerungsfrist unten.
+    local takt_sek
+    if declare -f ermittle_takt_sek >/dev/null 2>&1; then
+        takt_sek="$(ermittle_takt_sek)"
+    else
+        takt_sek="${WATCHDOG_TAKT_SEK:-300}"
+    fi
+
     if declare -f melde_status >/dev/null 2>&1; then
         if [[ "$status" == "UP" ]]; then
-            melde_status "$SERVICE_NAME" "OK" "" "${WATCHDOG_TAKT_SEK:-300}"
+            melde_status "$SERVICE_NAME" "OK" "" "$takt_sek"
         else
-            melde_status "$SERVICE_NAME" "AUFFAELLIG" "$reason" "${WATCHDOG_TAKT_SEK:-300}"
+            melde_status "$SERVICE_NAME" "AUFFAELLIG" "$reason" "$takt_sek"
         fi
     fi
 
@@ -486,31 +544,90 @@ main() {
                 "Service ist wieder erreichbar nach $consecutive Fehlversuch(en).\n\`$HEALTH_URL\`" \
                 3066993 || true  # grün
         fi
-        write_state "up" 0 ""
+        write_state "up" 0 "" ""
         echo "[watchdog:$SERVICE_NAME] OK — healthy"
         exit 0
     fi
 
     # DOWN-Pfad
     consecutive=$((consecutive + 1))
+    [[ -z "$down_since" ]] && down_since="$TS"
 
+    # ─── Alarm-Erinnerung bei anhaltendem Ausfall (ZERODOX #2425) ──────────
+    #
+    # Bis zum 18.08.2026 alarmierte dieser Watchdog ausschliesslich beim
+    # UEBERGANG up→down. Ab dem zweiten Down-Lauf war `last_status=down` und
+    # die Bedingung bis zur Erholung falsch — der Ausfall wurde genau einmal
+    # gemeldet und danach nie wieder.
+    #
+    # Am 16.08.2026 um 22:09 Uhr meldete `runner-vm-disk` so die zu 85 %
+    # gefuellte Platte der CI-Runner-VM. Danach schwieg er 9 h 18 min lang
+    # durch 19 Laeufe, waehrend die Belegung auf 100 % stieg und die gesamte
+    # CI stillstand. Der einzelne Samstagabend-Alarm war die einzige Warnung.
+    #
+    # Fuer einen Dienst ist Einmal-Alarmieren richtig: Er ist aus, man weiss
+    # es, Wiederholung waere Laerm. Fuer eine Ressource, die sich monoton
+    # verschlechtert, ist es das Gegenteil — dort ist die Zeit zwischen
+    # Schwellwert und Totalausfall genau die, in der man noch handeln kann.
+    local erinnerung_sek="${WATCHDOG_ERINNERUNG_SEK:-}"
+    if [[ -z "$erinnerung_sek" ]]; then
+        # Ein Vielfaches des eigenen Takts, mindestens stuendlich: ein
+        # 5-Minuten-Watchdog soll nicht alle 20 Minuten erinnern, ein
+        # 6-Stunden-Watchdog nicht oefter als einmal pro Tag.
+        erinnerung_sek=$(( takt_sek * 4 ))
+        (( erinnerung_sek < 3600 )) && erinnerung_sek=3600
+    fi
+
+    local seit_alarm ausfall_dauer
+    seit_alarm="$(sekunden_seit "$last_alert_at")"
+    ausfall_dauer="$(dauer_lesbar "$(sekunden_seit "$down_since")")"
+
+    local alarm_art=""
     if [[ "$consecutive" -ge 2 && "$last_status" != "down" ]]; then
-        if send_discord_alert \
-            "🔴 $SERVICE_NAME DOWN" \
-            "Health-Check fehlgeschlagen ($consecutive konsekutive Failures): \`$reason\`\nEndpoint: \`$HEALTH_URL\`\n\nSofort prüfen: Service-Status und Logs." \
-            15158332  # rot
-        then
-            write_state "down" "$consecutive" "$TS"
-            echo "[watchdog:$SERVICE_NAME] ALERT gesendet — down ($reason)"
+        alarm_art="erst"
+    elif [[ "$last_status" == "down" ]]; then
+        # Kein Zeitstempel heisst: Der Erstalarm ist am Webhook gescheitert.
+        # Dann sofort erneut versuchen statt eine Frist abzuwarten, die nie
+        # begonnen hat.
+        if [[ -z "$last_alert_at" || "$seit_alarm" -ge "$erinnerung_sek" ]]; then
+            alarm_art="erinnerung"
+        fi
+    fi
+
+    if [[ -n "$alarm_art" ]]; then
+        local titel text
+        if [[ "$alarm_art" == "erinnerung" ]]; then
+            titel="🔴 $SERVICE_NAME weiterhin DOWN (seit $ausfall_dauer)"
+            text="Der Ausfall dauert unverändert an — seit **$ausfall_dauer**, $consecutive fehlgeschlagene Prüfungen in Folge.\n\nGrund: \`$reason\`\nEndpoint: \`$HEALTH_URL\`\n\nDies ist eine Erinnerung, kein neuer Vorfall."
+        else
+            titel="🔴 $SERVICE_NAME DOWN"
+            text="Health-Check fehlgeschlagen ($consecutive konsekutive Failures): \`$reason\`\nEndpoint: \`$HEALTH_URL\`\n\nSofort prüfen: Service-Status und Logs."
+        fi
+
+        if send_discord_alert "$titel" "$text" 15158332; then  # rot
+            write_state "down" "$consecutive" "$TS" "$down_since"
+            if [[ "$alarm_art" == "erinnerung" ]]; then
+                echo "[watchdog:$SERVICE_NAME] ERINNERUNG gesendet — down seit $ausfall_dauer ($reason)"
+            else
+                echo "[watchdog:$SERVICE_NAME] ALERT gesendet — down ($reason)"
+            fi
             exit 0
         else
-            write_state "down" "$consecutive" ""
+            # ⚠️ `last_alert_at` bleibt leer: Ein Alarm, der nicht rausging,
+            # darf die Erinnerungsfrist nicht starten.
+            write_state "down" "$consecutive" "" "$down_since"
             echo "[watchdog:$SERVICE_NAME] FAIL — down ($reason) UND Webhook fehlgeschlagen"
             exit 1
         fi
     fi
 
-    write_state "$([[ $consecutive -ge 2 ]] && echo down || echo up)" "$consecutive" "$([[ "$last_status" == "down" ]] && echo "$TS" || echo "")"
+    # ⚠️ `last_alert_at` wird hier UNVERAENDERT durchgereicht. Vorher stand an
+    # dieser Stelle `$TS`, sobald der Dienst unten war — das Feld trug damit
+    # "letzter Down-Lauf" statt "letzter Alarm". Jeder Lauf schob die Frist vor
+    # sich her, und eine zeitbasierte Erinnerung waere stillschweigend nie
+    # ausgeloest worden.
+    write_state "$([[ $consecutive -ge 2 ]] && echo down || echo up)" "$consecutive" \
+        "$last_alert_at" "$([[ $consecutive -ge 2 ]] && echo "$down_since" || echo "")"
     echo "[watchdog:$SERVICE_NAME] down ($reason), consecutive=$consecutive, last_status=$last_status — kein neuer Alert"
     exit 0
 }
