@@ -46,6 +46,11 @@ mkdir -p "$(dirname "$STATE_FILE")"
 # Geteilte Discord-Send-Lib mit 429-Resilienz (#293). Fallback = altes Inline-Curl.
 # shellcheck source=lib/discord-send.sh
 source "$(dirname "${BASH_SOURCE[0]}")/lib/discord-send.sh" 2>/dev/null || true
+
+# Statusmeldung an den ZERODOX-Systemstatus (#2451). Optional: Fehlt die Datei,
+# laeuft der Watchdog unveraendert weiter — die Meldung ist Beiwerk, nicht Zweck.
+# shellcheck source=lib/watchdog-report.sh
+source "$(dirname "${BASH_SOURCE[0]}")/lib/watchdog-report.sh" 2>/dev/null || true
 if ! declare -f discord_post >/dev/null 2>&1; then
   discord_post() { curl -sS -o /dev/null -w '%{http_code}' -X POST \
     -H 'Content-Type: application/json' --data "$2" --max-time 10 "$1" 2>/dev/null || echo 000; }
@@ -99,6 +104,17 @@ fi
 
 now_ts=$(date +%s)
 now_iso=$(date -u +%Y-%m-%dT%H:%M:%SZ)
+
+# Meldung an den ZERODOX-Systemstatus (#2451) — hier, wo der Befund feststeht
+# und BEVOR der Throttle unten greift. Der unterdrueckt die Discord-Nachricht
+# bei anhaltendem Druck (60 min), die Seite braucht den Zustand aber in jedem
+# Lauf: Ausgerechnet dieser Watchdog fehlte auf der Uebersicht bisher ganz,
+# obwohl er die Fruehwarnung vor der OOM-Kaskade ist.
+if [ "$alarm" -eq 1 ]; then
+  melde_befund "memory" auffaellig "$(printf '%s; ' "${alarm_reasons[@]}")"
+else
+  melde_befund "memory" ok
+fi
 
 # ─── Throttling-Check ────────────────────────────────
 should_alert=0

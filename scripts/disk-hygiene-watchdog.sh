@@ -40,6 +40,11 @@ mkdir -p "$(dirname "$STATE_FILE")"
 # Geteilte Discord-Send-Lib mit 429-Resilienz (#293). Fallback = altes Inline-Curl.
 # shellcheck source=lib/discord-send.sh
 source "$(dirname "${BASH_SOURCE[0]}")/lib/discord-send.sh" 2>/dev/null || true
+
+# Statusmeldung an den ZERODOX-Systemstatus (#2451). Optional: Fehlt die Datei,
+# laeuft der Watchdog unveraendert weiter — die Meldung ist Beiwerk, nicht Zweck.
+# shellcheck source=lib/watchdog-report.sh
+source "$(dirname "${BASH_SOURCE[0]}")/lib/watchdog-report.sh" 2>/dev/null || true
 if ! declare -f discord_post >/dev/null 2>&1; then
   discord_post() { curl -sS -o /dev/null -w '%{http_code}' -X POST \
     -H 'Content-Type: application/json' --data "$2" --max-time 10 "$1" 2>/dev/null || echo 000; }
@@ -195,6 +200,13 @@ jq -nc --arg a "$new_alert_at" --arg c "$now_iso" --argjson pb "$pct_before" --a
 # 08.08.2026 einen Mount bei 100 % Inodes ueberdeckt: Sie war wahr und trotzdem
 # irrefuehrend, weil sie den zweiten Vorrat verschwieg.
 if [ "$pct_after" -lt "$WARN_PCT" ] && [ -z "$extra_findings" ]; then
+  melde_befund "disk-hygiene" ok
   echo "[disk-hygiene] OK — Disk ${pct_after}%, Inodes ${MOUNT} ${ipct_main:-?}%, /tmp ${ipct_tmp:-n/a}%"
+else
+  # Auch der Fall "Stufe 1 hat aufgeraeumt, aber es blieb eng" gehoert gemeldet:
+  # Die Seite soll den Unterschied zwischen "gepruft und gut" und "gepruft und
+  # knapp" zeigen, nicht nur den Alarm.
+  melde_befund "disk-hygiene" auffaellig \
+    "Disk ${pct_after}% (Schwelle ${WARN_PCT}%)${extra_findings:+ · $extra_findings}"
 fi
 exit 0

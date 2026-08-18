@@ -9,6 +9,14 @@ ExecStart=/home/cmdshadow/shadowops-bot/scripts/memory-watchdog.sh
 StandardOutput=journal
 StandardError=journal
 
+# ⚠️ Ohne diese Zeile fehlt ZERODOX_AGENT_API_KEY und die Statusmeldung an
+# /admin/systemstatus schweigt bestimmungsgemaess — der Watchdog liefe, waere
+# auf der Uebersicht aber nicht zu sehen. Als einzige der acht nachtraeglich
+# eingebundenen Units hatte diese hier gar keine EnvironmentFile (ZERODOX #2451).
+# Das Skript liest den Discord-Webhook selbst aus derselben Datei (WEBHOOK_CONFIG),
+# deshalb ist bisher niemandem etwas aufgefallen.
+EnvironmentFile=-%h/.config/shadowops-watchdog.env
+
 # Schwellen (überschreibbar via Drop-In):
 Environment="RAM_WARN_PCT=90"
 Environment="SWAP_WARN_PCT=80"

@@ -43,6 +43,11 @@ fi
 # shellcheck source=lib/postfach-send.sh
 source "$(dirname "${BASH_SOURCE[0]}")/lib/postfach-send.sh" 2>/dev/null || true
 
+# Statusmeldung an den ZERODOX-Systemstatus (#2451). Optional: Fehlt die Datei,
+# laeuft der Watchdog unveraendert weiter — die Meldung ist Beiwerk, nicht Zweck.
+# shellcheck source=lib/watchdog-report.sh
+source "$(dirname "${BASH_SOURCE[0]}")/lib/watchdog-report.sh" 2>/dev/null || true
+
 drift_lines=()
 
 # (a) Container-Host-Ports, die in keiner Port-Map-Datei stehen.
@@ -99,8 +104,10 @@ if [ "${#drift_lines[@]}" -gt 0 ]; then
       echo "[doku-drift] ERROR: Webhook fehlgeschlagen" >&2
     fi
   fi
+  melde_befund "doku-drift" auffaellig "$(printf '%s; ' "${drift_lines[@]}")"
   echo "[doku-drift] ${#drift_lines[@]} Drift(s) erkannt"
 else
+  melde_befund "doku-drift" ok
   echo "[doku-drift] OK — keine Abweichung"
 fi
 

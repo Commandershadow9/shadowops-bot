@@ -37,6 +37,11 @@ TS="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
 
 mkdir -p "$(dirname "$STATE_FILE")"
 
+# Statusmeldung an den ZERODOX-Systemstatus (#2451). Optional: Fehlt die Datei,
+# laeuft der Watchdog unveraendert weiter — die Meldung ist Beiwerk, nicht Zweck.
+# shellcheck source=lib/watchdog-report.sh
+source "$(dirname "${BASH_SOURCE[0]}")/lib/watchdog-report.sh" 2>/dev/null || true
+
 # ─── State-Helper ──────────────────────────────────────────────────────
 # State-Format (JSON): {"last_status": "up"|"down", "last_alert_at": "ISO", "consecutive_failures": N}
 read_state() {
@@ -143,6 +148,25 @@ main() {
     result=$(check_health || true)
     local status="${result%%:*}"
     local reason="${result#*:}"
+
+    # Meldung an den ZERODOX-Systemstatus (#2451) — an der einen Stelle, an der
+    # das Ergebnis feststeht, nicht verteilt auf die Ausgaenge darunter, wo ein
+    # Pfad beim naechsten Umbau vergessen wuerde. Fail-soft per Konstruktion:
+    # melde_status schluckt jeden Fehler; ein ZERODOX-Ausfall darf die
+    # Alarmierung des Bots niemals mitreissen.
+    if declare -f melde_status >/dev/null 2>&1; then
+        local takt_sek
+        if declare -f ermittle_takt_sek >/dev/null 2>&1; then
+            takt_sek="$(ermittle_takt_sek)"
+        else
+            takt_sek="${WATCHDOG_TAKT_SEK:-300}"
+        fi
+        if [[ "$status" == "UP" ]]; then
+            melde_status "shadowops" "OK" "" "$takt_sek"
+        else
+            melde_status "shadowops" "AUFFAELLIG" "$reason" "$takt_sek"
+        fi
+    fi
 
     if [[ "$status" == "UP" ]]; then
         # Recovery-Pfad: alert nur wenn vorher down. `|| true` weil Webhook-Fehler
