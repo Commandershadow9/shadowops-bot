@@ -111,3 +111,33 @@ def test_unbekannter_timer_liefert_leer_statt_zu_raten(fake_bin):
 def test_leere_ausgabe_liefert_leer(fake_bin):
     _schreibe_systemctl(fake_bin, "TimersMonotonic=")
     assert _takt(fake_bin) == ""
+
+
+# ---------- Zeitzonen-Unabhaengigkeit ----------
+#
+# Die erste Fassung der Ableitung las die `(in UTC):`-Zeile von
+# `systemd-analyze calendar`. Die gibt es aber NUR, wenn die lokale Zeitzone
+# von UTC abweicht — auf einem System mit TZ=UTC laesst systemd sie als
+# redundant weg.
+#
+# Auf dem Entwicklungsrechner (CEST) war das gruen, im CI (UTC) fiel die
+# Ableitung still auf den 300-Sekunden-Default zurueck. Also genau in den
+# Fehler, den sie beseitigen soll, und ausgerechnet bei den beiden
+# Kalender-Timern (`doku-drift`, `ki-cost`).
+#
+# Diese Tests laufen dieselbe Ableitung unter beiden Zeitzonen.
+
+@pytest.mark.parametrize("tz", ["UTC", "Europe/Berlin", "America/New_York"])
+def test_kalender_ableitung_ist_zeitzonen_unabhaengig(fake_bin, tz):
+    _schreibe_systemctl(fake_bin, "TimersCalendar={ OnCalendar=*-*-* 06:30:00 ; next_elapse=... }")
+    assert _takt(fake_bin, env_extra={"TZ": tz}) == "86400", (
+        f"Kalender-Takt unter TZ={tz} nicht ableitbar — "
+        "vermutlich wieder an einer zeitzonenabhaengigen Ausgabezeile festgemacht"
+    )
+
+
+@pytest.mark.parametrize("tz", ["UTC", "Europe/Berlin"])
+def test_intervall_ableitung_ist_zeitzonen_unabhaengig(fake_bin, tz):
+    # Gegenprobe: Der Intervall-Zweig war nie betroffen, soll es auch bleiben.
+    _schreibe_systemctl(fake_bin, "TimersMonotonic={ OnUnitActiveUSec=30min ; next_elapse=... }")
+    assert _takt(fake_bin, env_extra={"TZ": tz}) == "1800"

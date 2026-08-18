@@ -98,8 +98,18 @@ _takt_aus_timer() {
     spec="$(grep -oE 'OnCalendar=[^;]+' <<<"$zeilen" | head -1 | cut -d= -f2- | sed 's/[[:space:]]*$//')"
     if [[ -n "$spec" ]]; then
         local zeiten t1 t2 e1 e2
+        # ⚠️ `Next elapse:` und `Iteration #N:` auswerten, NICHT die
+        # `(in UTC):`-Zeile. Die gibt es nur, wenn die lokale Zeitzone von UTC
+        # abweicht — auf einem Server mit TZ=UTC laesst systemd-analyze sie als
+        # redundant weg. Die erste Fassung dieser Funktion hing genau daran und
+        # war auf dem Entwicklungsrechner (CEST) gruen, im CI (UTC) aber still
+        # wirkungslos: Sie fiel auf den 300-Sekunden-Default zurueck — also
+        # exakt in den Fehler, den diese Ableitung beseitigen soll, und
+        # ausgerechnet bei den beiden Kalender-Timern.
+        # Beide Zeilen tragen ein Zeitzonenkuerzel, das `date -d` versteht.
         zeiten="$(systemd-analyze calendar --iterations=2 "$spec" 2>/dev/null \
-                  | grep -oE '\(in UTC\):.*' | sed 's/(in UTC)://; s/^[[:space:]]*//')"
+                  | grep -E '^[[:space:]]*(Next elapse|Iteration #[0-9]+):' \
+                  | sed 's/^[[:space:]]*[^:]*:[[:space:]]*//')"
         t1="$(sed -n 1p <<<"$zeiten")"
         t2="$(sed -n 2p <<<"$zeiten")"
         if [[ -n "$t1" && -n "$t2" ]]; then
