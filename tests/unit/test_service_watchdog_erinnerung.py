@@ -37,6 +37,19 @@ from pathlib import Path
 
 SCRIPT = Path(__file__).resolve().parents[2] / "scripts" / "service-watchdog.sh"
 
+# ⚠️ Ohne diese Zeile melden die Testlaeufe an den ECHTEN Systemstatus.
+#
+# `melde_status` liest `ZERODOX_AGENT_API_KEY` aus der Umgebung, und die Tests
+# reichen `os.environ` vollstaendig durch. Bei der Entwicklung dieser Datei am
+# 18.08.2026 sind so die Phantom-Eintraege `test-service` und `test-erinnerung`
+# in der Produktionsdatenbank gelandet — auf einer Seite, deren einziger Zweck
+# es ist, den Bestand wahrheitsgemaess abzubilden.
+#
+# Ein leerer Schluessel laesst `melde_status` still und folgenlos aussteigen
+# (siehe scripts/lib/watchdog-report.sh) — genau der Pfad, der auch auf einem
+# System ohne ZERODOX greift.
+KEIN_ECHTES_MELDEN = {"ZERODOX_AGENT_API_KEY": ""}
+
 
 # Gleiches Stub-Muster wie test_service_watchdog_jq_filter.py — bewusst lokal
 # statt importiert: pytest legt tests/unit nicht auf den Modulpfad, und ein
@@ -96,6 +109,7 @@ def _lauf(state: dict | None, env_extra: dict | None = None):
                     "WATCHDOG_REQUIRE_BOT_READY": "0",
                     "WATCHDOG_TIMEOUT_S": "5",
                     "WATCHDOG_TAKT_SEK": "300",
+                    **KEIN_ECHTES_MELDEN,
                     **(env_extra or {}),
                 }
                 r = subprocess.run(["bash", str(SCRIPT)], env=env,
@@ -189,6 +203,7 @@ def test_erholung_setzt_alles_zurueck():
                     "WATCHDOG_HEALTH_URL": health_url,
                     "WATCHDOG_REQUIRE_BOT_READY": "0",
                     "WATCHDOG_TIMEOUT_S": "5",
+                    **KEIN_ECHTES_MELDEN,
                 }
                 r = subprocess.run(["bash", str(SCRIPT)], env=env,
                                    capture_output=True, text=True, timeout=30)
