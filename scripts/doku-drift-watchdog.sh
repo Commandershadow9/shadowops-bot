@@ -71,6 +71,46 @@ if [ -f "$MEMORY_FILE" ]; then
   fi
 fi
 
+# (c) Watchdog-Timer, die nicht in ZERODOX' Erwartungsliste stehen (ZERODOX #2451).
+#
+# Die Liste `ERWARTETE_WATCHDOGS` beantwortet auf /admin/systemstatus die Frage,
+# WESSEN FEHLEN ein Befund ist. Ein Watchdog, der dort nicht steht und nie
+# meldet, erscheint auf der Seite überhaupt nicht — nicht einmal als 'stumm',
+# weil die Erkennung das Alter der letzten Meldung vergleicht und es keine gibt.
+#
+# Genau so waren am 18.08.2026 acht von 23 Watchdogs unsichtbar, darunter die
+# RAM-Frühwarnung. Die Liste schliesst das für den Bestand — aber nichts hindert
+# den nächsten neuen Watchdog daran, wieder danebenzufallen. Diese Prüfung ist
+# das Gegenstück: Sie meldet, wenn ein Timer existiert, den die Seite nicht
+# erwartet.
+#
+# Bewusst nur in dieser Richtung: Ein Eintrag in der Liste OHNE Timer ist kein
+# Fehler, sondern der Normalfall für einen abgeschalteten Dienst — dort ist
+# 'stumm' die richtige und gewollte Anzeige.
+ERWARTETE_LISTE="${ERWARTETE_LISTE:-/home/cmdshadow/ZERODOX/web/src/lib/watchdog-status.ts}"
+if [ -f "$ERWARTETE_LISTE" ]; then
+  # Namen aus dem TypeScript-Array lesen. Der Block ist eindeutig genug für sed;
+  # ein Parser wäre hier mehr Mechanik als Nutzen.
+  bekannt=$(sed -n '/ERWARTETE_WATCHDOGS/,/^\]/p' "$ERWARTETE_LISTE" \
+            | grep -oE "'[a-z0-9-]+'" | tr -d "'" | sort -u || true)
+  if [ -n "$bekannt" ]; then
+    while read -r timer; do
+      [ -z "$timer" ] && continue
+      dienst="${timer%-watchdog.timer}"
+      # Der gemeldete Name kann vom Unit-Namen abweichen (mcp-watchdog meldet
+      # als zerodox-mcp). Deshalb zusätzlich gegen WATCHDOG_SERVICE_NAME der
+      # Unit prüfen, bevor etwas als fehlend gemeldet wird.
+      unit_name=$(systemctl --user show "${timer%.timer}.service" -p Environment --value 2>/dev/null \
+                  | tr ' ' '\n' | grep -oE '^WATCHDOG_SERVICE_NAME=.*' | cut -d= -f2 || true)
+      if ! grep -qx "$dienst" <<<"$bekannt" && \
+         { [ -z "$unit_name" ] || ! grep -qx "$unit_name" <<<"$bekannt"; }; then
+        drift_lines+=("Watchdog '${dienst}' fehlt in ERWARTETE_WATCHDOGS — sein Ausbleiben wäre auf /admin/systemstatus unsichtbar")
+      fi
+    done < <(systemctl --user list-timers --all --no-pager 2>/dev/null \
+             | grep -oE '[a-z0-9-]+-watchdog\.timer' | sort -u || true)
+  fi
+fi
+
 # Fingerprint für Throttle (gleicher Drift → nicht erneut alarmen)
 fp=$(printf '%s\n' "${drift_lines[@]:-}" | sha256sum | cut -d' ' -f1)
 last_fp=""; last_alert_at=""
