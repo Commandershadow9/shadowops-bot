@@ -1,0 +1,15 @@
+[Unit]
+Description=Timer fuer den Nightly-Suite-Watchdog (ZERODOX #2467)
+
+[Timer]
+# Alle 6 Stunden. Der ueberwachte Workflow laeuft einmal taeglich um 01:00 UTC —
+# haeufiger zu pruefen bringt nichts Neues, seltener verzoegert den Befund um
+# einen ganzen Tag. Der Alarm selbst geht ohnehin nur beim Zustandswechsel raus.
+OnBootSec=14min
+OnUnitActiveSec=6h
+# Verhindert, dass alle Watchdogs gleichzeitig auf die GitHub-API gehen.
+RandomizedDelaySec=300
+Persistent=true
+
+[Install]
+WantedBy=timers.target

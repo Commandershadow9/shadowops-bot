@@ -1,0 +1,35 @@
+[Unit]
+# Meldet, wenn die naechtliche Vollsuite dauerhaft rot ist (ZERODOX #2467).
+#
+# Anlass: Am 19.08.2026 waren von den letzten 60 Laeufen des Workflows
+# "Web Quality Nightly" 59 rot und einer abgebrochen — kein einziger gruen. Bei
+# taeglichem Lauf rund zwei Monate ohne einen durchgelaufenen Vollsuite-Test.
+# Die Fehler waren echt (vier von sechs Shards mit konkret scheiternden Tests),
+# keiner davon als Issue erfasst.
+#
+# Der Workflow alarmiert bei JEDEM Fehlschlag in Discord. Das ist ein
+# Ereignis-Signal; in der sechzigsten Nacht sah es aus wie in der ersten.
+# "Seit zwei Monaten nichts mehr gruen" sendet niemand — genau diese Luecke
+# schliesst dieser Watchdog.
+Description=Nightly-Suite Watchdog — Alarm bei dauerhaft roter Vollsuite (ZERODOX #2467)
+Documentation=https://github.com/Commandershadow9/ZERODOX/issues/2467
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+# ⚠️ Ohne diese Zeile fehlt ZERODOX_AGENT_API_KEY und die Statusmeldung an
+# /admin/systemstatus schweigt bestimmungsgemaess (ZERODOX #2451).
+EnvironmentFile=-%h/.config/shadowops-watchdog.env
+# Der Takt wird aus dem Timer abgeleitet (ZERODOX #2452); diese Zeile ist nur
+# der Notausgang, falls die Ableitung scheitert.
+Environment=WATCHDOG_TAKT_SEK=21600
+ExecStart=/home/cmdshadow/shadowops-bot/scripts/nightly-suite-watchdog.sh
+StandardOutput=journal
+StandardError=journal
+SyslogIdentifier=nightly-suite-watchdog
+NoNewPrivileges=true
+PrivateTmp=true
+
+[Install]
+WantedBy=default.target
