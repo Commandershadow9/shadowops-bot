@@ -1,7 +1,7 @@
 ---
 title: 🔧 ShadowOps API Documentation v5.1
 status: active
-last_reviewed: 2026-06-26
+last_reviewed: 2026-08-22
 owner: CommanderShadow9
 ---
 
@@ -524,12 +524,43 @@ projects:
           # For type: container — target is Docker container name; DOWN if missing/unhealthy
 
     # Deployment configuration (v3.1)
+    # deploy_path (optional, PR #418, 2026-08-15): separate deploy worktree.
+    # When set, git pull / tests / post_deploy_command run here instead of `path`.
+    # `path` stays the working directory for monitoring, backups, disk-checks, Kontext.
+    # The deploy worktree is overwritten by `git reset --hard origin/<branch>` on each
+    # deploy -- no human or process should work in it.
+    # Without this field: same directory for both work and deploy (legacy behaviour).
+    deploy_path: /separate/deploy/dir        # optional, falls back to `path` if unset
     deploy:
       run_tests: true                       # Run tests before deploy
       test_command: pytest tests/           # Test command
       post_deploy_command: pip install -r requirements.txt  # Post-deploy command
       service_name: shadowops-bot           # Systemd service name
       allow_direct_push: false              # Direct push to deploy branch triggers deploy (opt-in, default off)
+
+      # CI-Success-Reconciliation (PR #410, 2026-08-12):
+      # When enabled, a workflow_run event with conclusion=success on the tracked branch
+      # triggers a background task that compares live buildSha (health endpoint) with
+      # the branch HEAD. If drift is detected, the deploy pipeline is triggered again.
+      # Use for projects where CI re-runs can succeed after the initial deploy window.
+      reconcile_on_ci_success: false        # default false; set true for opt-in (e.g. zerodox)
+      ci_success_reconcile_delay_sec: 120   # seconds to wait before checking (default 120)
+      ci_success_reconcile_poll_sec: 30     # polling interval while waiting for active deploy (default 30)
+      ci_success_reconcile_timeout_sec: 1800  # total timeout per reconcile attempt (default 1800)
+      ci_success_reconcile_max_attempts: 2  # max reconcile attempts per SHA (default 2)
+
+      # Re-poll after deploy (ZERODOX#1720):
+      # After a successful deploy, checks whether origin/<branch> advanced during the
+      # deploy and triggers another deploy if so. Shares the same hardened pipeline.
+      repoll_enabled: true                  # default true; set false to disable
+      repoll_max_rounds: 2                  # max consecutive repoll rounds (default 2)
+
+    # Per-project CI workflow filter (PR #410, 2026-08-12):
+    # Optional list of workflow names to observe for CI-wait and reconcile.
+    # When omitted or empty, all workflows on the branch are observed.
+    # ci_workflows:
+    #   - "CI"
+    #   - "Test Suite"
 
     # External deploy notifications -- posted to customer Discord servers on each deploy.
     # Handled by DeploymentManager._forward_deploy_to_external.
@@ -1261,4 +1292,4 @@ export CLAUDE_CLI_PATH=/home/cmdshadow/.npm-global/bin/claude
 
 ---
 
-**API Documentation v5.1** | Last Updated: 2026-06-26
+**API Documentation v5.1** | Last Updated: 2026-08-22
