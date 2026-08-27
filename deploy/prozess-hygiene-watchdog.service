@@ -1,0 +1,26 @@
+[Unit]
+Description=Prozess-Hygiene Watchdog — raeumt verwaiste Prozesse toter Sitzungen ab
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+EnvironmentFile=-%h/.config/shadowops-watchdog.env
+# Der Takt MUSS hier stehen: service-watchdog.sh meldet sonst den Vorgabewert
+# 300 s an den ZERODOX-Systemstatus, und die Seite wertet ab dem doppelten Takt
+# als "stumm" — ein 12-Stunden-Dienst staende damit fast durchgehend falsch auf
+# ausgefallen (ZERODOX #2452).
+Environment=WATCHDOG_TAKT_SEK=43200
+ExecStart=%h/shadowops-bot/scripts/prozess-hygiene-watchdog.sh
+StandardOutput=journal
+StandardError=journal
+SyslogIdentifier=prozess-hygiene-watchdog
+NoNewPrivileges=true
+# PrivateTmp ausdruecklich NICHT gesetzt: Der Dienst muss die echten
+# /tmp/claude-*- und /tmp/codex-mcp-*-Pfade in fremden Kommandozeilen sehen.
+# Mit PrivateTmp saehe er ein eigenes leeres /tmp und faende nie etwas —
+# er wuerde erfolgreich melden, ohne je gemessen zu haben.
+PrivateTmp=false
+
+[Install]
+WantedBy=default.target

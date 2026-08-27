@@ -1,0 +1,13 @@
+[Unit]
+Description=Timer: Prozess-Hygiene Watchdog zweimal taeglich
+
+[Timer]
+# Zweimal taeglich genuegt: Der Zufluss lag bei rund zehn Waisen pro Tag, und
+# das Mindestalter von zwei Tagen macht haeufigeres Nachsehen ohnehin wirkungslos.
+OnBootSec=17min
+OnUnitActiveSec=12h
+Persistent=true
+Unit=prozess-hygiene-watchdog.service
+
+[Install]
+WantedBy=timers.target
