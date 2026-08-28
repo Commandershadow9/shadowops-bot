@@ -27,6 +27,11 @@ from .models import EngineMode
 
 logger = logging.getLogger('shadowops.deep_scan')
 
+# Obergrenze fuer den Duplikat-Check. Liefert `gh issue list` genau so viele
+# Zeilen, ist die Liste womoeglich abgeschnitten und taugt nicht mehr als
+# Beweis, dass ein Issue fehlt — dann wird keines angelegt.
+_DUPLIKAT_CHECK_LIMIT = 200
+
 
 # Session-Konfiguration pro Modus
 SESSION_CONFIG = {
@@ -456,13 +461,29 @@ Antworte NUR mit dem JSON Array."""
                 issue_url = await self._create_github_issue(finding)
                 if issue_url:
                     result['issues_created'] += 1
+                    # Der Status bleibt 'open' — ein Issue zu haben heisst nicht,
+                    # dass der Fund behoben ist. Frueher stand hier
+                    # status='issue_created'; dieser Wert verletzt den
+                    # CHECK-Constraint findings_status_check
+                    # (open|fixed|dismissed|false_positive|duplicate_of), das
+                    # UPDATE schlug fehl und ein `except: pass` verschluckte es.
+                    # Folge: github_issue_url blieb NULL, der naechste Lauf hielt
+                    # den Fund fuer unbearbeitet und legte ein zweites Issue an
+                    # (ZERODOX #2685 ff., sieben Duplikate an einem Tag).
                     try:
                         await self.db.pool.execute(
-                            "UPDATE findings SET status = 'issue_created', github_issue_url = $2 WHERE id = $1",
+                            "UPDATE findings SET github_issue_url = $2 WHERE id = $1",
                             finding['id'], issue_url
                         )
-                    except Exception:
-                        pass
+                    except Exception as e:
+                        # Nicht schlucken: Ab hier existiert ein Issue, von dem
+                        # die Datenbank nichts weiss — das erzeugt beim naechsten
+                        # Lauf zuverlaessig ein Duplikat.
+                        logger.error(
+                            "Issue-URL konnte nicht gespeichert werden (finding=%s, url=%s) "
+                            "— naechster Lauf legt sonst ein Duplikat an: %s",
+                            finding['id'], issue_url, e,
+                        )
                     logger.info(f"   📝 Issue: [{severity}] {finding['title']}")
             else:
                 result['skipped'] += 1
@@ -490,21 +511,46 @@ Antworte NUR mit dem JSON Array."""
             f"---\n*Automatisch erstellt von Security Engine v6*"
         )
 
-        # Duplikat-Check
+        # Duplikat-Check — fail-closed. Ein doppeltes Issue ist teurer als ein
+        # verzoegertes: Wer nicht nachsehen kann, legt nichts an.
+        #
+        # Gelistet statt gesucht: `gh issue list --search` ist eine
+        # Volltextsuche, und bei Titeln wie
+        # "[@auth/core] Auth.js: getToken() throws …" werden Klammern, Slashes
+        # und Doppelpunkte als Syntax gelesen — die Suche liefert nichts, woraus
+        # die alte Fassung "gibt es noch nicht" schloss und ein Duplikat anlegte.
+        # Die offenen security-Issues sind eine kleine, endliche Menge; der
+        # Vergleich gehoert hierher, nicht in die Suchmaschine.
         try:
             check = await asyncio.create_subprocess_exec(
                 'gh', 'issue', 'list', '--repo', repo,
-                '--search', finding['title'][:50],
-                '--state', 'open', '--json', 'title', '--limit', '5',
+                '--state', 'open', '--label', 'security',
+                '--json', 'title', '--limit', str(_DUPLIKAT_CHECK_LIMIT),
                 stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.PIPE,
             )
-            stdout, _ = await asyncio.wait_for(check.communicate(), timeout=15)
+            stdout, stderr = await asyncio.wait_for(check.communicate(), timeout=15)
+            if check.returncode != 0:
+                logger.warning(
+                    "Duplikat-Check fehlgeschlagen (%s) — kein Issue angelegt: %s",
+                    repo, stderr.decode()[:200],
+                )
+                return None
             existing = json.loads(stdout.decode())
-            if existing:
+            if len(existing) >= _DUPLIKAT_CHECK_LIMIT:
+                # Ab hier ist die Liste abgeschnitten und beweist nichts mehr.
+                logger.warning(
+                    "Duplikat-Check unvollstaendig (%s: >= %d offene security-Issues) "
+                    "— kein Issue angelegt", repo, _DUPLIKAT_CHECK_LIMIT,
+                )
+                return None
+            if any(vorhanden.get('title', '') == title for vorhanden in existing):
                 logger.info(f"   ⏭️ Issue existiert bereits: {finding['title'][:50]}")
                 return None
-        except Exception:
-            pass
+        except Exception as e:
+            logger.warning(
+                "Duplikat-Check nicht durchfuehrbar (%s) — kein Issue angelegt: %s", repo, e
+            )
+            return None
 
         # Issue erstellen
         try:
