@@ -49,8 +49,10 @@ class NpmAuditWorker(BaseSecurityWorker):
 
         findings = self._extract(data)
         added = 0
+        aktuelle_fps: set[str] = set()
         for f in findings:
             fp = compute_finding_fingerprint("npm_audit", job.project, None, f["title"])
+            aktuelle_fps.add(fp)
             exists = await self.db.pool.fetchval(
                 "SELECT 1 FROM findings WHERE finding_fingerprint=$1 AND status='open' LIMIT 1",
                 fp,
@@ -65,10 +67,51 @@ class NpmAuditWorker(BaseSecurityWorker):
             if fid:
                 added += 1
 
+        # Nur an dieser Stelle erreichbar, also nach einem VOLLSTAENDIGEN Lauf:
+        # jeder PARTIAL-Ausgang ist oben schon zurueckgekehrt. Das ist die
+        # Bedingung fuer den Abgleich — bei Timeout, fehlendem npm oder ENOLOCK
+        # waere `aktuelle_fps` leer und wuerde den gesamten Bestand abraeumen.
+        geschlossen = await self._veraltete_schliessen(job.project, aktuelle_fps)
+
         return JobResult(job_id=job.job_id, worker=self.worker_type,
                          project=job.project, status=JobStatus.OK,
                          findings_added=added,
-                         metadata={"scanned_path": path, "raw_count": len(findings)})
+                         metadata={"scanned_path": path, "raw_count": len(findings),
+                                   "findings_closed": geschlossen})
+
+    async def _veraltete_schliessen(self, project: str, aktuelle_fps: set[str]) -> int:
+        """Schliesst offene Funde, die in der aktuellen Ausgabe nicht mehr stehen.
+
+        Ohne diesen Abgleich altert der Bestand zu Unwahrheiten: Ein durch ein
+        Update behobener Fund bliebe dauerhaft `open` und wuerde Wochen spaeter
+        zum GitHub-Issue. Genau so entstanden am 28.08.2026 dreizehn Issues fuer
+        Funde aus Juli, die es laengst nicht mehr gab (ZERODOX #2685 ff.).
+
+        Begrenzt auf Kategorie UND Projekt: Ein npm-Lauf fuer ZERODOX darf
+        nichts ueber GuildScout oder ueber Trivy-Funde aussagen.
+        """
+        try:
+            rows = await self.db.pool.fetch(
+                """
+                UPDATE findings
+                   SET status = 'fixed', fixed_at = NOW()
+                 WHERE status = 'open'
+                   AND category = 'npm_audit'
+                   AND affected_project = $1
+                   AND finding_fingerprint IS NOT NULL
+                   AND NOT (finding_fingerprint = ANY($2::text[]))
+                RETURNING id
+                """,
+                project, list(aktuelle_fps),
+            )
+        except Exception:
+            logger.warning("Abgleich veralteter Funde fehlgeschlagen (project=%r)",
+                           project, exc_info=True)
+            return 0
+
+        if rows:
+            logger.info("%d veraltete npm-Funde geschlossen (project=%s)", len(rows), project)
+        return len(rows)
 
     def _partial(self, job: SecurityJob, msg: str) -> JobResult:
         return JobResult(job_id=job.job_id, worker=self.worker_type,
