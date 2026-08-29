@@ -538,6 +538,20 @@ class ShadowOpsBot(commands.Bot):
             await self._send_status_message("🔄 **Bot Reconnected**\nVerbindung zu Discord wiederhergestellt.", 0xFFA500)
             return
 
+        # Flag SOFORT setzen — vor dem ersten await dieser Methode.
+        # Zwischen der Prüfung oben und dieser Zuweisung liegt kein await, deshalb
+        # kann der Event-Loop hier nicht wechseln und ein zweiter on_ready-Task
+        # nicht am Guard vorbeilaufen.
+        #
+        # Vorher stand die Zuweisung 614 Zeilen weiter unten, hinter der kompletten
+        # Init-Sequenz (~3 Minuten, Phase 1-6). Brach die Sequenz davor ab, blieb die
+        # Flag False: Discord.py reconnected, on_ready lief erneut komplett durch und
+        # baute eine WEITERE SecurityEngine, ohne die alte abzuräumen — ein sich
+        # selbst verstärkender Kreislauf. Am 29.08.2026 gemessen: 16 Init-Läufe,
+        # davon 1 vollständig, 0 sauber beendet, Guard griff 0 Mal.
+        # Folge: 38 doppelte Security-Issues in ZERODOX (#2727-#2769).
+        self._ready_initialized = True
+
         # ============================================
         # PHASE 1: CORE SERVICES
         # ============================================
@@ -1138,16 +1152,22 @@ class ShadowOpsBot(commands.Bot):
             if not self.agent_weekly_recap_task.is_running():
                 self.agent_weekly_recap_task.start()
 
-        # Setze Status
-        await self.change_presence(
-            activity=discord.Activity(
-                type=discord.ActivityType.watching,
-                name=self.config.bot_status
+        # Setze Status — rein kosmetisch.
+        # Schlägt der Aufruf fehl, weil der Gateway-Socket bereits schließt
+        # (ClientConnectionResetError: "Cannot write to closing transport"), darf das
+        # die Initialisierung NICHT abbrechen. Genau hier brach on_ready bisher ab,
+        # bevor der Bot sich als initialisiert markieren konnte.
+        try:
+            await self.change_presence(
+                activity=discord.Activity(
+                    type=discord.ActivityType.watching,
+                    name=self.config.bot_status
+                )
             )
-        )
+        except Exception as e:
+            self.logger.warning(f"⚠️ Presence konnte nicht gesetzt werden: {e}")
 
-        # Markiere als initialisiert
-        self._ready_initialized = True
+        # Die Flag steht bereits seit dem Beginn dieser Methode.
         self.logger.info("🚀 ShadowOps Bot vollständig einsatzbereit!")
 
         # 1 kompaktes Startup-Embed senden (statt 8-10 einzelne)
