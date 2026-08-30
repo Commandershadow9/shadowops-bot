@@ -420,6 +420,29 @@ projects:
           timeout: 30
           flake_polls: 7
           heal: { action: alert-only }
+        # Host-Baum-Drift (ZERODOX#2801). Die zweite Haelfte von build-drift:
+        # jener misst den laufenden CONTAINER gegen origin/main, dieser die
+        # DATEIEN auf der Platte, die der Host selbst ausfuehrt (Cron-Skripte
+        # unter scripts/, Hooks unter .claude/hooks/, die Hook-Registrierung
+        # .claude/settings.json).
+        #
+        # ⚠️ Die beiden Checks bewerten `.claude/**` GEGENSAETZLICH, und beide
+        # haben recht: Fuer den Container ist es benign (kein Rebuild noetig,
+        # daher in der Docs-only-Allowlist von build-drift), fuer den Host ist
+        # es scharf (die Hooks laufen von dort). Wer das spaeter "vereinheitlicht",
+        # macht genau einen der beiden Checks blind.
+        #
+        # Anlass: PR #2800 war gruen, gemergt und deployt — der stuendliche
+        # Cron las `scripts/backup-files.sh` trotzdem in der alten Fassung.
+        # flake_polls=4 * interval=900s = 1 h Persistenz: schluckt den normalen
+        # Merge-Moment, meldet echtes Liegenbleiben.
+        - id: zerodox-host-tree-drift
+          type: script
+          target: "/home/cmdshadow/shadowops-bot/scripts/zerodox-host-tree-drift-check.py"
+          interval: 900
+          timeout: 30
+          flake_polls: 4
+          heal: { action: alert-only }
 
   # === MAYDAY SIM ===
   mayday_sim:
