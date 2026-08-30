@@ -1,0 +1,13 @@
+[Unit]
+Description=Takt für den ZERODOX-Hauptbaum-Sync (ZERODOX#2801)
+
+[Timer]
+# Alle 10 Minuten. Der Baum veraltete am 30.08. um 36 Commits in unter zwei
+# Stunden — ein stündlicher Takt wäre für den stündlichen Backup-Cron zu grob.
+# Ein Lauf ohne Arbeit kostet einen `git fetch`.
+OnBootSec=5min
+OnUnitActiveSec=10min
+AccuracySec=1min
+
+[Install]
+WantedBy=timers.target

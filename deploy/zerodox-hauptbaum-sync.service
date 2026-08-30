@@ -1,0 +1,26 @@
+[Unit]
+# Hält /home/cmdshadow/ZERODOX auf origin/main (ZERODOX#2801).
+#
+# Der Baum liefert Cron-Skripte (71 Crontab-Zeilen) und Claude-Hooks an den
+# laufenden Betrieb, wurde aber von nichts aktualisiert. Gemergte Korrekturen
+# waren dadurch wochenlang nicht wirksam.
+#
+# Bewusst NICHT nach `*-watchdog.*` benannt und nicht in ERWARTETE_WATCHDOGS:
+# Der Ausfall dieses Dienstes ist bereits überwacht — bleibt er aus, veraltet
+# der Baum, und genau das meldet der Check `zerodox-host-tree-drift`. Deshalb
+# wird er auch NICHT von sync-watchdog-units.sh eingesammelt, sondern von Hand
+# verlinkt (siehe deploy/README oder das Issue).
+Description=ZERODOX-Hauptbaum auf origin/main halten
+Documentation=https://github.com/Commandershadow9/ZERODOX/issues/2801
+
+[Service]
+Type=oneshot
+ExecStart=%h/shadowops-bot/scripts/zerodox-hauptbaum-sync.sh
+EnvironmentFile=-%h/.config/shadowops-watchdog.env
+# Greift nie in fremde Arbeit ein: nur `merge --ff-only`, nur auf einem Branch,
+# nur bei sauberem Baum. Ein Fehlschlag ist deshalb ein Hinweis, kein Notfall —
+# er wird gemeldet und beim nächsten Takt erneut versucht.
+TimeoutStartSec=120
+
+[Install]
+WantedBy=default.target
