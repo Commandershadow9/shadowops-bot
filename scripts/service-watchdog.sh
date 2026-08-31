@@ -32,6 +32,17 @@
 #                                Use-Case: Aggregierte Health-Endpoints filtern auf eine
 #                                Komponente (z.B. mayday-ci-Pool bei runner-health.service
 #                                der auch ZERODOX-Pool aggregiert).
+#   WATCHDOG_TAKT_SEK     — Override fuer den Melderhythmus an den ZERODOX-Systemstatus
+#                           (via lib/watchdog-report.sh). Wird normalerweise automatisch
+#                           aus dem steuernden systemd-Timer abgeleitet
+#                           (OnUnitActiveUSec bzw. Kalender-Abstand). Nur setzen, wenn
+#                           die Auto-Ableitung nicht greift (z.B. kein Timer-Zugriff).
+#                           (default 300 als letzter Fallback, schreibt Warnung)
+#   WATCHDOG_ERINNERUNG_SEK — Intervall fuer Wiederholungsalarm waehrend eines
+#                           Dauerausfalls (default: 4 × WATCHDOG_TAKT_SEK, mindestens 3600).
+#                           Ohne Erinnerung geht bei einem anhaltenden Ausfall nach dem
+#                           ersten Alert nichts mehr raus, bis Recovery gemeldet wird.
+#                           (PR #423, 2026-08-18)
 #
 # Backward-Compat: Falls SHADOWOPS_HEALTH_URL/SHADOWOPS_WATCHDOG_WEBHOOK/
 # SHADOWOPS_WATCHDOG_STATE/SHADOWOPS_WATCHDOG_TIMEOUT gesetzt sind, werden
