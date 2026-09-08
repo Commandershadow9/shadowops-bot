@@ -24,6 +24,13 @@ class WebhookMixin:
             self.logger.info("ℹ️ GitHub webhooks disabled in config")
             return
 
+        if not (self.webhook_secret or '').strip():
+            self.logger.error(
+                "\U0001f6ab GitHub-Webhook OHNE Secret gestartet: Jede eingehende Anfrage "
+                "wird mit 503 abgewiesen (fail-closed), Auto-Deploy steht still. "
+                "github.webhook_secret in der Konfiguration setzen."
+            )
+
         self.app = web.Application()
         self.app.router.add_post('/webhook', self.webhook_handler)
         self.app.router.add_get('/health', self.health_check)
@@ -209,10 +216,18 @@ class WebhookMixin:
                 self.logger.warning(f"⚠️ Webhook-Erstellung Fehler für {repo_slug}: {e}")
 
     async def health_check(self, request: web.Request) -> web.Response:
-        """Health check endpoint"""
+        """Health check endpoint
+
+        Meldet ausdrücklich, ob ein Webhook-Secret konfiguriert ist. Ohne Secret
+        weist webhook_handler jede Anfrage mit 503 ab — das ist richtig, aber von
+        aussen nicht von "Deploy hängt" zu unterscheiden. Der Zustand gehört
+        deshalb an eine Stelle, die ein Wächter abfragen kann.
+        """
+        geheimnis_vorhanden = bool((self.webhook_secret or '').strip())
         return web.json_response({
-            'status': 'healthy',
+            'status': 'healthy' if geheimnis_vorhanden else 'degraded',
             'service': 'github-webhook',
+            'webhook_secret_configured': geheimnis_vorhanden,
             'timestamp': datetime.now(timezone.utc).isoformat()
         })
 
@@ -223,15 +238,27 @@ class WebhookMixin:
         Verifies HMAC signature and routes to appropriate handler
         """
         try:
+            # Fail-closed: Ohne konfiguriertes Secret gibt es keine prüfbare Herkunft.
+            # Frühere Fassung prüfte nur `if self.webhook_secret:` — bei fehlender oder
+            # leerer Konfiguration lief jede unsignierte Anfrage durch bis zum Handler.
+            # Dieser Prozess läuft unter einem Konto mit weitreichenden Hostrechten und
+            # der Port ist öffentlich freigegeben; die Sperre steht deshalb VOR dem Lesen
+            # des Rumpfes und vor der Warteschlange.
+            if not (self.webhook_secret or '').strip():
+                self.logger.error(
+                    "🚫 Webhook abgewiesen: kein webhook_secret konfiguriert — "
+                    "Herkunft nicht prüfbar, Anfrage wird nicht verarbeitet"
+                )
+                return web.Response(status=503, text="Webhook secret not configured")
+
             # Read request body
             body = await request.read()
 
-            # Verify signature
-            if self.webhook_secret:
-                signature = request.headers.get('X-Hub-Signature-256', '')
-                if not self._verify_signature(body, signature):
-                    self.logger.warning("⚠️ Invalid webhook signature")
-                    return web.Response(status=401, text="Invalid signature")
+            # Verify signature (immer, nicht nur bei gesetztem Secret)
+            signature = request.headers.get('X-Hub-Signature-256', '')
+            if not self._verify_signature(body, signature):
+                self.logger.warning("⚠️ Invalid webhook signature")
+                return web.Response(status=401, text="Invalid signature")
 
             # Parse payload
             payload = json.loads(body)
@@ -273,13 +300,19 @@ class WebhookMixin:
         Returns:
             True if signature is valid
         """
+        geheimnis = (self.webhook_secret or '').strip()
+        if not geheimnis:
+            # Ohne Secret kann nichts gültig sein — auch nicht über den
+            # öffentlichen Wrapper verify_signature().
+            return False
+
         if not signature.startswith('sha256='):
             return False
 
         expected_signature = signature.split('=')[1]
 
         mac = hmac.new(
-            self.webhook_secret.encode('utf-8'),
+            geheimnis.encode('utf-8'),
             msg=body,
             digestmod=hashlib.sha256
         )
