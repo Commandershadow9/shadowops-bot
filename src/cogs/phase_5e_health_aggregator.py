@@ -1,9 +1,10 @@
 """Cog für Phase-5e Health-Aggregator.
 
-Pollt alle 60s die drei Health-Endpoints (Schema v1):
-- http://10.8.0.10:9100/health         → ci-runner (WireGuard, GitHub Runners, ...)
-- https://dev.zerodox.de/api/internal/health → web-dev
-- https://zerodox.de/api/internal/health     → web-prod
+Pollt alle 60s die konfigurierten Health-Endpoints (Schema v1):
+- http://10.8.0.10:9100/health           → ci-runner (WireGuard, GitHub Runners, ...)
+- https://zerodox.de/api/internal/health → web-prod
+- https://dev.zerodox.de/api/internal/health → web-dev, NUR mit ZERODOX_DEV_HEALTH=1
+  (Umgebung derzeit abgebaut — Begründung am Schalter selbst)
 
 Quelle der Wahrheit für Schema: ZERODOX/docs/HEALTH_SCHEMA_V1.md
 
@@ -30,6 +31,7 @@ from __future__ import annotations
 import asyncio
 import json
 import logging
+import os
 import sqlite3
 import time
 from contextlib import suppress
@@ -96,12 +98,26 @@ TARGETS: list[HealthTarget] = [
         url="https://zerodox.de/api/internal/health",
         role_hint="web-prod",
     ),
-    HealthTarget(
-        name="ZERODOX Dev",
-        url="https://dev.zerodox.de/api/internal/health",
-        role_hint="web-dev",
-    ),
 ]
+
+# Die Dev-Umgebung ist derzeit abgebaut. dev.zerodox.de löst zwar weiterhin auf
+# diesen Server auf, hat aber keinen Traefik-Router mehr und antwortet deshalb
+# dauerhaft mit HTTP 404. Als festes Target wurde sie alle 60 s vergeblich
+# gepollt — gemessen am 08.09.2026: 660 Anfragen in 13 h, ohne eine einzige
+# Meldung. Das ist kein Zufall: Gemeldet werden nur Zustandswechsel, und ein
+# Ziel, das nie erreichbar war, wechselt nie. Ein dauerhaft unerreichbares
+# Target überwacht daher nichts, es verdeckt nur, dass hier etwas fehlt.
+#
+# Kommt die Dev-Umgebung zurück, genügt ZERODOX_DEV_HEALTH=1 in der Umgebung
+# des Dienstes (systemd-Unit) plus Neustart — keine Code-Änderung nötig.
+if os.getenv("ZERODOX_DEV_HEALTH", "").strip().lower() in ("1", "true", "yes", "on"):
+    TARGETS.append(
+        HealthTarget(
+            name="ZERODOX Dev",
+            url="https://dev.zerodox.de/api/internal/health",
+            role_hint="web-dev",
+        )
+    )
 
 
 @dataclass
@@ -465,7 +481,12 @@ class Phase5eHealthAggregator(commands.Cog):
         self.embed_loop.start()
         self.trend_report_loop.start()
         self.purge_loop.start()
-        self.logger.info("[5e] Phase-5e Health-Aggregator gestartet (3 Hosts, 60s Polling)")
+        self.logger.info(
+            "[5e] Phase-5e Health-Aggregator gestartet "
+            "(%d Hosts, %ds Polling)",
+            len(TARGETS),
+            POLL_INTERVAL_SECONDS,
+        )
 
     async def cog_unload(self) -> None:
         self.poll_loop.cancel()
