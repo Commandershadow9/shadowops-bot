@@ -34,6 +34,9 @@
 # ⚠️ UNTRACKTE Dateien blockieren NICHT. Der echte Baum trägt dauerhaft welche
 # (Notizen, Videos, Screenshots). Wer sie mitzählt, baut ein Skript, das nie
 # läuft — und das wäre derselbe Fehler wie der, den es beheben soll.
+#
+# ENV-Overrides:
+#   ZERODOX_BAUM  Pfad zum ZERODOX-Arbeitsbaum (default: /home/cmdshadow/ZERODOX)
 
 set -uo pipefail   # bewusst KEIN -e: Fehler werden hier einzeln behandelt
 
