@@ -30,6 +30,7 @@ from __future__ import annotations
 import asyncio
 import json
 import logging
+import os
 import sqlite3
 import time
 from contextlib import suppress
@@ -83,6 +84,25 @@ class HealthTarget:
     name: str       # menschenlesbar, z.B. "Runner-VM"
     url: str
     role_hint: str  # erwartete role im Schema, für Cross-Check
+    # Seit ZERODOX#3173 liefert /api/internal/health anonym nur noch die
+    # Pflichtfelder. `components` und `alerts` gibt es erst mit Agent-Schlüssel
+    # und `?detailed=true`. Die Reduktion war richtig: Der Endpunkt hat einem
+    # externen Akteur am 08.09.2026 eine Sekunde nach dessen letztem
+    # Anmeldeversuch die Statistik der fehlgeschlagenen Anmeldungen geliefert
+    # (ZERODOX#3164). Der Aggregator muss sich deshalb ausweisen.
+    braucht_agent_schluessel: bool = False
+
+
+# Agent-Schlüssel für die Detailtiefe. Liegt in
+# `~/.config/shadowops-watchdog.env` (`ZERODOX_AGENT_API_KEY`) und wird über
+# die systemd-Unit des Bots vererbt.
+#
+# ⚠️ Fehlt er, wird das NICHT stillschweigend hingenommen — siehe
+# `PollResult.status`. Ein Aggregator, der ohne Schlüssel den reduzierten Body
+# liest und "ok" meldet, behauptet etwas über Komponenten, die er nie gesehen
+# hat. Genau diese Verwechslung von "nichts gefunden" und "konnte nicht
+# messen" hat den `mcp-drift-watchdog` monatelang blind laufen lassen.
+AGENT_SCHLUESSEL = os.environ.get("ZERODOX_AGENT_API_KEY", "").strip()
 
 
 TARGETS: list[HealthTarget] = [
@@ -95,11 +115,13 @@ TARGETS: list[HealthTarget] = [
         name="ZERODOX Production",
         url="https://zerodox.de/api/internal/health",
         role_hint="web-prod",
+        braucht_agent_schluessel=True,
     ),
     HealthTarget(
         name="ZERODOX Dev",
         url="https://dev.zerodox.de/api/internal/health",
         role_hint="web-dev",
+        braucht_agent_schluessel=True,
     ),
 ]
 
@@ -112,12 +134,28 @@ class PollResult:
     polled_at: datetime
     response: Optional[HealthResponse] = None
     error: Optional[str] = None
+    # True, wenn dieses Ziel Details braucht, wir sie aber nicht bekommen
+    # haben — kein Schlüssel gesetzt, oder der Endpunkt lieferte trotz
+    # Schlüssel den reduzierten Body (abgelehnt, vertippt, rotiert).
+    detail_fehlt: bool = False
 
     @property
     def status(self) -> str:
-        if self.response is not None:
-            return self.response.status
-        return "unreachable"
+        if self.response is None:
+            return "unreachable"
+
+        # ⚠️ Fail-closed. Ohne `components` und `alerts` haben wir nur die
+        # Selbstauskunft "status: ok" gesehen — nicht die Komponenten, aus
+        # denen sie sich ergibt, und keine Alarme. Das als "ok" weiterzugeben
+        # wäre eine Behauptung über Ungesehenes. `degraded` ist die ehrliche
+        # Aussage: Der Host lebt, aber wir messen ihn nicht vollständig.
+        #
+        # Ein gemeldetes `degraded` oder `critical` bleibt unberührt — die
+        # Herabstufung darf einen echten Befund nie überschreiben.
+        if self.detail_fehlt and self.response.status == "ok":
+            return "degraded"
+
+        return self.response.status
 
 
 @dataclass
@@ -231,8 +269,24 @@ def _query_drift_events_24h() -> list[tuple[str, str, str, int]]:
 
 async def _poll_one(session: aiohttp.ClientSession, target: HealthTarget) -> PollResult:
     polled_at = datetime.now(timezone.utc)
+
+    # Detailtiefe anfordern, wo sie nötig ist. Ohne Schlüssel wird die Anfrage
+    # trotzdem gestellt — der reduzierte Body sagt uns immerhin, ob der Host
+    # lebt. Er wird nur nicht als vollwertige Messung gewertet (`detail_fehlt`).
+    url = target.url
+    headers: dict[str, str] = {}
+    schluessel_fehlt = False
+    if target.braucht_agent_schluessel:
+        if AGENT_SCHLUESSEL:
+            headers["X-Agent-Key"] = AGENT_SCHLUESSEL
+            url = f"{target.url}{'&' if '?' in target.url else '?'}detailed=true"
+        else:
+            schluessel_fehlt = True
+
     try:
-        async with session.get(target.url, timeout=aiohttp.ClientTimeout(total=10)) as resp:
+        async with session.get(
+            url, headers=headers, timeout=aiohttp.ClientTimeout(total=10)
+        ) as resp:
             http_status = resp.status
             try:
                 payload = await resp.json(content_type=None)
@@ -253,7 +307,30 @@ async def _poll_one(session: aiohttp.ClientSession, target: HealthTarget) -> Pol
                     "[5e] role mismatch fuer %s: erwartet=%s, geliefert=%s",
                     target.name, target.role_hint, response.role,
                 )
-            return PollResult(target=target, polled_at=polled_at, response=response)
+
+            # ⚠️ Nicht nur prüfen, OB ein Schlüssel gesetzt ist, sondern ob er
+            # gewirkt hat. Ein abgelehnter, vertippter oder rotierter Schlüssel
+            # führt zu demselben reduzierten Body wie gar keiner — der
+            # Endpunkt antwortet in beiden Fällen mit 200. Wer nur die
+            # Konfiguration prüft, hält einen toten Schlüssel für einen guten.
+            detail_fehlt = target.braucht_agent_schluessel and (
+                schluessel_fehlt or not response.components
+            )
+            if detail_fehlt:
+                logger.warning(
+                    "[5e] %s liefert keine Detailtiefe (%s) — Komponenten und "
+                    "Alarme sind über diesen Weg nicht sichtbar",
+                    target.name,
+                    "kein ZERODOX_AGENT_API_KEY gesetzt" if schluessel_fehlt
+                    else "Schlüssel gesetzt, aber Body bleibt reduziert",
+                )
+
+            return PollResult(
+                target=target,
+                polled_at=polled_at,
+                response=response,
+                detail_fehlt=detail_fehlt,
+            )
     except asyncio.TimeoutError:
         return PollResult(target=target, polled_at=polled_at, error="timeout (>10s)")
     except aiohttp.ClientError as exc:
@@ -296,6 +373,13 @@ def _build_status_embed(results: list[PollResult]) -> discord.Embed:
                 alert_lines.append(f"🟡 {humanize_alert(a)}")
             if alert_lines:
                 body = "\n".join(alert_lines)
+            elif r.detail_fehlt:
+                # ⚠️ Hier stand "Keine aktiven Alerts" — und genau das wäre
+                # ohne Detailtiefe die Unwahrheit: Wir haben die Alarmliste
+                # nicht bekommen, also wissen wir nicht, ob es Alarme gibt.
+                # Der Unterschied zwischen "keine" und "nicht gesehen" ist der
+                # ganze Punkt dieser Anzeige.
+                body = "⚠️ Ohne Detailtiefe — Alarme hier nicht sichtbar"
             else:
                 body = "Keine aktiven Alerts"
             value = f"{host_line}\n{uptime_line}\n{body}"

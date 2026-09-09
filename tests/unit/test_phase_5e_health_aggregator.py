@@ -436,3 +436,83 @@ class TestIncidentGrouping:
 
         channel.send.assert_called_once()
         assert "Runner-VM" not in cog._open_incidents
+
+
+# ────────────────────────────────────────────────────────────────────────
+# ZERODOX#3174: Detailtiefe braucht einen Schlüssel — fail-closed
+#
+# Seit ZERODOX#3173 liefert /api/internal/health anonym nur die Pflichtfelder.
+# Der Aggregator brach dadurch nicht, aber er SAH weniger: keine Komponenten,
+# keine Alarme. Gemessen am 09.09.2026 lieferte der Endpunkt ohne Schlüssel
+# 0 Komponenten und 0 Alarme — mit Schlüssel 9 und 1. Der eine ungesehene
+# Alarm war `RISK_SCREENING_BLIND`.
+#
+# Der gefährliche Teil ist nicht das Weniger-Sehen, sondern das stille "ok":
+# Ein Aggregator, der den reduzierten Body liest und Entwarnung gibt,
+# behauptet etwas über Komponenten, die er nie gesehen hat.
+# ────────────────────────────────────────────────────────────────────────
+
+
+def _ergebnis(cog_module, *, status, components, braucht_schluessel, detail_fehlt):
+    """Baut ein PollResult, wie `_poll_one` es zurückgäbe."""
+    target = cog_module.HealthTarget(
+        name="ZERODOX Production",
+        url="https://zerodox.de/api/internal/health",
+        role_hint="web-prod",
+        braucht_agent_schluessel=braucht_schluessel,
+    )
+    response = MagicMock()
+    response.status = status
+    response.components = components
+    return cog_module.PollResult(
+        target=target,
+        polled_at=datetime.now(timezone.utc),
+        response=response,
+        detail_fehlt=detail_fehlt,
+    )
+
+
+class TestDetailtiefeFailClosed:
+    def test_ohne_detailtiefe_wird_ok_zu_degraded(self, cog_module):
+        """Der Kern: "ok" ohne Komponenten ist eine Behauptung über Ungesehenes."""
+        r = _ergebnis(
+            cog_module, status="ok", components={},
+            braucht_schluessel=True, detail_fehlt=True,
+        )
+        assert r.status == "degraded"
+
+    def test_mit_detailtiefe_bleibt_ok(self, cog_module):
+        """Kein Fehlalarm, wenn die Messung vollständig war."""
+        r = _ergebnis(
+            cog_module, status="ok", components={"database": {}, "redis": {}},
+            braucht_schluessel=True, detail_fehlt=False,
+        )
+        assert r.status == "ok"
+
+    def test_echter_befund_wird_nicht_ueberschrieben(self, cog_module):
+        """Die Herabstufung darf einen gemeldeten Zustand nie verdecken.
+
+        Ein Host, der `critical` meldet, bleibt `critical` — auch wenn wir
+        seine Komponenten nicht sehen. Sonst würde ein fehlender Schlüssel
+        einen echten Ausfall abmildern.
+        """
+        r = _ergebnis(
+            cog_module, status="critical", components={},
+            braucht_schluessel=True, detail_fehlt=True,
+        )
+        assert r.status == "critical"
+
+    def test_ziel_ohne_schluesselpflicht_bleibt_unberuehrt(self, cog_module):
+        """Die Runner-VM (:9100) kennt kein `detailed=true` und ist nicht betroffen."""
+        r = _ergebnis(
+            cog_module, status="ok", components={},
+            braucht_schluessel=False, detail_fehlt=False,
+        )
+        assert r.status == "ok"
+
+    def test_zerodox_ziele_verlangen_den_schluessel(self, cog_module):
+        """Ohne diese Markierung würde `_poll_one` den Schlüssel nie mitschicken."""
+        nach_rolle = {t.role_hint: t for t in cog_module.TARGETS}
+        assert nach_rolle["web-prod"].braucht_agent_schluessel is True
+        assert nach_rolle["web-dev"].braucht_agent_schluessel is True
+        assert nach_rolle["ci-runner"].braucht_agent_schluessel is False
