@@ -88,15 +88,47 @@ echo "=== ShadowOps Backup-Restore-Test $TS_LOCAL ===" > "$LOG_FILE"
 
 # Backup-Test laufen lassen, Output in Log + stdout. ANSI-Escapes
 # rausstrippen, damit Discord-Embed lesbar bleibt.
+# ⚠️ `sg docker` ist Pflicht, nicht Kosmetik. Dieser Dienst laeuft als
+# `systemd --user`, und der hat NUR die primaere Gruppe — `docker` fehlt ihr,
+# auch wenn jede interaktive Shell sie besitzt. Ohne `sg` scheitert die erste
+# Zeile von backup-test.sh (`docker exec zerodox-db psql ...`) mit
+# "permission denied", dessen `set -euo pipefail` bricht ab, und der Lauf endet
+# nach der ersten Ueberschrift. Genau das geschah am 01.09.2026: 573 Bytes
+# Protokoll, keine der zehn Pruefungen, systemd meldete Erfolg (#3184).
+# Nachweis: `systemd-run --user --wait --pipe docker ps` -> permission denied.
+# Dieselbe Falle hat den `mcp-drift-watchdog` monatelang blind laufen lassen.
 set +e
-"$BACKUP_TEST_SCRIPT" 2>&1 | tee -a "$LOG_FILE"
+sg docker -c "$(printf '%q' "$BACKUP_TEST_SCRIPT")" 2>&1 | tee -a "$LOG_FILE"
 test_exit=${PIPESTATUS[0]}
 set -e
 
-# Letzten Zusammenfassungs-Block aus dem Log extrahieren (Ergebnis-Zeile)
+# ⚠️ `|| true` ist hier zwingend. Diese Zeile stand bisher OHNE — und `grep`
+# gibt 1 zurueck, wenn es nichts findet. Bei einem abgebrochenen Lauf enthaelt
+# das Log keine Ergebnis-Zeile, `set -e` beendete daraufhin den WRAPPER, bevor
+# er alarmieren konnte. Deshalb stand am 01.09.2026 weder "FAIL" noch "OK" im
+# Journal: Die Meldestelle starb an der Bedingung, die sie melden sollte.
 result_summary=$(grep -E "Ergebnis:|ACHTUNG:|Hinweis:|Alle Tests bestanden" "$LOG_FILE" \
     | tail -3 \
-    | sed -e 's/\x1b\[[0-9;]*m//g')
+    | sed -e 's/\x1b\[[0-9;]*m//g' || true)
+
+# ⚠️ Der Exit-Code allein beweist keinen vollstaendigen Lauf. Ein Skript kann
+# mitten in Test 3 abbrechen und trotzdem 0 zurueckgeben — oder, wie hier, an
+# einer Stelle sterben, an der niemand hinsieht. Deshalb wird zusaetzlich
+# geprueft, ob die LETZTE Pruefung das Protokoll erreicht hat.
+# "Nichts gefunden" und "konnte nicht messen" sind verschiedene Zustaende;
+# nur der erste ist eine Entwarnung.
+LETZTE_PRUEFUNG="${BACKUP_TEST_LETZTE_PRUEFUNG:-Test 10}"
+if ! grep -qF "$LETZTE_PRUEFUNG" "$LOG_FILE"; then
+    echo "[backup-test] UNVOLLSTAENDIG — '$LETZTE_PRUEFUNG' fehlt im Protokoll"
+    test_exit=1
+    zeilen=$(wc -l < "$LOG_FILE")
+    result_summary="Lauf unvollstaendig: '$LETZTE_PRUEFUNG' nicht erreicht (Protokoll: ${zeilen} Zeilen). Das ist KEINE Entwarnung — es wurde nichts geprueft."
+fi
+
+# Ohne Ergebniszeile UND ohne Abbruch-Erkennung waere die Discord-Meldung leer.
+if [[ -z "$result_summary" ]]; then
+    result_summary="Keine Ergebniszeile im Protokoll gefunden."
+fi
 
 if [[ "$test_exit" -eq 0 ]]; then
     # Success: nur loggen, kein Discord-Spam (monatlich grün ist langweilig)
