@@ -51,7 +51,15 @@ class CodeAnalyzer:
             '.venv',
             'venv',
             'env',
-            'backups'
+            'backups',
+            # ZERODOX legt unter .claude/worktrees/ isolierte Arbeitskopien an —
+            # Stand 10.09.2026 vierzig Stück, jede mit einem vollstaendigen
+            # web/src. Ohne diesen Eintrag zaehlte die Analyse dieselben
+            # Quelldateien vierzigmal: gemeldet wurden 327.161 Dateien und
+            # 81,6 Mio. Zeilen fuer ein Projekt, das in web/src 2.453 Dateien
+            # hat. Auch .claude/skills und .claude/hooks gehoeren nicht zur
+            # Anwendung, sondern zur Werkzeugkiste.
+            '.claude',
         }
 
         # Cache
@@ -128,14 +136,43 @@ class CodeAnalyzer:
         return seen or [self.project_path]
 
     def _iter_source_files(self, source_dirs: List[Path]):
-        """Yield source files across supported extensions."""
-        extensions = ['*.py', '*.ts', '*.tsx', '*.js', '*.jsx']
+        """Yield source files across supported extensions.
+
+        ⚠️ Nutzt os.walk mit Pruning, NICHT Path.rglob.
+
+        Die frühere Fassung filterte erst NACH dem Fund:
+
+            for path in base.rglob(ext):
+                if any(part in self._skip_dirs for part in path.parts):
+                    continue
+
+        Das ist korrekt, aber wirkungslos für die Laufzeit — `rglob` steigt
+        trotzdem in JEDES Verzeichnis ab und verwirft die Treffer erst
+        hinterher. Bei ZERODOX bedeutete das einen Durchlauf über 1.000.240
+        TypeScript-Dateien (node_modules × 40 Worktrees) statt über 2.453.
+
+        Die Folge war kein langsamer Start, sondern ein **stummer Bot**: Die
+        Analyse läuft synchron im asyncio-Event-Loop und blockierte ihn am
+        10.09.2026 volle 7 Minuten 55 Sekunden (13:21:21 → 13:29:16, gemessen
+        im Journal). Discord gibt einer Slash-Command-Interaktion 3 Sekunden;
+        in diesem Fenster beantwortete der Bot keinen einzigen Befehl und
+        meldete „Die Anwendung reagiert nicht".
+
+        `os.walk` erlaubt es, `dirs` IN PLACE zu kürzen — dann steigt der
+        Durchlauf gar nicht erst ab. Das ist der ganze Unterschied.
+        """
+        suffixes = {'.py', '.ts', '.tsx', '.js', '.jsx'}
         for base in source_dirs:
-            for ext in extensions:
-                for path in base.rglob(ext):
-                    if any(part in self._skip_dirs for part in path.parts):
-                        continue
-                    yield path
+            for wurzel, verzeichnisse, dateien in os.walk(base):
+                # In-place kürzen — os.walk liest diese Liste NACH dem yield
+                # erneut und richtet den Abstieg danach. Eine neue Liste
+                # zuzuweisen (`verzeichnisse = [...]`) hätte keine Wirkung.
+                verzeichnisse[:] = [
+                    d for d in verzeichnisse if d not in self._skip_dirs
+                ]
+                for datei in dateien:
+                    if os.path.splitext(datei)[1] in suffixes:
+                        yield Path(wurzel) / datei
 
     def analyze_structure(self) -> Dict[str, Any]:
         """
