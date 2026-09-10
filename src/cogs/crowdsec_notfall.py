@@ -69,7 +69,16 @@ class CrowdSecNotfallCog(commands.Cog):
         self.logger = getattr(bot, "logger", None)
 
     async def _ist_betreiber(self, interaction: discord.Interaction) -> bool:
-        """Nur der Application-Owner darf diese Befehle nutzen."""
+        """Nur der Application-Owner darf diese Befehle nutzen.
+
+        ⚠️ Wird IMMER erst nach `interaction.response.defer()` aufgerufen,
+        antwortet deshalb über `followup`. Grund: Discord gibt einer
+        Interaktion drei Sekunden, und `bot.is_owner()` kann einen
+        `application_info()`-Aufruf auslösen, wenn `owner_id` noch nicht
+        zwischengespeichert ist. Steht die Prüfung vor dem `defer`, kostet
+        genau dieser Aufruf im ungünstigen Fall die Frist — und der Befehl
+        meldet „Die Anwendung reagiert nicht", ohne dass etwas kaputt wäre.
+        """
         try:
             if await self.bot.is_owner(interaction.user):
                 return True
@@ -82,7 +91,7 @@ class CrowdSecNotfallCog(commands.Cog):
                 interaction.user,
                 interaction.user.id,
             )
-        await interaction.response.send_message(
+        await interaction.followup.send(
             "Dieser Befehl ist dem Betreiber vorbehalten.", ephemeral=True
         )
         return False
@@ -119,10 +128,12 @@ class CrowdSecNotfallCog(commands.Cog):
         description="🛡️ Aktive CrowdSec-Sperren anzeigen (Betreiber)",
     )
     async def sperren_command(self, interaction: discord.Interaction) -> None:
+        # defer() ZUERST - vor jeder anderen Operation. Discord gibt drei
+        # Sekunden; alles davor kann die Frist kosten (siehe _ist_betreiber).
+        await interaction.response.defer(ephemeral=True)
         if not await self._ist_betreiber(interaction):
             return
 
-        await interaction.response.defer(ephemeral=True)
         stdout, stderr, code = await self._wrapper("--liste")
 
         if code != 0:
@@ -200,10 +211,11 @@ class CrowdSecNotfallCog(commands.Cog):
     async def entsperren_command(
         self, interaction: discord.Interaction, ip: str
     ) -> None:
+        # defer() ZUERST - siehe /sperren.
+        await interaction.response.defer(ephemeral=True)
         if not await self._ist_betreiber(interaction):
             return
 
-        await interaction.response.defer(ephemeral=True)
         stdout, stderr, code = await self._wrapper(ip.strip())
 
         if self.logger:
