@@ -157,8 +157,29 @@ def main() -> None:
         print(f"  Rolle @{name} angelegt")
 
     # ------------------------------------------------------------ Kategorien
+    # Projektbereiche: eigene Kategorie, eigene Rolle, nur diese sieht sie.
     projekt_bereiche = {
         "\U0001f7e0 AVUNEX": ("p-avunex", ["updates-avunex"]),
+        "\U0001f7e3 ZERODOX": ("p-zerodox", ["📋-updates-zerodox", "🧪-ci-zerodox", "🎯-akquise-funnel"]),
+        "\U0001f7e2 GuildScout": ("p-guildscout", ["updates-guildscout", "⚡-guildscout"]),
+        "\U0001f535 MayDay Sim": ("p-mayday", ["updates-mayday_sim", "deploy-events"]),
+    }
+
+    # Übergreifende Bereiche: gehen alle an, deshalb ohne Sperre.
+    uebergreifend = {
+        "⚙️ Eigene Werkzeuge": [
+            "📋-updates-shadowops", "📋-updates-agents",
+            "cmdshadow-design-updates", "updates-database-ports",
+        ],
+        "📋 Allgemein": ["Allgemein", "📝-notizen", "🎯-heute-dran", "dev-handoff", "dev-alerts"],
+        "🔐 Betrieb & Sicherheit": [
+            "🩺-uptime-alerts", "🚨-critical", "🛡️-crowdsec", "🐳-docker",
+            "🛡-security-briefing", "update", "backup-dashboard",
+            "🤖-bot-status", "👥-customer-alerts", "🚀-deployment-log", "📊-dashboard",
+        ],
+        "🤖 KI-Werkstatt": ["✋-approvals", "🧠-ai-learning", "⚡-orchestrator", "🔧-code-fixes"],
+        "🔍 SEO": ["seo-audits", "seo-search-console", "seo-fixes", "seo-reports"],
+        "🗄️ Archiv": ["archiv-updates-guildscout", "🚫-fail2ban"],
     }
 
     for kat_name, (rolle, kanal_namen) in projekt_bereiche.items():
@@ -196,6 +217,28 @@ def main() -> None:
         for kn in kanal_namen:
             if kn not in vorhandene_kanaele:
                 print(f"    Kanal '{kn}' nicht gefunden, übersprungen")
+                continue
+            d.verschieben(vorhandene_kanaele[kn]["id"], kat_id)
+            print(f"    '{kn}' verschoben")
+
+    # ------------------------------------------------- Übergreifende Bereiche
+    for kat_name, kanal_namen in uebergreifend.items():
+        if kat_name in kategorien:
+            kat_id = kategorien[kat_name]["id"]
+            print(f"\n  Kategorie '{kat_name}' existiert bereits")
+        elif TROCKEN:
+            print(f"\n  [trocken] Kategorie '{kat_name}' anlegen")
+            continue
+        else:
+            kat_id = d.kategorie_anlegen(kat_name)["id"]
+            print(f"\n  Kategorie '{kat_name}' angelegt")
+        if TROCKEN:
+            continue
+        for kn in kanal_namen:
+            if kn not in vorhandene_kanaele:
+                print(f"    '{kn}' nicht gefunden, übersprungen")
+                continue
+            if vorhandene_kanaele[kn].get("parent_id") == kat_id:
                 continue
             d.verschieben(vorhandene_kanaele[kn]["id"], kat_id)
             print(f"    '{kn}' verschoben")
