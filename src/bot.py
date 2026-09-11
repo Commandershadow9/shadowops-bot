@@ -47,7 +47,7 @@ from integrations.customer_notifications import CustomerNotificationManager
 from integrations.customer_server_setup import CustomerServerSetup
 from integrations.guildscout_alerts import GuildScoutAlertsHandler
 
-# AI Learning System (Legacy, nur noch fuer Config-Kompatibilitaet)
+# AI Learning System (Legacy, nur noch für Config-Kompatibilitaet)
 from integrations.ai_learning import ContinuousLearningAgent
 from integrations.research_fetcher import ResearchFetcher
 
@@ -185,10 +185,20 @@ class ShadowOpsBot(commands.Bot):
             self.logger.info("✅ Bot hat 'Manage Channels' Permission")
 
             # Categories
-            security_category = await self._get_or_create_category(guild, "🔐 Security Monitoring")
-            auto_remediation_category = await self._get_or_create_category(guild, "🤖 AI Engine")
-            system_category = await self._get_or_create_category(guild, "📦 System & Projekte")
-            project_updates_category = await self._get_or_create_category(guild, "📢 Updates & CI")
+            # Oben steht, was projektübergreifend gilt; projektbezogene Kanäle
+            # liegen je Projekt in einer eigenen Kategorie (discord_category in
+            # config.yaml). Vorher war beides gemischt: Wer wissen wollte, was
+            # mit GuildScout los ist, musste drei Kategorien absuchen.
+            security_category = await self._get_or_create_category(guild, "🔐 Betrieb & Sicherheit")
+            auto_remediation_category = await self._get_or_create_category(guild, "🤖 KI-Werkstatt")
+            system_category = security_category
+            # Zwei Kanäle gehören in projektbezogene bzw. stillgelegte Bereiche.
+            guildscout_category = await self._get_or_create_category(guild, "🟢 GuildScout")
+            archiv_category = await self._get_or_create_category(guild, "🗄️ Archiv")
+            # Auffangbereich wird erst angelegt, wenn ein Projekt ohne eigene
+            # Kategorie auftaucht — sonst entsteht bei jedem Start eine leere
+            # Kategorie, die niemand braucht.
+            project_updates_category = None
 
             channels_created_or_updated_in_session = False 
 
@@ -252,10 +262,13 @@ class ShadowOpsBot(commands.Bot):
             core_channels_to_manage = [
                 # 🔐 Security Monitoring
                 ('critical', '🚨-critical', 'Kritische Security Alerts - Sofortige Reaktion erforderlich', security_category),
-                ('fail2ban', '🚫-fail2ban', 'Fail2ban Bans und Aktivitäten', security_category),
+                # fail2ban ist auf diesem Server nicht mehr installiert, CrowdSec
+                # hat es abgelöst. Der Kanal bleibt wegen seines Verlaufs, gehört
+                # aber ins Archiv statt in den aktiven Betrieb.
+                ('fail2ban', '🚫-fail2ban', 'Fail2ban Bans und Aktivitäten — stillgelegt, CrowdSec hat übernommen', archiv_category),
                 ('crowdsec', '🛡️-crowdsec', 'CrowdSec Alerts', security_category),
                 ('docker', '🐳-docker', 'Docker Security Scans (Trivy)', security_category),
-                ('guildscout', '⚡-guildscout', 'GuildScout Verification Alerts & Performance Monitoring', security_category),
+                ('guildscout', '⚡-guildscout', 'GuildScout Verification Alerts & Performance Monitoring', guildscout_category),
                 # 📦 System & Projekte
                 ('bot_status', '🤖-bot-status', 'Bot Startup, Health-Checks und System-Status', system_category),
                 ('customer_alerts', '👥-customer-alerts', 'Kunden-sichtbare Alerts und Incidents', system_category),
@@ -315,12 +328,25 @@ class ShadowOpsBot(commands.Bot):
                     # Generate default channel name if not explicitly set in config
                     channel_name = proj_config.get("update_channel_name", f"updates-{proj_name}")
 
+                    # Eigene Kategorie je Projekt, wenn konfiguriert. Ohne die
+                    # Angabe landet der Kanal im Auffangbereich -- so wie
+                    # früher alle.
+                    kategorie_name = proj_config.get("discord_category")
+                    if kategorie_name:
+                        ziel_kategorie = await self._get_or_create_category(guild, kategorie_name)
+                    else:
+                        if project_updates_category is None:
+                            project_updates_category = await self._get_or_create_category(
+                                guild, "📢 Updates & CI"
+                            )
+                        ziel_kategorie = project_updates_category
+
                     self.logger.info(f"Prüfe Update-Channel für Projekt '{proj_name}' (Name: '{channel_name}')")
                     await _ensure_channel(
                         f"project_{proj_name}_updates", # Unique key for state manager
                         channel_name,
                         f"Updates & Patch-Notes für das Projekt {proj_name}",
-                        project_updates_category,
+                        ziel_kategorie,
                         self.config.projects[proj_name], # Update target is the project's config dict
                         'update_channel_id',             # Key in the project's config dict
                         is_autorem_channel=False         # Not an AR channel
@@ -450,7 +476,7 @@ class ShadowOpsBot(commands.Bot):
                     self.logger.error(f"❌ Fehler beim Laden von Cog '{filename[:-3]}': {e}", exc_info=True)
 
     async def _send_status_message(self, message: str, color: int = 0x00FF00):
-        """Sammelt Status-Nachrichten fuer das finale Startup-Embed.
+        """Sammelt Status-Nachrichten für das finale Startup-Embed.
 
         Statt 8-10 einzelne Embeds wird alles gesammelt und am Ende
         als 1 kompaktes Embed gesendet (via _send_startup_summary).
@@ -1105,7 +1131,7 @@ class ShadowOpsBot(commands.Bot):
                     "Security Analyst (ScanAgent) laeuft innerhalb Security Engine v6 — "
                     "kein separater Start noetig"
                 )
-                # Referenz fuer Abwaertskompatibilitaet (inspector, event_watcher, learning_notifier)
+                # Referenz für Abwaertskompatibilitaet (inspector, event_watcher, learning_notifier)
                 self.security_analyst = self.security_engine.scan_agent
 
             # Legacy: AI Learning System (falls in Config noch aktiviert)
@@ -1228,13 +1254,13 @@ class ShadowOpsBot(commands.Bot):
         """Beendet alle noch laufenden Child-Prozesse (Codex-CLI, gh-api etc.).
 
         Hintergrund: AI-Scan-Sessions (Codex/Claude CLI) laufen als Subprocesses
-        ueber `asyncio.create_subprocess_exec`. Bei Bot-Shutdown werden sie
+        über `asyncio.create_subprocess_exec`. Bei Bot-Shutdown werden sie
         teilweise nicht sauber beendet, was `bot.run()` nach `close()` bis zu
         120s warten laesst (systemd TimeoutStopSec) — das verursachte bisher
         2min Discord-Ausfall pro Deploy.
 
         Fix: Nach dem komponenten-weisen Shutdown alle noch lebenden Children
-        per SIGTERM/SIGKILL killen. Grace-Period 2s fuer SIGTERM.
+        per SIGTERM/SIGKILL killen. Grace-Period 2s für SIGTERM.
         """
         import os
         import signal as _sig
@@ -1259,7 +1285,7 @@ class ShadowOpsBot(commands.Bot):
                     pass
             # Grace-Period abwarten
             await asyncio.sleep(grace_period)
-            # Nachhilfe: SIGKILL fuer hartnaeckige
+            # Nachhilfe: SIGKILL für hartnaeckige
             remaining = []
             for pid in pids:
                 try:
@@ -1270,7 +1296,7 @@ class ShadowOpsBot(commands.Bot):
                     pass
             if remaining:
                 self.logger.info(
-                    f"🔨 SIGKILL fuer {len(remaining)} hartnaeckige Child-Prozess(e)"
+                    f"🔨 SIGKILL für {len(remaining)} hartnaeckige Child-Prozess(e)"
                 )
         except Exception as e:
             self.logger.warning(f"⚠️ Child-Cleanup fehlgeschlagen: {e}")
@@ -1745,11 +1771,11 @@ class ShadowOpsBot(commands.Bot):
 
     @tasks.loop(time=time(hour=23, minute=7))
     async def jules_nightly_batch_task(self):
-        """Nightly: klassifiziert Jules-Review-Outcomes fuer Learning-Loop."""
+        """Nightly: klassifiziert Jules-Review-Outcomes für Learning-Loop."""
         await self._jules_nightly_batch()
 
     async def _jules_nightly_batch(self):
-        """Nightly: klassifiziert Jules-Review-Outcomes fuer Learning-Loop."""
+        """Nightly: klassifiziert Jules-Review-Outcomes für Learning-Loop."""
         gh = getattr(self, "github_integration", None)
         if not gh or not getattr(gh, "_jules_enabled", False):
             return
