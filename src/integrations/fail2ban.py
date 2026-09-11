@@ -4,6 +4,7 @@ Monitort Fail2ban Logs und erkennt IP-Bans
 """
 
 import re
+import shutil
 import subprocess
 from typing import List, Dict, Optional
 from datetime import datetime, timedelta
@@ -26,6 +27,18 @@ class Fail2banMonitor:
         Returns:
             True if permissions are valid, False otherwise
         """
+        # Zwischen "nicht installiert" und "keine Rechte" muss unterschieden
+        # werden: Der Rückgabewert allein kann das nicht. Wer die alte Meldung
+        # las, trug eine sudoers-Regel ein und wunderte sich, dass sie nichts
+        # änderte — fail2ban wurde auf diesem Server durch CrowdSec abgelöst
+        # und ist gar nicht mehr vorhanden.
+        if shutil.which('fail2ban-client') is None:
+            print(
+                "fail2ban-client ist nicht installiert — Prüfung übersprungen. "
+                "Die Abwehr läuft über CrowdSec."
+            )
+            return False
+
         try:
             result = subprocess.run(
                 ['sudo', '-n', 'fail2ban-client', 'ping'],
