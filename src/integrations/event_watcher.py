@@ -4,6 +4,7 @@ Monitors all security integrations for new threats/vulnerabilities and triggers 
 """
 
 import asyncio
+import shutil
 import logging
 import time
 from datetime import datetime, timedelta
@@ -129,24 +130,35 @@ class SecurityEventWatcher:
         self.running = True
         logger.info("🔍 Starting Security Event Watcher (EFFICIENT Mode)...")
 
+        # fail2ban wurde auf diesem Server durch CrowdSec abgelöst und ist
+        # nicht mehr installiert. Ein Watcher für ein fehlendes Programm meldet
+        # im 15-Sekunden-Takt "No permissions for fail2ban-client" — das ist
+        # irreführend, denn es fehlen keine Rechte, sondern das Programm.
+        # Die Prüfung statt einer harten Entfernung hat einen Grund: Kommt
+        # fail2ban zurück, läuft der Watcher ohne Codeänderung wieder an.
+        fail2ban_vorhanden = shutil.which("fail2ban-client") is not None
+
         # Start individual watchers
         self.watcher_tasks = [
             asyncio.create_task(self._watch_trivy()),
             asyncio.create_task(self._watch_crowdsec()),
-            asyncio.create_task(self._watch_fail2ban()),
             asyncio.create_task(self._watch_aide()),
         ]
+        if fail2ban_vorhanden:
+            self.watcher_tasks.append(asyncio.create_task(self._watch_fail2ban()))
+        else:
+            logger.info(
+                "fail2ban-client nicht gefunden — Watcher übersprungen. "
+                "Die Abwehr läuft über CrowdSec."
+            )
 
+        fail2ban_takt = (
+            f"{self.intervals['fail2ban']}s" if fail2ban_vorhanden else "aus"
+        )
         logger.info("✅ Event-Driven Auto-Remediation aktiv!")
         logger.info(f"📊 Scan Intervals: Trivy={self.intervals['trivy']}s, "
                    f"CrowdSec={self.intervals['crowdsec']}s, "
-                   f"Fail2ban={self.intervals['fail2ban']}s, "
-                   f"AIDE={self.intervals['aide']}s")
-
-        logger.info("✅ Event-Driven Auto-Remediation aktiv!")
-        logger.info(f"📊 Scan Intervals: Trivy={self.intervals['trivy']}s, "
-                   f"CrowdSec={self.intervals['crowdsec']}s, "
-                   f"Fail2ban={self.intervals['fail2ban']}s, "
+                   f"Fail2ban={fail2ban_takt}, "
                    f"AIDE={self.intervals['aide']}s")
 
         # Keine separate Discord-Meldung — Startup-Summary im bot_status
