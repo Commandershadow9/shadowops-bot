@@ -44,6 +44,11 @@ API = "https://discord.com/api/v10"
 VIEW_CHANNEL = 1 << 10
 SEND_MESSAGES = 1 << 11
 READ_HISTORY = 1 << 16
+# MANAGE_MESSAGES (zum Anheften) wird bewusst NICHT vergeben: Ein Bot kann nur
+# Rechte weitergeben, die er selbst besitzt — ShadowOps hat es serverweit nicht,
+# der Versuch endet in 403. Die Statusübersicht wird stattdessen über die
+# Verlaufssuche wiedergefunden; in einem Kanal, der nur bei Ausfällen etwas
+# bekommt, steht sie ohnehin fast immer obenauf.
 
 TROCKEN = "--trocken" in sys.argv
 
