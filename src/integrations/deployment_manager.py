@@ -784,7 +784,17 @@ class DeploymentManager:
         allem für Mitarbeitende ohne Serverzugang der einzige Weg zu sehen, was
         mit ihrer Änderung passiert ist.
         """
-        projekt = self.projects.get(project_name) or {}
+        # ⚠️ Bewusst aus der LEBENDEN Konfiguration, nicht aus self.projects:
+        # Letzteres ist eine Kopie aus _load_projects(), die beim Start des
+        # Managers entsteht. Die Kanal-IDs setzt der Bot aber erst danach, wenn
+        # er die Kanäle anlegt — in der Kopie fehlen sie für immer.
+        projekte = getattr(self.config, "projects", None) or {}
+        projekt = projekte.get(project_name) or {}
+        if not projekt:
+            for schluessel, wert in projekte.items():
+                if schluessel.lower().replace("-", "_") == str(project_name).lower().replace("-", "_"):
+                    projekt = wert
+                    break
         eigener = projekt.get("deploy_channel_id")
         if eigener:
             kanal = self.bot.get_channel(eigener)
