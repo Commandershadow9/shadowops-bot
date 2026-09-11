@@ -318,6 +318,33 @@ class ShadowOpsBot(commands.Bot):
                         self.logger.info(f"⏭️ Projekt '{proj_name}' deaktiviert, überspringe Channel-Setup")
                         continue
 
+                    # Deploy-Kanal ZUERST, vor dem Cross-Guild-Abbruch weiter
+                    # unten. Der beendet den ganzen Schleifendurchlauf, nicht nur
+                    # den Update-Teil -- Projekte mit Update-Kanal auf einem
+                    # fremden Server bekämen sonst nie einen Deploy-Kanal.
+                    deploy_channel_name = proj_config.get("deploy_channel_name")
+                    if deploy_channel_name:
+                        deploy_kategorie = project_updates_category
+                        kat_name_deploy = proj_config.get("discord_category")
+                        if kat_name_deploy:
+                            deploy_kategorie = await self._get_or_create_category(guild, kat_name_deploy)
+                        elif deploy_kategorie is None:
+                            deploy_kategorie = await self._get_or_create_category(guild, "📢 Updates & CI")
+                            project_updates_category = deploy_kategorie
+                        await _ensure_channel(
+                            f"project_{proj_name}_deploy",
+                            deploy_channel_name,
+                            f"Deploy-Meldungen für {proj_name}: Schritte, Dauer, Ergebnis, Rollback",
+                            deploy_kategorie,
+                            self.config.projects[proj_name],
+                            'deploy_channel_id',
+                            is_autorem_channel=False,
+                        )
+                        self.logger.info(
+                            f"✅ Deploy-Kanal für '{proj_name}': "
+                            f"{self.config.projects[proj_name].get('deploy_channel_id')}"
+                        )
+
                     # Cross-Guild-Check: Wenn update_channel_id bereits in Config gesetzt
                     # und der Channel existiert (evtl. auf anderem Server), nicht überschreiben
                     existing_id = proj_config.get('update_channel_id')
@@ -352,6 +379,8 @@ class ShadowOpsBot(commands.Bot):
                         is_autorem_channel=False         # Not an AR channel
                     )
                     self.logger.info(f"✅ Laufzeit-Config für '{proj_name}' aktualisiert mit Channel-ID: {self.config.projects[proj_name].get('update_channel_id')}")
+
+
 
 
             if channels_created_or_updated_in_session:
