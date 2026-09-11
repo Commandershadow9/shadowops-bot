@@ -345,6 +345,32 @@ class ShadowOpsBot(commands.Bot):
                             f"{self.config.projects[proj_name].get('deploy_channel_id')}"
                         )
 
+                    # Statuskanal: Ausfall- und Erholungsmeldungen des Projekts.
+                    # Gemeldet wird nur der Zustandswechsel, nicht jede Prüfung —
+                    # der Kanal bleibt deshalb auch über Monate ruhig.
+                    status_channel_name = proj_config.get("status_channel_name")
+                    if status_channel_name:
+                        status_kategorie = project_updates_category
+                        kat_name_status = proj_config.get("discord_category")
+                        if kat_name_status:
+                            status_kategorie = await self._get_or_create_category(guild, kat_name_status)
+                        elif status_kategorie is None:
+                            status_kategorie = await self._get_or_create_category(guild, "📢 Updates & CI")
+                            project_updates_category = status_kategorie
+                        await _ensure_channel(
+                            f"project_{proj_name}_status",
+                            status_channel_name,
+                            f"Erreichbarkeit von {proj_name}: Ausfall mit Ursache, Rückkehr mit Dauer",
+                            status_kategorie,
+                            self.config.projects[proj_name],
+                            'status_channel_id',
+                            is_autorem_channel=False,
+                        )
+                        self.logger.info(
+                            f"✅ Statuskanal für '{proj_name}': "
+                            f"{self.config.projects[proj_name].get('status_channel_id')}"
+                        )
+
                     # Cross-Guild-Check: Wenn update_channel_id bereits in Config gesetzt
                     # und der Channel existiert (evtl. auf anderem Server), nicht überschreiben
                     existing_id = proj_config.get('update_channel_id')
