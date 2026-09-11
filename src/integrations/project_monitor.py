@@ -16,7 +16,7 @@ from datetime import datetime, timedelta, timezone
 from pathlib import Path
 import discord
 
-# EmbedBuilder + Severity fuer die Enterprise-Health-Check-Erweiterung (Phase 5b, Issue #278).
+# EmbedBuilder + Severity für die Enterprise-Health-Check-Erweiterung (Phase 5b, Issue #278).
 # Wird verwendet von _check_disk_space, _check_memory_usage, _check_container_restart_count,
 # _check_ssl_cert_expiry und _check_backup_freshness.
 try:  # pragma: no cover - Import-Pfad haengt von pythonpath ab (src/ vs. shadowops_bot/)
@@ -44,7 +44,7 @@ except ImportError:  # pragma: no cover
 logger = logging.getLogger('shadowops.project_monitor')
 
 
-# Default-Schwellen fuer die Enterprise-Health-Checks (Phase 5b).
+# Default-Schwellen für die Enterprise-Health-Checks (Phase 5b).
 # Pro Projekt ueberschreibbar via projects.<name>.monitor.thresholds.* in config.yaml.
 HEALTH_CHECK_DEFAULTS: Dict[str, Any] = {
     'disk_warn_percent': 15,      # < 15% frei -> Alert
@@ -465,7 +465,7 @@ class ProjectMonitor:
                 # Health-Check-Erweiterung (Phase 5b + 5c, Issue #278).
                 # Jede Methode hat ihren eigenen Min-Intervall-Filter — die werden
                 # bei jedem Loop-Tick aufgerufen, fuehren aber nur dann tatsaechlich
-                # die Pruefung aus, wenn der Filter es erlaubt.
+                # die Prüfung aus, wenn der Filter es erlaubt.
                 await self._check_disk_space(project)
                 await self._check_memory_usage(project)
                 await self._check_container_restart_count(project)
@@ -518,14 +518,14 @@ class ProjectMonitor:
         return origin.rstrip("/") + target
 
     async def _run_exec(self, argv: list) -> int:
-        """argv-Liste fuer reversible Heal-Aktionen ausfuehren (kein Shell →
+        """argv-Liste für reversible Heal-Aktionen ausfuehren (kein Shell →
         kein Injection) -> Exit-Code."""
         proc = await asyncio.create_subprocess_exec(*argv)
         await proc.communicate()
         return proc.returncode or 0
 
     async def _request_heal_approval(self, project_name: str, check_id: str, policy) -> bool:
-        """Discord-Approval fuer riskante Heal-Aktionen. Bis zur Verdrahtung mit
+        """Discord-Approval für riskante Heal-Aktionen. Bis zur Verdrahtung mit
         dem auto_remediation-Approval-Workflow konservativ False: nichts
         Riskantes wird ohne explizite Freigabe ausgefuehrt. Der Operator wird
         bei AWAITING_OR_DENIED via Alert informiert (siehe _run_one_declarative_check)."""
@@ -626,7 +626,7 @@ class ProjectMonitor:
         return mapping.get(outcome, (Severity.HIGH, str(outcome)))
 
     async def _alert_declarative(self, project, check, severity, title, desc, outcome_note) -> None:
-        """Sendet einen Discord-Alert fuer einen deklarativen Check (nutzt den
+        """Sendet einen Discord-Alert für einen deklarativen Check (nutzt den
         bestehenden _send_health_alert-Pfad inkl. Anti-Spam-Cooldown)."""
         await self._send_health_alert(
             project=project,
@@ -949,7 +949,7 @@ class ProjectMonitor:
 
         # Send alert to internal channel (fallback if IncidentManager failed)
         if not self.incident_manager:
-            channel = self.bot.get_channel(self.customer_alerts_channel_id)
+            channel = self._statuskanal_fuer(project.name)
             if channel:
                 embed = self._create_incident_embed(project, error)
                 await channel.send(embed=embed)
@@ -960,6 +960,40 @@ class ProjectMonitor:
 
         # Send DM to admin users for critical alerts
         await self._send_dm_alerts(project, "offline", error=error)
+
+    def _statuskanal_fuer(self, projekt_name: str):
+        """Liefert den Statuskanal eines Projekts.
+
+        Ist am Projekt `status_channel_id` gesetzt, gehen Ausfall- und
+        Erholungsmeldungen dorthin -- sonst in den gemeinsamen Kanal.
+
+        WARUM: Wer nur an einem Projekt arbeitet und keinen Serverzugang hat,
+        braucht einen Ort, an dem er sieht, ob *seine* Seite läuft. In einem
+        gemeinsamen Kanal geht das zwischen fremden Projekten unter.
+
+        Zumüllen kann das nicht: Gemeldet wird nur der Zustandswechsel
+        (ausgefallen / wieder erreichbar), nicht jede Prüfung.
+        """
+        projekte = getattr(self.bot.config, "projects", None) or {}
+        eintrag = projekte.get(projekt_name)
+        if not eintrag:
+            # Der Monitor kennt Projekte teils unter dem Anzeigenamen.
+            for schluessel, wert in projekte.items():
+                if schluessel.lower().replace("-", "_") == str(projekt_name).lower().replace("-", "_"):
+                    eintrag = wert
+                    break
+        eigener = (eintrag or {}).get("status_channel_id")
+        if eigener:
+            kanal = self.bot.get_channel(eigener)
+            if kanal:
+                return kanal
+            # Lieber im gemeinsamen Kanal melden als gar nicht -- eine
+            # verschluckte Ausfallmeldung ist schlimmer als eine am falschen Ort.
+            self.logger.warning(
+                f"Statuskanal {eigener} für '{projekt_name}' nicht erreichbar, "
+                "melde im gemeinsamen Kanal."
+            )
+        return self.bot.get_channel(self.customer_alerts_channel_id)
 
     async def _send_recovery_alert(self, project: ProjectStatus):
         """Send Discord alert when project recovers"""
@@ -990,7 +1024,7 @@ class ProjectMonitor:
                 )
 
         # Send recovery alert to channel
-        channel = self.bot.get_channel(self.customer_alerts_channel_id)
+        channel = self._statuskanal_fuer(project.name)
         if channel:
             embed = self._create_recovery_embed(project)
             await channel.send(embed=embed)
@@ -1389,10 +1423,10 @@ class ProjectMonitor:
                 if not channel:
                     continue
 
-                # Mini-Dashboard Embed fuer dieses eine Projekt
+                # Mini-Dashboard Embed für dieses eine Projekt
                 embed = self._create_single_project_dashboard(project, proj_cfg)
 
-                # State-Key fuer die externe Dashboard-Message-ID
+                # State-Key für die externe Dashboard-Message-ID
                 state_key = f"ext_dashboard_{proj_name}_{channel_id}"
 
                 try:
@@ -1412,11 +1446,11 @@ class ProjectMonitor:
                     self._ext_dashboard_ids[state_key] = msg.id
 
                 except Exception as e:
-                    self.logger.error(f"❌ Fehler beim externen Dashboard fuer {proj_name}: {e}")
+                    self.logger.error(f"❌ Fehler beim externen Dashboard für {proj_name}: {e}")
 
     def _create_single_project_dashboard(self, project, project_config) -> discord.Embed:
         """
-        Erstellt ein detailliertes Embed fuer ein einzelnes Projekt.
+        Erstellt ein detailliertes Embed für ein einzelnes Projekt.
         Wird auf dem externen Discord-Server des Projekts angezeigt.
         Zeigt den Gesamtstatus + einzelne Services (TCP-Ports).
         """
@@ -1580,7 +1614,7 @@ class ProjectMonitor:
         return None
 
     def _get_project_domain(self, project: ProjectStatus) -> Optional[str]:
-        """Domain fuer SSL-Check aus project.url ableiten."""
+        """Domain für SSL-Check aus project.url ableiten."""
         if not project.url:
             return None
         try:
@@ -1595,7 +1629,7 @@ class ProjectMonitor:
 
     def _should_run_health_check(self, project: ProjectStatus, check_type: str) -> bool:
         """
-        Min-Intervall-Filter: Hat dieser Check fuer dieses Projekt schon
+        Min-Intervall-Filter: Hat dieser Check für dieses Projekt schon
         kuerzlich gelaufen? Wenn ja -> skip.
         """
         key = f"{project.name}:{check_type}"
@@ -1636,7 +1670,7 @@ class ProjectMonitor:
         return fallback_id if fallback_id > 0 else None
 
     def _project_tag(self, project: ProjectStatus) -> str:
-        """Tag fuer Embed-Header (z.B. '📘 [ZERODOX]')."""
+        """Tag für Embed-Header (z.B. '📘 [ZERODOX]')."""
         proj_cfg = self._get_project_config(project.name)
         tag = proj_cfg.get('tag') if isinstance(proj_cfg, dict) else None
         return str(tag) if tag else f"[{project.name.upper()}]"
@@ -1671,13 +1705,13 @@ class ProjectMonitor:
         channel_id = self._resolve_health_alert_channel(channel_key, fallback_channel_id)
         if not channel_id:
             self.logger.warning(
-                f"⚠️ Kein Channel fuer {check_type}-Alert (key={channel_key}) konfiguriert — uebersprungen"
+                f"⚠️ Kein Channel für {check_type}-Alert (key={channel_key}) konfiguriert — uebersprungen"
             )
             return
 
         channel = self.bot.get_channel(channel_id) if hasattr(self.bot, 'get_channel') else None
         if not channel:
-            self.logger.warning(f"⚠️ Channel {channel_id} fuer {check_type}-Alert nicht gefunden")
+            self.logger.warning(f"⚠️ Channel {channel_id} für {check_type}-Alert nicht gefunden")
             return
 
         embed = EmbedBuilder.create_alert(
@@ -1693,10 +1727,10 @@ class ProjectMonitor:
             await channel.send(embed=embed)
             self._health_check_alerts[cooldown_key] = now
             self.logger.warning(
-                f"🚨 Health-Alert {check_type} fuer {project.name} -> Channel {channel_id}"
+                f"🚨 Health-Alert {check_type} für {project.name} -> Channel {channel_id}"
             )
         except discord.HTTPException as exc:
-            self.logger.error(f"❌ Discord-Send fuer {project.name} {check_type} fehlgeschlagen: {exc}")
+            self.logger.error(f"❌ Discord-Send für {project.name} {check_type} fehlgeschlagen: {exc}")
 
     def _clear_health_alert_cooldown(self, project: ProjectStatus, check_type: str) -> None:
         """
@@ -1985,9 +2019,9 @@ class ProjectMonitor:
             await self._send_health_alert(
                 project=project,
                 check_type='ssl_cert_expiry',
-                title=f"SSL-Zertifikat laeuft bald ab — {project.name}",
+                title=f"SSL-Zertifikat läuft bald ab — {project.name}",
                 description=(
-                    f"Das Zertifikat fuer **{domain}** laeuft in **{days_remaining} Tagen** ab "
+                    f"Das Zertifikat für **{domain}** läuft in **{days_remaining} Tagen** ab "
                     f"({not_after.strftime('%Y-%m-%d %H:%M UTC')}).\n"
                     f"Schwelle: **< {warn_days} Tage**.\n\n"
                     f"Let's Encrypt sollte automatisch renewen — falls nicht, "
@@ -2015,7 +2049,7 @@ class ProjectMonitor:
         try:
             ssl_obj = writer.get_extra_info('ssl_object')
             if not ssl_obj:
-                raise ssl.SSLError(f"Kein ssl_object fuer {host}:{port}")
+                raise ssl.SSLError(f"Kein ssl_object für {host}:{port}")
             # binary_form=False -> dict {'subject': ..., 'notAfter': ..., ...}
             cert = ssl_obj.getpeercert()
             return cert or {}
@@ -2037,7 +2071,7 @@ class ProjectMonitor:
         Frequenz: alle 30 Min (taeglicher Cron, kein Sub-Hour-Sampling noetig).
 
         Pfad: <project.path>/backups/daily/ — wenn der Pfad nicht existiert,
-        wird der Check uebersprungen (z.B. fuer Projekte ohne Backup-Strategie).
+        wird der Check uebersprungen (z.B. für Projekte ohne Backup-Strategie).
         Aktuell nur ZERODOX hat einen daily-Backup-Pfad.
         """
         if not self._should_run_health_check(project, 'backup_freshness'):
@@ -2068,7 +2102,7 @@ class ProjectMonitor:
                 title=f"Keine Backups gefunden — {project.name}",
                 description=(
                     f"Im Verzeichnis `{backup_dir}` liegen keine Backup-Dateien.\n"
-                    f"Backup-Cron wahrscheinlich tot — sofortige Pruefung erforderlich!"
+                    f"Backup-Cron wahrscheinlich tot — sofortige Prüfung erforderlich!"
                 ),
                 severity=Severity.HIGH,
                 fields=[
@@ -2193,7 +2227,7 @@ class ProjectMonitor:
     async def _fetch_app_health_stats(self, project: ProjectStatus) -> Optional[Dict[str, Any]]:
         """HTTP-Call zur internal Health-Stats-API des Projekts.
 
-        Legacy-Fallback fuer Checks, deren Schema-v1-Komponente noch nicht
+        Legacy-Fallback für Checks, deren Schema-v1-Komponente noch nicht
         von allen Projekten geliefert wird. Für DB-Pool-Saturation siehe
         _fetch_health_schema_v1.
 
@@ -2432,7 +2466,7 @@ class ProjectMonitor:
     # auf >= critical_endpoint_5xx_consecutive (default 2) konsekutiven Polls.
     # Hintergrund: Buchungs-Endpoint war ueber Tage defekt, niemand merkte, Kunden
     # verloren. Welle 9.15a (Synthetic-Monitor) faengt funktional broken Endpoints,
-    # Welle 9.15b faengt "Endpoint antwortet aber mit 500 fuer echte User".
+    # Welle 9.15b faengt "Endpoint antwortet aber mit 500 für echte User".
 
     async def _check_critical_endpoint_5xx_rate(self, project: ProjectStatus) -> None:
         """
