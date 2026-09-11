@@ -61,7 +61,7 @@ class ExecutorMixin:
         if current:
             chunks.append(current)
 
-        return chunks[:5]  # Max 5 Fields fuer Lesbarkeit
+        return chunks[:5]  # Max 5 Fields für Lesbarkeit
 
     def _set_embed_status(self, embed, name: str, value: str, *, inline: bool = False):
         """Set embed field(s), auto-splitting into multiple fields if > 1024 chars."""
@@ -177,7 +177,7 @@ class ExecutorMixin:
                     asyncio.create_task(self._process_next_batch())
 
     async def _escalate_to_github(self, batch, plan):
-        """Erstellt ein GitHub Issue fuer einen Batch der nicht approved wurde."""
+        """Erstellt ein GitHub Issue für einen Batch der nicht approved wurde."""
         import asyncio as _asyncio
 
         try:
@@ -892,6 +892,35 @@ class ExecutorMixin:
 
                         fix_results.append(fix_result)
 
+                        # Ergebnis nach Discord melden.
+                        #
+                        # WARUM HIER: Es gibt drei Wege, auf denen ein Fix
+                        # ausgeführt wird -- self_healing (Legacy), dieser
+                        # Orchestrator-Pfad und die Security Engine v6. Nur der
+                        # Legacy-Pfad meldete bisher nach Discord. Trivy-Funde
+                        # betreffen aber meist mehrere Projekte gleichzeitig und
+                        # laufen deshalb fast immer über DIESEN Pfad.
+                        #
+                        # Folge: Der Kanal #code-fixes bekam 185 Tage lang keine
+                        # einzige Nachricht, obwohl Fixes liefen. Kein Fehler,
+                        # keine Warnung -- nur ein Kanal, der schwieg.
+                        if getattr(self, 'discord_logger', None):
+                            try:
+                                erfolgreich = fix_result.get('status') == 'success'
+                                self.discord_logger.log_code_fix(
+                                    (
+                                        f"{'✅' if erfolgreich else '❌'} "
+                                        f"**Fix {'erfolgreich' if erfolgreich else 'fehlgeschlagen'}** "
+                                        f"(Orchestrator)\n"
+                                        f"📂 Projekt: **{project_name}**\n"
+                                        f"🔎 Quelle: {event.source}\n"
+                                        f"📝 {strategy.get('description', 'ohne Beschreibung')[:200]}"
+                                    ),
+                                    severity="success" if erfolgreich else "error",
+                                )
+                            except Exception as e:  # Melden darf den Fix nie stoppen
+                                logger.debug(f"Discord-Meldung für Fix fehlgeschlagen: {e}")
+
                         # Fix-Ergebnis in Knowledge DB speichern
                         try:
                             from integrations.ai_learning.knowledge_db import get_knowledge_db
@@ -1050,7 +1079,7 @@ class ExecutorMixin:
 
                         # Nur wenn Phase-Daten zu duenn sind (z.B. leere Steps), KI fragen
                         if not strategy['steps'] and not strategy['description']:
-                            logger.info(f"      Phase hat keine Details — generiere Strategy via KI fuer {event.source}...")
+                            logger.info(f"      Phase hat keine Details — generiere Strategy via KI für {event.source}...")
                             strategy = await self.ai_service.generate_fix_strategy({
                                 'event': event.to_dict(),
                                 'previous_attempts': previous_attempts
