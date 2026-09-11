@@ -13,7 +13,7 @@ import sys
 import os
 import signal
 from pathlib import Path
-from datetime import datetime, time
+from datetime import datetime, time, timezone
 from typing import Optional
 
 # Füge src/ zum Path hinzu
@@ -1177,13 +1177,13 @@ class ShadowOpsBot(commands.Bot):
                     exc_info=True
                 )
 
-            # SecurityScanAgent laeuft jetzt innerhalb der Security Engine v6
+            # SecurityScanAgent läuft jetzt innerhalb der Security Engine v6
             # Der alte SecurityAnalyst wird NICHT mehr separat gestartet.
             # Stattdessen: security_engine.start() startet den ScanAgent automatisch.
             analyst_config = self.config._config.get('security_analyst', {})
             if analyst_config.get('enabled', False) and self.security_engine and self.security_engine.scan_agent:
                 self.logger.info(
-                    "Security Analyst (ScanAgent) laeuft innerhalb Security Engine v6 — "
+                    "Security Analyst (ScanAgent) läuft innerhalb Security Engine v6 — "
                     "kein separater Start noetig"
                 )
                 # Referenz für Abwaertskompatibilitaet (inspector, event_watcher, learning_notifier)
@@ -1210,6 +1210,8 @@ class ShadowOpsBot(commands.Bot):
             self.daily_health_check.start()
         if not self.update_dashboard.is_running():
             self.update_dashboard.start()
+        if not self.update_projekt_uebersichten.is_running():
+            self.update_projekt_uebersichten.start()
         if not self.weekly_patch_notes_release.is_running():
             self.weekly_patch_notes_release.start()
         if not self.daily_patch_notes_release.is_running():
@@ -2072,6 +2074,138 @@ class ShadowOpsBot(commands.Bot):
         self.logger.info("🛡️ Agent-Review Weekly-Recap gestartet (Freitags 18:00)")
 
     @tasks.loop(minutes=5)
+    async def update_projekt_uebersichten(self):
+        """Hält je Projekt eine Übersicht im eigenen Statuskanal aktuell.
+
+        Bearbeitet eine angeheftete Nachricht, statt neue zu posten -- sonst
+        wäre der Kanal nach einem Tag unlesbar. Dieselbe Mechanik wie beim
+        gemeinsamen Dashboard.
+
+        Zweck: Wer keinen Serverzugang hat, soll auf einen Blick sehen, ob
+        seine Seite läuft, wie schnell sie antwortet und wie zuverlässig sie
+        in letzter Zeit war.
+        """
+        if not self.project_monitor or not self.project_monitor.projects:
+            return
+
+        for proj_name, proj_config in (self.config.projects or {}).items():
+            kanal_id = proj_config.get("status_channel_id")
+            if not kanal_id:
+                continue
+            kanal = self.get_channel(kanal_id)
+            if not kanal:
+                continue
+
+            status = self.project_monitor.projects.get(proj_name)
+            if not status:
+                # Der Monitor führt Projekte teils unter abweichender Schreibweise.
+                for schluessel, wert in self.project_monitor.projects.items():
+                    if schluessel.lower().replace("-", "_") == proj_name.lower().replace("-", "_"):
+                        status = wert
+                        break
+            if not status:
+                continue
+
+            try:
+                online = bool(status.is_online)
+                embed = discord.Embed(
+                    title=f"Status: {proj_name}",
+                    description=(
+                        "Erreichbar" if online else "**Nicht erreichbar**"
+                    ),
+                    color=0x2ECC71 if online else 0xE74C3C,
+                    timestamp=datetime.now(),
+                )
+
+                if status.url:
+                    embed.add_field(name="Adresse", value=status.url, inline=False)
+
+                # Verfügbarkeit seit dem Start des Bots -- bewusst so benannt,
+                # weil die Zähler bei jedem Neustart zurückgesetzt werden.
+                gesamt = getattr(status, "total_checks", 0) or 0
+                erfolgreich = getattr(status, "successful_checks", 0) or 0
+                if gesamt:
+                    quote = erfolgreich / gesamt * 100
+                    embed.add_field(
+                        name="Verfügbarkeit",
+                        value=f"{quote:.1f} % ({erfolgreich} von {gesamt} Prüfungen)",
+                        inline=True,
+                    )
+
+                # average_response_time liefert bereits Millisekunden und
+                # fängt den leeren Fall ab (project_monitor.py:166).
+                schnitt = getattr(status, "average_response_time", 0) or 0
+                if schnitt:
+                    embed.add_field(
+                        name="Antwortzeit",
+                        value=f"{schnitt:.0f} ms im Mittel",
+                        inline=True,
+                    )
+
+                if getattr(status, "last_check_time", None):
+                    embed.add_field(
+                        name="Zuletzt geprüft",
+                        value=status.last_check_time.strftime("%d.%m.%Y %H:%M"),
+                        inline=True,
+                    )
+
+                if not online and getattr(status, "current_downtime_start", None):
+                    seit = datetime.now(timezone.utc) - status.current_downtime_start
+                    minuten = int(seit.total_seconds() // 60)
+                    embed.add_field(
+                        name="Ausgefallen seit",
+                        value=f"{minuten} Minuten",
+                        inline=True,
+                    )
+
+                embed.set_footer(text="Alle 5 Minuten aktualisiert · Ausfälle werden zusätzlich gemeldet")
+
+                nachricht = None
+                try:
+                    async for pin in kanal.pins():
+                        if (
+                            pin.author.id == self.user.id
+                            and pin.embeds
+                            and pin.embeds[0].title
+                            and pin.embeds[0].title.startswith("Status:")
+                        ):
+                            nachricht = pin
+                            break
+                except Exception:
+                    pass
+
+                if not nachricht:
+                    try:
+                        async for msg in kanal.history(limit=20):
+                            if (
+                                msg.author.id == self.user.id
+                                and msg.embeds
+                                and msg.embeds[0].title
+                                and msg.embeds[0].title.startswith("Status:")
+                            ):
+                                nachricht = msg
+                                break
+                    except Exception:
+                        pass
+
+                if nachricht:
+                    await nachricht.edit(embed=embed)
+                else:
+                    neu = await kanal.send(embed=embed)
+                    try:
+                        await neu.pin()
+                    except Exception as e:
+                        # Anheften ist Kosmetik: Der Bot hat serverweit kein
+                        # MANAGE_MESSAGES. Gefunden wird die Übersicht auch über
+                        # die Verlaufssuche, und in einem Kanal, der nur bei
+                        # Ausfällen etwas bekommt, steht sie fast immer obenauf.
+                        self.logger.debug(
+                            f"Übersicht in {kanal.name} nicht angeheftet: {e}"
+                        )
+            except Exception as e:
+                self.logger.debug(f"Projektübersicht für {proj_name} fehlgeschlagen: {e}")
+
+    @tasks.loop(minutes=5)
     async def update_dashboard(self):
         """Aktualisiert das Dashboard-Embed mit aktuellem Projekt-Status alle 5 Minuten"""
         try:
@@ -2410,11 +2544,11 @@ def main():
             owner_pid = lock.read_owner_pid()
             if owner_pid:
                 logger.warning(
-                    "ShadowOps laeuft bereits (PID %s) - zweite Instanz wird beendet",
+                    "ShadowOps läuft bereits (PID %s) - zweite Instanz wird beendet",
                     owner_pid,
                 )
             else:
-                logger.warning("ShadowOps laeuft bereits - zweite Instanz wird beendet")
+                logger.warning("ShadowOps läuft bereits - zweite Instanz wird beendet")
             return 0
 
         # bot.run() nutzt intern asyncio.run() mit async with (garantiertes close()).
