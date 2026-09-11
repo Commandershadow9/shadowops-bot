@@ -42,7 +42,7 @@
 shadowops-bot/
 ├── src/
 │   ├── bot.py                    # Haupt-Bot
-│   ├── cogs/                     # Slash-Commands (admin, inspector, monitoring, claude_cli, cron_heartbeat, customer_setup_commands, phase_5e_health_aggregator)
+│   ├── cogs/                     # Slash-Commands (admin, inspector, monitoring, claude_cli, cron_heartbeat, customer_setup_commands, phase_5e_health_aggregator, crowdsec_notfall)
 │   ├── integrations/             # Externe Systeme (siehe unten)
 │   ├── patch_notes/              # Patch Notes Pipeline v6 + Editorial Layer v7 (editorial.py, seit 2026-06-25) — 5-Stufen State Machine + Pre-Context-Builder (~2300 Zeilen)
 │   ├── schemas/                  # JSON-Schemas fuer Structured Output (fix_strategy, patch_notes, incident_analysis, jules_review)
@@ -288,7 +288,7 @@ Worker-Konventionen:
 
 ## Statistik (Stand v5.1)
 
-20.000+ LoC, 700+ Tests, 3 PostgreSQL DBs (21+8+11 Tabellen), 4 Security-Integrationen, 21 Discord-Commands, 3 Monitored Projects (GuildScout, ZERODOX, AI Agents).
+20.000+ LoC, 700+ Tests, 3 PostgreSQL DBs (21+8+11 Tabellen), 4 Security-Integrationen, 23 Discord-Commands, 3 Monitored Projects (GuildScout, ZERODOX, AI Agents).
 
 ## Aktuelle Doku
 
