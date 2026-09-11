@@ -121,7 +121,7 @@ class DeploymentManager:
             projects[project_name] = {
                 'name': project_name,
                 'path': Path(project_config.get('path', '')),
-                # Optionaler eigener Baum fuer den Deploy (ZERODOX #2344).
+                # Optionaler eigener Baum für den Deploy (ZERODOX #2344).
                 # Ohne diesen Eintrag bleibt alles wie bisher — `_deploy_path`
                 # faellt dann auf 'path' zurueck. Bewusst getrennt gehalten:
                 # 'path' steuert ausserdem Backup-Monitoring, Disk-Checks,
@@ -482,7 +482,7 @@ class DeploymentManager:
         um eine zu reparieren, und macht dabei das Backup-Monitoring blind.
 
         Ohne `deploy_path` bleibt alles wie bisher; die Umstellung ist damit
-        fuer jedes andere Projekt ein No-op.
+        für jedes andere Projekt ein No-op.
 
         Args:
             project: Project configuration
@@ -508,7 +508,7 @@ class DeploymentManager:
         scheitert an derselben Stelle.
 
         `fetch --prune` + `reset --hard` ist idempotent und immun gegen dirty,
-        divergiert und abgebrochenen Rebase gleichermassen. Man kann nicht fuer
+        divergiert und abgebrochenen Rebase gleichermassen. Man kann nicht für
         jeden Zustand einen eigenen Guard bauen — die Abhaengigkeit muss weg.
 
         ⚠️ Verwirft lokale Aenderungen im Deploy-Baum. Genau deshalb gehoert
@@ -773,8 +773,34 @@ class DeploymentManager:
                     pass
 
 
+    def _kanal_fuer(self, project_name: str):
+        """Liefert den Meldekanal für ein Projekt.
+
+        Ist am Projekt `deploy_channel_id` gesetzt, geht die Meldung dorthin --
+        sonst in den gemeinsamen Deploy-Kanal.
+
+        WARUM: Wer nur an einem Projekt arbeitet, soll dessen Deploys
+        nachvollziehen können, ohne die aller anderen mitzulesen. Das ist vor
+        allem für Mitarbeitende ohne Serverzugang der einzige Weg zu sehen, was
+        mit ihrer Änderung passiert ist.
+        """
+        projekt = self.projects.get(project_name) or {}
+        eigener = projekt.get("deploy_channel_id")
+        if eigener:
+            kanal = self.bot.get_channel(eigener)
+            if kanal:
+                return kanal
+            # Fällt der eigene Kanal aus, lieber im gemeinsamen melden als
+            # gar nicht -- eine verschluckte Deploy-Meldung ist schlimmer als
+            # eine am falschen Ort.
+            self.logger.warning(
+                f"Deploy-Kanal {eigener} für '{project_name}' nicht erreichbar, "
+                "melde im gemeinsamen Kanal."
+            )
+        return self.bot.get_channel(self.deployment_channel_id)
+
     async def _send_deployment_started(self, project_name: str, branch: str):
-        """Initialisiert den Step-Sammler fuer dieses Deployment.
+        """Initialisiert den Step-Sammler für dieses Deployment.
 
         Keine separate Discord-Nachricht mehr — Steps werden gesammelt
         und im Success/Failure Embed angezeigt.
@@ -802,14 +828,14 @@ class DeploymentManager:
         self, project_name: str, branch: str, duration: float, result: Dict
     ):
         """Send Discord notification when deployment succeeds"""
-        channel = self.bot.get_channel(self.deployment_channel_id)
+        channel = self._kanal_fuer(project_name)
         if not channel:
             return
 
         steps = getattr(self, '_deploy_steps', {}).get(project_name, [])
         ok, total, _ = _summarize_steps(steps)
 
-        # Klartext-Zusammenfassung statt blosser Erfolgsmeldung
+        # Klartext-Zusammenfassung statt bloßer Erfolgsmeldung
         if total > 0:
             summary = f"**{project_name}** erfolgreich deployt — alle {total} Schritte ok."
         else:
@@ -843,7 +869,7 @@ class DeploymentManager:
         self, project_name: str, branch: str, duration: float, result: Dict
     ):
         """Send Discord notification when deployment fails"""
-        channel = self.bot.get_channel(self.deployment_channel_id)
+        channel = self._kanal_fuer(project_name)
         if not channel:
             return
 
@@ -904,7 +930,7 @@ class DeploymentManager:
         self, project_name: str, error: str, duration: float
     ):
         """Send Discord notification when deployment crashes with exception"""
-        channel = self.bot.get_channel(self.deployment_channel_id)
+        channel = self._kanal_fuer(project_name)
         if not channel:
             return
 
