@@ -382,6 +382,45 @@ Creates monitoring channels with correct permission overwrites on a customer Dis
 /setup-customer-server
 ```
 
+### CrowdSec Emergency Commands
+
+Emergency controls for CrowdSec bans. These commands exist because the CrowdSec bouncer uses `deny_action: DROP` without port filtering, which blocks WireGuard (51820/udp) and therefore SSH (reachable only via VPN). A misfire locks out the operator completely. The bot runs outbound-only and remains reachable even when inbound connections are blocked.
+
+Both commands are restricted to the **application owner** (Discord Developer Portal, not guild admin role).
+
+Runbook: `ZERODOX/docs/runbooks/2026-09-10-von-crowdsec-ausgesperrt.md`
+
+#### `/sperren`
+Lists active CrowdSec bans.
+
+**Permissions:** Application owner only
+**Parameters:** None
+**Returns:** Paginated embed with active bans, each showing IP, scenario, duration, and whether it matches a hard scenario (known-attack pattern — requires confirmation before unblocking)
+
+**Example:**
+```
+/sperren
+```
+
+#### `/entsperren [ip]`
+Removes an IP from CrowdSec bans via the `zerodox-crowdsec-entsperren` wrapper script.
+
+**Permissions:** Application owner only
+**Parameters:**
+- `ip` (required): IP address to unblock, e.g. `82.115.116.41`
+
+**Returns:** Result embed confirming removal or error. If the IP is in `HARTE_SZENARIEN` (hard attack scenarios), returns a warning embed — a second call with the same IP proceeds.
+
+**Notes:**
+- Executed via `create_subprocess_exec` (no shell), so Discord input is never interpreted as a command.
+- The wrapper (`/usr/local/bin/zerodox-crowdsec-entsperren`, root:root 0755) handles input validation and journald logging.
+- Timeout: 20 seconds.
+
+**Example:**
+```
+/entsperren 82.115.116.41
+```
+
 ---
 
 ## Configuration Reference
