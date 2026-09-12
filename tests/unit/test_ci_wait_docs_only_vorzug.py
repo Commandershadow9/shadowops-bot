@@ -47,6 +47,15 @@ class _DocsOnlyHarness(CIMixin):
         self.fetch_commit_files_aufrufe += 1
         return self._commit_files
 
+    async def _fetch_commit_tree_info(self, repo_full_name: str, sha: str):
+        # ZERODOX#3328 Task 4: Der pre-loop Tree-SHA-Reuse-Check (läuft NACH
+        # dem hier getesteten Docs-only-Check, aber noch vor der Schleife)
+        # ruft diese Methode jetzt ebenfalls unbedingt auf. None simuliert
+        # "keine Tree-Info verfügbar" (fail-closed) -- dieser Harness prüft
+        # den Docs-only-Vorzug, nicht Tree-Reuse, und soll den Kurzschluss
+        # nie greifen lassen.
+        return None
+
 
 class _VirtualClock:
     """Monoton fortschreitende Test-Uhr: springt nur vor, wenn der Code
