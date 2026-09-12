@@ -528,6 +528,7 @@ class CIMixin:
         workflow_names: List[str],
         max_wait_min: int = 30,
         admin_merge_grace_min: int = 5,
+        poll_interval_sec: int = 20,
     ) -> Literal[
         "success",
         "failure",
@@ -549,7 +550,20 @@ class CIMixin:
         ohne Deployment weiterlaufen. Code- oder unklare Commits warten bis
         `max_wait_min` und werden danach fail-closed als "missing" gemeldet.
 
-        Exponential backoff: 60s → 120s → 240s → cap 300s.
+        Konstantes Poll-Intervall (Default 20s, konfigurierbar ueber
+        poll_interval_sec / project_config-Key `ci_wait_poll_interval_sec`).
+        Messung 12.09.2026: Ein ZERODOX-Merge-zu-Live-Deploy dauert ~21min,
+        davon ~12min CI-Wait im Bot, obwohl der gemessene CI-Lauf selbst nur
+        9,4min brauchte — die Differenz war blinde Zeit durch Exponential-
+        Backoff (60s → 120s → 240s → cap 300s, VORHER). Die CI-Laufzeit ist
+        gut bekannt (8-17min, Median 16min) — fuer einen derart vorhersagbaren
+        Vorgang vergroessert Backoff die Blindzeit genau dann, wenn der Lauf
+        typischerweise fertig wird. Ein 16min-Lauf kostet bei 20s-Intervall nur
+        ~48 Requests gegen GitHubs 5000/h-Limit. Betrifft NUR diese Schleife
+        (kritischer Merge-zu-Deploy-Pfad) — die zweite Warteschleife im
+        Reconcile-Codepfad (ci_success_reconcile_*-Konfig) ist ein
+        nachtraeglicher Backstop, kein kritischer Pfad, und bleibt bewusst
+        unveraendert.
 
         Args:
             repo_full_name: e.g. "Commandershadow9/ZERODOX"
@@ -559,6 +573,8 @@ class CIMixin:
             max_wait_min: Hard-timeout in Minuten. Default 30.
             admin_merge_grace_min: Grace-Period in Minuten, in der NOCH KEIN
                 Workflow fuer den SHA erkannt sein muss. Default 5.
+            poll_interval_sec: Konstantes Poll-Intervall in Sekunden (kein
+                Backoff mehr). Default 20.
 
         Returns:
             "success"      — alle required Workflows haben conclusion=success
@@ -595,8 +611,9 @@ class CIMixin:
         started_at = time.monotonic()
         deadline = started_at + max_wait_min * 60
         admin_merge_deadline = started_at + max(0, admin_merge_grace_min) * 60
-        poll_interval_s = 60
-        max_poll_interval_s = 300  # 5 min cap
+        # 12.09.2026: konstantes Intervall statt Backoff (Begruendung im
+        # Docstring oben) — poll_interval_s wird danach nicht mehr veraendert.
+        poll_interval_s = max(1, int(poll_interval_sec))
         saw_any_relevant = False
         commit_paths_checked = False
         # 17.08.2026: Wurde die API waehrend der gesamten Frist nie gelesen, ist
@@ -618,7 +635,6 @@ class CIMixin:
                 # API-Fehler / Rate-Limit — weiter pollen
                 api_fehler_runden += 1
                 await asyncio.sleep(poll_interval_s)
-                poll_interval_s = min(poll_interval_s * 2, max_poll_interval_s)
                 continue
 
             api_erfolg_runden += 1
@@ -670,7 +686,6 @@ class CIMixin:
                     f"fuer {merged_sha[:7]} sichtbar — weiter pollen ({poll_interval_s}s)..."
                 )
                 await asyncio.sleep(poll_interval_s)
-                poll_interval_s = min(poll_interval_s * 2, max_poll_interval_s)
                 continue
 
             saw_any_relevant = True
@@ -725,7 +740,6 @@ class CIMixin:
                 f"fuer {merged_sha[:7]} (next poll in {poll_interval_s}s)"
             )
             await asyncio.sleep(poll_interval_s)
-            poll_interval_s = min(poll_interval_s * 2, max_poll_interval_s)
 
         if not saw_any_relevant:
             # Nur wenn die API mindestens einmal geantwortet hat, ist "es gibt
@@ -926,12 +940,18 @@ class CIMixin:
                 admin_merge_grace_min = int(
                     project_config.get('ci_wait_admin_merge_grace_min', 5)
                 )
+                # 12.09.2026: konstantes Poll-Intervall statt Backoff, konfigurierbar
+                # je Projekt (Begruendung im Docstring von _wait_for_ci_completion).
+                poll_interval_sec = int(
+                    project_config.get('ci_wait_poll_interval_sec', 20)
+                )
                 outcome = await self._wait_for_ci_completion(
                     repo_full_name=repo_full_name,
                     merged_sha=full_sha,
                     workflow_names=workflow_names,
                     max_wait_min=max_wait_min,
                     admin_merge_grace_min=admin_merge_grace_min,
+                    poll_interval_sec=poll_interval_sec,
                 )
                 if outcome == "failure":
                     await self._send_ci_wait_alert(
