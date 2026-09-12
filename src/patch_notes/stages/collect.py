@@ -84,6 +84,12 @@ def _gather_commits_since_last_release(project: str, project_path: str, config: 
     # 3. Commits seit letztem Release
     git_args = [
         'git', 'log', f'origin/{deploy_branch}',
+        # Merge-Commits tragen keine eigene Änderung — die steckt in den
+        # gemergten Commits, die hier ebenfalls auftauchen. Sie mitzuzählen
+        # überhöht die Commit-Zahl (bei zerodox 88 von 275, bei
+        # avunex-neustart 9 von 70) und setzt inhaltsleere Titel wie
+        # "Merge pull request #22 from …" in die Gruppen.
+        '--no-merges',
         # \x1f trennt die Felder, \x1e die Commits. Mit '|' und '\n' brach
         # das Parsen an jeder Commit-Beschreibung, die selbst ein '|' enthielt
         # (Tabellen, Shell-Schnipsel): Body-Zeilen wurden als eigene Commits
