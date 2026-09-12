@@ -272,14 +272,43 @@ class PipelineContext:
 def group_commits(commits: list[dict]) -> list[dict]:
     """
     Gruppiere Commits nach Thema. ALLE Commits, kein Cap.
-    
+
     Gruppierungs-Hierarchie:
     1. PR-Label (zuverlässigste Quelle, z.B. "feature", "security")
     2. Conventional Commit Scope (z.B. feat(auth) → Scope "auth")
-    3. Dateipfad-Heuristik (z.B. src/events/ → "Event-System")
-    4. Fallback: Nach Commit-Typ (alle feat: ohne Scope zusammen)
+    3. Fallback: Nach Commit-Typ (alle Commits ohne Scope nach Typ gebündelt)
     """
 ```
+
+**Stand 12.09.2026 (PR #516, #517).** Punkt 3 war bis dahin nur beschrieben,
+nicht umgesetzt: Sämtliche Commits ohne Scope landeten in einem Bucket `_misc`
+mit dem Thema „Misc" — bei `avunex-neustart` 69 Commits in einer Gruppe. Da aus
+den Gruppen die Hero-Kandidaten und die Themenordnung des veröffentlichten
+Textes entstehen, musste das Sprachmodell die Gliederung erfinden.
+
+Was jetzt tatsächlich gilt:
+
+* **Commits ohne Scope werden nach Typ gebündelt** (`_feature`, `_bugfix`, …)
+  und über `TAG_TO_THEME` benannt („Neue Funktionen", „Fehlerbehebungen").
+  Projekte **mit** Scopes bleiben unberührt — der Typ-Name gilt nur für die
+  synthetischen Buckets, sonst hießen `fix(admin)` und `fix(seo)` beide
+  „Fehlerbehebungen" und die Gliederung verlöre die Unterscheidung.
+* **Typ-Erkennung** in `classify_commit`, in dieser Reihenfolge: PR-Label →
+  Gits `Revert "…"` → Conventional-Präfix (inkl. `security:` und `ci:`) →
+  Liste englischer Verben (`_VERB_ZU_TAG`, für Titel wie „Add a hero
+  headline") → KI-Einordnung → `OTHER`.
+* **KI-Einordnung** (`patch_notes/ki_einordnung.py`): ein Aufruf pro Lauf, nur
+  für Titel, bei denen alles Deterministische versagt, erst ab drei solchen
+  Titeln, höchstens 120. Ausfall lässt den Commit bei `OTHER` — das Ergebnis
+  ist dann das bisherige, nie ein schlechteres.
+* **Merge-Commits werden nicht gesammelt** (`--no-merges` in `collect.py`).
+  Sie tragen keine eigene Änderung und überhöhten die Commit-Zahl (zerodox
+  88 von 275).
+
+⚠️ **Die Dateipfad-Heuristik** (früher Punkt 3: `src/events/` → „Event-System")
+ist **nicht** implementiert. `_extract_scope` liest ausschließlich den
+Conventional-Scope. Wer sie nachrüsten will, findet die Stelle dort — die
+Doku beschrieb sie, der Code kannte sie nie.
 
 ### Scope-Mapping (deterministisch, konfigurierbar)
 
