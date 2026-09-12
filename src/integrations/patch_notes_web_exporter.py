@@ -313,12 +313,14 @@ class PatchNotesWebExporter:
                     lines.append(f'### {emoji} {label}')
                     lines.append('')
                     for item in items:
-                        desc = self._change_summary(item)
+                        kopf, wirkung = self._change_head_and_impact(item)
                         author = self._authors_display(item)
+                        zeile = f'- **{kopf}**'
+                        if wirkung:
+                            zeile += f' — {wirkung}'
                         if show_author and author:
-                            lines.append(f'- **{desc}** · *{author}*')
-                        else:
-                            lines.append(f'- **{desc}**')
+                            zeile += f' · *{author}*'
+                        lines.append(zeile)
                         for detail in self._change_detail_lines(item, language):
                             lines.append(f'  - {detail}')
                     lines.append('')
@@ -335,19 +337,24 @@ class PatchNotesWebExporter:
             files = stats.get('files_changed', 0)
             added = stats.get('lines_added', 0)
             removed = stats.get('lines_removed', 0)
-            contributors = stats.get('contributors', [])
+            # 'authors' ist der Schluessel, den collect.py setzt.
+            # Die frueher abgefragten 'contributors' existieren in git_stats
+            # nicht — der Block darunter lief deshalb nie an, obwohl die
+            # Namen vorlagen. 'contributors' bleibt als Rueckfall stehen.
+            contributors = stats.get('authors') or stats.get('contributors', [])
 
             lines.append(f'- **{commit_count}** Commits')
             lines.append(f'- **{files}** Dateien geändert')
             lines.append(f'- **+{added}** / **-{removed}** Zeilen')
 
             if contributors:
+                ein, viele = ('Beitragende:r', 'Beitragende') if language == 'de' \
+                    else ('Contributor', 'Contributors')
                 if len(contributors) == 1 and ' — ' not in contributors[0]:
-                    lines.append(f'- **{len(contributors)}** Contributor: {contributors[0]}')
+                    lines.append(f'- **1** {ein}: {contributors[0]}')
                 else:
-                    lines.append(f'- **{len(contributors)}** Contributors:')
-                    for c in contributors:
-                        lines.append(f'  - {c}')
+                    lines.append(f'- **{len(contributors)}** {viele}: '
+                                 + ', '.join(contributors))
 
             tests_passed = stats.get('tests_passed')
             tests_total = stats.get('tests_total')
@@ -401,6 +408,25 @@ class PatchNotesWebExporter:
             lines.append('')
 
         return lines
+
+    def _change_head_and_impact(self, item: Dict) -> tuple:
+        """Titel und Wirkung getrennt — nicht zu einer fetten Zeile verschmolzen.
+
+        Vorher lieferte _change_summary "Titel: Wirkung" als einen String, der
+        komplett fett gesetzt wurde. Das las sich doppelt gemoppelt, etwa als
+        "**Upgrade-Preis korrekt berechnet: Korrekte Preisanzeige bei
+        Plan-Upgrades…**" — zwei Formulierungen derselben Aussage in Fettschrift.
+        """
+        title = (item.get('title') or '').strip()
+        impact = (item.get('impact') or '').strip()
+        desc = (item.get('description') or '').strip()
+        if not title:
+            return (desc or impact or 'Update'), ''
+        if impact and impact.lower() not in desc.lower():
+            return title, impact
+        if desc and desc.lower() != title.lower():
+            return title, desc
+        return title, ''
 
     def _change_summary(self, item: Dict) -> str:
         title = (item.get('title') or '').strip()
