@@ -550,20 +550,37 @@ class CIMixin:
         ohne Deployment weiterlaufen. Code- oder unklare Commits warten bis
         `max_wait_min` und werden danach fail-closed als "missing" gemeldet.
 
+        ZERODOX#3230 (12.09.2026): Der Docs-only-Check aus #1985 lief bisher
+        ERST nach admin_merge_grace_min und nur einmal. Ein docs-only Commit
+        wartete dadurch sinnlos die volle Gnadenfrist ab, obwohl die
+        geänderten Pfade sofort feststehen und sich während des Wartens
+        nicht ändern. Der Check laeuft jetzt VOR Beginn der Polling-Schleife:
+        Ist der Commit nachweislich docs-only, kommt "docs_only" zurueck,
+        ohne einen einzigen Workflow-Poll abzusetzen. Fail-closed bleibt
+        erhalten (None aus _fetch_commit_files gilt NIEMALS als docs-only,
+        siehe api_unavailable-Vorfall unten), und die Gnadenfrist für den
+        unklaren Fall (Code-Commit ohne bisher sichtbaren Workflow) ist davon
+        unberührt.
+
+        Grenze (ZERODOX#3331): Der Vorzug erkennt nur, was _paths_are_docs_only
+        hartcodiert als docs-only kennt — eine Kopie der `paths-ignore`-Muster
+        aus `web-quality.yml`. Weicht diese Kopie vom Workflow ab, fällt der
+        Check das falsche Urteil, ohne dass hier neue Muster ergänzt werden.
+
         Konstantes Poll-Intervall (Default 20s, konfigurierbar ueber
         poll_interval_sec / project_config-Key `ci_wait_poll_interval_sec`).
         Messung 12.09.2026: Ein ZERODOX-Merge-zu-Live-Deploy dauert ~21min,
         davon ~12min CI-Wait im Bot, obwohl der gemessene CI-Lauf selbst nur
         9,4min brauchte — die Differenz war blinde Zeit durch Exponential-
         Backoff (60s → 120s → 240s → cap 300s, VORHER). Die CI-Laufzeit ist
-        gut bekannt (8-17min, Median 16min) — fuer einen derart vorhersagbaren
-        Vorgang vergroessert Backoff die Blindzeit genau dann, wenn der Lauf
+        gut bekannt (8-17min, Median 16min) — für einen derart vorhersagbaren
+        Vorgang vergrößert Backoff die Blindzeit genau dann, wenn der Lauf
         typischerweise fertig wird. Ein 16min-Lauf kostet bei 20s-Intervall nur
         ~48 Requests gegen GitHubs 5000/h-Limit. Betrifft NUR diese Schleife
         (kritischer Merge-zu-Deploy-Pfad) — die zweite Warteschleife im
         Reconcile-Codepfad (ci_success_reconcile_*-Konfig) ist ein
-        nachtraeglicher Backstop, kein kritischer Pfad, und bleibt bewusst
-        unveraendert.
+        nachträglicher Backstop, kein kritischer Pfad, und bleibt bewusst
+        unverändert.
 
         Args:
             repo_full_name: e.g. "Commandershadow9/ZERODOX"
@@ -611,11 +628,10 @@ class CIMixin:
         started_at = time.monotonic()
         deadline = started_at + max_wait_min * 60
         admin_merge_deadline = started_at + max(0, admin_merge_grace_min) * 60
-        # 12.09.2026: konstantes Intervall statt Backoff (Begruendung im
-        # Docstring oben) — poll_interval_s wird danach nicht mehr veraendert.
+        # 12.09.2026: konstantes Intervall statt Backoff (Begründung im
+        # Docstring oben) — poll_interval_s wird danach nicht mehr verändert.
         poll_interval_s = max(1, int(poll_interval_sec))
         saw_any_relevant = False
-        commit_paths_checked = False
         # 17.08.2026: Wurde die API waehrend der gesamten Frist nie gelesen, ist
         # die CI-Lage unbekannt — das darf nicht als "kein Workflow vorhanden"
         # aus der Schleife kommen. Gezaehlt werden beide Seiten, damit sich der
@@ -628,6 +644,23 @@ class CIMixin:
             f"(workflows={workflow_names}, timeout={max_wait_min}min, "
             f"admin_merge_grace={admin_merge_grace_min}min)"
         )
+
+        # ZERODOX#3230: Docs-only-Check VOR der Schleife, nicht erst nach
+        # admin_merge_grace_min. Die geänderten Pfade eines Commits stehen
+        # sofort fest und ändern sich während des Wartens nicht — ein
+        # docs-only Commit muss deshalb keinen einzigen Workflow-Poll
+        # abwarten. Fail-closed bleibt: `changed_paths is None` (API-Störung,
+        # siehe api_unavailable-Vorfall im Docstring) gilt NIEMALS als
+        # docs-only, egal was danach passiert.
+        precomputed_changed_paths = await self._fetch_commit_files(repo_full_name, merged_sha)
+        if precomputed_changed_paths is not None and _paths_are_docs_only(precomputed_changed_paths):
+            self.logger.info(
+                f"ℹ️ _wait_for_ci_completion: Docs-only-Commit "
+                f"{merged_sha[:7]} mit {len(precomputed_changed_paths)} Datei(en) erkannt — "
+                "kein Runtime-Deployment nötig (Check vor der Polling-Schleife)."
+            )
+            return "docs_only"
+        admin_merge_deadline_logged = False
 
         while time.monotonic() < deadline:
             data = await self._fetch_workflow_runs_for_sha(repo_full_name, merged_sha)
@@ -657,25 +690,20 @@ class CIMixin:
                         break
 
             if not relevant:
-                # ZERODOX#1985: Nach der Grace-Period genau einmal die Commit-
-                # Pfade pruefen. Nur die identische Allowlist aus deploy.sh darf
-                # ohne Workflow weiterlaufen; API-Fehler bleiben fail-closed.
+                # ZERODOX#1985/#3230: Der Docs-only-Check laeuft inzwischen VOR
+                # der Schleife (siehe oben) — hier bleibt nur noch die einmalige
+                # Klassifikations-Warnung, sobald die Gnadenfrist erreicht ist.
+                # Kein erneuter _fetch_commit_files-Call mehr: `precomputed_changed_paths`
+                # wurde bereits vor der Schleife ermittelt und ändert sich nicht.
                 if (
                     not saw_any_relevant
-                    and not commit_paths_checked
+                    and not admin_merge_deadline_logged
                     and time.monotonic() >= admin_merge_deadline
                 ):
-                    commit_paths_checked = True
-                    changed_paths = await self._fetch_commit_files(repo_full_name, merged_sha)
-                    if changed_paths is not None and _paths_are_docs_only(changed_paths):
-                        self.logger.info(
-                            f"ℹ️ _wait_for_ci_completion: Docs-only-Commit "
-                            f"{merged_sha[:7]} mit {len(changed_paths)} Datei(en) erkannt — "
-                            "kein Runtime-Deployment noetig."
-                        )
-                        return "docs_only"
-
-                    classification = "Code-Commit" if changed_paths is not None else "unklarer Commit"
+                    admin_merge_deadline_logged = True
+                    classification = (
+                        "Code-Commit" if precomputed_changed_paths is not None else "unklarer Commit"
+                    )
                     self.logger.warning(
                         f"⚠️ _wait_for_ci_completion: {classification} {merged_sha[:7]} "
                         f"nach {admin_merge_grace_min}min ohne relevanten Workflow — "
@@ -941,7 +969,7 @@ class CIMixin:
                     project_config.get('ci_wait_admin_merge_grace_min', 5)
                 )
                 # 12.09.2026: konstantes Poll-Intervall statt Backoff, konfigurierbar
-                # je Projekt (Begruendung im Docstring von _wait_for_ci_completion).
+                # je Projekt (Begründung im Docstring von _wait_for_ci_completion).
                 poll_interval_sec = int(
                     project_config.get('ci_wait_poll_interval_sec', 20)
                 )
