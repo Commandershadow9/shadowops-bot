@@ -98,11 +98,26 @@ def classify_commit(commit: dict) -> str:
             return tag
 
     msg = commit.get('message', '').split('\n')[0]
+
+    # `git revert` schreibt 'Revert "<urspruenglicher Titel>"' — ohne
+    # Conventional-Präfix, obwohl die Absicht eindeutig ist.
+    if msg.startswith('Revert "') or msg.startswith("Revert '"):
+        return 'REVERT'
+
     m = _CONVENTIONAL_RE.match(msg)
     if not m:
         # Kein Conventional-Präfix: erstes Wort gegen die Verbliste prüfen.
         erstes = msg.strip().split(' ')[0].rstrip(':,.').lower()
-        return _VERB_ZU_TAG.get(erstes, 'OTHER')
+        aus_verb = _VERB_ZU_TAG.get(erstes)
+        if aus_verb:
+            return aus_verb
+        # Zuletzt eine KI-Einordnung, falls eine vorliegt (ki_einordnung.py).
+        # Bewusst NACH allem Deterministischen: Präfix, Label und Verbliste
+        # sind nachvollziehbar und kostenlos, die KI ist beides nicht.
+        ki = commit.get('_ki_tag')
+        if ki:
+            return str(ki)
+        return 'OTHER'
 
     ctype = m.group('type').lower()
     is_breaking = bool(m.group('breaking'))
@@ -115,7 +130,11 @@ def classify_commit(commit: dict) -> str:
         return 'BUGFIX'
     if ctype == 'docs':
         return 'DESIGN_DOC' if _DESIGN_DOC_PATTERNS.search(msg) else 'DOCS'
-    if ctype in ('refactor', 'perf', 'style', 'chore', 'build'):
+    if ctype == 'security':
+        # Konsistent zu LABEL_TO_TAG, das 'security' bereits auf BUGFIX
+        # abbildet — dort aber nur für PR-Labels, nicht für Präfixe.
+        return 'BUGFIX'
+    if ctype in ('refactor', 'perf', 'style', 'chore', 'build', 'ci'):
         return 'IMPROVEMENT'
     if ctype == 'test':
         return 'TEST'
@@ -179,8 +198,11 @@ def group_commits(commits: list[dict]) -> list[dict]:
             all_labels.extend(c.get('pr_labels', []))
 
         groups.append({
-            'theme': SCOPE_TO_THEME.get(scope)
-            or TAG_TO_THEME.get(dominant, scope.replace('_', ' ').strip().title()),
+            'theme': (
+                TAG_TO_THEME.get(dominant, scope.lstrip('_').title())
+                if scope.startswith('_')
+                else SCOPE_TO_THEME.get(scope, scope.replace('_', ' ').title())
+            ),
             'tag': dominant,
             'scope': scope,
             'commits': bucket,
