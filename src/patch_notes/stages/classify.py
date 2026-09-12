@@ -58,6 +58,18 @@ async def classify(ctx: PipelineContext, bot=None) -> None:
 
     commits = ctx.enriched_commits or ctx.raw_commits
 
+    # 0. Commits ohne erkennbares Muster per KI einordnen.
+    #
+    # Muss VOR dem Gruppieren laufen: group_commits liest den Typ, und aus den
+    # Gruppen entsteht die Gliederung des fertigen Textes. Ein Aufruf pro Lauf,
+    # nur für die offenen Titel, und ausfallsicher — schlägt er fehl, bleiben
+    # die Commits wie bisher "Sonstiges".
+    try:
+        from patch_notes.ki_einordnung import ordne_offene_commits_ein
+        await ordne_offene_commits_ein(ctx, bot)
+    except Exception as e:
+        logger.warning(f"[v6] {ctx.project}: KI-Einordnung übersprungen: {e}")
+
     # 1. Commits gruppieren (ALLE — kein Cap!)
     ctx.groups = group_commits(commits)
     logger.info(
