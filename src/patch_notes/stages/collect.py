@@ -84,7 +84,12 @@ def _gather_commits_since_last_release(project: str, project_path: str, config: 
     # 3. Commits seit letztem Release
     git_args = [
         'git', 'log', f'origin/{deploy_branch}',
-        '--format=%H|%s|%an|%b',
+        # \x1f trennt die Felder, \x1e die Commits. Mit '|' und '\n' brach
+        # das Parsen an jeder Commit-Beschreibung, die selbst ein '|' enthielt
+        # (Tabellen, Shell-Schnipsel): Body-Zeilen wurden als eigene Commits
+        # gelesen. Bei zerodox waren so 2 von 20 'Commits' reine Textfragmente,
+        # samt Phantom-Autoren wie 'Handlungsbedarf'.
+        '--format=%H%x1f%s%x1f%an%x1f%b%x1e',
         '--no-merges',
     ]
     if last_release_date:
@@ -102,10 +107,11 @@ def _gather_commits_since_last_release(project: str, project_path: str, config: 
             return []
 
         commits = []
-        for line in result.stdout.strip().split('\n'):
-            if not line.strip():
+        for record in result.stdout.split('\x1e'):
+            record = record.strip('\n')
+            if not record.strip():
                 continue
-            parts = line.split('|', 3)
+            parts = record.split('\x1f', 3)
             if len(parts) < 3:
                 continue
             body = parts[3].strip() if len(parts) > 3 else ''
@@ -196,14 +202,46 @@ def _categorize_file(filepath: str) -> str:
     return 'Sonstiges'
 
 
+def _authors_from_commits(commits: list[dict]) -> list[str]:
+    """Beitragende aus Commits — gemappt, gefiltert, nach Beitrag sortiert.
+
+    Rohe git-Namen taugen hier nicht: Dieselbe Person committet unter mehreren
+    Namen (gleiche Mail, aber "Shadow" und "Christian Jahnke") und stünde dann
+    doppelt in der Liste — genau so geschehen in zerodox v1.36.0.
+    """
+    from collections import Counter
+
+    from patch_notes.stages.classify import _AI_AUTHORS, TEAM_MAPPING
+
+    author_counts: Counter = Counter()
+    for c in commits:
+        author = c.get('author', {})
+        if isinstance(author, dict):
+            name = author.get('name', author.get('username', ''))
+        elif isinstance(author, str):
+            name = author
+        else:
+            name = ''
+        key = name.lower().strip()
+        if not key or key in _AI_AUTHORS:
+            continue
+        display = TEAM_MAPPING.get(key, (name, ''))[0]
+        author_counts[display] += 1
+    return [n for n, _ in author_counts.most_common()]
+
+
 def _collect_git_stats(commits: list[dict], project_path: str) -> dict:
     """Sammle Git-Stats (Dateien, Zeilen) + kategorisierte Dateianalyse."""
     if not commits:
         return {}
 
     shas = [c.get('sha', '') for c in commits if c.get('sha')]
+    _autoren = _authors_from_commits(commits)
+    _grundstock = {"commits": len(commits)}
+    if _autoren:
+        _grundstock["authors"] = _autoren
     if not shas:
-        return {}
+        return _grundstock
 
     try:
         oldest = shas[-1]
@@ -214,11 +252,11 @@ def _collect_git_stats(commits: list[dict], project_path: str) -> dict:
             capture_output=True, text=True, timeout=15, cwd=project_path,
         )
         if result.returncode != 0:
-            return {"commits": len(commits)}
+            return _grundstock
 
         lines = result.stdout.strip().split('\n')
         summary_line = lines[-1] if lines else ''
-        stats = {"commits": len(commits)}
+        stats = dict(_grundstock)
 
         files_m = re.search(r'(\d+) files? changed', summary_line)
         ins_m = re.search(r'(\d+) insertions?\(\+\)', summary_line)
@@ -259,22 +297,7 @@ def _collect_git_stats(commits: list[dict], project_path: str) -> dict:
             except Exception:
                 pass
 
-        # Autoren zählen
-        authors = set()
-        for c in commits:
-            author = c.get('author', {})
-            if isinstance(author, dict):
-                name = author.get('name', author.get('username', ''))
-            elif isinstance(author, str):
-                name = author
-            else:
-                name = ''
-            if name:
-                authors.add(name)
-        if authors:
-            stats['authors'] = list(authors)
-
         return stats
     except Exception as e:
         logger.debug(f"Git-Stats Fehler: {e}")
-        return {"commits": len(commits)}
+        return _grundstock
