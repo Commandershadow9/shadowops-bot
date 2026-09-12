@@ -50,6 +50,15 @@ class _SleepSpurHarness(CIMixin):
         # zurückfällt (die einen GitHub-Token via _get_github_token() braucht).
         return ["src/module.py"]
 
+    async def _fetch_commit_tree_info(self, repo_full_name: str, sha: str):
+        # ZERODOX#3328 Task 4: Der pre-loop Tree-SHA-Reuse-Check ruft diese
+        # Methode jetzt IMMER vor der Schleife auf. None simuliert "keine
+        # Tree-Info verfügbar" (fail-closed) — dieser Harness (Fokus:
+        # Poll-Intervall, nicht Tree-Reuse) soll den Kurzschluss nie greifen
+        # lassen und nicht auf die echte, tokenbasierte Implementierung
+        # zurückfallen (die einen GitHub-Token via _get_github_token() braucht).
+        return None
+
 
 def _lauf(name: str, status: str, conclusion: str | None = None) -> dict:
     return {
@@ -173,6 +182,13 @@ class _ConfigWiringHarness(CIMixin):
         # liefert und die zu prüfende Schleife samt sleep()-Aufruf entfällt.
         return ["src/module.py"]
 
+    async def _fetch_commit_tree_info(self, repo_full_name: str, sha: str):
+        # ZERODOX#3328 Task 4: Wie bei _SleepSpurHarness -- None simuliert
+        # "keine Tree-Info verfügbar" (fail-closed), damit der Tree-Reuse-
+        # Kurzschluss diesen (Config-Wiring-fokussierten) Test nicht vorzeitig
+        # beendet und der zu prüfende sleep()-Aufruf ausbleibt.
+        return None
+
     def _release_deploy(self, repo_name: str, full_sha: str) -> None:
         # Auf dem hier geprüfte Erfolgspfad nicht erwartet — nur defensiv
         # gestellt, falls sich das je ändert.
@@ -180,14 +196,23 @@ class _ConfigWiringHarness(CIMixin):
 
 
 @pytest.mark.asyncio
-async def test_project_config_key_erreicht_den_aufrufort_bei_945():
+async def test_project_config_key_erreicht_die_warteschleife():
     """ZERODOX#3230-Nachtrag (team-lead-Review): Belegt, dass
     `ci_wait_poll_interval_sec` aus `project_config` über `_trigger_deployment`
     tatsächlich bis zum asyncio.sleep()-Aufruf in der Warteschleife
     durchgereicht wird — nicht nur der direkte Parameter (siehe
     test_poll_intervall_ist_ueber_parameter_konfigurierbar oben, der
     poll_interval_sec direkt an _wait_for_ci_completion übergibt und damit
-    die Config-Verdrahtung selbst NICHT prüft)."""
+    die Config-Verdrahtung selbst NICHT prüft).
+
+    Namensgebung nach Verhalten, nicht nach Ort im Quelltext (team-lead-Review,
+    12.09.2026): Der Test hieß zuvor
+    test_project_config_key_erreicht_den_aufrufort_bei_945 — die Zeile 945 war
+    zum Zeitpunkt der Benennung der Ort des durchgereichten Werts in
+    ci_mixin.py, wird aber bei der nächsten Code-Einfügung oberhalb davon
+    veralten, ohne dass der Testname das anzeigt. Die Zeilennummer bleibt hier
+    im Docstring als Momentaufnahme; im Testnamen zählt nur das geprüfte
+    Verhalten."""
     h = _ConfigWiringHarness(poll_interval_sec_config=7)
 
     async def _fake_sleep(dauer, *a, **kw):
