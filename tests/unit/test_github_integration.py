@@ -806,6 +806,17 @@ class TestWelle910WaitForCI:
             except StopIteration:
                 return 1000.0
 
+        # ZERODOX#3328 (12.09.2026): _wait_for_ci_completion ruft seit Task 2/4 VOR
+        # der Polling-Schleife _fetch_commit_files (Docs-only-Vorzug) und
+        # _fetch_commit_tree_info (Tree-SHA-Reuse). Ungemockt versuchen beide einen
+        # echten HTTP-Request; dessen aiohttp-Innereien rufen time.monotonic(), und
+        # der Patch unten wirkt prozessweit — die endliche Wertefolge waere
+        # aufgebraucht, bevor die Schleife startet (Ergebnis dann 'missing' statt
+        # 'timeout'). Beide liefern None = kein Urteil moeglich (fail-closed), damit
+        # dieser Test weiterhin genau den Timeout-Pfad prueft und nichts anderes.
+        integration._fetch_commit_files = AsyncMock(return_value=None)
+        integration._fetch_commit_tree_info = AsyncMock(return_value=None)
+
         monkeypatch.setattr('integrations.github_integration.ci_mixin.time.monotonic', fake_monotonic)
 
         result = await integration._wait_for_ci_completion(
@@ -957,6 +968,17 @@ class TestWelle910WaitForCI:
                 return next(times)
             except StopIteration:
                 return 2000.0
+
+        # ZERODOX#3328 (12.09.2026): _wait_for_ci_completion ruft seit Task 2/4 VOR
+        # der Polling-Schleife _fetch_commit_files (Docs-only-Vorzug) und
+        # _fetch_commit_tree_info (Tree-SHA-Reuse). Ungemockt versuchen beide einen
+        # echten HTTP-Request; dessen aiohttp-Innereien rufen time.monotonic(), und
+        # der Patch unten wirkt prozessweit — die endliche Wertefolge waere
+        # aufgebraucht, bevor die Schleife startet (Ergebnis dann 'missing' statt
+        # 'timeout'). Beide liefern None = kein Urteil moeglich (fail-closed), damit
+        # dieser Test weiterhin genau den Timeout-Pfad prueft und nichts anderes.
+        integration._fetch_commit_files = AsyncMock(return_value=None)
+        integration._fetch_commit_tree_info = AsyncMock(return_value=None)
 
         monkeypatch.setattr('integrations.github_integration.ci_mixin.time.monotonic', fake_monotonic)
 
