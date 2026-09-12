@@ -68,6 +68,12 @@ def _group_author_facts(groups: list[dict]) -> list[str]:
         commits = g.get('commits') or []
         if not commits:
             continue
+        # Dieselbe Zuordnung wie in den Footer-Credits: ohne TEAM_MAPPING
+        # stünden hier die rohen git-Namen, und dieselbe Person erschiene
+        # unter zwei Namen ("Shadow" und "Christian Jahnke") — die KI
+        # übernähme das dann in den Fließtext.
+        from patch_notes.stages.classify import _AI_AUTHORS, TEAM_MAPPING
+
         author_counts: Counter = Counter()
         for c in commits:
             author = c.get('author', {})
@@ -77,8 +83,13 @@ def _group_author_facts(groups: list[dict]) -> list[str]:
                 name = author
             else:
                 name = ''
-            if name and name.lower() not in ('codex', 'ai-bot', 'agent', 'bot'):
-                author_counts[name] += 1
+            key = name.lower().strip()
+            if not key or key in _AI_AUTHORS:
+                continue
+            if key in ('codex', 'ai-bot', 'agent', 'bot'):
+                continue
+            display = TEAM_MAPPING.get(key, (name, ''))[0]
+            author_counts[display] += 1
         if not author_counts:
             continue
         top = author_counts.most_common(3)
