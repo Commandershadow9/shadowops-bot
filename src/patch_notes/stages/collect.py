@@ -202,6 +202,11 @@ def _categorize_file(filepath: str) -> str:
     return 'Sonstiges'
 
 
+# Gits leerer Baum. Dient als Vergleichsbasis, wenn der älteste Commit eines
+# Bereichs keinen Vorgänger hat — bei `<sha>^..<sha>` bricht git dann ab.
+_LEERER_BAUM = '4b825dc642cb6eb9a060e54bf8d69288fbee4904'
+
+
 def _authors_from_commits(commits: list[dict]) -> list[str]:
     """Beitragende aus Commits — gemappt, gefiltert, nach Beitrag sortiert.
 
@@ -252,7 +257,18 @@ def _collect_git_stats(commits: list[dict], project_path: str) -> dict:
             capture_output=True, text=True, timeout=15, cwd=project_path,
         )
         if result.returncode != 0:
-            return _grundstock
+            # Tritt auf, wenn der älteste Commit der erste des Repos ist: Zu
+            # `<sha>^` gibt es dann nichts. Betraf avunex-neustart, dessen
+            # Statistik dadurch ohne Datei- und Zeilenzahlen blieb. Gegen den
+            # leeren Baum zu vergleichen liefert genau das Gewünschte — alles,
+            # was seit dem Nichts entstanden ist.
+            result = subprocess.run(
+                ['git', 'diff', '--stat', '--stat-width=120',
+                 f'{_LEERER_BAUM}..{newest}'],
+                capture_output=True, text=True, timeout=15, cwd=project_path,
+            )
+            if result.returncode != 0:
+                return _grundstock
 
         lines = result.stdout.strip().split('\n')
         summary_line = lines[-1] if lines else ''
