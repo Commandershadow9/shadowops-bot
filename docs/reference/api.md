@@ -601,9 +601,27 @@ projects:
     #   - "CI"
     #   - "Test Suite"
 
+    # Per-project Discord channels on the DEV server (PRs #505-#512, 2026-09-11).
+    # bot.py creates these channels at startup if they do not yet exist.
+    # Rechte haengen an der Kategorie, nicht am Kanal — Kanaele erben sie.
+    #
+    # discord_category (optional): name of the Discord category to place project
+    #   channels in. When absent, channels land in a generic "📢 Updates & CI"
+    #   category. Use scripts/discord_struktur.py to create categories and roles
+    #   before the bot creates channels (--trocken for dry-run).
+    # deploy_channel_name (optional): human-readable channel name. bot.py finds
+    #   or creates this channel in discord_category and stores the channel ID in
+    #   the live config as deploy_channel_id. deployment_manager.py reads
+    #   deploy_channel_id from the LIVE config (self.bot.config.projects), not
+    #   from the startup copy self.projects -- the startup copy does not carry
+    #   IDs the bot just created (Vorfall #512).
+    # status_channel_id: set at runtime by bot.py; do NOT configure manually.
+    discord_category: "🟣 GuildScout"    # example; omit if using the default category
+    deploy_channel_name: "deploy-guildscout"  # example; omit to skip per-project deploy channel
+
     # External deploy notifications -- posted to customer Discord servers on each deploy.
     # Handled by DeploymentManager._forward_deploy_to_external.
-    # Config-key lookup is dash/underscore-tolerant (mayday-sim <-> mayday_sim).
+    # Config-key lookup is dash/underscore-tolerant (mayday-sim <-> mayday_sym).
     # Without this block, only the internal DEV-server deployment-log channel receives posts.
     external_notifications:
       - enabled: true
