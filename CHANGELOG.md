@@ -2,6 +2,59 @@
 
 ## [Unreleased]
 
+### Fixed — Beitragende in Patch Notes korrekt erheben und lesbar ausgeben (2026-09-12, PR #516)
+
+- **Commit-Parsing brach an Pipe-Zeichen:** `git log --format=%H|%s|%an|%b` wurde
+  zeilenweise an `|` zerlegt. Jede Commit-Beschreibung, die selbst ein `|` enthielt
+  (Markdown-Tabellen, `grep … || true`), erzeugte Phantom-Commits aus Body-Zeilen.
+  Bei zerodox waren 2 von 20 „Commits" reine Textfragmente, mit Autorennamen wie
+  `'Handlungsbedarf'`. Getrennt wird jetzt über `\x1f` (Feld) und `\x1e` (Datensatz).
+- **Beitragende gingen verloren, wenn `git diff` scheiterte:** Die Autorensammlung
+  stand hinter dem Diff-Aufruf; schlug der fehl — etwa weil der älteste Commit keinen
+  Vorgänger hat —, griff ein früher `return`. Betraf avunex-neustart, database-ports
+  und mayday_sim, die dauerhaft ohne Statistik dastanden.
+- **Dieselbe Person erschien doppelt:** `TEAM_MAPPING` kannte `shadow`, aber nicht
+  `christian jahnke` (gleiche Commit-Mail, zwei git-Namen). Dadurch trat ein zweiter
+  Fehler zutage: `Counter.most_common()` sortiert die rohen Namen, das Verschmelzen
+  von Aliassen passiert erst danach, neu sortiert wurde nie — der Footer zeigt aber
+  nur die ersten drei.
+- **Export nannte nie Beitragende:** Der Statistik-Block las `stats['contributors']`,
+  ein Schlüssel, den niemand setzt; `collect.py` schreibt `authors`. Zudem presste
+  `_change_summary` Titel und Wirkung in eine durchgehend fette Zeile, die zweimal
+  dasselbe sagte.
+- **Antwortschema war nicht strict-konform:** OpenAI Structured Outputs verlangt
+  `required` für jeden Schlüssel aus `properties`; in `changes[]` standen 4 von 12.
+  Jeder Lauf endete mit `HTTP 400 invalid_json_schema`, der erste Anbieter fiel aus,
+  der Zweitanbieter übernahm (198 s Umweg). Die ergänzten Felder sind nullable.
+- **Diff-Statistik fehlte beim Root-Commit:** `git diff <ältester>^..<neuester>`
+  bricht ab, wenn der älteste Commit der erste des Repos ist. Fällt jetzt auf Gits
+  leeren Baum zurück.
+- **Gruppen-Attribution im KI-Prompt** nutzt dieselbe Namenszuordnung wie die
+  Footer-Credits; vorher widersprachen sich die beiden Angaben im selben Prompt.
+
+### Added — Commits ohne Muster per KI einordnen, Merge-Commits nicht zählen (2026-09-12, PR #517)
+
+- **Commits ohne Scope werden nach Typ gebündelt** statt in einem `_misc`-Topf. Die
+  Gruppierung war bis dahin rein scope-basiert, sodass Projekte ohne Scopes genau
+  eine Gruppe „Misc" bekamen — bei avunex-neustart 69 Commits in einer. Damit fehlte
+  allen nachgelagerten Stufen die Gliederung.
+- **`patch_notes/ki_einordnung.py` (neu):** ordnet Titel ein, bei denen Präfix,
+  PR-Label und Verbliste versagen — ein Aufruf pro Lauf, erst ab drei offenen
+  Titeln, höchstens 120. Ausfall lässt den Commit bei `OTHER`.
+- **`security:`, `ci:` und Gits `Revert "…"`** werden erkannt. `security` kannte
+  `LABEL_TO_TAG` nur als PR-Label, nicht als Präfix; `ci` fehlte ganz.
+- **Merge-Commits werden nicht mehr gesammelt** (`--no-merges`). Sie tragen keine
+  eigene Änderung und überhöhten die Commit-Zahl systematisch (zerodox 88 von 275,
+  avunex-neustart 9 von 70). ⚠️ Ausgewiesene Commit-Zahlen fallen dadurch sichtbar —
+  das ist die Korrektur einer Überzählung.
+- **Englische Titel ohne Präfix** („Add a hero headline") werden über eine
+  konservative Verbliste erkannt. Was nicht darin steht, bleibt `OTHER`.
+
+Gemessen an avunex-neustart: vorher 70 Commits in 1 Gruppe mit 28 ohne Muster,
+jetzt 61 Commits in 6 benannten Gruppen mit 3 ohne Muster. zerodox behält seine
+Scope-Namen.
+
+
 ### Fixed — CI-Success Deployment-Reconciliation (2026-08-12, PR #410)
 
 - **Verspätet grüne Main-CI holt ausgebliebene Deployments nach:** Ein
