@@ -7,6 +7,8 @@ Signal.
 """
 from __future__ import annotations
 
+from types import SimpleNamespace
+
 import pytest
 from unittest.mock import AsyncMock, MagicMock
 
@@ -22,6 +24,12 @@ def _mgr_with_channel():
     mgr = DeploymentManager.__new__(DeploymentManager)
     mgr.logger = MagicMock()
     mgr.deployment_channel_id = 12345
+    # __new__ umgeht __init__, deshalb fehlt self.config. _kanal_fuer() liest
+    # daraus die lebende Projektkonfiguration; ohne das Attribut bricht jeder
+    # Embed-Test mit AttributeError ab. Leere projects-Abbildung bedeutet:
+    # kein projekteigener Kanal, es greift der Rückfall auf
+    # deployment_channel_id — genau der Pfad, den diese Tests prüfen.
+    mgr.config = SimpleNamespace(projects={})
     channel = MagicMock()
     channel.send = AsyncMock()
     mgr.bot = MagicMock()

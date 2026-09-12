@@ -40,6 +40,10 @@ TEAM_MAPPING: dict[str, tuple[str, str]] = {
     'commandershadow': ('Shadow', 'Founder & Lead Dev'),
     'renjihoshida': ('Mapu', 'Co-Founder & Dev'),
     'mapu': ('Mapu', 'Co-Founder & Dev'),
+    # Gleiche Person wie 'shadow' — identische Commit-Mail, nur zwei
+    # git-Namen. Ohne diese Zeile erscheint der Betreiber doppelt,
+    # zuletzt als ["Shadow", "Christian Jahnke"] in zerodox v1.36.0.
+    'christian jahnke': ('Shadow', 'Founder & Lead Dev'),
     # Wenn neue Team-Mitglieder dazukommen: hier eintragen.
     # Beispiel:
     # 'newdesigner':    ('Newbie', 'Game Designer'),
@@ -119,6 +123,13 @@ def _extract_credits(commits: list[dict]) -> list[dict]:
             existing['commits'] += count
         else:
             credits.append({'name': display, 'role': role, 'commits': count})
+
+    # Nach dem Zusammenführen neu sortieren: most_common() ordnet die ROHEN
+    # git-Namen, das Verschmelzen zweier Aliase auf denselben Anzeigenamen
+    # passiert aber erst danach. Ohne diese Zeile stand in AVUNEX ein Beitrager
+    # mit 25 Commits vor dem Betreiber mit 30 — und bei mehr als drei
+    # Beteiligten fällt die Hauptperson aus dem Footer, der nur [:3] zeigt.
+    credits.sort(key=lambda c: c['commits'], reverse=True)
 
     return credits
 
