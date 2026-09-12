@@ -1,0 +1,55 @@
+Nachtrag zum Umfang dieses Commits.
+
+Die Squash-Nachricht nennt vier Fehler plus den Testfix. Tatsächlich behebt der
+Commit acht, weil beim Verifizieren weitere auffielen. Der vollständige Stand:
+
+1. Commit-Parsing brach an Pipe-Zeichen (collect.py)
+   `--format=%H|%s|%an|%b` wurde zeilenweise an '|' zerlegt. Jede
+   Commit-Beschreibung mit einem '|' erzeugte Phantom-Commits aus Body-Zeilen.
+   Bei zerodox waren 2 von 20 "Commits" Textfragmente, mit Autorennamen wie
+   'Handlungsbedarf'. Jetzt \x1f (Feld) und \x1e (Datensatz).
+
+2. Beitragende gingen verloren, wenn `git diff` scheiterte (collect.py)
+   Die Sammlung stand hinter dem Diff-Aufruf; ein früher return verwarf sie.
+   Betraf avunex-neustart, database-ports und mayday_sim.
+
+3. Dieselbe Person erschien doppelt (classify.py)
+   TEAM_MAPPING kannte 'shadow', nicht 'christian jahnke' — gleiche
+   Commit-Mail, zwei git-Namen.
+
+4. Falsche Reihenfolge der Beitragenden (classify.py)
+   Counter.most_common() sortiert die rohen Namen, das Verschmelzen von
+   Aliassen passiert erst danach, neu sortiert wurde nie. Der Footer zeigt nur
+   die ersten drei.
+
+5. Export nannte nie Beitragende (patch_notes_web_exporter.py)
+   Der Statistik-Block las stats['contributors'] — diesen Schlüssel setzt
+   niemand, collect.py schreibt 'authors'.
+
+6. Titel und Wirkung verschmolzen (patch_notes_web_exporter.py)
+   _change_summary presste beides in eine durchgehend fette Zeile, die zweimal
+   dasselbe sagte.
+
+7. Antwortschema war nicht strict-konform (src/schemas/patch_notes.json)
+   OpenAI Structured Outputs verlangt `required` für jeden Schlüssel aus
+   `properties`; in changes[] standen 4 von 12. Jeder Lauf endete mit
+   HTTP 400 invalid_json_schema, der erste Anbieter fiel aus, der
+   Zweitanbieter übernahm mit 198 s Umweg.
+
+8. Diff-Statistik fehlte beim Root-Commit (collect.py)
+   `git diff <ältester>^..<neuester>` bricht ab, wenn der älteste Commit der
+   erste des Repos ist. Fällt jetzt auf Gits leeren Baum zurück.
+
+Dazu: Gruppen-Attribution im KI-Prompt nutzt dieselbe Namenszuordnung wie die
+Footer-Credits (vorher widersprachen sich beide Angaben im selben Prompt), und
+ein vorbestehender Testfehler, der auf main jeden Merge blockierte
+(DeploymentManager-Stub ohne config, seit #512).
+
+Vollständige Fassung mit Belegen: PR #516, Abschlusskommentar.
+Als Changelog-Eintrag: CHANGELOG.md, Abschnitt [Unreleased] (PR #518).
+
+Warum als Notiz und nicht in der Nachricht selbst: 2ca1faf liegt drei Commits
+tief; die Nachricht zu ändern hieße, #517 und #518 mit umzuschreiben, alle drei
+SHAs zu ändern, die zugehörigen Pull Requests auf verwaiste Commits zeigen zu
+lassen und per Push auf main einen Deploy auszulösen. Für eine
+Nachrichtenkorrektur ist das der falsche Preis.
