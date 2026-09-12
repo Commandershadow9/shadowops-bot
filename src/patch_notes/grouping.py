@@ -32,6 +32,53 @@ SCOPE_TO_THEME = {
     'migration': 'Daten-Migration', 'projections': 'Daten-Projektion',
 }
 
+# Lesbare Themen, wenn nach Typ statt nach Scope gebündelt wird.
+TAG_TO_THEME = {
+    'BREAKING': 'Grundlegende Änderungen',
+    'FEATURE': 'Neue Funktionen',
+    'BUGFIX': 'Fehlerbehebungen',
+    'IMPROVEMENT': 'Verbesserungen',
+    'INFRASTRUCTURE': 'Infrastruktur',
+    'TEST': 'Tests',
+    'DOCS': 'Dokumentation',
+    'DESIGN_DOC': 'Planung & Entwurf',
+    'DEPS': 'Abhängigkeiten',
+    'REVERT': 'Zurückgenommene Änderungen',
+    'OTHER': 'Sonstiges',
+}
+
+# Englische Commit-Titel ohne Conventional-Präfix. Kommen zustande, wenn ein
+# Werkzeug (Cursor, Copilot) die Nachricht schreibt oder ein Beitragender die
+# Konvention nicht kennt. Bei avunex-neustart betraf das 28 von 60 Commits,
+# die dadurch sämtlich als OTHER galten.
+# Bewusst konservativ: Was hier nicht steht, bleibt OTHER — eine falsche
+# Einordnung wäre schlechter als eine neutrale.
+_ENGLISCHE_VERBEN = {
+    'FEATURE': (
+        'add', 'added', 'adds', 'introduce', 'introduces', 'implement',
+        'implements', 'create', 'creates', 'embed', 'embeds', 'enable',
+        'enables', 'expand', 'expands', 'include', 'includes', 'support',
+    ),
+    'BUGFIX': (
+        'fix', 'fixed', 'fixes', 'correct', 'corrects', 'resolve', 'resolves',
+        'repair', 'repairs', 'prevent', 'prevents',
+    ),
+    'IMPROVEMENT': (
+        'remove', 'removes', 'removed', 'delete', 'deletes', 'drop', 'drops',
+        'disable', 'disables', 'update', 'updates', 'updated', 'improve',
+        'improves', 'refine', 'refines', 'tighten', 'tightens', 'polish',
+        'refactor', 'refactors', 'rename', 'renames', 'move', 'moves',
+        'switch', 'switches', 'rebuild', 'rebuilds', 'reorient', 'reorients',
+        'scale', 'scales', 'simplify', 'reduce', 'reduces', 'adjust',
+        'adjusts', 'tune', 'restore', 'restores', 'keep', 'keeps', 'pull',
+        'fill', 'give', 'present', 'replace', 'replaces',
+    ),
+    'DOCS': ('document', 'documents', 'documented',),
+}
+_VERB_ZU_TAG = {
+    verb: tag for tag, verben in _ENGLISCHE_VERBEN.items() for verb in verben
+}
+
 _DESIGN_DOC_PATTERNS = re.compile(
     r'design.doc|implementierungsplan|architecture.*design|design.*architecture',
     re.IGNORECASE,
@@ -53,7 +100,9 @@ def classify_commit(commit: dict) -> str:
     msg = commit.get('message', '').split('\n')[0]
     m = _CONVENTIONAL_RE.match(msg)
     if not m:
-        return 'OTHER'
+        # Kein Conventional-Präfix: erstes Wort gegen die Verbliste prüfen.
+        erstes = msg.strip().split(' ')[0].rstrip(':,.').lower()
+        return _VERB_ZU_TAG.get(erstes, 'OTHER')
 
     ctype = m.group('type').lower()
     is_breaking = bool(m.group('breaking'))
@@ -102,6 +151,16 @@ def group_commits(commits: list[dict]) -> list[dict]:
         c['_tag'] = classify_commit(c)
         c['_scope'] = _extract_scope(c)
 
+    # Commits ohne Scope nach ihrem Typ bündeln statt alle in einen Topf.
+    # Gruppiert wird primär nach Scope ("fix(auth):"); Projekte, die keine
+    # Scopes schreiben, hatten dadurch GENAU EINE Gruppe namens "Misc" — bei
+    # avunex-neustart 60 Commits in einer. Den nachgelagerten Stufen fehlt
+    # damit jede Gliederung: Aus den Gruppen entstehen die Hero-Kandidaten
+    # und die Themenordnung des fertigen Textes.
+    for c in commits:
+        if c['_scope'] == '_misc':
+            c['_scope'] = f"_{c['_tag'].lower()}"
+
     scope_buckets: dict[str, list[dict]] = defaultdict(list)
     for c in commits:
         scope_buckets[c['_scope']].append(c)
@@ -120,7 +179,8 @@ def group_commits(commits: list[dict]) -> list[dict]:
             all_labels.extend(c.get('pr_labels', []))
 
         groups.append({
-            'theme': SCOPE_TO_THEME.get(scope, scope.replace('_', ' ').title()),
+            'theme': SCOPE_TO_THEME.get(scope)
+            or TAG_TO_THEME.get(dominant, scope.replace('_', ' ').strip().title()),
             'tag': dominant,
             'scope': scope,
             'commits': bucket,
