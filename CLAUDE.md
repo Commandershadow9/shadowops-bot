@@ -44,7 +44,7 @@ shadowops-bot/
 │   ├── bot.py                    # Haupt-Bot
 │   ├── cogs/                     # Slash-Commands (admin, inspector, monitoring, claude_cli, cron_heartbeat, customer_setup_commands, phase_5e_health_aggregator, crowdsec_notfall)
 │   ├── integrations/             # Externe Systeme (siehe unten)
-│   ├── patch_notes/              # Patch Notes Pipeline v6 + Editorial Layer v7 (editorial.py, seit 2026-06-25) — 5-Stufen State Machine + Pre-Context-Builder (~2300 Zeilen)
+│   ├── patch_notes/              # Patch Notes Pipeline v6 + Editorial Layer v7 (editorial.py, seit 2026-06-25) — 5-Stufen State Machine + Pre-Context-Builder + ki_einordnung.py (KI-Fallback fuer uncategorized Commits, seit 2026-09-12)
 │   ├── schemas/                  # JSON-Schemas fuer Structured Output (fix_strategy, patch_notes, incident_analysis, jules_review)
 │   └── utils/                    # config, logging, embeds, state, alert_humanizer, health_server, message_handler, circuit_breaker, changelog_parser, process_lock
 ├── tests/
@@ -300,6 +300,8 @@ Worker-Konventionen:
 - [config/DO-NOT-TOUCH.md](./config/DO-NOT-TOUCH.md)
 
 ## Letztes Update dieser Datei
+
+2026-09-12 — Patch Notes Commit-Qualitaet + CI-Wait-Haertung (PRs #516/#517/#518/#519): (1) `ki_einordnung.py` (neues Modul in `src/patch_notes/`): ein KI-Aufruf pro Lauf ordnet Commits ein, deren Titel kein Conventional-Praefix, kein PR-Label und keinen Verb-Match hat. Schwelle: ab 3 offenen Titeln, Ausfall ist unschaedlich (OTHER bleibt OTHER, Lauf geht weiter). (2) Merge-Commits werden nicht mehr gezaehlt (`--no-merges` in `collect.py`) — sie waren systematisch ueberhoeht (zerodox 88 von 275 Treffern waren Merge-Commits), Titel wie "Merge pull request #X" landeten als leere Eintraege in Gruppen. (3) `stages/classify.py:TEAM_MAPPING` erweitert: `christian jahnke` als Alias fuer `shadow` (gleiche Mail, anderer git-Name). (4) `patch_notes_web_exporter.py`: Statistik-Block las `stats['contributors']` — diesen Key setzt niemand (richtig ist `authors`). (5) CI-Wait-Haertung in `ci_mixin.py`: Docs-only-Check laeuft jetzt VOR der Poll-Schleife (`_fetch_commit_files` vorab, fail-closed bei API-Fehler). Konstantes Poll-Intervall (default 20 s) ersetzt Exponential-Backoff; neuer project_config-Key `ci_wait_poll_interval_sec`. Tree-SHA-Reuse fuer Merge-Commits (ZERODOX#3328): wenn der Merge-Tree identisch mit dem zweiten Parent-Tree ist, gilt CI des zweiten Parents; neuer project_config-Key `ci_wait_tree_sha_reuse` (default true, fail-closed bei jedem Zweifel).
 
 2026-09-11 — Discord-Struktur nach Projekten getrennt (PRs #505/#507/#508/#509/#510/#511/#512): Uebergreifende Monitoring- und Deploy-Meldungen landen jetzt im projekteigenen Kanal statt in einem gemeinsamen. `bot.py` legt beim Start je Projekt eine Kategorie (`discord_category`) + Status- und Deploy-Kanal an und schreibt die IDs in die Live-Config (`self.bot.config.projects`). `project_monitor.py` nutzt `status_channel_id` fuer Statusupdates; `deployment_manager.py` liest `deploy_channel_id` aus der **Live-Config** (NICHT aus `self.projects`, die beim Manager-Start erstellt wird und neuere Kanal-IDs nicht kennt — Vorfall #512). `scripts/discord_struktur.py` (neu): einmaliges REST-Skript, das Kategorien, Rollen und Rechte auf dem DEV-Server anlegt; Rechte an der Kategorie, Kanaele erben (`--trocken` fuer Dry-Run). Design-Dokument: `docs/2026-09-11-discord-struktur-design.md`. Separate Aenderung: `src/integrations/orchestrator/executor_mixin.py` leitet Fix-Ergebnisse auch aus dem Orchestrator-Pfad weiter (#508).
 
