@@ -670,6 +670,15 @@ deployment:
                                             # skip the CI wait ("docs_only") → deploy proceeds.
                                             # Code commits or API errors stay fail-closed until
                                             # ci_wait_max_min → "missing" → no deploy.sh.
+  ci_wait_poll_interval_sec: 20             # Constant poll interval (s) in _wait_for_ci_completion.
+                                            # Replaces exponential back-off. Per-project override.
+                                            # PR #518 / ZERODOX#3230. Default: 20.
+  ci_wait_tree_sha_reuse: true              # Tree-SHA short-circuit for merge commits (PR #519 / ZERODOX#3328).
+                                            # When the merge tree == second-parent tree, CI on the
+                                            # second parent counts for the merge commit too.
+                                            # Fail-closed: no second parent, API error, different
+                                            # trees, or non-green parent CI → falls through to polling.
+                                            # Default: true.
 
 # ========================================
 # INCIDENT MANAGEMENT (v3.1)
