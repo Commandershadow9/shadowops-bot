@@ -53,6 +53,75 @@ def _paths_are_docs_only(paths: list[str]) -> bool:
     )
 
 
+def _klassifiziere_workflow_runs(
+    all_runs: List[Dict],
+    workflow_names_lower: List[str],
+) -> tuple:
+    """Relevanz-Filterung + "neuester Run pro Workflow-Name"-Klassifikation
+    (Welle 9.10) fuer eine Liste von workflow_runs.
+
+    ZERODOX#3328 Task 4 (12.09.2026): Ausgelagert aus der Polling-Schleife in
+    `_wait_for_ci_completion`, damit der Tree-SHA-Reuse-Kurzschluss (siehe
+    dort) dieselbe Klassifikations-Strenge auf den zweiten Parent-Commit
+    anwenden kann statt sie ein zweites Mal zu implementieren — EINE Quelle
+    fuer "was zaehlt als vollstaendig gruen", nicht zwei Kopien, die
+    auseinanderlaufen koennten.
+
+    Returns:
+        (relevant, latest_per_workflow, all_completed, any_failed, failed_run,
+         pending_names)
+    """
+    relevant = []
+    for run in all_runs:
+        run_name = str(run.get("name") or "").lower()
+        run_path = str(run.get("path") or "").lower()
+        for wf_name in workflow_names_lower:
+            if not wf_name:
+                continue
+            if (
+                wf_name == run_name
+                or f"/{wf_name}.yml" in run_path
+                or f"/{wf_name}.yaml" in run_path
+            ):
+                relevant.append(run)
+                break
+
+    if not relevant:
+        return relevant, {}, False, False, None, []
+
+    # Bestimme Status pro workflow_name: den NEUESTEN Run zaehlen
+    # (re-runs koennen mehrere Eintraege liefern).
+    latest_per_workflow: Dict[str, Dict] = {}
+    for run in relevant:
+        rname = str(run.get("name") or "").lower()
+        # Welle 9.10 Vorsicht: created_at kann fehlen; default leerer string sortiert
+        # frueh -> der ECHTE neueste ueberschreibt das.
+        created = run.get("created_at") or ""
+        existing = latest_per_workflow.get(rname)
+        if existing is None or created > (existing.get("created_at") or ""):
+            latest_per_workflow[rname] = run
+
+    all_completed = True
+    any_failed = False
+    failed_run = None
+    pending_names = []
+    for rname, run in latest_per_workflow.items():
+        status = str(run.get("status") or "").lower()
+        conclusion = str(run.get("conclusion") or "").lower()
+
+        if status != "completed":
+            all_completed = False
+            pending_names.append(rname)
+            continue
+
+        if conclusion in _CI_FAILURE_CONCLUSIONS:
+            any_failed = True
+            failed_run = run
+            break
+
+    return relevant, latest_per_workflow, all_completed, any_failed, failed_run, pending_names
+
+
 class CIMixin:
 
     def _schedule_ci_success_reconcile(
@@ -521,6 +590,103 @@ class CIMixin:
             )
             return None
 
+    async def _fetch_commit_tree_info(
+        self,
+        repo_full_name: str,
+        sha: str,
+    ) -> Optional[Dict]:
+        """Tree-SHA + Parent-SHAs eines einzelnen Commits laden (ZERODOX#3328
+        Task 4 — Tree-SHA-Reuse).
+
+        Ein EINZELNER, nicht-paginierter GET-Aufruf gegen denselben Endpunkt
+        wie `_fetch_commit_files` (`GET /repos/{repo}/commits/{sha}`), hier
+        aber nur `commit.tree.sha` und `parents[].sha` ausgewertet — die
+        Datei-Liste selbst wird hier nicht gebraucht.
+
+        Fail-closed wie `_fetch_commit_files`: JEDE Unklarheit (fehlender
+        Token nicht erforderlich, aber HTTP-Fehler, fehlendes Feld, falscher
+        Typ, Exception) liefert None. Der Aufrufer in `_wait_for_ci_completion`
+        behandelt None als "kein Tree-SHA-Reuse moeglich" und faellt auf das
+        normale Polling zurueck — niemals als Beleg fuer Gleichheit.
+
+        Returns:
+            {"tree_sha": str, "parent_shas": list[str]} oder None bei jedem
+            Fehler/jeder Unklarheit.
+        """
+        if not repo_full_name or not sha:
+            return None
+
+        url = f"https://api.github.com/repos/{repo_full_name}/commits/{sha}"
+        try:
+            # Token-Beschaffung bewusst INNERHALB des try-Blocks (anders als
+            # eine fruehere Zwischenfassung): Ein Harness/Subklasse ohne
+            # _get_github_token() (z.B. testfremde Alt-Harnesses, die vor
+            # ZERODOX#3328 Task 4 entstanden) darf den Aufruf nicht mit einer
+            # unbehandelten AttributeError zum Absturz bringen -- fail-closed
+            # bedeutet auch hier: JEDE Unklarheit liefert None, nie eine
+            # durchschlagende Exception.
+            headers = {"Accept": "application/vnd.github+json"}
+            token = self._get_github_token()
+            if token:
+                headers["Authorization"] = f"token {token}"
+
+            async with aiohttp.ClientSession(headers=headers) as session:
+                async with session.get(url, timeout=20) as resp:
+                    if resp.status != 200:
+                        body = await resp.text()
+                        self.logger.warning(
+                            f"⚠️ Tree-Info fuer {repo_full_name}@{sha[:7]} "
+                            f"konnte nicht geladen werden ({resp.status}): {body[:200]}"
+                        )
+                        return None
+
+                    payload = await resp.json()
+                    commit_obj = payload.get("commit")
+                    if not isinstance(commit_obj, dict):
+                        self.logger.warning(
+                            f"⚠️ Tree-Info fuer {repo_full_name}@{sha[:7]} "
+                            "fehlt das 'commit'-Feld in der GitHub-Antwort."
+                        )
+                        return None
+
+                    tree_obj = commit_obj.get("tree")
+                    tree_sha = tree_obj.get("sha") if isinstance(tree_obj, dict) else None
+                    if not isinstance(tree_sha, str) or not tree_sha:
+                        self.logger.warning(
+                            f"⚠️ Tree-Info fuer {repo_full_name}@{sha[:7]} "
+                            "enthaelt keine gueltige tree.sha."
+                        )
+                        return None
+
+                    parents = payload.get("parents")
+                    if not isinstance(parents, list):
+                        self.logger.warning(
+                            f"⚠️ Tree-Info fuer {repo_full_name}@{sha[:7]} "
+                            "enthaelt kein gueltiges parents-Array."
+                        )
+                        return None
+
+                    parent_shas = [
+                        str(p.get("sha") or "").strip()
+                        for p in parents
+                        if isinstance(p, dict)
+                    ]
+                    if any(not p for p in parent_shas) or len(parent_shas) != len(parents):
+                        self.logger.warning(
+                            f"⚠️ Tree-Info fuer {repo_full_name}@{sha[:7]} "
+                            "enthaelt ungueltige parent-Eintraege."
+                        )
+                        return None
+
+                    return {"tree_sha": tree_sha, "parent_shas": parent_shas}
+        except Exception as e:
+            self.logger.error(
+                f"❌ Fehler beim Laden der Tree-Info fuer "
+                f"{repo_full_name}@{sha[:7]}: {e}",
+                exc_info=True,
+            )
+            return None
+
     async def _wait_for_ci_completion(
         self,
         repo_full_name: str,
@@ -528,6 +694,8 @@ class CIMixin:
         workflow_names: List[str],
         max_wait_min: int = 30,
         admin_merge_grace_min: int = 5,
+        poll_interval_sec: int = 20,
+        tree_sha_reuse_enabled: bool = True,
     ) -> Literal[
         "success",
         "failure",
@@ -549,7 +717,62 @@ class CIMixin:
         ohne Deployment weiterlaufen. Code- oder unklare Commits warten bis
         `max_wait_min` und werden danach fail-closed als "missing" gemeldet.
 
-        Exponential backoff: 60s → 120s → 240s → cap 300s.
+        ZERODOX#3230 (12.09.2026): Der Docs-only-Check aus #1985 lief bisher
+        ERST nach admin_merge_grace_min und nur einmal. Ein docs-only Commit
+        wartete dadurch sinnlos die volle Gnadenfrist ab, obwohl die
+        geänderten Pfade sofort feststehen und sich während des Wartens
+        nicht ändern. Der Check laeuft jetzt VOR Beginn der Polling-Schleife:
+        Ist der Commit nachweislich docs-only, kommt "docs_only" zurueck,
+        ohne einen einzigen Workflow-Poll abzusetzen. Fail-closed bleibt
+        erhalten (None aus _fetch_commit_files gilt NIEMALS als docs-only,
+        siehe api_unavailable-Vorfall unten), und die Gnadenfrist für den
+        unklaren Fall (Code-Commit ohne bisher sichtbaren Workflow) ist davon
+        unberührt.
+
+        Grenze (ZERODOX#3331): Der Vorzug erkennt nur, was _paths_are_docs_only
+        hartcodiert als docs-only kennt — eine Kopie der `paths-ignore`-Muster
+        aus `web-quality.yml`. Weicht diese Kopie vom Workflow ab, fällt der
+        Check das falsche Urteil, ohne dass hier neue Muster ergänzt werden.
+
+        ZERODOX#3328 Task 4 (12.09.2026): Tree-SHA-Reuse fuer Merge-Commits.
+        Ist `merged_sha` ein Merge-Commit (zwei Parents) und ist der Tree
+        dieses Merge-Commits BIT-IDENTISCH mit dem Tree seines zweiten
+        Parents (`parent_shas[1]` — das ist bei GitHubs "Merge pull request"
+        immer der PR-HEAD-Commit, nicht der Ziel-Branch), dann hat der Merge
+        selbst inhaltlich NICHTS am Baum veraendert: Jede bereits auf dem
+        zweiten Parent gelaufene und gruene CI ist damit ebenso gueltig fuer
+        den Merge-Commit. In diesem Fall wird die CI des zweiten Parents
+        EINMALIG geprueft (kein Poll, kein sleep) — ist sie vollstaendig
+        gruen, kommt sofort "success" zurueck, ohne die Polling-Schleife
+        ueberhaupt zu betreten. Das spart die volle CI-Laufzeit bei jedem
+        Merge, dessen Tree bit-identisch ist (6 von 15 gemessenen Faellen,
+        12.09.2026).
+
+        Fail-closed an jeder Stelle: Kein zweiter Parent, ein API-Fehler beim
+        Laden der Tree-/Parent-Info, unterschiedliche Tree-SHAs, oder eine
+        NICHT vollstaendig gruene CI auf dem zweiten Parent — jeweils faellt
+        der Ablauf durch zum normalen Polling (auf dem Merge-Commit selbst).
+        Der Kurzschluss liefert NIEMALS direkt "failure" oder irgendein
+        anderes Ergebnis ausser "success" — jede Unklarheit bedeutet warten,
+        nie raten. Konfigurierbar ueber `tree_sha_reuse_enabled` /
+        project_config-Key `ci_wait_tree_sha_reuse` (Default True), weil die
+        Herleitung "gleicher Tree = gleiche CI-Gueltigkeit" zwar git-technisch
+        korrekt ist, aber im Zweifel abschaltbar bleiben soll.
+
+        Konstantes Poll-Intervall (Default 20s, konfigurierbar ueber
+        poll_interval_sec / project_config-Key `ci_wait_poll_interval_sec`).
+        Messung 12.09.2026: Ein ZERODOX-Merge-zu-Live-Deploy dauert ~21min,
+        davon ~12min CI-Wait im Bot, obwohl der gemessene CI-Lauf selbst nur
+        9,4min brauchte — die Differenz war blinde Zeit durch Exponential-
+        Backoff (60s → 120s → 240s → cap 300s, VORHER). Die CI-Laufzeit ist
+        gut bekannt (8-17min, Median 16min) — für einen derart vorhersagbaren
+        Vorgang vergrößert Backoff die Blindzeit genau dann, wenn der Lauf
+        typischerweise fertig wird. Ein 16min-Lauf kostet bei 20s-Intervall nur
+        ~48 Requests gegen GitHubs 5000/h-Limit. Betrifft NUR diese Schleife
+        (kritischer Merge-zu-Deploy-Pfad) — die zweite Warteschleife im
+        Reconcile-Codepfad (ci_success_reconcile_*-Konfig) ist ein
+        nachträglicher Backstop, kein kritischer Pfad, und bleibt bewusst
+        unverändert.
 
         Args:
             repo_full_name: e.g. "Commandershadow9/ZERODOX"
@@ -559,6 +782,11 @@ class CIMixin:
             max_wait_min: Hard-timeout in Minuten. Default 30.
             admin_merge_grace_min: Grace-Period in Minuten, in der NOCH KEIN
                 Workflow fuer den SHA erkannt sein muss. Default 5.
+            poll_interval_sec: Konstantes Poll-Intervall in Sekunden (kein
+                Backoff mehr). Default 20.
+            tree_sha_reuse_enabled: Tree-SHA-Reuse (ZERODOX#3328 Task 4,
+                project_config-Key `ci_wait_tree_sha_reuse`) an/aus. Default
+                True. Siehe Docstring-Abschnitt weiter unten.
 
         Returns:
             "success"      — alle required Workflows haben conclusion=success
@@ -595,10 +823,10 @@ class CIMixin:
         started_at = time.monotonic()
         deadline = started_at + max_wait_min * 60
         admin_merge_deadline = started_at + max(0, admin_merge_grace_min) * 60
-        poll_interval_s = 60
-        max_poll_interval_s = 300  # 5 min cap
+        # 12.09.2026: konstantes Intervall statt Backoff (Begründung im
+        # Docstring oben) — poll_interval_s wird danach nicht mehr verändert.
+        poll_interval_s = max(1, int(poll_interval_sec))
         saw_any_relevant = False
-        commit_paths_checked = False
         # 17.08.2026: Wurde die API waehrend der gesamten Frist nie gelesen, ist
         # die CI-Lage unbekannt — das darf nicht als "kein Workflow vorhanden"
         # aus der Schleife kommen. Gezaehlt werden beide Seiten, damit sich der
@@ -612,54 +840,129 @@ class CIMixin:
             f"admin_merge_grace={admin_merge_grace_min}min)"
         )
 
+        # ZERODOX#3230: Docs-only-Check VOR der Schleife, nicht erst nach
+        # admin_merge_grace_min. Die geänderten Pfade eines Commits stehen
+        # sofort fest und ändern sich während des Wartens nicht — ein
+        # docs-only Commit muss deshalb keinen einzigen Workflow-Poll
+        # abwarten. Fail-closed bleibt: `changed_paths is None` (API-Störung,
+        # siehe api_unavailable-Vorfall im Docstring) gilt NIEMALS als
+        # docs-only, egal was danach passiert.
+        precomputed_changed_paths = await self._fetch_commit_files(repo_full_name, merged_sha)
+        if precomputed_changed_paths is not None and _paths_are_docs_only(precomputed_changed_paths):
+            self.logger.info(
+                f"ℹ️ _wait_for_ci_completion: Docs-only-Commit "
+                f"{merged_sha[:7]} mit {len(precomputed_changed_paths)} Datei(en) erkannt — "
+                "kein Runtime-Deployment nötig (Check vor der Polling-Schleife)."
+            )
+            return "docs_only"
+
+        # ZERODOX#3328 Task 4: Tree-SHA-Reuse fuer Merge-Commits (voller
+        # Hintergrund im Docstring oben). Muss NACH dem Docs-only-Check und
+        # VOR der Polling-Schleife laufen: Ist der Tree des Merge-Commits
+        # bit-identisch mit dem Tree seines zweiten Parents (merge^2, bei
+        # GitHubs "Merge pull request" immer die Spitze des gemergten
+        # Branches), dann hat der Merge selbst nichts am Baum veraendert —
+        # jede bereits auf merge^2 gelaufene, gruene CI ist ebenso gueltig
+        # fuer den Merge-Commit. Fail-closed an jeder Stelle: kein zweiter
+        # Parent, ein API-Fehler, unterschiedliche Trees oder eine nicht
+        # vollstaendig gruene CI auf merge^2 fallen jeweils durch zum
+        # normalen Polling unten — der Kurzschluss liefert NIEMALS direkt
+        # "failure", nur zusaetzliche Evidenz fuer "success".
+        if tree_sha_reuse_enabled:
+            tree_info_merge = await self._fetch_commit_tree_info(repo_full_name, merged_sha)
+            if tree_info_merge is not None:
+                parent_shas = tree_info_merge.get("parent_shas") or []
+                if len(parent_shas) >= 2:
+                    parent2_sha = parent_shas[1]
+                    tree_info_parent2 = await self._fetch_commit_tree_info(
+                        repo_full_name, parent2_sha
+                    )
+                    merge_tree_sha = tree_info_merge.get("tree_sha")
+                    if (
+                        tree_info_parent2 is not None
+                        and merge_tree_sha
+                        and merge_tree_sha == tree_info_parent2.get("tree_sha")
+                    ):
+                        # Erst JETZT, nach bestaetigter Tree-Gleichheit, den
+                        # CI-Status von merge^2 laden — ein abweichender Baum
+                        # macht diesen Aufruf ueberfluessig (siehe Test c).
+                        all_runs_parent2 = await self._fetch_workflow_runs_for_sha(
+                            repo_full_name, parent2_sha
+                        )
+                        if all_runs_parent2 is not None:
+                            parent2_runs = all_runs_parent2.get("workflow_runs")
+                            if isinstance(parent2_runs, list):
+                                (
+                                    _relevant_p2,
+                                    latest_per_workflow_p2,
+                                    all_completed_p2,
+                                    any_failed_p2,
+                                    _failed_run_p2,
+                                    _pending_names_p2,
+                                ) = _klassifiziere_workflow_runs(
+                                    parent2_runs, workflow_names_lower
+                                )
+                                if (
+                                    latest_per_workflow_p2
+                                    and all_completed_p2
+                                    and not any_failed_p2
+                                ):
+                                    self.logger.info(
+                                        "✅ ZERODOX#3328 Task 4: Tree-SHA-Reuse — "
+                                        f"Merge-Commit {merged_sha[:7]} (tree "
+                                        f"{merge_tree_sha}) hat denselben Tree wie sein "
+                                        f"zweiter Parent {parent2_sha[:7]} (tree "
+                                        f"{tree_info_parent2.get('tree_sha')}) — "
+                                        f"{len(latest_per_workflow_p2)} bereits gruene "
+                                        "Check(s) auf dem PR-HEAD-Commit werden fuer den "
+                                        "Merge-Commit wiederverwendet, kein zusaetzlicher "
+                                        "Poll noetig."
+                                    )
+                                    return "success"
+
+        admin_merge_deadline_logged = False
+
         while time.monotonic() < deadline:
             data = await self._fetch_workflow_runs_for_sha(repo_full_name, merged_sha)
             if data is None:
                 # API-Fehler / Rate-Limit — weiter pollen
                 api_fehler_runden += 1
                 await asyncio.sleep(poll_interval_s)
-                poll_interval_s = min(poll_interval_s * 2, max_poll_interval_s)
                 continue
 
             api_erfolg_runden += 1
             all_runs = data.get("workflow_runs") or []
 
-            # Filter auf relevant: name matched workflow_names (case-insensitive, substring)
-            relevant = []
-            for run in all_runs:
-                run_name = str(run.get("name") or "").lower()
-                run_path = str(run.get("path") or "").lower()
-                for wf_name in workflow_names_lower:
-                    if not wf_name:
-                        continue
-                    if (
-                        wf_name == run_name
-                        or f"/{wf_name}.yml" in run_path
-                        or f"/{wf_name}.yaml" in run_path
-                    ):
-                        relevant.append(run)
-                        break
+            # ZERODOX#3328 Task 4: Relevanz-Filterung + Klassifikation kommen
+            # jetzt aus der gemeinsamen, zustandslosen Hilfsfunktion
+            # `_klassifiziere_workflow_runs` (siehe Modulebene oben) — derselbe
+            # Code-Pfad, den auch der Tree-SHA-Reuse-Kurzschluss vor dieser
+            # Schleife verwendet. Verhaltensgleiches Refactoring, keine neue
+            # Logik hier.
+            (
+                relevant,
+                latest_per_workflow,
+                all_completed,
+                any_failed,
+                failed_run,
+                pending_names,
+            ) = _klassifiziere_workflow_runs(all_runs, workflow_names_lower)
 
             if not relevant:
-                # ZERODOX#1985: Nach der Grace-Period genau einmal die Commit-
-                # Pfade pruefen. Nur die identische Allowlist aus deploy.sh darf
-                # ohne Workflow weiterlaufen; API-Fehler bleiben fail-closed.
+                # ZERODOX#1985/#3230: Der Docs-only-Check laeuft inzwischen VOR
+                # der Schleife (siehe oben) — hier bleibt nur noch die einmalige
+                # Klassifikations-Warnung, sobald die Gnadenfrist erreicht ist.
+                # Kein erneuter _fetch_commit_files-Call mehr: `precomputed_changed_paths`
+                # wurde bereits vor der Schleife ermittelt und ändert sich nicht.
                 if (
                     not saw_any_relevant
-                    and not commit_paths_checked
+                    and not admin_merge_deadline_logged
                     and time.monotonic() >= admin_merge_deadline
                 ):
-                    commit_paths_checked = True
-                    changed_paths = await self._fetch_commit_files(repo_full_name, merged_sha)
-                    if changed_paths is not None and _paths_are_docs_only(changed_paths):
-                        self.logger.info(
-                            f"ℹ️ _wait_for_ci_completion: Docs-only-Commit "
-                            f"{merged_sha[:7]} mit {len(changed_paths)} Datei(en) erkannt — "
-                            "kein Runtime-Deployment noetig."
-                        )
-                        return "docs_only"
-
-                    classification = "Code-Commit" if changed_paths is not None else "unklarer Commit"
+                    admin_merge_deadline_logged = True
+                    classification = (
+                        "Code-Commit" if precomputed_changed_paths is not None else "unklarer Commit"
+                    )
                     self.logger.warning(
                         f"⚠️ _wait_for_ci_completion: {classification} {merged_sha[:7]} "
                         f"nach {admin_merge_grace_min}min ohne relevanten Workflow — "
@@ -670,41 +973,9 @@ class CIMixin:
                     f"fuer {merged_sha[:7]} sichtbar — weiter pollen ({poll_interval_s}s)..."
                 )
                 await asyncio.sleep(poll_interval_s)
-                poll_interval_s = min(poll_interval_s * 2, max_poll_interval_s)
                 continue
 
             saw_any_relevant = True
-
-            # Bestimme Status pro workflow_name: den NEUESTEN Run zaehlen
-            # (re-runs koennen mehrere Eintraege liefern).
-            latest_per_workflow: Dict[str, Dict] = {}
-            for run in relevant:
-                rname = str(run.get("name") or "").lower()
-                # Welle 9.10 Vorsicht: created_at kann fehlen; default leerer string sortiert
-                # frueh -> der ECHTE neueste ueberschreibt das.
-                created = run.get("created_at") or ""
-                existing = latest_per_workflow.get(rname)
-                if existing is None or created > (existing.get("created_at") or ""):
-                    latest_per_workflow[rname] = run
-
-            # Alle latest_per_workflow durchgehen
-            all_completed = True
-            any_failed = False
-            failed_run = None
-            pending_names = []
-            for rname, run in latest_per_workflow.items():
-                status = str(run.get("status") or "").lower()
-                conclusion = str(run.get("conclusion") or "").lower()
-
-                if status != "completed":
-                    all_completed = False
-                    pending_names.append(rname)
-                    continue
-
-                if conclusion in _CI_FAILURE_CONCLUSIONS:
-                    any_failed = True
-                    failed_run = run
-                    break
 
             if any_failed:
                 self.logger.warning(
@@ -725,7 +996,6 @@ class CIMixin:
                 f"fuer {merged_sha[:7]} (next poll in {poll_interval_s}s)"
             )
             await asyncio.sleep(poll_interval_s)
-            poll_interval_s = min(poll_interval_s * 2, max_poll_interval_s)
 
         if not saw_any_relevant:
             # Nur wenn die API mindestens einmal geantwortet hat, ist "es gibt
@@ -926,12 +1196,26 @@ class CIMixin:
                 admin_merge_grace_min = int(
                     project_config.get('ci_wait_admin_merge_grace_min', 5)
                 )
+                # 12.09.2026: konstantes Poll-Intervall statt Backoff, konfigurierbar
+                # je Projekt (Begründung im Docstring von _wait_for_ci_completion).
+                poll_interval_sec = int(
+                    project_config.get('ci_wait_poll_interval_sec', 20)
+                )
+                # ZERODOX#3328 Task 4: Tree-SHA-Reuse-Kurzschluss, Default AN --
+                # ein Merge-Commit mit bit-identischem Tree zu seinem zweiten
+                # Parent hat bereits validierte CI (Begründung + Fail-closed-
+                # Verhalten im Docstring von _wait_for_ci_completion).
+                tree_sha_reuse_enabled = bool(
+                    project_config.get('ci_wait_tree_sha_reuse', True)
+                )
                 outcome = await self._wait_for_ci_completion(
                     repo_full_name=repo_full_name,
                     merged_sha=full_sha,
                     workflow_names=workflow_names,
                     max_wait_min=max_wait_min,
                     admin_merge_grace_min=admin_merge_grace_min,
+                    poll_interval_sec=poll_interval_sec,
+                    tree_sha_reuse_enabled=tree_sha_reuse_enabled,
                 )
                 if outcome == "failure":
                     await self._send_ci_wait_alert(

@@ -40,6 +40,10 @@ TEAM_MAPPING: dict[str, tuple[str, str]] = {
     'commandershadow': ('Shadow', 'Founder & Lead Dev'),
     'renjihoshida': ('Mapu', 'Co-Founder & Dev'),
     'mapu': ('Mapu', 'Co-Founder & Dev'),
+    # Gleiche Person wie 'shadow' — identische Commit-Mail, nur zwei
+    # git-Namen. Ohne diese Zeile erscheint der Betreiber doppelt,
+    # zuletzt als ["Shadow", "Christian Jahnke"] in zerodox v1.36.0.
+    'christian jahnke': ('Shadow', 'Founder & Lead Dev'),
     # Wenn neue Team-Mitglieder dazukommen: hier eintragen.
     # Beispiel:
     # 'newdesigner':    ('Newbie', 'Game Designer'),
@@ -53,6 +57,18 @@ async def classify(ctx: PipelineContext, bot=None) -> None:
     from patch_notes.versioning import calculate_version
 
     commits = ctx.enriched_commits or ctx.raw_commits
+
+    # 0. Commits ohne erkennbares Muster per KI einordnen.
+    #
+    # Muss VOR dem Gruppieren laufen: group_commits liest den Typ, und aus den
+    # Gruppen entsteht die Gliederung des fertigen Textes. Ein Aufruf pro Lauf,
+    # nur für die offenen Titel, und ausfallsicher — schlägt er fehl, bleiben
+    # die Commits wie bisher "Sonstiges".
+    try:
+        from patch_notes.ki_einordnung import ordne_offene_commits_ein
+        await ordne_offene_commits_ein(ctx, bot)
+    except Exception as e:
+        logger.warning(f"[v6] {ctx.project}: KI-Einordnung übersprungen: {e}")
 
     # 1. Commits gruppieren (ALLE — kein Cap!)
     ctx.groups = group_commits(commits)
@@ -119,6 +135,13 @@ def _extract_credits(commits: list[dict]) -> list[dict]:
             existing['commits'] += count
         else:
             credits.append({'name': display, 'role': role, 'commits': count})
+
+    # Nach dem Zusammenführen neu sortieren: most_common() ordnet die ROHEN
+    # git-Namen, das Verschmelzen zweier Aliase auf denselben Anzeigenamen
+    # passiert aber erst danach. Ohne diese Zeile stand in AVUNEX ein Beitrager
+    # mit 25 Commits vor dem Betreiber mit 30 — und bei mehr als drei
+    # Beteiligten fällt die Hauptperson aus dem Footer, der nur [:3] zeigt.
+    credits.sort(key=lambda c: c['commits'], reverse=True)
 
     return credits
 

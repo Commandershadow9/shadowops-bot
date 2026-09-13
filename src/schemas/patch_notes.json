@@ -1,75 +1,220 @@
 {
   "type": "object",
   "properties": {
-    "title": { "type": "string" },
-    "tldr": { "type": "string" },
-    "summary": { "type": "string" },
+    "title": {
+      "type": "string"
+    },
+    "tldr": {
+      "type": "string"
+    },
+    "summary": {
+      "type": "string"
+    },
     "discord_highlights": {
       "type": "array",
-      "items": { "type": "string" }
+      "items": {
+        "type": "string"
+      }
     },
-    "web_content": { "type": "string" },
+    "web_content": {
+      "type": "string"
+    },
     "breaking_changes": {
       "type": "array",
-      "items": { "type": "string" }
+      "items": {
+        "type": "string"
+      }
     },
     "changes": {
       "type": "array",
       "items": {
         "type": "object",
         "properties": {
-          "type": { "type": "string", "enum": ["feature", "content", "gameplay", "design", "performance", "multiplayer", "fix", "breaking", "infrastructure", "improvement", "docs", "security"] },
-          "description": { "type": "string" },
+          "type": {
+            "type": "string",
+            "enum": [
+              "feature",
+              "content",
+              "gameplay",
+              "design",
+              "performance",
+              "multiplayer",
+              "fix",
+              "breaking",
+              "infrastructure",
+              "improvement",
+              "docs",
+              "security"
+            ]
+          },
+          "description": {
+            "type": "string"
+          },
           "details": {
             "type": "array",
-            "items": { "type": "string" }
+            "items": {
+              "type": "string"
+            }
           },
-          "author": { "type": "string", "description": "Name des Autors (z.B. 'Shadow', 'Mapu'). Leer-String wenn unklar." },
-          "title": { "type": "string", "description": "Kurze sprechende Change-Ueberschrift ohne Version." },
-          "impact": { "type": "string", "description": "Konkreter Nutzer-, Spieler- oder Ops-Nutzen." },
-          "before": { "type": "string", "description": "Vorherige Reibung/Einschraenkung, nur wenn aus Input ableitbar." },
-          "after": { "type": "string", "description": "Neuer Ablauf oder neues Verhalten." },
-          "why": { "type": "string", "description": "Warum diese Aenderung fuer das Release wichtig ist." },
-          "user_action": { "type": "string", "description": "Keine oder konkrete Migration/Config/Re-Login/Handlung." },
-          "is_hero": { "type": "boolean", "description": "True fuer 1-4 wichtigste Hero-Aenderungen." },
+          "author": {
+            "type": "string",
+            "description": "Name des Autors (z.B. 'Shadow', 'Mapu'). Leer-String wenn unklar."
+          },
+          "title": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "Kurze sprechende Change-Ueberschrift ohne Version."
+          },
+          "impact": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "Konkreter Nutzer-, Spieler- oder Ops-Nutzen."
+          },
+          "before": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "Vorherige Reibung/Einschraenkung, nur wenn aus Input ableitbar."
+          },
+          "after": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "Neuer Ablauf oder neues Verhalten."
+          },
+          "why": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "Warum diese Aenderung fuer das Release wichtig ist."
+          },
+          "user_action": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "Keine oder konkrete Migration/Config/Re-Login/Handlung."
+          },
+          "is_hero": {
+            "type": [
+              "boolean",
+              "null"
+            ],
+            "description": "True fuer 1-4 wichtigste Hero-Aenderungen."
+          },
           "source_commits": {
-            "type": "array",
-            "items": { "type": "string" },
+            "type": [
+              "array",
+              "null"
+            ],
+            "items": {
+              "type": "string"
+            },
             "description": "Kurze Commit-Titel aus dem Input, keine erfundenen PRs."
           }
         },
-        "required": ["type", "description", "details", "author"],
+        "required": [
+          "type",
+          "description",
+          "details",
+          "author",
+          "title",
+          "impact",
+          "before",
+          "after",
+          "why",
+          "user_action",
+          "is_hero",
+          "source_commits"
+        ],
         "additionalProperties": false
       }
     },
     "stats": {
       "type": "object",
       "properties": {
-        "commits": { "type": "integer" },
-        "files_changed": { "type": "integer" },
-        "lines_added": { "type": "integer" },
-        "lines_removed": { "type": "integer" },
+        "commits": {
+          "type": "integer"
+        },
+        "files_changed": {
+          "type": "integer"
+        },
+        "lines_added": {
+          "type": "integer"
+        },
+        "lines_removed": {
+          "type": "integer"
+        },
         "contributors": {
           "type": "array",
-          "items": { "type": "string" }
+          "items": {
+            "type": "string"
+          }
         },
-        "tests_passed": { "type": ["integer", "null"] },
-        "tests_total": { "type": ["integer", "null"] },
-        "coverage_percent": { "type": ["number", "null"] }
+        "tests_passed": {
+          "type": [
+            "integer",
+            "null"
+          ]
+        },
+        "tests_total": {
+          "type": [
+            "integer",
+            "null"
+          ]
+        },
+        "coverage_percent": {
+          "type": [
+            "number",
+            "null"
+          ]
+        }
       },
-      "required": ["commits", "files_changed", "lines_added", "lines_removed", "contributors", "tests_passed", "tests_total", "coverage_percent"],
+      "required": [
+        "commits",
+        "files_changed",
+        "lines_added",
+        "lines_removed",
+        "contributors",
+        "tests_passed",
+        "tests_total",
+        "coverage_percent"
+      ],
       "additionalProperties": false
     },
-    "version": { "type": "string" },
-    "language": { "type": "string", "enum": ["de", "en"] },
+    "version": {
+      "type": "string"
+    },
+    "language": {
+      "type": "string",
+      "enum": [
+        "de",
+        "en"
+      ]
+    },
     "seo_keywords": {
       "type": "array",
-      "items": { "type": "string" },
+      "items": {
+        "type": "string"
+      },
       "description": "5-10 spezifische, suchrelevante Keywords für SEO"
     },
     "seo_category": {
       "type": "string",
-      "enum": ["feature", "security", "performance", "bugfix", "maintenance"],
+      "enum": [
+        "feature",
+        "security",
+        "performance",
+        "bugfix",
+        "maintenance"
+      ],
       "description": "Hauptkategorie dieses Releases"
     },
     "discord_teaser": {
@@ -77,6 +222,20 @@
       "description": "Kurzer Discord-Teaser mit Cliffhanger (max 1000 Zeichen). Leer-String wenn kein Teaser gewuenscht."
     }
   },
-  "required": ["title", "tldr", "summary", "discord_highlights", "web_content", "breaking_changes", "changes", "stats", "version", "language", "seo_keywords", "seo_category", "discord_teaser"],
+  "required": [
+    "title",
+    "tldr",
+    "summary",
+    "discord_highlights",
+    "web_content",
+    "breaking_changes",
+    "changes",
+    "stats",
+    "version",
+    "language",
+    "seo_keywords",
+    "seo_category",
+    "discord_teaser"
+  ],
   "additionalProperties": false
 }
