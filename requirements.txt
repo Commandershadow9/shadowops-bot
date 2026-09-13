@@ -36,4 +36,4 @@ coloredlogs>=15.0.1,<16.0.0
 # Allow minor updates for bug fixes and features, but pin major versions
 openai>=1.54.0,<2.0.0
 anthropic>=0.39.0,<1.0.0
-httpx>=0.27.0,<0.28  # Pin to <0.28 for AI library compatibility (proxies parameter removed in 0.28)
+httpx>=0.28.0,<0.29  # Matches installed 0.28.1; openai>=1.109/anthropic>=0.122 no longer use the removed `proxies` param
