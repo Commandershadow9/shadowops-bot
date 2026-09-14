@@ -32,6 +32,14 @@ Befund ist er erst dort, wo der **Host** die Datei tatsächlich liest und
 ausführt. Alles andere wäre Rauschen, und ein Wächter, der dauernd meldet,
 wird weggeklickt wie ein kaputter. Scharf sind daher genau drei Klassen —
 siehe `scharfe_pfade`.
+
+ENV-Overrides (alle optional, Defaults genuegen fuer Standard-Setup):
+    ZERODOX_REPO_PATH       Pfad zum ZERODOX-Arbeitsbaum
+                            (default: /home/cmdshadow/ZERODOX)
+    ZERODOX_REMOTE_REF      Remote-Ref fuer den Diff-Vergleich
+                            (default: origin/main)
+    ZERODOX_GIT_TIMEOUT_SEC Timeout in Sekunden fuer git-Aufrufe
+                            (default: 15)
 """
 
 import os

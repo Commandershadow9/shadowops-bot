@@ -19,7 +19,11 @@ Verhaltens-Eckpunkte (analog memory-watchdog.sh):
 ENV-Overrides:
   KICOST_WEBHOOK / SHADOWOPS_WATCHDOG_WEBHOOK  Discord-Webhook-URL
   KICOST_DAY                Tag YYYY-MM-DD (default: heute UTC)
-  KICOST_ANOMALY_FACTOR     Faktor fuer Anomalie (default 2.5)
+  KICOST_ANOMALY_FACTOR     Faktor fuer relativen Anomalie-Alarm (default 2.5)
+  KICOST_ABSOLUTE_ALERT_USD Absolute Kostendecke USD/Tag (default 0 = deaktiviert).
+                            Fängt dauerhaft teure Hintergrund-Pfade, die Teil der
+                            eigenen Baseline sind und den relativen Alarm nie auslösen.
+  KICOST_TOP_PROJECTS       Top-N Claude-Projekte nach Kosten im Embed (default 4)
   STATE_FILE                Pfad zum State-File
   WEBHOOK_CONFIG            Pfad zur Env-Config
   PRICE_CLAUDE_OPUS_IN/OUT      USD pro 1M Token (default 15 / 75)
