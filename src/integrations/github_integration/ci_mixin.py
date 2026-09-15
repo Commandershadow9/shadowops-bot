@@ -1178,6 +1178,7 @@ class CIMixin:
         full_sha: Optional[str] = None,
         _repoll_round: int = 0,
         push_commit_shas: Optional[List[str]] = None,
+        deployment_context: Optional[Dict] = None,
     ):
         """
         Trigger deployment for a repository
@@ -1311,7 +1312,16 @@ class CIMixin:
             # Execute deployment
             # Alle Discord-Benachrichtigungen (Started, Updates, Success, Failed)
             # werden vom deployment_manager gesendet — nicht hier doppeln
-            result = await self.deployment_manager.deploy_project(repo_name, branch)
+            context = dict(deployment_context or {})
+            context.setdefault("commit_sha", full_sha or commit_sha)
+            if repo_full_name:
+                repo_url = f"https://github.com/{repo_full_name}"
+                context.setdefault("repo_url", repo_url)
+                if full_sha:
+                    context.setdefault("commit_url", f"{repo_url}/commit/{full_sha}")
+            result = await self.deployment_manager.deploy_project(
+                repo_name, branch, deploy_context=context
+            )
 
             if result['success']:
                 self.logger.info(f"✅ Deployment erfolgreich: {repo_name}")

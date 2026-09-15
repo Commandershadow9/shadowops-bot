@@ -14,6 +14,8 @@ from unittest.mock import AsyncMock, MagicMock
 
 from src.integrations.deployment_manager import (
     DeploymentManager,
+    _concise_deploy_error,
+    _format_deploy_trigger,
     _summarize_steps,
     _format_deploy_duration,
 )
@@ -74,6 +76,52 @@ def test_format_deploy_duration_short_vs_long():
     assert "Min" in long
 
 
+def test_format_deploy_trigger_links_pr_issue_and_commit():
+    text = _format_deploy_trigger({
+        "pr_number": 102,
+        "pr_title": "Demo-Zähler aktivieren",
+        "pr_url": "https://github.com/acme/app/pull/102",
+        "issues": [101, 103],
+        "repo_url": "https://github.com/acme/app",
+        "commit_sha": "abcdef123456",
+        "commit_url": "https://github.com/acme/app/commit/abcdef123456",
+    })
+    assert "PR #102" in text
+    assert "Issue #103" in text
+    assert "`abcdef1`" in text
+
+
+def test_concise_deploy_error_prefers_specific_last_error():
+    error = """Post-deploy command failed (exit=1):
+stdout: Quality läuft noch
+stderr: FEHLER: Quality für 91e19d0 ist durch — Ergebnis: cancelled."""
+    assert _concise_deploy_error(error) == (
+        "FEHLER: Quality für 91e19d0 ist durch — Ergebnis: cancelled."
+    )
+
+
+@pytest.mark.asyncio
+async def test_progress_message_is_sent_and_edited():
+    mgr, channel = _mgr_with_channel()
+    mgr.projects = {"ZERODOX": {"branch": "main"}}
+    progress_message = MagicMock()
+    progress_message.edit = AsyncMock()
+    channel.send.return_value = progress_message
+
+    await mgr._send_deployment_started(
+        "ZERODOX",
+        "main",
+        deploy_context={"commit_sha": "abcdef123456", "branch": "main"},
+    )
+    await mgr._send_deployment_update("ZERODOX", "📦 Backup wird erstellt …")
+
+    channel.send.assert_awaited_once()
+    progress_message.edit.assert_awaited_once()
+    embed = progress_message.edit.call_args.kwargs["embed"]
+    assert "läuft" in embed.title
+    assert any(field.name == "Aktueller Schritt" for field in embed.fields)
+
+
 # ---------- Success-Embed ----------
 
 @pytest.mark.asyncio
@@ -110,9 +158,8 @@ async def test_failure_embed_highlights_failed_step():
 
     embed = _sent_embed(channel)
     assert "fehlgeschlagen" in embed.title.lower()
-    # Zusammenfassung: 2/3 ok + fehlgeschlagener Schritt benannt
-    assert "2/3" in embed.description
-    assert "Health-Check" in embed.description
+    # Zusammenfassung nennt Fortschritt; der konkrete Schritt bleibt separat sichtbar.
+    assert "2 erfolgreichen Statusmeldungen" in embed.description
     # Eigenes Hervorhebungs-Feld
     field_names = [f.name for f in embed.fields]
     assert any("Fehlgeschlagen bei" in n for n in field_names)

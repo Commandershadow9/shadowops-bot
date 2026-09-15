@@ -562,6 +562,7 @@ class TestPullRequestHandling:
                 'base': {'ref': 'main'},
                 'merged': True,
                 'merge_commit_sha': 'a' * 40,
+                'body': 'Closes #103',
             }
         }
 
@@ -571,6 +572,8 @@ class TestPullRequestHandling:
         kwargs = integration._trigger_deployment.call_args.kwargs
         assert kwargs['repo_full_name'] == 'Commandershadow9/ZERODOX'
         assert kwargs['full_sha'] == 'a' * 40
+        assert kwargs['deployment_context']['pr_number'] == 42
+        assert kwargs['deployment_context']['issues'] == [103]
 
     @pytest.mark.asyncio
     async def test_pr_merge_does_not_block_on_deploy(self, mock_bot, enabled_config):
@@ -1075,7 +1078,10 @@ class TestWelle910WaitForCI:
             full_sha='a' * 40,
         )
 
-        integration.deployment_manager.deploy_project.assert_called_once_with('zerodox', 'main')
+        integration.deployment_manager.deploy_project.assert_called_once()
+        args, kwargs = integration.deployment_manager.deploy_project.call_args
+        assert args == ('zerodox', 'main')
+        assert kwargs['deploy_context']['commit_sha'] == 'a' * 40
         integration._send_ci_wait_alert.assert_not_called()
 
     @pytest.mark.asyncio
@@ -1096,7 +1102,10 @@ class TestWelle910WaitForCI:
             full_sha='a' * 40,
         )
 
-        integration.deployment_manager.deploy_project.assert_awaited_once_with('zerodox', 'main')
+        integration.deployment_manager.deploy_project.assert_awaited_once()
+        args, kwargs = integration.deployment_manager.deploy_project.call_args
+        assert args == ('zerodox', 'main')
+        assert kwargs['deploy_context']['commit_sha'] == 'a' * 40
         integration._send_ci_wait_alert.assert_not_awaited()
 
     @pytest.mark.asyncio

@@ -54,6 +54,57 @@ def _format_deploy_duration(duration: float) -> str:
     return format_downtime(duration)
 
 
+def _format_deploy_trigger(context: Optional[Dict]) -> Optional[str]:
+    """Formatiert Commit, PR und Issues als klickbaren Discord-Kontext."""
+    if not context:
+        return None
+    parts: List[str] = []
+    pr_number = context.get("pr_number")
+    pr_url = context.get("pr_url")
+    pr_title = str(context.get("pr_title") or "").strip()
+    if pr_number:
+        label = f"PR #{pr_number}"
+        if pr_title:
+            label += f" · {pr_title[:120]}"
+        parts.append(f"[{label}]({pr_url})" if pr_url else label)
+
+    issues = context.get("issues") or []
+    issue_links = []
+    repo_url = str(context.get("repo_url") or "").rstrip("/")
+    for number in issues[:5]:
+        label = f"Issue #{number}"
+        issue_links.append(
+            f"[{label}]({repo_url}/issues/{number})" if repo_url else label
+        )
+    if issue_links:
+        parts.append("Betroffen: " + ", ".join(issue_links))
+
+    sha = str(context.get("commit_sha") or "").strip()
+    commit_url = context.get("commit_url")
+    if sha:
+        short_sha = sha[:7]
+        parts.append(
+            f"Commit [`{short_sha}`]({commit_url})" if commit_url else f"Commit `{short_sha}`"
+        )
+    return "\n".join(parts) or None
+
+
+def _concise_deploy_error(error: str) -> str:
+    """Extrahiert den aussagekräftigsten Fehler statt beliebig abzuschneiden."""
+    lines = [line.strip() for line in str(error).splitlines() if line.strip()]
+    if not lines:
+        return "Kein Fehlergrund gemeldet."
+    preferred = [
+        line for line in lines
+        if any(marker in line.lower() for marker in ("fehler:", "error:", "failed", "cancelled", "timeout"))
+    ]
+    selected = preferred[-1] if preferred else lines[-1]
+    for prefix in ("stderr:", "stdout:"):
+        if selected.lower().startswith(prefix):
+            selected = selected[len(prefix):].strip()
+    return selected[:1000]
+
+
 class DeploymentManager:
     """
     Automated deployment system with safety checks
@@ -143,7 +194,10 @@ class DeploymentManager:
         return projects
 
     async def deploy_project(
-        self, project_name: str, branch: Optional[str] = None
+        self,
+        project_name: str,
+        branch: Optional[str] = None,
+        deploy_context: Optional[Dict] = None,
     ) -> Dict:
         """
         Deploy a project with full safety workflow
@@ -204,6 +258,8 @@ class DeploymentManager:
         try:
             project = self.projects[project_key]
             deploy_branch = branch or project['branch']
+            context = dict(deploy_context or {})
+            context['branch'] = deploy_branch
 
             self.logger.info(f"🚀 Starting deployment: {project_name} @ {deploy_branch}")
 
@@ -216,7 +272,9 @@ class DeploymentManager:
                 'backup_created': False,
                 'deployed': False,
                 'rolled_back': False,
-                'error': None
+                'error': None,
+                'deploy_context': context,
+                'failed_stage': None,
             }
 
             # Self-Deploy: Kompakter Flow — nur git pull + 1 Embed + Restart
@@ -224,13 +282,18 @@ class DeploymentManager:
 
             if not is_self_deploy:
                 # Normale Projekte: Volles Deployment mit allen Schritten
-                await self._send_deployment_started(project_name, deploy_branch)
+                await self._send_deployment_started(
+                    project_name, deploy_branch, deploy_context=context
+                )
+
+            current_stage = "Projektpfad prüfen"
 
             # Step 1: Validate project path
             if not project['path'].exists():
                 raise DeploymentError(f"Project path does not exist: {project['path']}")
 
             # Step 2: Create backup
+            current_stage = "Backup erstellen"
             self.logger.info(f"📦 Creating backup for {project_name}")
             if not is_self_deploy:
                 await self._send_deployment_update(project_name, "📦 Creating backup...")
@@ -241,6 +304,7 @@ class DeploymentManager:
                 await self._send_deployment_update(project_name, f"✅ Backup created: {backup_path.name}")
 
             # Step 3: Pull latest code
+            current_stage = "Code aktualisieren"
             self.logger.info(f"📥 Pulling latest code from {deploy_branch}")
             if not is_self_deploy:
                 await self._send_deployment_update(project_name, f"📥 Pulling latest code from {deploy_branch}...")
@@ -250,6 +314,7 @@ class DeploymentManager:
 
             # Step 4: Run tests (if configured)
             if project['run_tests']:
+                current_stage = "Tests ausführen"
                 self.logger.info(f"🧪 Running tests for {project_name}")
                 if not is_self_deploy:
                     await self._send_deployment_update(project_name, "🧪 Running tests...")
@@ -285,14 +350,16 @@ class DeploymentManager:
 
             # Step 5: Execute post-deploy command (if configured)
             if project['post_deploy_command']:
+                current_stage = "Post-Deploy ausführen"
                 self.logger.info(f"⚙️ Running post-deploy command")
                 await self._send_deployment_update(project_name, f"⚙️ Running post-deploy: {project['post_deploy_command']}")
-                await self._run_post_deploy_command(project)
+                await self._run_post_deploy_command(project, project_name=project_name)
                 self.logger.info(f"✅ Post-deploy command completed")
                 await self._send_deployment_update(project_name, "✅ Post-deploy completed")
 
             # Step 6: Restart service (if configured)
             if project['service_name']:
+                current_stage = "Dienst neu starten"
                 self.logger.info(f"🔄 Restarting service: {project['service_name']}")
                 await self._send_deployment_update(project_name, f"🔄 Restarting service: {project['service_name']}...")
                 await self._restart_service(project)
@@ -303,6 +370,7 @@ class DeploymentManager:
 
             # Step 7: Health check
             if project['health_check_url']:
+                current_stage = "Health-Check ausführen"
                 self.logger.info(f"🏥 Running health check")
                 await self._send_deployment_update(project_name, "🏥 Running health check...")
                 health_ok = await self._health_check(project)
@@ -331,6 +399,10 @@ class DeploymentManager:
             self.logger.error(f"❌ Deployment failed: {e}")
 
             result['error'] = str(e)
+            result['failed_stage'] = current_stage
+            await self._send_deployment_update(
+                project_name, f"❌ {current_stage} fehlgeschlagen"
+            )
             duration = time.time() - start_time
             result['duration_seconds'] = duration
 
@@ -366,11 +438,18 @@ class DeploymentManager:
             self.logger.error(f"💥 Deployment exception: {e}", exc_info=True)
 
             result['error'] = str(e)
+            result['failed_stage'] = current_stage
+            await self._send_deployment_update(
+                project_name, f"❌ {current_stage}: unerwarteter Fehler"
+            )
             duration = time.time() - start_time
             result['duration_seconds'] = duration
 
-            # Send Discord notification: Deployment exception
-            await self._send_deployment_exception(project_name, str(e), duration)
+            # Dieselbe detaillierte Abschlussmeldung wie bei erwarteten Fehlern
+            # verwenden, damit keine gelbe Fortschrittsmeldung stehen bleibt.
+            await self._send_deployment_failure(
+                project_name, deploy_branch, duration, result
+            )
 
             return result
 
@@ -578,7 +657,9 @@ class DeploymentManager:
             process.kill()
             raise DeploymentError(f"Tests timed out after {self.test_timeout}s")
 
-    async def _run_post_deploy_command(self, project: Dict):
+    async def _run_post_deploy_command(
+        self, project: Dict, project_name: Optional[str] = None
+    ):
         """
         Run post-deployment command (e.g., npm install, pip install)
 
@@ -606,7 +687,19 @@ class DeploymentManager:
                 stderr=asyncio.subprocess.PIPE
             )
 
-        stdout, stderr = await process.communicate()
+        started = time.monotonic()
+        communicate_task = asyncio.create_task(process.communicate())
+        while True:
+            done, _ = await asyncio.wait({communicate_task}, timeout=30)
+            if done:
+                stdout, stderr = communicate_task.result()
+                break
+            if project_name:
+                elapsed = int(time.monotonic() - started)
+                await self._send_deployment_update(
+                    project_name,
+                    f"⏳ Post-Deploy läuft weiter ({elapsed}s vergangen) …",
+                )
 
         if process.returncode != 0:
             # Bash-Scripts (z.B. deploy.sh) schreiben Errors oft nach stdout
@@ -809,23 +902,62 @@ class DeploymentManager:
             )
         return self.bot.get_channel(self.deployment_channel_id)
 
-    async def _send_deployment_started(self, project_name: str, branch: str):
-        """Initialisiert den Step-Sammler für dieses Deployment.
-
-        Keine separate Discord-Nachricht mehr — Steps werden gesammelt
-        und im Success/Failure Embed angezeigt.
-        """
+    async def _send_deployment_started(
+        self,
+        project_name: str,
+        branch: str,
+        deploy_context: Optional[Dict] = None,
+    ):
+        """Erstellt eine editierbare Discord-Statusmeldung für den Deploy."""
         if not hasattr(self, '_deploy_steps'):
             self._deploy_steps: Dict[str, list] = {}
+        if not hasattr(self, '_deploy_messages'):
+            self._deploy_messages: Dict[str, object] = {}
+        if not hasattr(self, '_deploy_contexts'):
+            self._deploy_contexts: Dict[str, Dict] = {}
         self._deploy_steps[project_name] = []
+        self._deploy_contexts[project_name] = deploy_context or {}
         self.logger.info(f"🚀 Deployment gestartet: {project_name} ({branch})")
 
-    async def _send_deployment_update(self, project_name: str, message: str):
-        """Sammelt Deploy-Steps und loggt nur intern.
+        channel = self._kanal_fuer(project_name)
+        if not channel:
+            return
+        embed = self._build_progress_embed(project_name, branch, "Deployment wird vorbereitet …")
+        try:
+            self._deploy_messages[project_name] = await channel.send(embed=embed)
+        except Exception as exc:
+            self.logger.error(
+                f"❌ Deploy-Startmeldung konnte nicht gesendet werden: {exc}",
+                exc_info=True,
+            )
 
-        Einzelne Steps werden NICHT mehr als separate Discord-Nachrichten gesendet.
-        Stattdessen sammelt _send_deployment_success/_failure alle Steps in 1 Embed.
-        """
+    def _build_progress_embed(
+        self, project_name: str, branch: str, current: str
+    ) -> discord.Embed:
+        """Baut den aktuellen Zwischenstand für eine laufende Auslieferung."""
+        steps = getattr(self, '_deploy_steps', {}).get(project_name, [])
+        embed = discord.Embed(
+            title=f"🟡 Deployment läuft: {project_name}",
+            description="Die Auslieferung läuft. Diese Meldung wird automatisch aktualisiert.",
+            color=discord.Color.gold(),
+            timestamp=datetime.now(timezone.utc),
+        )
+        embed.add_field(name="Projekt", value=f"`{project_name}`", inline=True)
+        embed.add_field(name="Branch", value=f"`{branch}`", inline=True)
+        embed.add_field(name="Aktueller Schritt", value=current[:1024], inline=False)
+        trigger = _format_deploy_trigger(
+            getattr(self, '_deploy_contexts', {}).get(project_name)
+        )
+        if trigger:
+            embed.add_field(name="Auslöser", value=trigger[:1024], inline=False)
+        if steps:
+            embed.add_field(
+                name="Fortschritt", value="\n".join(steps[-8:])[:1024], inline=False
+            )
+        return embed
+
+    async def _send_deployment_update(self, project_name: str, message: str):
+        """Sammelt einen Schritt und aktualisiert die laufende Discord-Meldung."""
         if not hasattr(self, '_deploy_steps'):
             self._deploy_steps: Dict[str, list] = {}
         if project_name not in self._deploy_steps:
@@ -833,6 +965,38 @@ class DeploymentManager:
         timestamp = datetime.now(timezone.utc).strftime('%H:%M:%S')
         self._deploy_steps[project_name].append(f"`{timestamp}` {message}")
         self.logger.info(f"[Deploy] {project_name}: {message}")
+        progress_message = getattr(self, '_deploy_messages', {}).get(project_name)
+        if progress_message:
+            context = getattr(self, '_deploy_contexts', {}).get(project_name, {})
+            branch = str(
+                context.get('branch')
+                or self.projects.get(project_name, {}).get('branch')
+                or 'main'
+            )
+            try:
+                await progress_message.edit(
+                    embed=self._build_progress_embed(project_name, branch, message)
+                )
+            except Exception as exc:
+                self.logger.warning(
+                    f"⚠️ Deploy-Fortschritt konnte nicht aktualisiert werden: {exc}"
+                )
+
+    async def _publish_final_embed(
+        self, project_name: str, channel, embed: discord.Embed
+    ) -> None:
+        """Ersetzt die Fortschrittsmeldung durch das Ergebnis oder sendet neu."""
+        progress_message = getattr(self, '_deploy_messages', {}).pop(project_name, None)
+        try:
+            if progress_message:
+                await progress_message.edit(embed=embed)
+            else:
+                await channel.send(embed=embed)
+        except Exception as exc:
+            self.logger.error(
+                f"❌ Failed to send Discord notification: {exc}", exc_info=True
+            )
+        getattr(self, '_deploy_contexts', {}).pop(project_name, None)
 
     async def _send_deployment_success(
         self, project_name: str, branch: str, duration: float, result: Dict
@@ -862,15 +1026,16 @@ class DeploymentManager:
         embed.add_field(name="Branch", value=f"`{branch}`", inline=True)
         embed.add_field(name="Dauer", value=_format_deploy_duration(duration), inline=True)
 
+        trigger = _format_deploy_trigger(result.get('deploy_context'))
+        if trigger:
+            embed.add_field(name="Auslöser", value=trigger[:1024], inline=False)
+
         # Gesammelte Deploy-Steps als Timeline (Detail, unter der Zusammenfassung)
         if steps:
             embed.add_field(name="Verlauf", value="\n".join(steps[-10:])[:1024], inline=False)
             self._deploy_steps.pop(project_name, None)  # Cleanup
 
-        try:
-            await channel.send(embed=embed)
-        except Exception as e:
-            self.logger.error(f"❌ Failed to send Discord notification: {e}", exc_info=True)
+        await self._publish_final_embed(project_name, channel, embed)
 
         # External-Guilds benachrichtigen (Kunden-Discord)
         await self._forward_deploy_to_external(project_name, embed)
@@ -889,17 +1054,17 @@ class DeploymentManager:
         steps = getattr(self, '_deploy_steps', {}).get(project_name, [])
         ok, total, failed_step = _summarize_steps(steps)
 
+        failed_stage = result.get('failed_stage')
         # Klartext-Zusammenfassung: wie weit kam das Deployment?
         if total > 0:
-            summary = f"**{project_name}** abgebrochen — {ok}/{total} Schritten ok"
-            if failed_step is not None:
-                # Zeitstempel-Prefix `HH:MM:SS` für die Kurzfassung entfernen
-                short = failed_step.split('` ', 1)[-1].strip('`').strip()
-                summary += f", fehlgeschlagen bei: **{short}**."
-            else:
-                summary += "."
+            summary = (
+                f"**{project_name}** wurde nach {ok} erfolgreichen "
+                "Statusmeldungen abgebrochen."
+            )
         else:
             summary = f"**{project_name}** Deployment fehlgeschlagen."
+        if failed_stage:
+            summary += f" Fehler in Phase: **{failed_stage}**."
 
         embed = discord.Embed(
             title=f"❌ Deployment fehlgeschlagen: {project_name}",
@@ -912,13 +1077,21 @@ class DeploymentManager:
         embed.add_field(name="Branch", value=f"`{branch}`", inline=True)
         embed.add_field(name="Dauer", value=_format_deploy_duration(duration), inline=True)
 
+        trigger = _format_deploy_trigger(result.get('deploy_context'))
+        if trigger:
+            embed.add_field(name="Auslöser", value=trigger[:1024], inline=False)
+
         # Fehlgeschlagener Schritt klar hervorgehoben (vor der Roh-Fehlermeldung)
         if failed_step is not None:
             embed.add_field(name="⛔ Fehlgeschlagen bei", value=failed_step[:1024], inline=False)
 
-        if len(error) > 400:
-            error = error[:397] + "..."
-        embed.add_field(name="Fehler", value=f"```{error}```", inline=False)
+        embed.add_field(
+            name="Fehlerursache", value=_concise_deploy_error(error), inline=False
+        )
+        if len(error) > 1000:
+            error = "..." + error[-997:]
+        error = error.replace("```", "'''")
+        embed.add_field(name="Technische Details", value=f"```{error}```", inline=False)
 
         rollback_msg = "✅ Rollback erfolgreich" if rolled_back else "❌ Kein Rollback"
         embed.add_field(name="Rollback", value=rollback_msg, inline=True)
@@ -928,10 +1101,7 @@ class DeploymentManager:
             embed.add_field(name="Verlauf", value="\n".join(steps[-10:])[:1024], inline=False)
             self._deploy_steps.pop(project_name, None)
 
-        try:
-            await channel.send(embed=embed)
-        except Exception as e:
-            self.logger.error(f"❌ Failed to send Discord notification: {e}", exc_info=True)
+        await self._publish_final_embed(project_name, channel, embed)
 
         # External-Guilds benachrichtigen (Kunden-Discord)
         await self._forward_deploy_to_external(project_name, embed)
