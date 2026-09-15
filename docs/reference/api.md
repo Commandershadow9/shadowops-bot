@@ -798,7 +798,16 @@ deploy_mgr = DeploymentManager(bot, config)
 # Deploy project
 result = await deploy_mgr.deploy_project(
     project_name='shadowops-bot',
-    branch='main'  # optional, defaults to project config
+    branch='main',  # optional, defaults to project config
+    deploy_context={  # optional; wird in Discord verlinkt
+        'commit_sha': 'abc123...',
+        'commit_url': 'https://github.com/owner/repo/commit/abc123...',
+        'pr_number': 123,
+        'pr_title': 'Deploy-Meldungen verbessern',
+        'pr_url': 'https://github.com/owner/repo/pull/123',
+        'issues': [120],
+        'repo_url': 'https://github.com/owner/repo',
+    },
 )
 
 # Result structure:
@@ -811,9 +820,16 @@ result = await deploy_mgr.deploy_project(
 #     'backup_created': True,
 #     'deployed': True,
 #     'rolled_back': False,
-#     'error': None  # or error message if failed
+#     'error': None,  # or error message if failed
+#     'failed_stage': None,  # benannte Phase bei Fehlern
+#     'deploy_context': {...}
 # }
 ```
+
+Für normale Projekte erzeugt der Manager eine gelbe, editierbare
+Fortschrittsmeldung. Sie zeigt den aktuellen Schritt und wird bei Abschluss in
+die grüne Erfolgs- oder rote Fehlermeldung umgewandelt. Lange
+Post-Deploy-Kommandos aktualisieren die verstrichene Zeit alle 30 Sekunden.
 
 ---
 

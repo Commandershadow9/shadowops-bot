@@ -21,7 +21,7 @@ Alle Notifications laufen zentral im **DEV Commandershadow** Discord-Server (`14
 |---------|-----|-----------|-----|
 | `🤖-bot-status` | `1441655486981214309` | ShadowOps Startup-Logs, Recovery-Alerts | Bot-System-Status |
 | `👥-customer-alerts` | `1441655498515550370` | ZERODOX Eskalationen (Kunden) | DSGVO-/Customer-relevant |
-| `🚀-deployment-log` | `1441655502441414675` | ShadowOps `DeploymentManager._send_deployment_success`/`_failure` (alle Auto-Deploys). `deploy.sh` selbst postet **nicht** nach Discord — der Embed kommt aus dem Bot (Issue mayday-sim#504) | Deploy-Erfolg/Fehler/Rollback (intern, DEV-Server) |
+| `🚀-deployment-log` | `1441655502441414675` | ShadowOps `DeploymentManager` (alle Auto-Deploys). `deploy.sh` selbst postet **nicht** nach Discord — der Embed kommt aus dem Bot (Issue mayday-sim#504) | Editierbarer Live-Fortschritt; danach Deploy-Erfolg oder genaue Fehlerphase, Ursache und Rollback (intern, DEV-Server) |
 | `📊-dashboard` | `1479615549356114124` | ShadowOps `_update_dashboard_loop` (5 Min Update) | Live Status aller Projekte |
 | `🎮-mayday-sim` | `1486896113503043725` | MayDay Sim Health | Spezial-Projekt |
 
@@ -52,6 +52,18 @@ Zusätzlich zu den internen Posts oben sendet ShadowOps Deploy-Embeds an **Kunde
 **⚠️ Repo-Name (Bindestrich) vs. Config-Key (Underscore):** `_forward_deploy_to_external` bekommt den GitHub-Repo-Namen (`mayday-sim`) und muss ihn dash/underscore-tolerant auf den Config-Key (`mayday_sim`) auflösen. Fehlt die Normalisierung, bleibt der Post **still** aus — genau das war der Vorfall **#316 / Issue mayday-sim#504** (Channel wochenlang leer, ohne Fehler im Log). Restschulden gleichen Musters in `notifications_mixin.py`: **#317**.
 
 **Verwechslungsgefahr:** Der externe `#🚀-deploy-log` (Kunden, ID endet `…421840`) ist **nicht** der interne `#🚀-deployment-log` (DEV-Server, ID endet `…414675`). Zwei verschiedene Channels auf zwei verschiedenen Servern.
+
+## Lebenszyklus einer Deploy-Meldung
+
+1. Zu Beginn sendet der Manager eine gelbe Meldung `Deployment läuft`.
+2. Jeder Phasenwechsel editiert dieselbe Meldung mit aktuellem Schritt und Verlauf.
+3. Dauert das Post-Deploy-Kommando länger, erscheint alle 30 Sekunden ein
+   Herzschlag mit der verstrichenen Zeit.
+4. Erfolg oder Fehler ersetzt die gelbe Meldung. Beide Ergebnisse verlinken den
+   Commit und – wenn der Webhook sie kennt – PR sowie mit
+   `Closes`/`Fixes`/`Resolves #…` referenzierte Issues.
+5. Fehler zeigen die Phase, eine kompakte Ursache, technische Details und den
+   Rollback-Status. Dadurch entsteht kein irreführendes „alle Schritte ok“ mehr.
 
 ## Webhook-Routing (`.env` ZERODOX)
 

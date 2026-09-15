@@ -73,7 +73,9 @@ Event → TaskRouter → Codex CLI (Primary)
 - **Project Health Checks** - Real-time monitoring for all services
 - **Incident Detection** - Automatic incident creation and tracking
 - **GitHub Events** - Detaillierte Patch-Notes für Push, PR und Release Events
-- **Deployment Status** - Real-time deployment progress
+- **Deployment Status** - Eine editierbare Live-Meldung zeigt Phase, Verlauf
+  und bei langen Schritten alle 30 Sekunden die verstrichene Zeit. Das Ergebnis
+  nennt Commit, PR, referenzierte Issues und bei Fehlern die genaue Ursache.
 
 ### 🤖 Slash Commands
 

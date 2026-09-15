@@ -4,6 +4,7 @@ GitHub event handler methods for GitHubIntegration.
 
 import asyncio
 import logging
+import re
 from datetime import datetime, timezone
 from typing import Dict, Optional
 
@@ -103,6 +104,20 @@ class EventHandlersMixin:
                         push_commit_shas = [
                             sha for sha in (c.get('id') for c in commits) if sha
                         ]
+                        commit_messages = "\n".join(
+                            str(commit.get('message') or '') for commit in commits
+                        )
+                        pr_matches = re.findall(
+                            r"(?:Merge pull request #|\(#)(\d+)", commit_messages
+                        )
+                        closing_issues = sorted({
+                            int(number)
+                            for number in re.findall(
+                                r"(?i)\b(?:close[sd]?|fix(?:e[sd])?|resolve[sd]?)\s*:?[ \t]+#(\d+)",
+                                commit_messages,
+                            )
+                        })
+                        pr_number = int(pr_matches[-1]) if pr_matches else None
                         deploy_task = asyncio.create_task(
                             self._trigger_deployment(
                                 repo_name,
@@ -111,6 +126,18 @@ class EventHandlersMixin:
                                 repo_full_name=repo_full_name,
                                 full_sha=full_sha,
                                 push_commit_shas=push_commit_shas,
+                                deployment_context={
+                                    "commit_sha": full_sha,
+                                    "commit_url": (
+                                        f"{repo_url}/commit/{full_sha}" if full_sha else None
+                                    ),
+                                    "repo_url": repo_url,
+                                    "pr_number": pr_number,
+                                    "pr_url": (
+                                        f"{repo_url}/pull/{pr_number}" if pr_number else None
+                                    ),
+                                    "issues": closing_issues,
+                                },
                             )
                         )
                         self._deploy_tasks.add(deploy_task)
@@ -206,6 +233,20 @@ class EventHandlersMixin:
                                 merge_commit_sha,
                                 repo_full_name=repo_full_name,
                                 full_sha=full_merge_sha,
+                                deployment_context={
+                                    "pr_number": pr_number,
+                                    "pr_title": pr_title,
+                                    "pr_url": pr_url,
+                                    "issues": sorted({
+                                        int(number)
+                                        for number in re.findall(
+                                            r"(?i)\b(?:close[sd]?|fix(?:e[sd])?|resolve[sd]?)\s*:?[ \t]+#(\d+)",
+                                            str(pr.get("body") or ""),
+                                        )
+                                    }),
+                                    "repo_url": payload.get('repository', {}).get('html_url'),
+                                    "commit_sha": full_merge_sha,
+                                },
                             )
                         )
                         self._deploy_tasks.add(deploy_task)
