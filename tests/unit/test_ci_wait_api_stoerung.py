@@ -144,7 +144,9 @@ class _StubDeploymentManager:
     def __init__(self):
         self.calls: list = []
 
-    async def deploy_project(self, project_name: str, branch: str) -> dict:
+    async def deploy_project(
+        self, project_name: str, branch: str, deploy_context: dict | None = None
+    ) -> dict:
         self.calls.append((project_name, branch))
         return {'success': True}
 

@@ -233,6 +233,7 @@ async def test_project_config_key_erreicht_die_warteschleife():
         f"asyncio.sleep()-Aufruf durchgereicht werden müssen, gemessen: "
         f"{h.sleep_dauern}"
     )
-    h.deployment_manager.deploy_project.assert_awaited_once_with(
-        "shadowops-bot", "main"
-    )
+    h.deployment_manager.deploy_project.assert_awaited_once()
+    args, kwargs = h.deployment_manager.deploy_project.call_args
+    assert args == ("shadowops-bot", "main")
+    assert kwargs["deploy_context"]["commit_sha"].startswith("9683bbb")
