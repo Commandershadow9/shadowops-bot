@@ -1,6 +1,6 @@
 # 🗡️ ShadowOps - Active Security Guardian v5.1 🚀
 
-**Status:** AKTIV | **Version:** 5.1.0 | **Letzte Aktualisierung:** 10.06.2026
+**Status:** AKTIV | **Version:** 5.1.0 | **Letzte Aktualisierung:** 15.09.2026
 
 **ShadowOps** ist ein **vollständig autonomer Security Guardian** mit lernfähigem AI Security Analyst, KI-gesteuerter Auto-Remediation, adaptiver Session-Steuerung und wachsender Knowledge-DB — kein statischer Scanner, sondern ein **System das aus seinen Erfahrungen lernt und immer besser wird**.
 
@@ -83,6 +83,10 @@ Event → TaskRouter → Codex CLI (Primary)
 - `/bans` - Aktuell gebannte IPs (Fail2ban + CrowdSec)
 - `/docker` - Letzte Docker Scan Ergebnisse
 - `/aide` - AIDE Integrity Check Status
+
+#### CrowdSec Notfall (Owner-only)
+- `/sperren <ip>` - CrowdSec: IP-Adresse sofort sperren (ZERODOX-spezifisch, Notfall-Befehl)
+- `/entsperren <ip>` - CrowdSec: gesperrte IP-Adresse freigeben
 
 #### Auto-Remediation
 - `/maintenance [scope] [state] [minutes] [reason]` - Auto-Heal pausieren/fortsetzen global oder pro Projekt (Admin)
@@ -260,7 +264,7 @@ deployment:
   health_check_timeout: 30
 ```
 
-> **Welle 9.10 / ZERODOX #1985 — Wait-for-CI vor Auto-Deploy:** Sobald ein PR auf einen `deploy_branches`-Branch gemergt wird, wartet der Bot vor dem Trigger von `deploy.sh` auf den Abschluss der in `projects.<name>.ci_workflows` konfigurierten Workflows (z.B. `[“Web Quality”]`). Bei `failure`/`timeout` wird `deploy.sh` NICHT aufgerufen — stattdessen erscheint ein Alert im projekt-`ci_channel_id` oder `deployment_log`. Taucht innerhalb der Grace-Period kein Workflow auf, darf nur ein über die GitHub-Commit-Dateiliste verifizierter Docs-only-Commit (Top-Level `*.md`, `docs/**`, `.claude/**`) weiterlaufen. Code- und nicht eindeutig klassifizierbare Commits warten das volle Zeitfenster ab und werden danach mit einem „CI fehlt”-Alert fail-closed blockiert. Hard-Timeout 30 min (überschreibbar via `projects.<name>.ci_wait_max_min`). Exponential backoff 60s → 120s → 240s → cap 300s.
+> **Welle 9.10 / ZERODOX #1985 — Wait-for-CI vor Auto-Deploy:** Sobald ein PR auf einen `deploy_branches`-Branch gemergt wird, wartet der Bot vor dem Trigger von `deploy.sh` auf den Abschluss der in `projects.<name>.ci_workflows` konfigurierten Workflows (z.B. `["Web Quality"]`). Bei `failure`/`timeout` wird `deploy.sh` NICHT aufgerufen — stattdessen erscheint ein Alert im projekt-`ci_channel_id` oder `deployment_log`. Taucht innerhalb der Grace-Period kein Workflow auf, darf nur ein über die GitHub-Commit-Dateiliste verifizierter Docs-only-Commit (Top-Level `*.md`, `docs/**`, `.claude/**`) weiterlaufen. Code- und nicht eindeutig klassifizierbare Commits warten das volle Zeitfenster ab und werden danach mit einem „CI fehlt"-Alert fail-closed blockiert. Hard-Timeout 30 min (überschreibbar via `projects.<name>.ci_wait_max_min`). Exponential backoff 60s → 120s → 240s → cap 300s.
 
 > **ZERODOX #2267 / ShadowOps PR #410 — Reconciliation nach grünem CI:**
 > Für Projekte mit `deploy.reconcile_on_ci_success: true` startet ein später
@@ -291,6 +295,10 @@ Security & Monitoring:
   /bans [limit]        - Gebannte IPs
   /docker              - Docker Scan Ergebnisse
   /aide                - AIDE Check-Status
+
+CrowdSec Notfall (Owner-only):
+  /sperren <ip>        - IP sofort sperren (Notfall, wenn Betreiber selbst geblockt)
+  /entsperren <ip>     - gesperrte IP freigeben
 
 Auto-Remediation (alle Admin):
   /maintenance [scope] [state] [minutes] [reason]  - Auto-Heal pausieren/fortsetzen
@@ -368,6 +376,7 @@ shadowops-bot/
 │   │   ├── monitoring.py               # /status, /bans, /threats, /docker, /aide
 │   │   ├── customer_setup_commands.py  # /setup-customer-server
 │   │   ├── claude_cli.py               # /claude (owner-only Mobile-Trigger)
+│   │   ├── crowdsec_notfall.py         # /sperren, /entsperren (CrowdSec Notfall, Owner-only)
 │   │   ├── cron_heartbeat.py           # Cron-Heartbeat
 │   │   └── phase_5e_health_aggregator.py  # Health-Aggregation
 │   ├── integrations/
@@ -497,7 +506,7 @@ See [CHANGELOG.md](./CHANGELOG.md) for the full version history.
 - **PostgreSQL Databases**: 3 (security_analyst: 21 Tabellen, agent_learning: 8 Tabellen, seo_agent: 11 Tabellen)
 - **Learning Pipeline Tables**: 11 (Security: fix_attempts, fix_verifications, finding_quality, scan_coverage · Shared: agent_feedback, agent_quality_scores, agent_knowledge · Patch Notes: pn_generations, pn_variants, pn_examples · SEO: seo_fix_impact)
 - **Scan Areas**: 10 (firewall, ssh, docker, permissions, packages, services, logs, network, credentials, dependencies)
-- **Discord Commands**: 21 (inkl. /agent-stats, /claude, /security-engine, /setup-customer-server, /maintenance)
+- **Discord Commands**: 23 (inkl. /agent-stats, /claude, /security-engine, /setup-customer-server, /maintenance, /sperren, /entsperren)
 - **Monitored Projects**: 3 (GuildScout, ZERODOX, AI Agents)
 - **Auto Discord-Posts**: Session-Summaries, Feedback-Auswertungen, Weekly Summary, Meilensteine
 
