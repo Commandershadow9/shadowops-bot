@@ -18,7 +18,7 @@ paths:
 | Datei | Cog | Commands |
 |-------|-----|----------|
 | `monitoring.py` | MonitoringCog | `/status`, `/bans`, `/threats`, `/docker`, `/aide` |
-| `admin.py` | AdminCog | `/scan`, `/stop-all-fixes`, `/remediation-stats`, `/set-approval-mode`, `/reload-context`, `/release-notes`, `/pending-notes`, `/mark-duplicate` |
+| `admin.py` | AdminCog | `/maintenance`, `/scan`, `/stop-all-fixes`, `/remediation-stats`, `/set-approval-mode`, `/reload-context`, `/release-notes`, `/pending-notes`, `/mark-duplicate` |
 | `inspector.py` | InspectorCog | `/get-ai-stats`, `/projekt-status`, `/alle-projekte`, `/agent-stats`, `/security-engine` |
 | `customer_setup_commands.py` | CustomerSetupCommands | `/setup-customer-server` |
 | `claude_cli.py` | ClaudeCLICog | `/claude` (owner-only: headless Claude-Session per Mobile-Trigger) |
