@@ -94,6 +94,15 @@ class EventHandlersMixin:
                             f"🚀 Direct push to {branch} (allow_direct_push), triggering "
                             f"deployment (wait-for-CI: repo={repo_full_name}, sha={short_sha})"
                         )
+                        # ZERODOX#3391: Die vollständige Commit-Liste des
+                        # Pushes mitgeben. Ohne sie prüft die Docs-only-
+                        # Erkennung nur den HEAD — ein Push aus Code-Commit
+                        # plus nachfolgendem Docs-Commit galt dadurch als
+                        # reine Dokumentation und wurde mit `--skip-e2e`
+                        # deployt (Vorfall 15.09.2026).
+                        push_commit_shas = [
+                            sha for sha in (c.get('id') for c in commits) if sha
+                        ]
                         deploy_task = asyncio.create_task(
                             self._trigger_deployment(
                                 repo_name,
@@ -101,6 +110,7 @@ class EventHandlersMixin:
                                 short_sha,
                                 repo_full_name=repo_full_name,
                                 full_sha=full_sha,
+                                push_commit_shas=push_commit_shas,
                             )
                         )
                         self._deploy_tasks.add(deploy_task)
