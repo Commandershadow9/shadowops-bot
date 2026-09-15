@@ -696,6 +696,7 @@ class CIMixin:
         admin_merge_grace_min: int = 5,
         poll_interval_sec: int = 20,
         tree_sha_reuse_enabled: bool = True,
+        push_commit_shas: Optional[List[str]] = None,
     ) -> Literal[
         "success",
         "failure",
@@ -847,11 +848,47 @@ class CIMixin:
         # abwarten. Fail-closed bleibt: `changed_paths is None` (API-Störung,
         # siehe api_unavailable-Vorfall im Docstring) gilt NIEMALS als
         # docs-only, egal was danach passiert.
-        precomputed_changed_paths = await self._fetch_commit_files(repo_full_name, merged_sha)
+        # ZERODOX#3391 (15.09.2026): Ein PR-Merge bringt genau EINEN Commit mit,
+        # ein direkter Push auf main dagegen beliebig viele. Bis hierher wurde
+        # immer nur `merged_sha` (der HEAD) geprüft — trug ein Push einen
+        # Code-Commit und danach einen Docs-Commit, galt der GESAMTE Push als
+        # docs-only. Am 15.09. wurde so CSS-Code mehrerer Produktivseiten mit
+        # `--skip-e2e` ausgeliefert. `push_commit_shas` reicht deshalb die
+        # vollständige Commit-Liste des Push-Events durch; ohne sie (PR-Pfad)
+        # bleibt das Verhalten unverändert.
+        docs_only_kandidaten = [sha for sha in (push_commit_shas or []) if sha] or [merged_sha]
+        # Obergrenze: Ein Push mit sehr vielen Commits ist nie „nur
+        # Dokumentation" und würde je Commit einen API-Aufruf kosten. Über der
+        # Grenze fail-closed KEIN docs-only — ein überflüssiger Deploy mit
+        # voller CI ist harmlos, ungetestet ausgelieferter Code nicht.
+        _DOCS_ONLY_MAX_COMMITS = 20
+        if len(docs_only_kandidaten) > _DOCS_ONLY_MAX_COMMITS:
+            self.logger.info(
+                f"ℹ️ _wait_for_ci_completion: Push mit {len(docs_only_kandidaten)} Commits "
+                f"(> {_DOCS_ONLY_MAX_COMMITS}) — Docs-only-Kurzschluss übersprungen (fail-closed)."
+            )
+            precomputed_changed_paths = None
+        else:
+            precomputed_changed_paths = []
+            for kandidat_sha in docs_only_kandidaten:
+                pfade = await self._fetch_commit_files(repo_full_name, kandidat_sha)
+                if pfade is None:
+                    # Fail-closed über die GANZE Liste: Ein einzelner nicht
+                    # lesbarer Commit macht den Push unbekannt, nicht
+                    # „die übrigen waren ja docs-only".
+                    precomputed_changed_paths = None
+                    break
+                precomputed_changed_paths.extend(pfade)
+
         if precomputed_changed_paths is not None and _paths_are_docs_only(precomputed_changed_paths):
+            commit_hinweis = (
+                f"{merged_sha[:7]}"
+                if len(docs_only_kandidaten) == 1
+                else f"{len(docs_only_kandidaten)} Commits bis {merged_sha[:7]}"
+            )
             self.logger.info(
                 f"ℹ️ _wait_for_ci_completion: Docs-only-Commit "
-                f"{merged_sha[:7]} mit {len(precomputed_changed_paths)} Datei(en) erkannt — "
+                f"{commit_hinweis} mit {len(precomputed_changed_paths)} Datei(en) erkannt — "
                 "kein Runtime-Deployment nötig (Check vor der Polling-Schleife)."
             )
             return "docs_only"
@@ -1140,6 +1177,7 @@ class CIMixin:
         repo_full_name: Optional[str] = None,
         full_sha: Optional[str] = None,
         _repoll_round: int = 0,
+        push_commit_shas: Optional[List[str]] = None,
     ):
         """
         Trigger deployment for a repository
@@ -1216,6 +1254,7 @@ class CIMixin:
                     admin_merge_grace_min=admin_merge_grace_min,
                     poll_interval_sec=poll_interval_sec,
                     tree_sha_reuse_enabled=tree_sha_reuse_enabled,
+                    push_commit_shas=push_commit_shas,
                 )
                 if outcome == "failure":
                     await self._send_ci_wait_alert(
