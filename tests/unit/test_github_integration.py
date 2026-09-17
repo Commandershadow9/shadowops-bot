@@ -819,6 +819,11 @@ class TestWelle910WaitForCI:
         # dieser Test weiterhin genau den Timeout-Pfad prueft und nichts anderes.
         integration._fetch_commit_files = AsyncMock(return_value=None)
         integration._fetch_commit_tree_info = AsyncMock(return_value=None)
+        # ZERODOX#3328 Paket A (17.09.2026): dasselbe gilt fuer die
+        # PR-Zuordnung — ungemockt lief sie in einen echten HTTP-Request und
+        # verbrauchte die endliche monotonic-Wertefolge, Ergebnis wieder
+        # 'missing' statt 'timeout'. None = fail-closed, kein Kurzschluss.
+        integration._fetch_pull_head_shas = AsyncMock(return_value=None)
 
         monkeypatch.setattr('integrations.github_integration.ci_mixin.time.monotonic', fake_monotonic)
 
@@ -982,6 +987,11 @@ class TestWelle910WaitForCI:
         # dieser Test weiterhin genau den Timeout-Pfad prueft und nichts anderes.
         integration._fetch_commit_files = AsyncMock(return_value=None)
         integration._fetch_commit_tree_info = AsyncMock(return_value=None)
+        # ZERODOX#3328 Paket A (17.09.2026): dasselbe gilt fuer die
+        # PR-Zuordnung — ungemockt lief sie in einen echten HTTP-Request und
+        # verbrauchte die endliche monotonic-Wertefolge, Ergebnis wieder
+        # 'missing' statt 'timeout'. None = fail-closed, kein Kurzschluss.
+        integration._fetch_pull_head_shas = AsyncMock(return_value=None)
 
         monkeypatch.setattr('integrations.github_integration.ci_mixin.time.monotonic', fake_monotonic)
 
