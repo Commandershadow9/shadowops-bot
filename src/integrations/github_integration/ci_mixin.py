@@ -1523,8 +1523,33 @@ class CIMixin:
                 context.setdefault("repo_url", repo_url)
                 if full_sha:
                     context.setdefault("commit_url", f"{repo_url}/commit/{full_sha}")
-            result = await self.deployment_manager.deploy_project(
-                repo_name, branch, deploy_context=context
+            # ZERODOX#3447: Harte Zeitgrenze um den Deploy.
+            #
+            # Am 17.09.2026 meldete der Bot "Starting deployment: ZERODOX@224ff05"
+            # und danach nichts mehr — kein Ergebnis, kein deploy.sh-Prozess,
+            # kein Deploy-Log, der Deploy-Baum unveraendert, keine Ausnahme im
+            # Journal. Der Auftrag war weg, und die Reservierung blieb gesetzt:
+            # Erst ein Neustart des Bots loeste den Zustand.
+            #
+            # Ohne Grenze wartet dieser `await` unbegrenzt. Mit ihr laeuft der
+            # Fall in den `except`-Block unten, der die Reservierung freigibt
+            # und den Fehler SICHTBAR loggt — und `deploy_project` raeumt sein
+            # `active_deployments` im eigenen `finally` auf, auch bei Abbruch.
+            #
+            # ⚠️ Die Grenze ist bewusst gross. Ein echter Deploy dauert ~4 min
+            # (gemessen 17.09.), das CI-Warten liegt davor und zaehlt hier
+            # nicht mit. 45 min ist rund das Zehnfache — sie greift also nur
+            # bei einem Zustand, der ohnehin kaputt ist, und schneidet keinen
+            # langsamen, aber gesunden Lauf ab. Wer sie kleiner setzt, riskiert
+            # genau das.
+            deploy_hard_timeout_min = int(
+                (project_config or {}).get('deploy', {}).get('hard_timeout_min', 45)
+            )
+            result = await asyncio.wait_for(
+                self.deployment_manager.deploy_project(
+                    repo_name, branch, deploy_context=context
+                ),
+                timeout=max(1, deploy_hard_timeout_min) * 60,
             )
 
             if result['success']:
