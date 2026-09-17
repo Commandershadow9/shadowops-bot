@@ -44,6 +44,11 @@ TEAM_MAPPING: dict[str, tuple[str, str]] = {
     # git-Namen. Ohne diese Zeile erscheint der Betreiber doppelt,
     # zuletzt als ["Shadow", "Christian Jahnke"] in zerodox v1.36.0.
     'christian jahnke': ('Shadow', 'Founder & Lead Dev'),
+    # GitHub ordnet Commits mit diesem lokalen Klarname dem Account
+    # @teamakqura zu. In öffentlichen Changelogs darf nur der GitHub-Name
+    # erscheinen.
+    'andreas edinger': ('teamakqura', 'Contributor'),
+    'teamakqura': ('teamakqura', 'Contributor'),
     # Wenn neue Team-Mitglieder dazukommen: hier eintragen.
     # Beispiel:
     # 'newdesigner':    ('Newbie', 'Game Designer'),

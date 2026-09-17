@@ -74,6 +74,10 @@ class TestResolveTeamMember:
         result = mixin._resolve_team_member('COMMANDERSHADOW9')
         assert result == ('Shadow', 'Founder & Lead Dev')
 
+    def test_klarname_wird_zu_github_name(self, mixin):
+        result = mixin._resolve_team_member('Andreas Edinger')
+        assert result == ('teamakqura', 'Contributor')
+
 
 # ============================================================================
 # CREDITS-AUFBEREITUNG

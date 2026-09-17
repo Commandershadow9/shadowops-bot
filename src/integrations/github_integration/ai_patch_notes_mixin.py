@@ -32,6 +32,9 @@ class AIPatchNotesMixin:
         'mapu': ('Mapu', 'Co-Founder & Dev'),
         # GuildScout / ZERODOX
         'commandershadow': ('Shadow', 'Founder & Lead Dev'),
+        # Öffentlicher GitHub-Name statt lokalem Git-Klarnamen.
+        'andreas edinger': ('teamakqura', 'Contributor'),
+        'teamakqura': ('teamakqura', 'Contributor'),
     }
 
     # Git-Autoren die NICHT als eigenständige Credits erscheinen sollen
