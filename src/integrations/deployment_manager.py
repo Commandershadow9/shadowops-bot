@@ -20,7 +20,30 @@ try:  # pragma: no cover - Import-Pfad haengt von pythonpath ab
 except ImportError:  # pragma: no cover
     from src.utils.alert_humanizer import format_downtime  # type: ignore[no-redef]
 
-logger = logging.getLogger(__name__)
+# ⚠️ Bewusst 'shadowops.deployment' und NICHT getLogger(__name__).
+#
+# Die Handler des Bots haengen am Logger 'shadowops' (src/bot.py:497). Ein
+# Logger namens `src.integrations.deployment_manager` liegt ausserhalb dieses
+# Baums — seine Ausgaben erreichen das Journal nie. Jede Zeile dieses Moduls
+# war damit unsichtbar, und ein Deploy hinterliess exakt EINE Spur: die
+# Ergebniszeile, die `ci_mixin` selbst schreibt.
+#
+# Was das kostet, zeigte der 17.09.2026: Ein Deploy fuer 224ff05 meldete
+# "Starting deployment" und danach nichts. Kein Ergebnis, kein deploy.sh-
+# Prozess, kein Deploy-Log, der Deploy-Baum unveraendert. Es gab schlicht
+# nichts, woran zu erkennen gewesen waere, WO er stehenblieb — 35 Minuten
+# Diagnose fuer eine Frage, die eine sichtbare Log-Zeile beantwortet haette.
+#
+# `shadowops.deployment` erbt die Handler und benennt zugleich die Quelle,
+# genau wie die bereits sichtbaren `shadowops.project_monitor` und
+# `shadowops.context`.
+#
+# ⚠️ Dasselbe Muster steckt in weiteren Modulen (incident_manager,
+# self_healing, customer_notifications, zerodox_auto_fix_gate und mehr). Sie
+# sind hier bewusst NICHT mitgeaendert: Fuer den Deploy-Pfad ist der Schaden
+# belegt, fuer die anderen nicht — und eine Sammeländerung ohne Befund macht
+# den PR unpruefbar.
+logger = logging.getLogger('shadowops.deployment')
 
 
 # Marker, an denen ein gesammelter Deploy-Step als fehlgeschlagen erkannt wird.
