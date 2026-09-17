@@ -154,6 +154,15 @@ def test_extract_credits_unknown_author():
     assert credits[0]["role"] == "Contributor"
 
 
+def test_extract_credits_veroeffentlicht_gitnamen_statt_klarname():
+    commits = [
+        {"author": {"name": "Andreas Edinger"}},
+        {"author": {"name": "teamakqura"}},
+    ]
+    credits = _extract_credits(commits)
+    assert credits == [{"name": "teamakqura", "role": "Contributor", "commits": 2}]
+
+
 @pytest.mark.asyncio
 async def test_classify_player_facing_detected(ctx_major):
     await classify(ctx_major)
