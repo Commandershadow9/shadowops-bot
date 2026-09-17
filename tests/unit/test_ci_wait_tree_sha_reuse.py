@@ -47,6 +47,11 @@ from src.integrations.github_integration.ci_mixin import CIMixin
 _MERGE_SHA = "1111111111111111111111111111111111111a"
 _PARENT1_SHA = "2222222222222222222222222222222222222b"
 _PARENT2_SHA = "3333333333333333333333333333333333333c"
+_PR_HEAD_SHA = "4444444444444444444444444444444444444d"
+
+#: Sentinel: Der Test hat zum PR-Weg (ZERODOX#3328 Paket A) nichts gesagt.
+#: Wirkt wie eine API-Unklarheit, also fail-closed.
+_NICHT_GESETZT = object()
 
 
 def _lauf(name: str, status: str, conclusion: str | None = None) -> dict:
@@ -65,15 +70,31 @@ class _TreeReuseHarness(CIMixin):
     von Antworten ab (wird der Reihe nach abgearbeitet, letzter Wert wiederholt
     sich -- wie bei `_SleepSpurHarness` in test_ci_wait_poll_intervall.py)."""
 
-    def __init__(self, tree_info: dict, workflow_runs_by_sha: dict):
+    def __init__(self, tree_info: dict, workflow_runs_by_sha: dict, pull_heads=_NICHT_GESETZT):
         self.logger = logging.getLogger("test-ci-wait-tree-reuse")
         self._tree_info = tree_info
         self._workflow_runs_by_sha = {
             sha: list(antworten) for sha, antworten in workflow_runs_by_sha.items()
         }
+        # ZERODOX#3328 Paket A: sha -> Liste von PR-HEAD-SHAs, [] = nachweislich
+        # kein PR, None = API-Unklarheit (muss fail-closed wirken).
+        # `_NICHT_GESETZT` bedeutet "dieser Test kennt den Weg nicht" und
+        # verhaelt sich wie eine API-Unklarheit — so bleiben die aelteren
+        # Testfaelle unveraendert gueltig, ohne sich auf eine AttributeError
+        # zu verlassen.
+        self._pull_heads = pull_heads
         self.tree_info_aufrufe: list[str] = []
         self.workflow_aufrufe: list[str] = []
+        self.pull_aufrufe: list[str] = []
         self.sleep_dauern: list = []
+
+    async def _fetch_pull_head_shas(self, repo_full_name: str, sha: str):
+        self.pull_aufrufe.append(sha)
+        if self._pull_heads is _NICHT_GESETZT:
+            return None
+        if isinstance(self._pull_heads, dict):
+            return self._pull_heads.get(sha)
+        return self._pull_heads
 
     async def _fetch_commit_files(self, repo_full_name: str, sha: str):
         # Fixe, nicht-docs-only Pfadliste -- dieser Testfokus ist die
@@ -211,12 +232,16 @@ async def test_tree_gleich_aber_rot_wartet_normal(monkeypatch):
 
 
 @pytest.mark.asyncio
-async def test_tree_unterschiedlich_wartet_normal(monkeypatch):
-    """(c) Baeume unterschiedlich (z.B. echter 3-Wege-Merge mit eigenem
-    Merge-Commit-Inhalt) -> kein Shortcut, normaler Poll auf den
-    Merge-Commit. merge^2 darf dafuer gar nicht erst auf CI-Status geprueft
-    werden -- das waere verschwendete Arbeit, wenn der Tree ohnehin
-    abweicht."""
+async def test_tree_unterschiedlich_ohne_paket_a_wartet_normal(monkeypatch):
+    """(c) Baeume unterschiedlich, Paket A ABGESCHALTET -> kein Shortcut,
+    normaler Poll auf den Merge-Commit. merge^2 darf dafuer gar nicht erst auf
+    CI-Status geprueft werden -- das waere verschwendete Arbeit, wenn der Tree
+    ohnehin abweicht.
+
+    Dieser Fall haelt den Zustand VOR ZERODOX#3328 Paket A fest. Er muss
+    erhalten bleiben, weil `ci_wait_pr_head_reuse: false` genau dorthin
+    zurueckschaltet -- und dieser Rueckweg ist die Absicherung fuer den Fall,
+    dass Paket A sich als Fehlgriff erweist."""
     h = _TreeReuseHarness(
         tree_info={
             _MERGE_SHA: {"tree_sha": "TREE_MERGE", "parent_shas": [_PARENT1_SHA, _PARENT2_SHA]},
@@ -227,7 +252,9 @@ async def test_tree_unterschiedlich_wartet_normal(monkeypatch):
         },
     )
 
-    ergebnis = await _warte(h, monkeypatch, max_wait_min=30, poll_interval_sec=1)
+    ergebnis = await _warte(
+        h, monkeypatch, max_wait_min=30, poll_interval_sec=1, pr_head_reuse_enabled=False
+    )
 
     assert ergebnis == "success"
     assert _MERGE_SHA in h.workflow_aufrufe
@@ -235,6 +262,141 @@ async def test_tree_unterschiedlich_wartet_normal(monkeypatch):
         "Bei abweichendem Tree ist der CI-Status von merge^2 irrelevant -- "
         f"er darf gar nicht erst abgefragt werden. Gemessen: {h.workflow_aufrufe}."
     )
+
+
+@pytest.mark.asyncio
+async def test_tree_unterschiedlich_mit_paket_a_nutzt_pr_head(monkeypatch):
+    """(c2) Baeume unterschiedlich, Paket A AN -> der gruene Stand des
+    PR-HEAD wird trotzdem wiederverwendet.
+
+    Das ist der Kern von ZERODOX#3328 Paket A. Der Baum weicht ab, sobald
+    zwischen PR-Erstellung und Merge irgendein anderer Commit auf main landet
+    -- belegt am 16.09.2026: PR #3404 wurde nach #3405 gemergt, der strenge
+    Riegel schlug zu, der Merge hing. Nachdem `push: main` aus
+    `web-quality.yml` entfernt ist, gibt es fuer den Merge-Commit ueberhaupt
+    keinen Lauf mehr; ohne diesen Weg wartete der Bot die vollen
+    `max_wait_min` und lieferte danach NICHT aus.
+
+    Geprueft wird deshalb ausdruecklich auch, dass auf den Merge-Commit KEIN
+    Poll mehr faellt -- genau die Wartezeit ist der Ertrag."""
+    h = _TreeReuseHarness(
+        tree_info={
+            _MERGE_SHA: {"tree_sha": "TREE_MERGE", "parent_shas": [_PARENT1_SHA, _PARENT2_SHA]},
+            _PARENT2_SHA: {"tree_sha": "TREE_ANDERS", "parent_shas": [_PARENT1_SHA]},
+        },
+        workflow_runs_by_sha={
+            _PARENT2_SHA: [{"workflow_runs": [_lauf("Web Quality", "completed", "success")]}],
+        },
+    )
+
+    ergebnis = await _warte(h, monkeypatch, max_wait_min=30, poll_interval_sec=1)
+
+    assert ergebnis == "success"
+    assert _PARENT2_SHA in h.workflow_aufrufe
+    assert _MERGE_SHA not in h.workflow_aufrufe, (
+        "Der Merge-Commit darf gar nicht mehr gepollt werden -- fuer ihn "
+        "existiert nach Paket A kein Lauf, und das Warten darauf ist exakt "
+        f"die Blindzeit, die entfaellt. Gemessen: {h.workflow_aufrufe}."
+    )
+    assert h.sleep_dauern == [], (
+        "Kein einziger Schlaf erwartet -- der Kurzschluss sitzt VOR der "
+        f"Polling-Schleife. Gemessen: {h.sleep_dauern}."
+    )
+
+
+@pytest.mark.asyncio
+async def test_squash_merge_nutzt_den_zugeordneten_pr(monkeypatch):
+    """(c3) Squash-Merge: EIN Elternteil, aber ein zugeordneter, gemergter PR
+    mit gruenem HEAD -> Wiederverwendung.
+
+    Gemessen auf der main-Linie von ZERODOX ueber 30 Tage (17.09.2026):
+    387 Merge-Commits, dazu 68 Ein-Eltern-Commits, davon 51 mit Code. Alle 51
+    hatten einen zugeordneten PR, keiner war ein echter Direkt-Push.
+
+    Eine Wiederverwendung, die nur ueber `merge^2` geht, laesst diese 51
+    durchfallen -- nach dem Entfernen von `push: main` haetten sie jeweils die
+    vollen `max_wait_min` gewartet und waeren danach NICHT ausgeliefert worden.
+    Rund 1,7-mal taeglich, also schlimmer als das Problem, das Paket A loest.
+    """
+    h = _TreeReuseHarness(
+        tree_info={
+            _MERGE_SHA: {"tree_sha": "TREE_SQUASH", "parent_shas": [_PARENT1_SHA]},
+        },
+        workflow_runs_by_sha={
+            _PR_HEAD_SHA: [{"workflow_runs": [_lauf("Web Quality", "completed", "success")]}],
+        },
+        pull_heads=[_PR_HEAD_SHA],
+    )
+
+    ergebnis = await _warte(h, monkeypatch, max_wait_min=30, poll_interval_sec=1)
+
+    assert ergebnis == "success"
+    assert _PR_HEAD_SHA in h.workflow_aufrufe
+    assert _MERGE_SHA not in h.workflow_aufrufe, (
+        "Fuer den Squash-Commit existiert nach Paket A kein Lauf -- er darf "
+        f"nicht gepollt werden. Gemessen: {h.workflow_aufrufe}."
+    )
+    assert h.sleep_dauern == []
+
+
+@pytest.mark.asyncio
+async def test_direkt_push_ohne_pr_bleibt_fail_closed(monkeypatch):
+    """(c4) Ein-Eltern-Commit OHNE zugeordneten PR -> KEIN Kurzschluss.
+
+    Das ist ein echter Direkt-Push auf main. In 30 Tagen kam er kein einziges
+    Mal vor -- und genau deshalb darf er hier nicht durchrutschen: ungeprueft
+    auf main geschobener Code soll NICHT ohne Lauf ausgeliefert werden. Eine
+    leere PR-Liste ist ein nachweisliches "kein PR", kein Anlass zur Nachsicht.
+    """
+    h = _TreeReuseHarness(
+        tree_info={
+            _MERGE_SHA: {"tree_sha": "TREE_DIREKT", "parent_shas": [_PARENT1_SHA]},
+        },
+        workflow_runs_by_sha={
+            _MERGE_SHA: [{"workflow_runs": [_lauf("Web Quality", "completed", "success")]}],
+        },
+        pull_heads=[],
+    )
+
+    ergebnis = await _warte(h, monkeypatch, max_wait_min=30, poll_interval_sec=1)
+
+    # Der normale Poll auf den Commit selbst findet hier noch einen Lauf
+    # (Testaufbau); entscheidend ist, dass der Kurzschluss NICHT gegriffen hat.
+    assert ergebnis == "success"
+    assert _MERGE_SHA in h.workflow_aufrufe, (
+        "Ohne zugeordneten PR muss der Commit selbst gepollt werden -- "
+        f"gemessen: {h.workflow_aufrufe}."
+    )
+
+
+@pytest.mark.asyncio
+async def test_pr_zuordnung_unklar_bleibt_fail_closed(monkeypatch):
+    """(c5) Die PR-Zuordnung ist nicht ermittelbar (API-Fehler) -> kein
+    Kurzschluss.
+
+    `None` heisst "ich konnte nicht nachsehen", niemals "es gibt keinen PR".
+    Dieselbe Unterscheidung, an der der `mcp-drift-watchdog` einmal
+    gescheitert ist: Zwischen "ist aus" und "ich kann nicht nachsehen" muss
+    ein Wachposten unterscheiden."""
+    h = _TreeReuseHarness(
+        tree_info={
+            _MERGE_SHA: {"tree_sha": "TREE_SQUASH", "parent_shas": [_PARENT1_SHA]},
+        },
+        workflow_runs_by_sha={
+            _MERGE_SHA: [{"workflow_runs": [_lauf("Web Quality", "completed", "success")]}],
+            _PR_HEAD_SHA: [{"workflow_runs": [_lauf("Web Quality", "completed", "success")]}],
+        },
+        pull_heads=None,
+    )
+
+    ergebnis = await _warte(h, monkeypatch, max_wait_min=30, poll_interval_sec=1)
+
+    assert ergebnis == "success"
+    assert _PR_HEAD_SHA not in h.workflow_aufrufe, (
+        "Bei unklarer PR-Zuordnung darf kein fremder Commit als Beleg "
+        f"herangezogen werden. Gemessen: {h.workflow_aufrufe}."
+    )
+    assert _MERGE_SHA in h.workflow_aufrufe
 
 
 @pytest.mark.asyncio

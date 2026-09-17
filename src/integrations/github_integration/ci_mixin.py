@@ -687,6 +687,131 @@ class CIMixin:
             )
             return None
 
+    async def _fetch_pull_head_shas(
+        self,
+        repo_full_name: str,
+        sha: str,
+    ) -> Optional[List[str]]:
+        """HEAD-SHAs der Pull Requests laden, zu denen dieser Commit gehoert.
+
+        ZERODOX#3328 Paket A. Ergaenzt `_fetch_commit_tree_info` um den Fall,
+        den die Eltern-Kette NICHT abdeckt: **Squash-Merges**.
+
+        Warum das noetig ist -- gemessen auf der main-Linie von ZERODOX ueber
+        30 Tage (Stand 17.09.2026):
+
+            387 Merge-Commits  (zwei Eltern, merge^2 == PR-HEAD)
+             68 Ein-Eltern-Commits, davon 51 mit Code
+
+        Die 51 sind Squash-Merges. Sie haben KEINEN zweiten Elternteil -- nur
+        GitHubs `(#PR)`-Suffix im Betreff. Eine Wiederverwendung, die
+        ausschliesslich ueber `merge^2` geht, laesst sie durchfallen; nachdem
+        `push: main` aus `web-quality.yml` entfernt ist, existiert fuer sie
+        dann ueberhaupt kein CI-Lauf mehr, und der Bot wartet die vollen
+        `max_wait_min` ab, um danach fail-closed NICHT auszuliefern. Das waere
+        rund 1,7-mal taeglich passiert -- schlimmer als das Problem, das
+        Paket A loest.
+
+        Von denselben 51 Commits hatten **51** einen zugeordneten PR und
+        **null** waren echte Direkt-Pushes. Dieser Endpunkt ist damit der
+        verlaessliche Weg, und der Direkt-Push bleibt bewusst fail-closed:
+        ungeprueft auf `main` geschobener Code soll NICHT ohne Lauf raus.
+
+        Fail-closed wie die Schwestermethoden: JEDE Unklarheit (HTTP-Fehler,
+        falscher Typ, fehlendes Feld, Exception) liefert None. None heisst fuer
+        den Aufrufer "keine Wiederverwendung moeglich" -- niemals "kein PR
+        vorhanden". Eine LEERE Liste dagegen heisst nachweislich "kein PR".
+
+        Returns:
+            Liste der HEAD-SHAs (moeglicherweise leer) oder None bei Fehler.
+        """
+        if not repo_full_name or not sha:
+            return None
+
+        url = f"https://api.github.com/repos/{repo_full_name}/commits/{sha}/pulls"
+        try:
+            # Token-Beschaffung innerhalb des try-Blocks -- Begruendung siehe
+            # _fetch_commit_tree_info: Ein Harness ohne _get_github_token()
+            # darf hier keine durchschlagende AttributeError ausloesen.
+            headers = {"Accept": "application/vnd.github+json"}
+            token = self._get_github_token()
+            if token:
+                headers["Authorization"] = f"token {token}"
+
+            async with aiohttp.ClientSession(headers=headers) as session:
+                async with session.get(url, timeout=20) as resp:
+                    if resp.status != 200:
+                        body = await resp.text()
+                        self.logger.warning(
+                            f"⚠️ Zugehoerige PRs fuer {repo_full_name}@{sha[:7]} "
+                            f"nicht ladbar ({resp.status}): {body[:200]}"
+                        )
+                        return None
+
+                    payload = await resp.json()
+                    if not isinstance(payload, list):
+                        self.logger.warning(
+                            f"⚠️ Unerwartete Antwortform fuer die PRs zu "
+                            f"{repo_full_name}@{sha[:7]}: {type(payload).__name__}"
+                        )
+                        return None
+
+                    head_shas: List[str] = []
+                    for eintrag in payload:
+                        if not isinstance(eintrag, dict):
+                            continue
+                        head = eintrag.get("head")
+                        if not isinstance(head, dict):
+                            continue
+                        head_sha = head.get("sha")
+                        # Nur gemergte PRs zaehlen. Ein offener PR, der
+                        # denselben Commit enthaelt, sagt nichts darueber, ob
+                        # DIESER Stand auf main geprueft ist.
+                        if isinstance(head_sha, str) and head_sha and eintrag.get("merged_at"):
+                            head_shas.append(head_sha)
+
+                    return head_shas
+        except Exception as e:
+            self.logger.error(
+                f"❌ Fehler beim Laden der zugehoerigen PRs fuer "
+                f"{repo_full_name}@{sha[:7]}: {e}",
+                exc_info=True,
+            )
+            return None
+
+    async def _checks_sind_vollstaendig_gruen(
+        self,
+        repo_full_name: str,
+        sha: str,
+        workflow_names_lower,
+    ) -> Optional[int]:
+        """Prueft, ob auf `sha` alle geforderten Workflows gruen abgeschlossen sind.
+
+        Returns:
+            Zahl der gruenen Workflows, oder None wenn nicht (Fehler, kein
+            relevanter Lauf, noch nicht fertig, oder mindestens einer rot).
+            Fail-closed: None ist NIE ein Beleg fuer Gruen.
+        """
+        alle_runs = await self._fetch_workflow_runs_for_sha(repo_full_name, sha)
+        if alle_runs is None:
+            return None
+        runs = alle_runs.get("workflow_runs")
+        if not isinstance(runs, list):
+            return None
+
+        (
+            _relevant,
+            latest_per_workflow,
+            all_completed,
+            any_failed,
+            _failed_run,
+            _pending_names,
+        ) = _klassifiziere_workflow_runs(runs, workflow_names_lower)
+
+        if latest_per_workflow and all_completed and not any_failed:
+            return len(latest_per_workflow)
+        return None
+
     async def _wait_for_ci_completion(
         self,
         repo_full_name: str,
@@ -696,6 +821,7 @@ class CIMixin:
         admin_merge_grace_min: int = 5,
         poll_interval_sec: int = 20,
         tree_sha_reuse_enabled: bool = True,
+        pr_head_reuse_enabled: bool = True,
         push_commit_shas: Optional[List[str]] = None,
     ) -> Literal[
         "success",
@@ -788,6 +914,16 @@ class CIMixin:
             tree_sha_reuse_enabled: Tree-SHA-Reuse (ZERODOX#3328 Task 4,
                 project_config-Key `ci_wait_tree_sha_reuse`) an/aus. Default
                 True. Siehe Docstring-Abschnitt weiter unten.
+            pr_head_reuse_enabled: PR-Head-Wiederverwendung ohne
+                Tree-Bedingung (ZERODOX#3328 Paket A, project_config-Key
+                `ci_wait_pr_head_reuse`) an/aus. Default True.
+
+                ⚠️ Dieser Schalter gehoert zu `push: main` in
+                `web-quality.yml`. Wer ihn auf False setzt, WAEHREND dort kein
+                Merge-Lauf mehr startet, bringt #3230 zurueck: Der Bot wartet
+                dann `max_wait_min` auf einen Workflow, den niemand mehr
+                ausloest, und verwirft solange jeden Folge-Auftrag. Beides
+                gehoert zusammen zurueckgenommen oder gar nicht.
 
         Returns:
             "success"      — alle required Workflows haben conclusion=success
@@ -905,57 +1041,116 @@ class CIMixin:
         # vollstaendig gruene CI auf merge^2 fallen jeweils durch zum
         # normalen Polling unten — der Kurzschluss liefert NIEMALS direkt
         # "failure", nur zusaetzliche Evidenz fuer "success".
-        if tree_sha_reuse_enabled:
+        if tree_sha_reuse_enabled or pr_head_reuse_enabled:
             tree_info_merge = await self._fetch_commit_tree_info(repo_full_name, merged_sha)
-            if tree_info_merge is not None:
-                parent_shas = tree_info_merge.get("parent_shas") or []
-                if len(parent_shas) >= 2:
-                    parent2_sha = parent_shas[1]
-                    tree_info_parent2 = await self._fetch_commit_tree_info(
-                        repo_full_name, parent2_sha
+            merge_tree_sha = tree_info_merge.get("tree_sha") if tree_info_merge else None
+            parent_shas = (tree_info_merge or {}).get("parent_shas") or []
+            parent2_sha = parent_shas[1] if len(parent_shas) >= 2 else None
+
+            # --- Weg 1: strenge Tree-Gleichheit (Task 4, unveraendert) -------
+            # Greift nur bei Merge-Commits, deren Baum bit-identisch mit dem
+            # des PR-HEAD ist. Bleibt erhalten, damit sich Paket A ueber
+            # `ci_wait_pr_head_reuse` abschalten laesst, ohne den vorherigen
+            # Zustand mitzunehmen.
+            if tree_sha_reuse_enabled and parent2_sha and merge_tree_sha:
+                tree_info_parent2 = await self._fetch_commit_tree_info(
+                    repo_full_name, parent2_sha
+                )
+                if (
+                    tree_info_parent2 is not None
+                    and merge_tree_sha == tree_info_parent2.get("tree_sha")
+                ):
+                    gruene = await self._checks_sind_vollstaendig_gruen(
+                        repo_full_name, parent2_sha, workflow_names_lower
                     )
-                    merge_tree_sha = tree_info_merge.get("tree_sha")
-                    if (
-                        tree_info_parent2 is not None
-                        and merge_tree_sha
-                        and merge_tree_sha == tree_info_parent2.get("tree_sha")
-                    ):
-                        # Erst JETZT, nach bestaetigter Tree-Gleichheit, den
-                        # CI-Status von merge^2 laden — ein abweichender Baum
-                        # macht diesen Aufruf ueberfluessig (siehe Test c).
-                        all_runs_parent2 = await self._fetch_workflow_runs_for_sha(
-                            repo_full_name, parent2_sha
+                    if gruene:
+                        self.logger.info(
+                            "✅ ZERODOX#3328 Task 4: Tree-SHA-Reuse — Merge-Commit "
+                            f"{merged_sha[:7]} hat denselben Tree wie sein zweiter "
+                            f"Parent {parent2_sha[:7]}; {gruene} bereits gruene "
+                            "Check(s) werden wiederverwendet. Uebersprungen wird "
+                            "damit der Merge-Lauf auf main, NICHT der PR-Lauf."
                         )
-                        if all_runs_parent2 is not None:
-                            parent2_runs = all_runs_parent2.get("workflow_runs")
-                            if isinstance(parent2_runs, list):
-                                (
-                                    _relevant_p2,
-                                    latest_per_workflow_p2,
-                                    all_completed_p2,
-                                    any_failed_p2,
-                                    _failed_run_p2,
-                                    _pending_names_p2,
-                                ) = _klassifiziere_workflow_runs(
-                                    parent2_runs, workflow_names_lower
-                                )
-                                if (
-                                    latest_per_workflow_p2
-                                    and all_completed_p2
-                                    and not any_failed_p2
-                                ):
-                                    self.logger.info(
-                                        "✅ ZERODOX#3328 Task 4: Tree-SHA-Reuse — "
-                                        f"Merge-Commit {merged_sha[:7]} (tree "
-                                        f"{merge_tree_sha}) hat denselben Tree wie sein "
-                                        f"zweiter Parent {parent2_sha[:7]} (tree "
-                                        f"{tree_info_parent2.get('tree_sha')}) — "
-                                        f"{len(latest_per_workflow_p2)} bereits gruene "
-                                        "Check(s) auf dem PR-HEAD-Commit werden fuer den "
-                                        "Merge-Commit wiederverwendet, kein zusaetzlicher "
-                                        "Poll noetig."
-                                    )
-                                    return "success"
+                        return "success"
+
+            # --- Weg 2: gruener PR-Stand, ohne Tree-Bedingung (Paket A) ------
+            #
+            # Warum die Tree-Gleichheit als BEDINGUNG faellt: GitHub loest beim
+            # "Merge pull request" keine Konflikte selbst auf -- bei Konflikten
+            # verweigert es den Merge. Ein Merge-Commit enthaelt deshalb nur die
+            # Aenderungen des PR plus die bereits auf main gepruefte Historie,
+            # nichts Ungeprueftes. Sobald zwischen PR-Erstellung und Merge ein
+            # anderer Commit auf main landet, weicht der Baum jedoch ab, und
+            # Weg 1 faellt durch -- belegt am 16.09.2026: PR #3404 wurde nach
+            # #3405 gemergt, der Riegel schlug zu, der Merge hing.
+            #
+            # Was NICHT abgedeckt bleibt, sind semantische Konflikte: PR A
+            # aendert eine Funktion, PR B ihren Aufrufer, beide einzeln gruen,
+            # zusammen kaputt. Genau die faengt der Tagesabschluss-Scan ab
+            # (ZERODOX#3328 Paket B, `tagesabschluss.yml`). Wer Paket A ohne
+            # dieses Netz betreibt, traegt das Risiko ungefedert.
+            #
+            # ⚠️ `merge^2` allein reicht NICHT: Squash-Merges haben nur EINEN
+            # Elternteil. Auf der main-Linie von ZERODOX waren das in 30 Tagen
+            # 51 Code-Commits -- alle mit zugeordnetem PR, keiner ein echter
+            # Direkt-Push (gemessen 17.09.2026). Deshalb zusaetzlich der
+            # Umweg ueber `GET /commits/{sha}/pulls`.
+            if pr_head_reuse_enabled:
+                # Reihenfolge ist Absicht: erst der zweite Elternteil, den wir
+                # ohnehin schon in der Hand haben, DANN erst die zusaetzliche
+                # PR-Abfrage. Der haeufigste Fall ist der Merge-Commit (387 von
+                # 455 in 30 Tagen) — fuer ihn faellt damit kein weiterer
+                # API-Aufruf an, und Testdoubles, die nur die Eltern-Kette
+                # kennen, brauchen den neuen Endpunkt gar nicht erst.
+                if parent2_sha:
+                    gruene = await self._checks_sind_vollstaendig_gruen(
+                        repo_full_name, parent2_sha, workflow_names_lower
+                    )
+                    if gruene:
+                        self.logger.info(
+                            "✅ ZERODOX#3328 Paket A: PR-Head-Wiederverwendung — "
+                            f"fuer {merged_sha[:7]} sind auf dem zweiten Parent "
+                            f"{parent2_sha[:7]} {gruene} Check(s) gruen "
+                            "abgeschlossen (ohne Tree-Bedingung). Der Merge-Lauf "
+                            "auf main entfaellt; semantische Konflikte deckt der "
+                            "Tagesabschluss-Scan ab. Abschaltbar ueber "
+                            "project_config `ci_wait_pr_head_reuse: false`."
+                        )
+                        return "success"
+
+                # Zweiter Weg NUR fuer Commits ohne (gruenen) zweiten Elternteil
+                # — praktisch: Squash-Merges.
+                pr_heads = await self._fetch_pull_head_shas(repo_full_name, merged_sha)
+                if pr_heads is None:
+                    # Fail-closed: "nicht ermittelbar" heisst NICHT "kein PR".
+                    self.logger.info(
+                        "ℹ️ ZERODOX#3328 Paket A: PR-Zuordnung fuer "
+                        f"{merged_sha[:7]} nicht ermittelbar — kein Kurzschluss, "
+                        "es wird normal gepollt."
+                    )
+                else:
+                    for head_sha in pr_heads:
+                        if head_sha == parent2_sha:
+                            continue  # oben bereits erfolglos geprueft
+                        gruene = await self._checks_sind_vollstaendig_gruen(
+                            repo_full_name, head_sha, workflow_names_lower
+                        )
+                        if gruene:
+                            self.logger.info(
+                                "✅ ZERODOX#3328 Paket A: PR-Head-Wiederverwendung "
+                                f"— fuer {merged_sha[:7]} sind auf {head_sha[:7]} "
+                                f"(HEAD des zugeordneten PR, Squash-Merge) {gruene} "
+                                "Check(s) gruen abgeschlossen. Abschaltbar ueber "
+                                "project_config `ci_wait_pr_head_reuse: false`."
+                            )
+                            return "success"
+                    if not pr_heads:
+                        self.logger.info(
+                            "ℹ️ ZERODOX#3328 Paket A: Zu "
+                            f"{merged_sha[:7]} gehoert nachweislich kein gemergter "
+                            "PR (Direkt-Push auf main) — kein Kurzschluss, es wird "
+                            "normal gepollt."
+                        )
 
         admin_merge_deadline_logged = False
 
@@ -1247,6 +1442,14 @@ class CIMixin:
                 tree_sha_reuse_enabled = bool(
                     project_config.get('ci_wait_tree_sha_reuse', True)
                 )
+                # ZERODOX#3328 Paket A: Wiederverwendung des gruenen PR-Standes
+                # OHNE Tree-Bedingung — deckt zusaetzlich Squash-Merges ab, die
+                # keinen zweiten Elternteil haben. Gehoert zusammen mit dem
+                # entfallenen `push: main` in web-quality.yml; siehe die Warnung
+                # im Docstring von _wait_for_ci_completion.
+                pr_head_reuse_enabled = bool(
+                    project_config.get('ci_wait_pr_head_reuse', True)
+                )
                 outcome = await self._wait_for_ci_completion(
                     repo_full_name=repo_full_name,
                     merged_sha=full_sha,
@@ -1255,6 +1458,7 @@ class CIMixin:
                     admin_merge_grace_min=admin_merge_grace_min,
                     poll_interval_sec=poll_interval_sec,
                     tree_sha_reuse_enabled=tree_sha_reuse_enabled,
+                    pr_head_reuse_enabled=pr_head_reuse_enabled,
                     push_commit_shas=push_commit_shas,
                 )
                 if outcome == "failure":
