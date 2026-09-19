@@ -39,6 +39,13 @@ _DEFAULT_REPOLL_MAX_ROUNDS = 2
 _COMMIT_FILES_PER_PAGE = 100
 _COMMIT_FILES_MAX_PAGES = 30
 
+# ZERODOX#3391: Obergrenze des GitHub-Compare-Endpunkts. Er liefert hoechstens
+# 300 Dateien, ohne das verlaesslich zu kennzeichnen. Eine volle Liste gilt
+# deshalb als moeglicherweise abgeschnitten und fuehrt zu KEINEM
+# Docs-only-Kurzschluss — bei so vielen Dateien ist "nur Dokumentation" ohnehin
+# unwahrscheinlich.
+_COMPARE_FILES_MAX = 300
+
 # ZERODOX#3328 Paket A: `GET /commits/{sha}/pulls` antwortet unmittelbar nach
 # einem Merge oft noch mit einer leeren Liste — GitHub indiziert die Zuordnung
 # Commit→PR verzoegert. Wer das als "kein PR" liest, verliert den Kurzschluss
@@ -533,6 +540,106 @@ class CIMixin:
             )
             return None
 
+    async def _fetch_compare_files(
+        self,
+        repo_full_name: str,
+        base_sha: str,
+        head_sha: str,
+    ) -> Optional[list[str]]:
+        """Geaenderte Pfade zwischen zwei Staenden — fail-closed wie die Schwester.
+
+        ZERODOX#3391: Fuer die Docs-only-Frage zaehlt nicht, was der letzte Push
+        enthielt, sondern was zwischen dem AUSGELIEFERTEN Stand und dem neuen
+        HEAD liegt. Nur das beantwortet "enthaelt das, was noch nicht live ist,
+        Laufzeitcode?".
+
+        Der Unterschied ist nicht theoretisch. Am 15.09.2026 fiel ein
+        Code-Merge (#3386, drei CSS-/Testdateien) in einen laufenden Deploy und
+        wurde verworfen. Zwanzig Minuten spaeter kam ein Docs-Merge; sein Push
+        enthielt nur Dokumentation, also galt der Kurzschluss — und der
+        Code-Merge blieb unausgeliefert. Kein Fehler, kein Alarm, eine
+        INFO-Zeile. Eine Pruefung der Push-Commits haette das nicht gefunden:
+        Der verworfene Commit steckte in keinem spaeteren Push.
+
+        ⚠️ Fail-closed an jeder Stelle: HTTP-Fehler, unerwartete Antwortform,
+        ungueltige Eintraege oder ein abgeschnittenes Ergebnis liefern None —
+        und None heisst beim Aufrufer NIEMALS docs-only.
+
+        ⚠️ Der Compare-Endpunkt liefert hoechstens 300 Dateien und meldet das
+        ueber `files`-Laenge gegen `total_commits` nicht zuverlaessig. Deshalb
+        gilt eine volle Seite als "moeglicherweise abgeschnitten" → None. Ein
+        ueberfluessiger Deploy ist harmlos, ungetestet ausgelieferter Code nicht.
+        """
+        if not repo_full_name or not base_sha or not head_sha:
+            return None
+        if base_sha == head_sha:
+            return []
+
+        headers = {"Accept": "application/vnd.github+json"}
+        token = self._get_github_token()
+        if token:
+            headers["Authorization"] = f"token {token}"
+
+        url = (
+            f"https://api.github.com/repos/{repo_full_name}/compare/"
+            f"{base_sha}...{head_sha}?per_page={_COMPARE_FILES_MAX}"
+        )
+        try:
+            async with aiohttp.ClientSession(headers=headers) as session:
+                async with session.get(url, timeout=25) as resp:
+                    if resp.status != 200:
+                        body = await resp.text()
+                        self.logger.warning(
+                            f"⚠️ Vergleich {base_sha[:7]}...{head_sha[:7]} fuer "
+                            f"{repo_full_name} nicht ladbar ({resp.status}): {body[:200]}"
+                        )
+                        return None
+
+                    payload = await resp.json()
+                    if not isinstance(payload, dict):
+                        self.logger.warning(
+                            f"⚠️ Unerwartete Antwortform beim Vergleich "
+                            f"{base_sha[:7]}...{head_sha[:7]} fuer {repo_full_name}."
+                        )
+                        return None
+
+                    files = payload.get("files")
+                    if files is None and payload.get("status") == "identical":
+                        return []
+                    if not isinstance(files, list):
+                        self.logger.warning(
+                            f"⚠️ Dateiliste fehlt im Vergleich "
+                            f"{base_sha[:7]}...{head_sha[:7]} fuer {repo_full_name}."
+                        )
+                        return None
+
+                    if len(files) >= _COMPARE_FILES_MAX:
+                        self.logger.info(
+                            f"ℹ️ Vergleich {base_sha[:7]}...{head_sha[:7]} liefert "
+                            f"{len(files)} Dateien (Obergrenze {_COMPARE_FILES_MAX}) — "
+                            "moeglicherweise abgeschnitten, kein Docs-only-Kurzschluss."
+                        )
+                        return None
+
+                    pfade = [
+                        str(item.get("filename") or "").strip()
+                        for item in files
+                        if isinstance(item, dict)
+                    ]
+                    if any(not p for p in pfade) or len(pfade) != len(files):
+                        self.logger.warning(
+                            f"⚠️ Vergleich {base_sha[:7]}...{head_sha[:7]} fuer "
+                            f"{repo_full_name} enthaelt ungueltige Eintraege."
+                        )
+                        return None
+                    return pfade
+        except Exception as exc:  # pragma: no cover - Netzwerkfehler
+            self.logger.warning(
+                f"⚠️ Vergleich {base_sha[:7]}...{head_sha[:7]} fuer "
+                f"{repo_full_name} fehlgeschlagen: {exc}"
+            )
+            return None
+
     async def _fetch_commit_files(
         self,
         repo_full_name: str,
@@ -835,6 +942,7 @@ class CIMixin:
         tree_sha_reuse_enabled: bool = True,
         pr_head_reuse_enabled: bool = True,
         push_commit_shas: Optional[List[str]] = None,
+        ausgelieferter_sha: Optional[str] = None,
     ) -> Literal[
         "success",
         "failure",
@@ -1004,13 +1112,56 @@ class CIMixin:
         # `--skip-e2e` ausgeliefert. `push_commit_shas` reicht deshalb die
         # vollständige Commit-Liste des Push-Events durch; ohne sie (PR-Pfad)
         # bleibt das Verhalten unverändert.
+        # ZERODOX#3391 (19.09.2026): Vorrangig gegen den AUSGELIEFERTEN Stand
+        # vergleichen, nicht gegen die Commits dieses Pushes.
+        #
+        # Die Push-Liste oben behebt den Fall "Code-Commit und Docs-Commit im
+        # selben Push". Sie hilft aber nicht, wenn ein FRUEHERER Deploy-Auftrag
+        # verworfen wurde: Dessen Commits stecken in keinem spaeteren Push.
+        # Genau so blieb am 15.09.2026 der Code-Merge #3386 unausgeliefert — der
+        # nachfolgende Docs-Merge sah, fuer sich betrachtet, korrekt nach
+        # Dokumentation aus.
+        #
+        # `ausgelieferter_sha` kommt aus dem Deploy-Baum (HEAD nach dem letzten
+        # `git pull` von deploy_project). Ist er bekannt, beantwortet der
+        # Vergleich die richtige Frage: "Enthaelt das, was noch nicht live ist,
+        # Laufzeitcode?" Ist er es nicht, bleibt alles wie bisher.
+        vergleichs_pfade: Optional[list[str]] = None
+        vergleich_genutzt = False
+        if ausgelieferter_sha and ausgelieferter_sha != merged_sha:
+            vergleichs_pfade = await self._fetch_compare_files(
+                repo_full_name, ausgelieferter_sha, merged_sha
+            )
+            if vergleichs_pfade is not None:
+                vergleich_genutzt = True
+                self.logger.info(
+                    f"ℹ️ Docs-only-Pruefung gegen den ausgelieferten Stand "
+                    f"{ausgelieferter_sha[:7]}...{merged_sha[:7]}: "
+                    f"{len(vergleichs_pfade)} geaenderte Datei(en)."
+                )
+            else:
+                # Fail-closed: Der Vergleich ist die genauere Quelle. Konnte er
+                # nicht gelesen werden, ist "nur Dokumentation" eine Behauptung
+                # ohne Messung — dann lieber die Push-Liste, die hoechstens zu
+                # VIEL deployt.
+                self.logger.info(
+                    "ℹ️ Vergleich gegen den ausgelieferten Stand nicht moeglich — "
+                    "Docs-only-Pruefung faellt auf die Push-Commits zurueck."
+                )
+
         docs_only_kandidaten = [sha for sha in (push_commit_shas or []) if sha] or [merged_sha]
         # Obergrenze: Ein Push mit sehr vielen Commits ist nie „nur
         # Dokumentation" und würde je Commit einen API-Aufruf kosten. Über der
         # Grenze fail-closed KEIN docs-only — ein überflüssiger Deploy mit
         # voller CI ist harmlos, ungetestet ausgelieferter Code nicht.
         _DOCS_ONLY_MAX_COMMITS = 20
-        if len(docs_only_kandidaten) > _DOCS_ONLY_MAX_COMMITS:
+        if vergleich_genutzt:
+            # Der Vergleich deckt alles ab, was zwischen live und HEAD liegt —
+            # einschliesslich verworfener Auftraege. Die Commit-Schleife
+            # darunter waere dann nicht nur ueberfluessig, sondern ENGER: Sie
+            # saehe die verpassten Commits nicht.
+            precomputed_changed_paths = vergleichs_pfade
+        elif len(docs_only_kandidaten) > _DOCS_ONLY_MAX_COMMITS:
             self.logger.info(
                 f"ℹ️ _wait_for_ci_completion: Push mit {len(docs_only_kandidaten)} Commits "
                 f"(> {_DOCS_ONLY_MAX_COMMITS}) — Docs-only-Kurzschluss übersprungen (fail-closed)."
@@ -1502,6 +1653,24 @@ class CIMixin:
                 pr_head_reuse_enabled = bool(
                     project_config.get('ci_wait_pr_head_reuse', True)
                 )
+                # ZERODOX#3391: Der zuletzt AUSGELIEFERTE Stand — HEAD des
+                # Deploy-Baums, den `deploy_project` per `git pull` pflegt.
+                # Damit prüft die Docs-only-Erkennung den Diff "live → HEAD"
+                # statt nur die Commits dieses Pushes und übersieht keinen
+                # zuvor verworfenen Auftrag mehr.
+                #
+                # ⚠️ Derselbe Pfad wie beim Re-Poll (`deploy_path` vor `path`):
+                # Der Arbeitsbaum zeigt, was der Entwickler ausgecheckt hat,
+                # nicht was live läuft.
+                ausgelieferter_sha = None
+                deploy_baum_raw = (
+                    project_config.get('deploy_path') or project_config.get('path')
+                )
+                if deploy_baum_raw:
+                    deploy_baum = Path(deploy_baum_raw)
+                    if deploy_baum.exists():
+                        ausgelieferter_sha = self._get_commit_sha(deploy_baum, 'HEAD')
+
                 outcome = await self._wait_for_ci_completion(
                     repo_full_name=repo_full_name,
                     merged_sha=full_sha,
@@ -1512,6 +1681,7 @@ class CIMixin:
                     tree_sha_reuse_enabled=tree_sha_reuse_enabled,
                     pr_head_reuse_enabled=pr_head_reuse_enabled,
                     push_commit_shas=push_commit_shas,
+                    ausgelieferter_sha=ausgelieferter_sha,
                 )
                 if outcome == "failure":
                     await self._send_ci_wait_alert(
