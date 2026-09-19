@@ -540,6 +540,77 @@ class CIMixin:
             )
             return None
 
+    async def _laeuft_noch_ein_workflow(
+        self,
+        repo_full_name: str,
+        sha: str,
+    ) -> Optional[bool]:
+        """Ist fuer diesen Commit noch irgendein Workflow unterwegs?
+
+        ZERODOX#3230: Der Bot wartete bis zu 30 Minuten auf `Web Quality` und
+        meldete danach "Deployment fehlgeschlagen" — fuer Commits, bei denen
+        dieser Workflow durch den `paths-ignore`-Filter NIE startet. Am
+        09.09.2026 legte eine Docs-Serie die Auslieferung so ueber eine Stunde
+        lahm, und der Fehlschlag war keiner.
+
+        "Noch nicht angelegt" und "wird nie angelegt" sehen an einem einzelnen
+        Check-Run identisch aus. Unterscheidbar werden sie erst ueber den
+        GESAMTEN Lauf-Bestand des Commits: Ist dort nichts mehr offen, hat
+        GitHub die Push-Events verarbeitet — was dann fehlt, kommt nicht mehr.
+
+        Dieselbe Quelle und dieselbe Frage wie `ci_lauf_ist_unterwegs()` in
+        ZERODOX/scripts/deploy.sh. Bewusst nachgebaut statt neu erfunden: Zwei
+        Stellen, die ueber "darf deployt werden" verschieden urteilen, sind
+        genau das Problem aus ZERODOX#3331.
+
+        Returns:
+            True  — mindestens ein Lauf ist noch nicht `completed`
+            False — alle Laeufe sind abgeschlossen (oder es gibt keine)
+            None  — nicht ermittelbar; der Aufrufer MUSS das wie True behandeln
+        """
+        if not repo_full_name or not sha:
+            return None
+
+        url = (
+            f"https://api.github.com/repos/{repo_full_name}/actions/runs"
+            f"?head_sha={sha}&per_page=50"
+        )
+        try:
+            # Token-Beschaffung INNERHALB des try — gleiche Begruendung wie bei
+            # _fetch_commit_tree_info: Ein Harness ohne _get_github_token()
+            # darf hier keine durchschlagende AttributeError ausloesen.
+            headers = {"Accept": "application/vnd.github+json"}
+            token = self._get_github_token()
+            if token:
+                headers["Authorization"] = f"token {token}"
+            async with aiohttp.ClientSession(headers=headers) as session:
+                async with session.get(url, timeout=20) as resp:
+                    if resp.status != 200:
+                        self.logger.warning(
+                            f"⚠️ Lauf-Bestand fuer {repo_full_name}@{sha[:7]} "
+                            f"nicht ladbar ({resp.status}) — es wird weiter gewartet."
+                        )
+                        return None
+                    payload = await resp.json()
+                    runs = (payload or {}).get("workflow_runs")
+                    if not isinstance(runs, list):
+                        self.logger.warning(
+                            f"⚠️ Unerwartete Antwortform beim Lauf-Bestand fuer "
+                            f"{repo_full_name}@{sha[:7]} — es wird weiter gewartet."
+                        )
+                        return None
+                    offen = [
+                        r for r in runs
+                        if isinstance(r, dict) and str(r.get("status") or "").lower() != "completed"
+                    ]
+                    return len(offen) > 0
+        except Exception as exc:  # pragma: no cover - Netzwerkfehler
+            self.logger.warning(
+                f"⚠️ Lauf-Bestand fuer {repo_full_name}@{sha[:7]} "
+                f"nicht abfragbar ({exc}) — es wird weiter gewartet."
+            )
+            return None
+
     async def _fetch_compare_files(
         self,
         repo_full_name: str,
@@ -575,16 +646,18 @@ class CIMixin:
         if base_sha == head_sha:
             return []
 
-        headers = {"Accept": "application/vnd.github+json"}
-        token = self._get_github_token()
-        if token:
-            headers["Authorization"] = f"token {token}"
-
         url = (
             f"https://api.github.com/repos/{repo_full_name}/compare/"
             f"{base_sha}...{head_sha}?per_page={_COMPARE_FILES_MAX}"
         )
         try:
+            # Token-Beschaffung INNERHALB des try — gleiche Begruendung wie bei
+            # _fetch_commit_tree_info: Ein Harness ohne _get_github_token()
+            # darf hier keine durchschlagende AttributeError ausloesen.
+            headers = {"Accept": "application/vnd.github+json"}
+            token = self._get_github_token()
+            if token:
+                headers["Authorization"] = f"token {token}"
             async with aiohttp.ClientSession(headers=headers) as session:
                 async with session.get(url, timeout=25) as resp:
                     if resp.status != 200:
@@ -1403,6 +1476,43 @@ class CIMixin:
                         f"nach {admin_merge_grace_min}min ohne relevanten Workflow — "
                         f"warte fail-closed bis zum {max_wait_min}min-Limit."
                     )
+                # ZERODOX#3230: Wird der erwartete Workflow fuer DIESEN Commit
+                # ueberhaupt noch starten?
+                #
+                # `Web Quality` hat einen `paths-ignore`-Filter. Bei einem
+                # Docs-Merge legt GitHub den Lauf nie an — der Bot wartete
+                # trotzdem 30 Minuten und meldete danach "Deployment
+                # fehlgeschlagen". Am 09.09.2026 legte eine Docs-Serie die
+                # Auslieferung so ueber eine Stunde lahm, weil nachfolgende
+                # Merges waehrenddessen mit "already in progress" verworfen
+                # wurden.
+                #
+                # Geprueft wird erst NACH dem Gnadenfenster und nur, wenn
+                # nichts mehr offen ist: Dann hat GitHub die Events verarbeitet,
+                # und was jetzt fehlt, kommt nicht mehr.
+                #
+                # ⚠️ Fail-closed: None (nicht ermittelbar) zaehlt wie "laeuft
+                # noch". Und der Ausstieg ist KEIN "darf ohne CI deployen" —
+                # `deploy.sh` hat ein eigenes Gate und entscheidet erneut; bei
+                # einem Docs-only-Merge greift dort der Graceful-Skip (#1262).
+                if (
+                    admin_merge_deadline is not None
+                    and time.monotonic() >= admin_merge_deadline
+                    and not saw_any_relevant
+                ):
+                    noch_unterwegs = await self._laeuft_noch_ein_workflow(
+                        repo_full_name, merged_sha
+                    )
+                    if noch_unterwegs is False:
+                        self.logger.info(
+                            f"ℹ️ _wait_for_ci_completion: fuer {merged_sha[:7]} ist kein "
+                            f"Lauf mehr offen und {workflow_names} fehlt weiterhin — der "
+                            "Workflow wurde per Path-Filter uebersprungen und startet "
+                            "nicht mehr. Kein Wartegrund (ZERODOX#3230); deploy.sh "
+                            "entscheidet mit seinem eigenen Gate."
+                        )
+                        return "no_workflows"
+
                 self.logger.info(
                     f"⏳ _wait_for_ci_completion: noch keine relevanten Workflows "
                     f"fuer {merged_sha[:7]} sichtbar — weiter pollen ({poll_interval_s}s)..."
