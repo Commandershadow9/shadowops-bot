@@ -39,6 +39,18 @@ _DEFAULT_REPOLL_MAX_ROUNDS = 2
 _COMMIT_FILES_PER_PAGE = 100
 _COMMIT_FILES_MAX_PAGES = 30
 
+# ZERODOX#3328 Paket A: `GET /commits/{sha}/pulls` antwortet unmittelbar nach
+# einem Merge oft noch mit einer leeren Liste — GitHub indiziert die Zuordnung
+# Commit→PR verzoegert. Wer das als "kein PR" liest, verliert den Kurzschluss
+# fuer JEDEN Squash-Merge (gemessen 19.09.2026 an ae34e13: leer nach 2 s,
+# korrekt PR #3458 wenige Minuten spaeter).
+#
+# ⚠️ Die Obergrenze ist bewusst klein. Sie verzoegert nur den Fall, in dem
+# wirklich kein PR existiert — und der kam in 30 Tagen null Mal vor. Waere sie
+# gross, verschoebe sie im Gegenzug jeden echten Direkt-Push-Deploy.
+_PR_ZUORDNUNG_VERSUCHE = 4
+_PR_ZUORDNUNG_WARTE_S = 15
+
 
 def _paths_are_docs_only(paths: list[str]) -> bool:
     """Return True only for a non-empty, entirely non-runtime path list."""
@@ -1120,7 +1132,45 @@ class CIMixin:
 
                 # Zweiter Weg NUR fuer Commits ohne (gruenen) zweiten Elternteil
                 # — praktisch: Squash-Merges.
+                #
+                # ⚠️ Eine LEERE Antwort heisst hier NICHT "kein PR", sondern
+                # meistens "GitHub hat die Zuordnung noch nicht indiziert".
+                # Gemessen am 19.09.2026: Fuer den Squash-Commit ae34e13
+                # lieferte `GET /commits/{sha}/pulls` zwei Sekunden nach dem
+                # Merge eine leere Liste — Minuten spaeter korrekt PR #3458.
+                #
+                # Der Bot schloss daraus "Direkt-Push auf main", verwarf den
+                # Kurzschluss ENDGUELTIG (die Pruefung liegt vor der
+                # Polling-Schleife und wird nie wiederholt) und wartete dann
+                # 30 Minuten auf einen Merge-Lauf, den es seit Paket A gar
+                # nicht mehr gibt. Danach: Abbruch, Merge unausgeliefert.
+                #
+                # Aufgefallen ist es erst jetzt, weil die vorherigen Merges
+                # Merge-Commits waren — fuer die greift Weg 1 ohne diese
+                # Abfrage. Der erste Squash-Merge nach Paket A lief sofort
+                # hinein.
+                #
+                # Deshalb wird eine leere Antwort wiederholt statt gedeutet.
+                # Die Wartezeit traegt ausschliesslich der echte Direkt-Push
+                # — und davon gab es in 30 Tagen null (gemessen 17.09.2026,
+                # 51 Code-Commits, alle mit zugeordnetem PR). Ein Fehler
+                # (None) wird NICHT wiederholt: Der ist bereits fail-closed
+                # und eine Wiederholung verzoegerte nur.
                 pr_heads = await self._fetch_pull_head_shas(repo_full_name, merged_sha)
+                for versuch in range(2, _PR_ZUORDNUNG_VERSUCHE + 1):
+                    if pr_heads is None or pr_heads:
+                        break
+                    self.logger.info(
+                        "⏳ ZERODOX#3328 Paket A: PR-Zuordnung fuer "
+                        f"{merged_sha[:7]} noch leer — GitHub indiziert "
+                        f"verzoegert, Versuch {versuch}/{_PR_ZUORDNUNG_VERSUCHE} "
+                        f"in {_PR_ZUORDNUNG_WARTE_S}s."
+                    )
+                    await asyncio.sleep(_PR_ZUORDNUNG_WARTE_S)
+                    pr_heads = await self._fetch_pull_head_shas(
+                        repo_full_name, merged_sha
+                    )
+
                 if pr_heads is None:
                     # Fail-closed: "nicht ermittelbar" heisst NICHT "kein PR".
                     self.logger.info(
@@ -1147,9 +1197,11 @@ class CIMixin:
                     if not pr_heads:
                         self.logger.info(
                             "ℹ️ ZERODOX#3328 Paket A: Zu "
-                            f"{merged_sha[:7]} gehoert nachweislich kein gemergter "
-                            "PR (Direkt-Push auf main) — kein Kurzschluss, es wird "
-                            "normal gepollt."
+                            f"{merged_sha[:7]} gehoert nach "
+                            f"{_PR_ZUORDNUNG_VERSUCHE} Abfragen ueber "
+                            f"{_PR_ZUORDNUNG_VERSUCHE * _PR_ZUORDNUNG_WARTE_S}s "
+                            "kein gemergter PR (Direkt-Push auf main) — kein "
+                            "Kurzschluss, es wird normal gepollt."
                         )
 
         admin_merge_deadline_logged = False
