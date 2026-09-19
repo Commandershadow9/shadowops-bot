@@ -3,7 +3,9 @@ CI polling and deployment methods for GitHubIntegration.
 """
 
 import asyncio
+import base64
 import logging
+import re
 import time
 from datetime import datetime, timezone
 from pathlib import Path
@@ -55,15 +57,90 @@ _COMPARE_FILES_MAX = 300
 # ⚠️ Die Obergrenze ist bewusst klein. Sie verzoegert nur den Fall, in dem
 # wirklich kein PR existiert — und der kam in 30 Tagen null Mal vor. Waere sie
 # gross, verschoebe sie im Gegenzug jeden echten Direkt-Push-Deploy.
+# ZERODOX#3331: Wie lange die aus dem Workflow gelesenen `paths-ignore`-Muster
+# gelten. Kurz genug, dass eine Aenderung an web-quality.yml binnen Minuten
+# wirkt; lang genug, dass nicht jeder Merge zwei API-Aufrufe kostet.
+_PATHS_IGNORE_CACHE_S = 600
+
 _PR_ZUORDNUNG_VERSUCHE = 4
 _PR_ZUORDNUNG_WARTE_S = 15
 
 
-def _paths_are_docs_only(paths: list[str]) -> bool:
-    """Return True only for a non-empty, entirely non-runtime path list."""
+def _glob_zu_regex(muster: str) -> str:
+    """Uebersetzt ein GitHub-`paths-ignore`-Muster in einen regulaeren Ausdruck.
+
+    GitHub benutzt eine eigene Glob-Variante (nicht fnmatch):
+
+        docs/**              alles unterhalb von docs/
+        **.md                jede .md-Datei, in jeder Tiefe
+        web/public/**/*.svg  svg unterhalb von web/public/, beliebig tief
+        .gitignore           genau diese Datei
+
+    ⚠️ Der Unterschied zwischen `*` und `**` ist der Schraegstrich: `*` bleibt
+    innerhalb eines Pfadsegments, `**` ueberspringt beliebig viele. Wer `*` als
+    `.*` uebersetzt, macht aus `web/public/*.svg` ein Muster, das auch
+    `web/public/tief/verschachtelt/x.svg` trifft — und erklaert damit Dateien
+    zu Doku, die keine sind.
+    """
+    ergebnis: list[str] = []
+    i = 0
+    while i < len(muster):
+        zeichen = muster[i]
+        if muster.startswith("**/", i):
+            # Beliebig viele Verzeichnisebenen — auch null.
+            ergebnis.append("(?:.*/)?")
+            i += 3
+        elif muster.startswith("**", i):
+            ergebnis.append(".*")
+            i += 2
+        elif zeichen == "*":
+            ergebnis.append("[^/]*")
+            i += 1
+        elif zeichen == "?":
+            ergebnis.append("[^/]")
+            i += 1
+        else:
+            ergebnis.append(re.escape(zeichen))
+            i += 1
+    return "^" + "".join(ergebnis) + "$"
+
+
+def _pfad_passt_auf_muster(pfad: str, muster_liste: list[str]) -> bool:
+    """Trifft mindestens eines der Muster diesen Pfad?"""
+    for muster in muster_liste:
+        try:
+            if re.match(_glob_zu_regex(muster), pfad):
+                return True
+        except re.error:  # pragma: no cover - defektes Muster
+            continue
+    return False
+
+
+def _paths_are_docs_only(
+    paths: list[str],
+    paths_ignore: Optional[list[str]] = None,
+) -> bool:
+    """Return True only for a non-empty, entirely non-runtime path list.
+
+    ZERODOX#3331: Mit `paths_ignore` wird gegen die MUSTER DES WORKFLOWS
+    geurteilt — dieselbe Quelle, aus der `hard_gate_docs_only_bypass` in
+    ZERODOX/scripts/deploy.sh liest. Vorher trug diese Funktion eine
+    hartkodierte Kopie von drei Mustern, waehrend `web-quality.yml` dreissig
+    hat. Alles dazwischen (`maintenance/**`, `web/public/**/*.svg`, `**.md`
+    ausserhalb des Roots, …) galt hier als Laufzeitcode, obwohl der Workflow
+    dafuer gar nicht erst startet.
+
+    ⚠️ Ohne `paths_ignore` bleibt die alte, ENGERE Heuristik. Sie irrt
+    hoechstens in Richtung "deployen" — und das ist die harmlose Richtung.
+    """
     normalized_paths = [str(path).strip() for path in paths if str(path).strip()]
     if not normalized_paths:
         return False
+
+    if paths_ignore:
+        return all(
+            _pfad_passt_auf_muster(path, paths_ignore) for path in normalized_paths
+        )
 
     return all(
         path.startswith(("docs/", ".claude/"))
@@ -537,6 +614,125 @@ class CIMixin:
             self.logger.error(
                 f"❌ Fehler beim Laden der Workflow Runs fuer {repo_full_name}@{head_sha[:7]}: {e}",
                 exc_info=True,
+            )
+            return None
+
+    async def _lade_paths_ignore(
+        self,
+        repo_full_name: str,
+        workflow_namen: List[str],
+    ) -> Optional[list[str]]:
+        """Liest `on.push.paths-ignore` aus dem CI-Workflow des Repos.
+
+        ZERODOX#3331: Die Frage "ist dieser Merge reine Doku?" wurde an zwei
+        Stellen unabhaengig beantwortet. `hard_gate_docs_only_bypass` in
+        ZERODOX/scripts/deploy.sh liest die Muster zur Laufzeit aus
+        `web-quality.yml` und kann deshalb nicht driften. Der Bot trug
+        stattdessen eine hartkodierte Kopie von DREI Mustern, waehrend der
+        Workflow DREISSIG hat.
+
+        Nicht abgedeckt waren unter anderem `maintenance/**`,
+        `web/public/**/*.svg|png|woff`, `**.md` ausserhalb des Roots,
+        `.gitignore`, `LICENSE` und die `.github/`-Vorlagen. Ein Merge, der nur
+        ein SEO-Bild austauscht, startet `web-quality.yml` per `paths-ignore`
+        nicht — der Bot hielt ihn aber fuer Laufzeitcode und lief in den
+        Fehlschlag.
+
+        Der Workflow-PFAD wird nicht konfiguriert, sondern ueber seinen Namen
+        aufgeloest (`/actions/workflows` liefert `name` und `path`). Der Bot
+        bedient mehrere Projekte; ein hartkodierter Pfad waere die naechste
+        Kopie.
+
+        ⚠️ Fail-closed: Jede Unklarheit liefert None. Der Aufrufer faellt dann
+        auf die alte, ENGERE Heuristik zurueck — sie irrt hoechstens in
+        Richtung "deployen", und das ist die harmlose Richtung. "Keine Muster
+        gelesen" darf NIEMALS "alles ist docs-only" bedeuten.
+        """
+        if not repo_full_name or not workflow_namen:
+            return None
+
+        zwischenspeicher = getattr(self, "_paths_ignore_cache", None)
+        if zwischenspeicher is None:
+            zwischenspeicher = {}
+            self._paths_ignore_cache = zwischenspeicher
+        schluessel = f"{repo_full_name}::{workflow_namen[0]}"
+        eintrag = zwischenspeicher.get(schluessel)
+        if eintrag and (time.monotonic() - eintrag[0]) < _PATHS_IGNORE_CACHE_S:
+            return eintrag[1]
+
+        try:
+            headers = {"Accept": "application/vnd.github+json"}
+            token = self._get_github_token()
+            if token:
+                headers["Authorization"] = f"token {token}"
+
+            gesucht = workflow_namen[0].strip().lower()
+            async with aiohttp.ClientSession(headers=headers) as session:
+                # 1) Name -> Dateipfad
+                url = f"https://api.github.com/repos/{repo_full_name}/actions/workflows?per_page=100"
+                async with session.get(url, timeout=20) as resp:
+                    if resp.status != 200:
+                        return None
+                    payload = await resp.json()
+                workflows = (payload or {}).get("workflows")
+                if not isinstance(workflows, list):
+                    return None
+                pfad = next(
+                    (
+                        str(w.get("path") or "")
+                        for w in workflows
+                        if isinstance(w, dict)
+                        and str(w.get("name") or "").strip().lower() == gesucht
+                    ),
+                    "",
+                )
+                if not pfad:
+                    self.logger.info(
+                        f"ℹ️ Workflow '{workflow_namen[0]}' in {repo_full_name} nicht "
+                        "gefunden — Docs-only-Pruefung nutzt die enge Heuristik."
+                    )
+                    return None
+
+                # 2) Datei lesen
+                url = f"https://api.github.com/repos/{repo_full_name}/contents/{pfad}"
+                async with session.get(url, timeout=20) as resp:
+                    if resp.status != 200:
+                        return None
+                    datei = await resp.json()
+
+            inhalt_roh = (datei or {}).get("content")
+            if not isinstance(inhalt_roh, str):
+                return None
+            text = base64.b64decode(inhalt_roh).decode("utf-8", errors="replace")
+
+            import yaml  # lokal: nur dieser Pfad braucht ihn
+
+            # ⚠️ `on:` ist in YAML 1.1 das Schluesselwort True. PyYAML liefert
+            # den Block deshalb unter dem Schluessel `True`, nicht "on" — wer
+            # nur nach "on" sucht, findet nie etwas und faellt still zurueck.
+            daten = yaml.safe_load(text)
+            if not isinstance(daten, dict):
+                return None
+            on_block = daten.get("on", daten.get(True))
+            if not isinstance(on_block, dict):
+                return None
+            push_block = on_block.get("push")
+            if not isinstance(push_block, dict):
+                return None
+            muster = push_block.get("paths-ignore")
+            if not isinstance(muster, list) or not muster:
+                return None
+
+            sauber = [str(m).strip() for m in muster if str(m).strip()]
+            if not sauber:
+                return None
+
+            zwischenspeicher[schluessel] = (time.monotonic(), sauber)
+            return sauber
+        except Exception as exc:  # pragma: no cover - Netz-/Parse-Fehler
+            self.logger.warning(
+                f"⚠️ `paths-ignore` fuer {repo_full_name} nicht lesbar ({exc}) — "
+                "Docs-only-Pruefung nutzt die enge Heuristik."
             )
             return None
 
@@ -1252,7 +1448,18 @@ class CIMixin:
                     break
                 precomputed_changed_paths.extend(pfade)
 
-        if precomputed_changed_paths is not None and _paths_are_docs_only(precomputed_changed_paths):
+        # ZERODOX#3331: Die Muster kommen aus dem Workflow selbst — dieselbe
+        # Quelle, aus der `hard_gate_docs_only_bypass` in deploy.sh liest.
+        # Schlägt das fehl, gilt die alte, engere Heuristik (fail-closed).
+        paths_ignore_muster = None
+        if precomputed_changed_paths is not None:
+            paths_ignore_muster = await self._lade_paths_ignore(
+                repo_full_name, workflow_names
+            )
+
+        if precomputed_changed_paths is not None and _paths_are_docs_only(
+            precomputed_changed_paths, paths_ignore_muster
+        ):
             commit_hinweis = (
                 f"{merged_sha[:7]}"
                 if len(docs_only_kandidaten) == 1
