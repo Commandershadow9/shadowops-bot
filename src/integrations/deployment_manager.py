@@ -501,6 +501,11 @@ class DeploymentManager:
             "node_modules",
             "venv",
             "backups",
+            # ZERODOX#3447: siehe BACKUP_FLUECHTIG unten. `ignore_patterns`
+            # vergleicht nur Basisnamen, `.claude/worktrees` ist deshalb hier
+            # nicht ausdrueckbar — dieser Zweig laeuft aber ohnehin nur ohne
+            # rsync, und rsync liegt auf allen Deploy-Hosts.
+            ".next",
         )
 
         if shutil.which("rsync"):
@@ -520,6 +525,29 @@ class DeploymentManager:
                 '--exclude=backups',
                 '--exclude=logs',
                 '--exclude=uploads',
+                # ZERODOX#3447: Was reproduzierbar oder fluechtig ist, gehoert
+                # nicht ins Deploy-Backup.
+                #
+                # Gemessen am 19.09.2026 an zerodox_20260918_145640 — 22 GB:
+                #
+                #     18   GB  .claude/worktrees/  Arbeitskopien paralleler
+                #                                  Claude-Sessions
+                #      4,1 GB  web/.next/          Build-Output, den der Deploy
+                #                                  ohnehin neu erzeugt
+                #     ~0,2 GB                      alles Uebrige — der Code,
+                #                                  also der einzige Grund fuer
+                #                                  dieses Backup
+                #
+                # Die Folgen trug jeder Deploy: Das Backup brauchte 5m28s von
+                # 10m46s Gesamtzeit (18.09., 14:56:40 bis 15:02:08), fuenf
+                # Staende je Projekt belegten 112 GB, und bei rund 21 Merges am
+                # Tag schrieb der Bot etwa 460 GB taeglich auf die NVMe.
+                #
+                # ⚠️ `.claude/worktrees` MIT Pfad, nicht nur `worktrees`: Im
+                # ZERODOX-Baum liegt daneben ein unversioniertes `worktrees/`
+                # mit anderem Inhalt. Ein blosser Basisname schluesse beide aus.
+                '--exclude=.claude/worktrees',
+                '--exclude=.next',
                 str(project['path']) + '/',
                 str(backup_path) + '/'
             ]
@@ -534,8 +562,28 @@ class DeploymentManager:
 
             # rsync exit code 23 = partial transfer (z.B. Permission Denied
             # auf Docker-Container-Dateien). Für Backup akzeptabel.
-            if process.returncode not in (0, 23):
+            #
+            # 24 = "some files vanished before they could be transferred".
+            # Am 18.09.2026 um 12:56 brach daran ein kompletter ZERODOX-Deploy
+            # ab: Eine parallele Claude-Session entfernte waehrend des Backups
+            # ihren Worktree (.claude/worktrees/watchdog-liste-3328). Verloren
+            # ging dabei nichts Schuetzenswertes — eine Datei, die es beim
+            # Kopieren nicht mehr gibt, ist per Definition keine, die gesichert
+            # werden musste.
+            #
+            # ⚠️ Der Ausschluss der Worktrees oben macht genau diesen Fall
+            # unwahrscheinlich, aber nicht unmoeglich: Auch Logdateien und
+            # temporaere Dateien verschwinden waehrend eines mehrminuetigen
+            # Laufs. Ein Deploy, der daran scheitert, verwechselt einen
+            # Nebeneffekt mit einem Fehler.
+            if process.returncode not in (0, 23, 24):
                 raise DeploymentError(f"Backup failed: {stderr.decode()}")
+
+            if process.returncode == 24:
+                self.logger.info(
+                    "ℹ️ Backup: einzelne Dateien verschwanden waehrend des Laufs "
+                    "(rsync 24) — kein Fehler, Backup gilt als erstellt."
+                )
         else:
             self.logger.warning("⚠️ rsync not found, using Python copy for backup")
             await self._send_deployment_update(
