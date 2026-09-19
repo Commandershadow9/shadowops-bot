@@ -1607,8 +1607,12 @@ class CIMixin:
         ZERODOX#1720: Re-Poll nach abgeschlossenem Deploy.
 
         Prueft, ob origin/<branch> inzwischen weiter ist als der gerade
-        deployte Commit (deploy_project() hat das lokale Repo bereits per
-        `git pull` aktualisiert, HEAD ist also der deployte Stand). Ursache
+        deployte Commit. Gemessen wird im DEPLOY-Baum (`deploy_path`, Fallback
+        `path`): Dort hat `deploy_project()` per `git pull` aktualisiert, sein
+        HEAD ist also der deployte Stand. Der Arbeitsbaum `path` taugt dafuer
+        seit ZERODOX#2344 NICHT mehr — er zeigt, was der Entwickler gerade
+        ausgecheckt hat, und liess den Re-Poll am 19.09.2026 zwei verworfene
+        Merges uebersehen. Ursache
         eines solchen Drifts ist typischerweise der `active_deployments`-Guard
         in deployment_manager.deploy_project(): ein zweiter Push/PR-Merge, der
         waehrend eines laufenden Deploys eintrifft, wird dort mit
@@ -1630,7 +1634,31 @@ class CIMixin:
         if not deploy_config.get('repoll_enabled', True):
             return
 
-        repo_path_raw = project_config.get('path')
+        # ⚠️ `deploy_path` vor `path` — sonst misst der Re-Poll den falschen Baum.
+        #
+        # Der Docstring oben sagt: "deploy_project() hat das lokale Repo bereits
+        # per `git pull` aktualisiert, HEAD ist also der deployte Stand". Das
+        # galt bis ZERODOX#2344. Seitdem deployt der Bot aus einem EIGENEN Baum
+        # (`deploy_path`, bei ZERODOX ~/ZERODOX-deploy) und fasst den
+        # Arbeitsbaum `path` nicht mehr an — dort steht, was der Entwickler
+        # gerade ausgecheckt hat.
+        #
+        # Die Folge war ein Re-Poll, der zuverlaessig nichts tat: Ist der
+        # Arbeitsbaum zufaellig aktuell (ein `git fetch` genuegt), gilt
+        # `deployed_sha == remote_sha`, und die Funktion kehrt zurueck, ohne
+        # den verpassten Deploy zu bemerken.
+        #
+        # Belegt am 19.09.2026: Zwei Merges (7df6f87, f35f855) trafen waehrend
+        # eines laufenden Deploys ein und wurden vom `active_deployments`-Guard
+        # verworfen — genau der Fall, fuer den dieser Re-Poll gebaut wurde. Er
+        # lief nach dem erfolgreichen Deploy um 14:32 und meldete nichts; live
+        # blieb 25 Minuten lang ein Stand hinter `origin/main`, darunter
+        # unausgelieferter Billing-Code. Nachgezogen werden musste von Hand.
+        #
+        # Gleiche Auflösung wie `deployment_manager._deploy_path()`: Ohne
+        # `deploy_path` bleibt alles wie bisher, fuer jedes andere Projekt ein
+        # No-op.
+        repo_path_raw = project_config.get('deploy_path') or project_config.get('path')
         if not repo_path_raw:
             return
         repo_path = Path(repo_path_raw)
