@@ -20,7 +20,7 @@
 | Discord | discord.py | siehe requirements.txt |
 | Datenbank | PostgreSQL | 3 DBs: security_analyst, agent_learning, seo_agent |
 | Cache | Redis | — |
-| AI Primary | Codex CLI | gpt-4o / gpt-5.3-codex / o3 |
+| AI Primary | Codex CLI | gpt-4o / gpt-5.5 / o3 |
 | AI Fallback | Claude CLI | claude-sonnet-4-6 / claude-opus-4-6 |
 | Container | Docker | mit Trivy fuer Scans |
 | Service | systemd | `/etc/systemd/system/shadowops-bot.service` |
@@ -42,9 +42,9 @@
 shadowops-bot/
 ├── src/
 │   ├── bot.py                    # Haupt-Bot
-│   ├── cogs/                     # Slash-Commands (admin, inspector, monitoring)
+│   ├── cogs/                     # Slash-Commands (admin, inspector, monitoring, claude_cli, cron_heartbeat, crowdsec_notfall, customer_setup_commands, phase_5e_health_aggregator)
 │   ├── integrations/             # Externe Systeme (siehe unten)
-│   ├── patch_notes/              # Patch Notes Pipeline v6 (5-Stufen State Machine, ~2100 Zeilen)
+│   ├── patch_notes/              # Patch Notes Pipeline v6 (5-Stufen State Machine) + ki_einordnung.py (KI-Fallback fuer uncategorized Commits, seit PR #517)
 │   ├── schemas/                  # JSON-Schemas fuer Structured Output (fix_strategy, patch_notes, incident_analysis, jules_review)
 │   └── utils/                    # config, logging, embeds, state, alert_humanizer, health_server, message_handler, circuit_breaker, changelog_parser, process_lock
 ├── tests/
