@@ -177,7 +177,65 @@ class DeploymentManager:
         # Track active deployments
         self.active_deployments: Dict[str, bool] = {}
 
+        # Wartende Auftraege — je Projekt hoechstens EINER, und zwar der neueste.
+        # Siehe `auftrag_vormerken` fuer die Begruendung, warum keine Historie.
+        self.pending_deployments: Dict[str, Dict] = {}
+
         self.logger.info(f"🔧 Deployment Manager initialized for {len(self.projects)} projects")
+
+    # Obergrenze fuer eine Kette von Nachhol-Deploys. Ohne sie koennte ein
+    # Auftrag, der bei jedem Lauf erneut vorgemerkt wird, endlos weiterlaufen —
+    # die Grenze macht aus einer moeglichen Endlosschleife eine Meldung.
+    NACHHOL_MAX = 3
+
+    def auftrag_vormerken(
+        self,
+        project_key: str,
+        branch: Optional[str],
+        deploy_context: Optional[Dict],
+    ) -> bool:
+        """Merkt einen Deploy-Auftrag vor, wenn gerade einer laeuft.
+
+        Liefert `True`, wenn vorgemerkt wurde, `False`, wenn die Sperre frei ist
+        (dann gehoert der Auftrag nicht in die Warteschlange, sondern direkt
+        ausgefuehrt — sonst liefe jeder gewoehnliche Deploy zweimal).
+
+        ⚠️ **Es wird nur der NEUESTE Auftrag gehalten, bewusst ohne Historie.**
+        Drei Merges waehrend eines Deploys ergeben genau einen Nachholer, und
+        der deployt `origin/main` — also den Stand, der alle drei enthaelt. Eine
+        echte Queue wuerde denselben Endzustand dreimal ausliefern.
+        """
+        if not self.active_deployments.get(project_key, False):
+            return False
+
+        vorher = self.pending_deployments.get(project_key)
+        self.pending_deployments[project_key] = {
+            'branch': branch,
+            'deploy_context': dict(deploy_context or {}),
+            'vorgemerkt_um': datetime.now().isoformat(timespec='seconds'),
+        }
+        if vorher is None:
+            self.logger.info(
+                f"📥 Deploy-Auftrag fuer '{project_key}' vorgemerkt — laeuft nach dem aktuellen Deploy."
+            )
+        else:
+            self.logger.info(
+                f"📥 Deploy-Auftrag fuer '{project_key}' ersetzt den vorgemerkten "
+                f"(nur der neueste Stand wird nachgeholt)."
+            )
+        return True
+
+    def wartenden_auftrag_entnehmen(self, project_key: str) -> Optional[Dict]:
+        """Entnimmt den vorgemerkten Auftrag — genau einmal.
+
+        Entnehmen statt Lesen, damit ein Auftrag nicht doppelt laeuft, wenn
+        zwei Stellen gleichzeitig nachsehen.
+        """
+        return self.pending_deployments.pop(project_key, None)
+
+    def nachhol_grenze_erreicht(self, bisherige_nachholer: int) -> bool:
+        """Ist die Kette von Nachhol-Deploys am Ende?"""
+        return bisherige_nachholer >= self.NACHHOL_MAX
 
     def _load_projects(self) -> Dict[str, Dict]:
         """Load project configurations from config"""
@@ -221,6 +279,7 @@ class DeploymentManager:
         project_name: str,
         branch: Optional[str] = None,
         deploy_context: Optional[Dict] = None,
+        _nachhol_tiefe: int = 0,
     ) -> Dict:
         """
         Deploy a project with full safety workflow
@@ -254,14 +313,32 @@ class DeploymentManager:
                 'duration_seconds': 0
             }
 
-        # Check if deployment is already in progress
+        # Laeuft schon ein Deploy? Dann VORMERKEN statt verwerfen (ZERODOX#3532ff).
+        #
+        # Bis zum 21.09.2026 endete dieser Zweig mit `success: False` — der
+        # Auftrag war weg. An jenem Tag blieben dadurch drei fertig gebaute
+        # Staende liegen (Merges 17:50 und 17:50 waehrend eines Deploys, der um
+        # 17:08 begann und 36 Minuten lief). Fuer alle drei hatte
+        # `Release Image (GHCR)` erfolgreich ein Image gebaut; ausgeliefert
+        # wurde keines.
+        #
+        # ⚠️ Der eingebaute Nachhol-Weg greift hier NICHT:
+        # `_schedule_ci_success_reconcile` haengt an einem `workflow_run` mit
+        # `event_name == 'push'` auf einem Deploy-Branch — und seit
+        # ZERODOX#3328 gibt es keinen Merge-Lauf auf `main` mehr. Das
+        # ausloesende Event kommt nie. Beide Aenderungen sind einzeln richtig;
+        # zusammen ergaben sie: verworfene Auftraege bleiben verworfen.
         if self.active_deployments.get(project_key, False):
-            error_msg = f"Deployment already in progress for '{project_name}'"
-            self.logger.warning(f"⚠️ {error_msg}")
+            self.auftrag_vormerken(project_key, branch, deploy_context)
             return {
-                'success': False,
-                'error': error_msg,
-                'duration_seconds': 0
+                'success': True,
+                'queued': True,
+                'error': None,
+                'duration_seconds': 0,
+                'message': (
+                    f"Deploy fuer '{project_name}' vorgemerkt — laeuft direkt nach dem "
+                    f"aktuellen Deploy. Nur der neueste Stand wird nachgeholt."
+                ),
             }
 
         # Check if deployment is disabled for this project
@@ -479,6 +556,68 @@ class DeploymentManager:
         finally:
             # Mark deployment as complete
             self.active_deployments[project_key] = False
+
+            # Wartet ein Auftrag? Dann jetzt nachholen (ZERODOX#3532ff).
+            #
+            # Als Hintergrundaufgabe, nicht per Rekursion: Dieser Block laeuft
+            # im `finally` des gerade beendeten Deploys, und ein `await` hier
+            # wuerde dessen Rueckgabe so lange verzoegern, bis die ganze Kette
+            # durch ist — der Aufrufer (Discord-Handler) waere blockiert.
+            wartend = self.wartenden_auftrag_entnehmen(project_key)
+            if wartend is not None:
+                if self.nachhol_grenze_erreicht(_nachhol_tiefe):
+                    self.logger.warning(
+                        f"⚠️ Nachhol-Grenze ({self.NACHHOL_MAX}) fuer '{project_name}' erreicht — "
+                        f"kein weiterer Nachhol-Deploy. Der vorgemerkte Auftrag wurde verworfen; "
+                        f"der buildSha-Drift-Waechter bleibt der Backstop."
+                    )
+                else:
+                    self.logger.info(
+                        f"🔁 Hole vorgemerkten Deploy fuer '{project_name}' nach "
+                        f"(Kette {_nachhol_tiefe + 1}/{self.NACHHOL_MAX})."
+                    )
+                    asyncio.create_task(
+                        self._nachhol_deploy(
+                            project_name=project_name,
+                            branch=wartend.get('branch'),
+                            deploy_context=wartend.get('deploy_context'),
+                            naechste_tiefe=_nachhol_tiefe + 1,
+                        )
+                    )
+
+    async def _nachhol_deploy(
+        self,
+        project_name: str,
+        branch: Optional[str],
+        deploy_context: Optional[Dict],
+        naechste_tiefe: int,
+    ) -> None:
+        """Fuehrt einen vorgemerkten Deploy aus und protokolliert das Ergebnis.
+
+        Eigene Methode, damit der Hintergrund-Task eine Fehlerbehandlung hat:
+        Eine Ausnahme in einem `asyncio.create_task` ohne `await` verschwindet
+        sonst in der Ereignisschleife und taucht allenfalls als
+        "Task exception was never retrieved" auf.
+        """
+        try:
+            ergebnis = await self.deploy_project(
+                project_name,
+                branch=branch,
+                deploy_context=deploy_context,
+                _nachhol_tiefe=naechste_tiefe,
+            )
+            if ergebnis.get('success'):
+                self.logger.info(f"✅ Nachhol-Deploy fuer '{project_name}' erfolgreich.")
+            else:
+                self.logger.warning(
+                    f"⚠️ Nachhol-Deploy fuer '{project_name}' fehlgeschlagen: "
+                    f"{ergebnis.get('error')}"
+                )
+        except Exception as fehler:  # noqa: BLE001 — ein Hintergrund-Task darf nie still sterben
+            self.logger.error(
+                f"❌ Nachhol-Deploy fuer '{project_name}' brach mit einer Ausnahme ab: {fehler}",
+                exc_info=True,
+            )
 
     async def _create_backup(self, project: Dict) -> Path:
         """
