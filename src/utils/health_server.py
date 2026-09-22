@@ -112,8 +112,11 @@ class HealthCheckServer:
             self.runner = web.AppRunner(self.app)
             await self.runner.setup()
 
-            # ZERODOX#3212: statt 0.0.0.0 nur 127.0.0.1 + Docker-Bridge (172.17.0.1,
-            # falls vorhanden) — enger als die UFW-Regel, die es bisher allein tat.
+            # ZERODOX#3212: statt 0.0.0.0 nur 127.0.0.1 + alle Docker-Bridges
+            # (docker0, br-*) — enger als die UFW-Regel, die es bisher allein
+            # tat. Konsument u. a. zerodox-web, das den Changelog-Endpunkt
+            # über 172.20.0.1 (Gateway von zerodox-internal) erreicht, nicht
+            # über die Standard-Bridge 172.17.0.1.
             self.site = web.TCPSite(
                 self.runner, host=bind_hosts(), port=self.port,
                 reuse_address=True, reuse_port=True

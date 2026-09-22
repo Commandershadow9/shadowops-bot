@@ -83,10 +83,10 @@ class GuildScoutAlertsHandler:
 
         self.runner = web.AppRunner(self.app)
         await self.runner.setup()
-        # ZERODOX#3212: statt 0.0.0.0 nur 127.0.0.1 + Docker-Bridge (172.17.0.1,
-        # falls vorhanden) — Docker-Container erreichen den Host darüber, ein
-        # weiterer Grund für 0.0.0.0 bestand nicht. Absicherung zusätzlich über
-        # UFW (nur 172.16.0.0/12) + HMAC-Signaturen.
+        # ZERODOX#3212: statt 0.0.0.0 nur 127.0.0.1 + alle Docker-Bridges
+        # (docker0, br-*) — das Routing-Netz für diesen Webhook liegt z. B.
+        # unter 172.18.0.1, nicht unter der Standard-Bridge 172.17.0.1.
+        # Absicherung zusätzlich über UFW (nur 172.16.0.0/12) + HMAC-Signaturen.
         self.site = web.TCPSite(
             self.runner, host=bind_hosts(), port=self.webhook_port,
             reuse_address=True, reuse_port=True
