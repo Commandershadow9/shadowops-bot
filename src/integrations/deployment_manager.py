@@ -50,6 +50,42 @@ logger = logging.getLogger('shadowops.deployment')
 _STEP_FAIL_MARKERS = ("❌", "fehlgeschlagen", "failed", "error", "fehler", "abort")
 
 
+# ZERODOX#3515: Backup- und Rollback-rsync teilen sich diese eine Liste.
+#
+# Was der Backup-rsync per --exclude auslaesst, existiert im Backup schlicht
+# nicht. Faehrt der Rollback-rsync mit --delete darueber und kennt denselben
+# Ausschluss nicht, loescht er es aus dem LIVE-Baum, weil es "im Backup fehlt"
+# — ein Rollback wuerde es sonst so lesen, als sei es seit dem Backup neu
+# entstanden und darum zu entfernen.
+#
+# Genau das geschah am 20.-22.09.2026 viermal: ZERODOX#3447 nahm
+# `.claude/worktrees` und `.next` in den Backup-Ausschluss auf, der
+# Rollback-Aufruf blieb unveraendert. Jeder Rollback loeschte damit die
+# getrackten Dateien in ALLEN parallelen Claude-Worktrees (~5300 Dateien je
+# Vorfall). Vorher hielten zwei separate Listen exakt in dem Moment
+# zusammen, in dem sie es am dringendsten muessten — direkt nach einer
+# Aenderung an nur einer davon. Eine gemeinsame Konstante macht dieses
+# Auseinanderlaufen strukturell unmoeglich statt nur dokumentiert verboten.
+#
+# ⚠️ `.claude/worktrees` MIT Pfad, nicht nur `worktrees`: Im ZERODOX-Baum
+# liegt daneben ein unversioniertes `worktrees/` mit anderem Inhalt. Ein
+# blosser Basisname schluesse beide aus.
+DEPLOY_BACKUP_EXCLUDES: Tuple[str, ...] = (
+    ".git",
+    ".env",
+    ".venv",
+    "__pycache__",
+    "*.pyc",
+    "node_modules",
+    "venv",
+    "backups",
+    "logs",
+    "uploads",
+    ".claude/worktrees",
+    ".next",
+)
+
+
 def _summarize_steps(steps: List[str]) -> Tuple[int, int, Optional[str]]:
     """Fasst gesammelte Deploy-Steps zusammen.
 
@@ -651,42 +687,29 @@ class DeploymentManager:
             # Create backup using rsync for efficiency
             # --no-perms --no-group --no-owner: Avoid chgrp/chown errors when source
             # files are owned by Docker container user (uid 1001, gid 65533)
+            #
+            # ZERODOX#3447 (Herkunft der Liste) + ZERODOX#3515 (warum sie eine
+            # gemeinsame Konstante mit dem Rollback ist): siehe
+            # DEPLOY_BACKUP_EXCLUDES oben.
+            #
+            # Gemessen am 19.09.2026 an zerodox_20260918_145640 — 22 GB:
+            #
+            #     18   GB  .claude/worktrees/  Arbeitskopien paralleler
+            #                                  Claude-Sessions
+            #      4,1 GB  web/.next/          Build-Output, den der Deploy
+            #                                  ohnehin neu erzeugt
+            #     ~0,2 GB                      alles Uebrige — der Code,
+            #                                  also der einzige Grund fuer
+            #                                  dieses Backup
+            #
+            # Die Folgen trug jeder Deploy: Das Backup brauchte 5m28s von
+            # 10m46s Gesamtzeit (18.09., 14:56:40 bis 15:02:08), fuenf
+            # Staende je Projekt belegten 112 GB, und bei rund 21 Merges am
+            # Tag schrieb der Bot etwa 460 GB taeglich auf die NVMe.
             cmd = [
                 'rsync', '-rlptD',
                 '--no-perms', '--no-group', '--no-owner',
-                '--exclude=.git',
-                '--exclude=.env',
-                '--exclude=.venv',
-                '--exclude=__pycache__',
-                '--exclude=*.pyc',
-                '--exclude=node_modules',
-                '--exclude=venv',
-                '--exclude=backups',
-                '--exclude=logs',
-                '--exclude=uploads',
-                # ZERODOX#3447: Was reproduzierbar oder fluechtig ist, gehoert
-                # nicht ins Deploy-Backup.
-                #
-                # Gemessen am 19.09.2026 an zerodox_20260918_145640 — 22 GB:
-                #
-                #     18   GB  .claude/worktrees/  Arbeitskopien paralleler
-                #                                  Claude-Sessions
-                #      4,1 GB  web/.next/          Build-Output, den der Deploy
-                #                                  ohnehin neu erzeugt
-                #     ~0,2 GB                      alles Uebrige — der Code,
-                #                                  also der einzige Grund fuer
-                #                                  dieses Backup
-                #
-                # Die Folgen trug jeder Deploy: Das Backup brauchte 5m28s von
-                # 10m46s Gesamtzeit (18.09., 14:56:40 bis 15:02:08), fuenf
-                # Staende je Projekt belegten 112 GB, und bei rund 21 Merges am
-                # Tag schrieb der Bot etwa 460 GB taeglich auf die NVMe.
-                #
-                # ⚠️ `.claude/worktrees` MIT Pfad, nicht nur `worktrees`: Im
-                # ZERODOX-Baum liegt daneben ein unversioniertes `worktrees/`
-                # mit anderem Inhalt. Ein blosser Basisname schluesse beide aus.
-                '--exclude=.claude/worktrees',
-                '--exclude=.next',
+                *[f'--exclude={muster}' for muster in DEPLOY_BACKUP_EXCLUDES],
                 str(project['path']) + '/',
                 str(backup_path) + '/'
             ]
@@ -1011,7 +1034,7 @@ class DeploymentManager:
             # --no-perms --no-group --no-owner: Avoid chgrp/chown errors when
             # files were originally owned by Docker container user
             #
-            # WICHTIG: Gleiche Excludes wie beim Backup + .env/.venv!
+            # WICHTIG: Gleiche Excludes wie beim Backup, ueber DEPLOY_BACKUP_EXCLUDES!
             # Ohne --exclude=.git würde --delete das Git-Repo löschen,
             # weil .git NICHT im Backup enthalten ist (Vorfall 2026-03-20).
             #
@@ -1022,16 +1045,18 @@ class DeploymentManager:
             # zu unlink-en. Diese Dateien gehören Docker-Container-User (UID
             # 1001), Bot läuft als cmdshadow (UID 1000) → Permission denied.
             # 2-Tage-Auto-Deploy-Blockade nach ZERODOX-PRs #705, #707, #708.
+            #
+            # ZERODOX#3515 (20.-22.09.2026): ZERODOX#3447 hatte
+            # `.claude/worktrees` und `.next` nur der Backup-Liste hinzugefuegt,
+            # nicht dieser hier — der Kommentar "Gleiche Excludes wie beim
+            # Backup" stimmte seither nicht mehr. Jeder Rollback loeschte damit
+            # per --delete alle getrackten Dateien in ALLEN parallelen
+            # Claude-Worktrees, viermal belegt, je ~5300 Dateien. Seither
+            # ziehen beide Kommandos aus DEPLOY_BACKUP_EXCLUDES — zwei Kopien
+            # derselben Liste koennen nicht mehr auseinanderlaufen.
             cmd = [
                 'rsync', '-rlptD', '--delete',
-                '--exclude=.git',
-                '--exclude=.env',
-                '--exclude=.venv',
-                '--exclude=node_modules',
-                '--exclude=__pycache__',
-                '--exclude=backups',
-                '--exclude=logs',
-                '--exclude=uploads',
+                *[f'--exclude={muster}' for muster in DEPLOY_BACKUP_EXCLUDES],
                 '--no-perms', '--no-group', '--no-owner',
                 str(backup_path) + '/',
                 str(project['path']) + '/'
