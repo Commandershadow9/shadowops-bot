@@ -17,13 +17,21 @@ eine parallele Session ihren Worktree waehrend des Backups entfernte
 ("directory has vanished"). rsync meldet dafuer Exit 24, und der galt als
 Fehler.
 
-Geprueft wird der QUELLTEXT. Ein Laufzeittest muesste ein echtes rsync gegen
-einen echten Baum fahren, um dasselbe auszusagen — und der teure Teil (dass die
-Ausschluesse auch WIRKLICH in der Kommandozeile landen) waere dabei genau der,
-den eine Attrappe verdeckt.
+Geprueft wird der QUELLTEXT fuer den Python-Fallback und die rsync-Exit-Codes.
+Ein Laufzeittest muesste ein echtes rsync gegen einen echten Baum fahren, um
+dasselbe auszusagen — und der teure Teil (dass die Ausschluesse auch WIRKLICH
+in der Kommandozeile landen) waere dabei genau der, den eine Attrappe verdeckt.
+
+Seit ZERODOX#3515 ziehen Backup- und Rollback-rsync ihre Ausschluesse aus der
+EINEN Konstante `DEPLOY_BACKUP_EXCLUDES` — die Ausschluss-Liste selbst wird
+deshalb direkt importiert und gepruefe, statt sie aus dem rsync-Aufruf per
+Regex zurueckzulesen (Details + Paritaet zum Rollback:
+test_deploy_rollback_ausschluesse.py).
 """
 import re
 from pathlib import Path
+
+from src.integrations.deployment_manager import DEPLOY_BACKUP_EXCLUDES
 
 DEPLOYMENT_MANAGER = (
     Path(__file__).resolve().parents[2]
@@ -49,23 +57,21 @@ def _ohne_kommentare(text: str) -> str:
 
 
 def test_worktrees_sind_ausgeschlossen():
-    code = _ohne_kommentare(_quelle())
-    assert "'--exclude=.claude/worktrees'" in code, (
-        "Der rsync-Aufruf schliesst .claude/worktrees nicht aus. Diese "
+    assert ".claude/worktrees" in DEPLOY_BACKUP_EXCLUDES, (
+        "DEPLOY_BACKUP_EXCLUDES schliesst .claude/worktrees nicht aus. Diese "
         "Arbeitskopien machten 18 der 22 GB eines ZERODOX-Backups aus und "
         "haben keinen Sicherungswert — sie liegen als Branch auf GitHub."
     )
 
 
 def test_ausschluss_traegt_den_pfad_nicht_nur_den_namen():
-    """`--exclude=worktrees` allein waere zu breit.
+    """`worktrees` als Basisname allein waere zu breit.
 
     Im ZERODOX-Arbeitsbaum liegt neben `.claude/worktrees/` ein
     unversioniertes `worktrees/` mit anderem Inhalt. Ein blosser Basisname
     schluesse beide aus — und das zweite gehoert moeglicherweise gesichert.
     """
-    code = _ohne_kommentare(_quelle())
-    assert "'--exclude=worktrees'" not in code, (
+    assert "worktrees" not in DEPLOY_BACKUP_EXCLUDES, (
         "Ausschluss per Basisname gefunden. rsync wendet den auf JEDES "
         "Verzeichnis dieses Namens an, auch auf das unversionierte "
         "worktrees/ im Repo-Wurzelverzeichnis."
@@ -73,9 +79,8 @@ def test_ausschluss_traegt_den_pfad_nicht_nur_den_namen():
 
 
 def test_build_output_ist_ausgeschlossen():
-    code = _ohne_kommentare(_quelle())
-    assert "'--exclude=.next'" in code, (
-        "Der rsync-Aufruf schliesst web/.next nicht aus — 4,1 GB Build-Output, "
+    assert ".next" in DEPLOY_BACKUP_EXCLUDES, (
+        "DEPLOY_BACKUP_EXCLUDES schliesst .next nicht aus — 4,1 GB Build-Output, "
         "den jeder Deploy ohnehin neu erzeugt."
     )
 
