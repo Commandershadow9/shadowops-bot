@@ -495,7 +495,7 @@ class DeploymentManager:
             return result
 
         except PostDeployTempfailError as e:
-            # ZERODOX#3577: EX_TEMPFAIL (75) heisst "voruebergehend
+            # ZERODOX#3328: EX_TEMPFAIL (75) heisst "voruebergehend
             # verhindert, kein Fehlschlag" — weder Rollback noch Fehler-
             # Alarm. Ohne diesen eigenen Zweig faellt die Ausnahme (als
             # DeploymentError-Unterklasse) sonst in den Zweig darunter und
@@ -1454,7 +1454,7 @@ class PostDeployTempfailError(DeploymentError):
     waehrend des Gates weitergerueckt, der naechste Merge liefert gesammelt
     aus" (Sammel-Zug).
 
-    ZERODOX#3577: Bis hierhin behandelte `deploy_project()` JEDEN
+    ZERODOX#3328: Bis hierhin behandelte `deploy_project()` JEDEN
     nicht-Null-Exitcode von `post_deploy_command` gleich — Rollback-Versuch
     aus dem Backup UND Discord-Fehlalarm, noch bevor `ci_mixin._trigger_
     deployment()` ueberhaupt sieht, dass der Grund "exit=75" war. Fuer einen
@@ -1470,7 +1470,7 @@ class PostDeployTempfailError(DeploymentError):
     pass
 
 
-# ZERODOX#3577: deploy.sh's eigener Exitcode fuer "voruebergehend verhindert,
+# ZERODOX#3328: deploy.sh's eigener Exitcode fuer "voruebergehend verhindert,
 # kein Fehlschlag" — siehe PostDeployTempfailError. Muss synchron bleiben mit
 # ci_mixin._DEPLOY_TEMPFAIL_MARKER ("exit=75" im Fehlertext).
 _POST_DEPLOY_TEMPFAIL_EXIT_CODE = 75
