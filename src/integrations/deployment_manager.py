@@ -494,6 +494,36 @@ class DeploymentManager:
 
             return result
 
+        except PostDeployTempfailError as e:
+            # ZERODOX#3577: EX_TEMPFAIL (75) heisst "voruebergehend
+            # verhindert, kein Fehlschlag" — weder Rollback noch Fehler-
+            # Alarm. Ohne diesen eigenen Zweig faellt die Ausnahme (als
+            # DeploymentError-Unterklasse) sonst in den Zweig darunter und
+            # loest genau das aus, was hier verhindert werden soll: einen
+            # Rollback der unveraenderten Arbeitskopie und einen roten
+            # Discord-Alarm fuer einen Lauf, der schlicht vom naechsten,
+            # neueren Merge ueberholt wurde bzw. auf eine belegte
+            # Deploy-Sperre traf.
+            self.logger.info(f"↻ Deploy voruebergehend zurueckgestellt: {e}")
+
+            result['error'] = str(e)
+            result['failed_stage'] = current_stage
+            duration = time.time() - start_time
+            result['duration_seconds'] = duration
+
+            await self._send_deployment_update(
+                project_name,
+                f"↻ {current_stage} voruebergehend zurueckgestellt — "
+                f"kein Fehler, wird nachgeholt.",
+            )
+
+            # Kein Rollback: Es wurde nichts Kaputtes deployt — deploy.sh
+            # ist gar nicht bis zum Ausliefern gekommen. Kein Discord-
+            # Fehler-Alarm (`_send_deployment_failure`): ci_mixin wertet
+            # das Ergebnis ueber den "exit=75"-Marker in `result['error']`
+            # als "transient"/"superseded" und alarmiert dort bewusst nicht.
+            return result
+
         except DeploymentError as e:
             # Deployment failed, attempt rollback
             self.logger.error(f"❌ Deployment failed: {e}")
@@ -928,7 +958,10 @@ class DeploymentManager:
                 parts.append(f"stderr: {stderr_text}")
             if not stdout_text and not stderr_text:
                 parts.append("(both streams empty — subprocess silent fail)")
-            raise DeploymentError("\n".join(parts))
+            message = "\n".join(parts)
+            if process.returncode == _POST_DEPLOY_TEMPFAIL_EXIT_CODE:
+                raise PostDeployTempfailError(message)
+            raise DeploymentError(message)
 
     async def _restart_service(self, project: Dict):
         """
@@ -1411,3 +1444,33 @@ class DeploymentManager:
 class DeploymentError(Exception):
     """Exception raised for deployment failures"""
     pass
+
+
+class PostDeployTempfailError(DeploymentError):
+    """
+    deploy.sh beendet sich mit EX_TEMPFAIL (75), wenn der Lauf aus einem
+    Grund abgebrochen wurde, der KEIN Fehlschlag ist — bisher "eine andere
+    Deploy-Sperre ist belegt", seit ZERODOX#3328 zusaetzlich "main ist
+    waehrend des Gates weitergerueckt, der naechste Merge liefert gesammelt
+    aus" (Sammel-Zug).
+
+    ZERODOX#3577: Bis hierhin behandelte `deploy_project()` JEDEN
+    nicht-Null-Exitcode von `post_deploy_command` gleich — Rollback-Versuch
+    aus dem Backup UND Discord-Fehlalarm, noch bevor `ci_mixin._trigger_
+    deployment()` ueberhaupt sieht, dass der Grund "exit=75" war. Fuer einen
+    Zustand, der laut eigenem Marker "voruebergehend" heisst, ist ein
+    Rollback der Arbeitskopie und ein Fehler-Alarm falsch: Es wurde nichts
+    Kaputtes deployt, der naechste Merge holt den Stand ohnehin nach.
+
+    Eine eigene Exception-Klasse (statt eine String-Pruefung im except-Block
+    von `deploy_project`) haelt den Unterschied dort sichtbar, wo er
+    entsteht — in `_run_post_deploy_command`, wo der Exitcode zuerst bekannt
+    ist.
+    """
+    pass
+
+
+# ZERODOX#3577: deploy.sh's eigener Exitcode fuer "voruebergehend verhindert,
+# kein Fehlschlag" — siehe PostDeployTempfailError. Muss synchron bleiben mit
+# ci_mixin._DEPLOY_TEMPFAIL_MARKER ("exit=75" im Fehlertext).
+_POST_DEPLOY_TEMPFAIL_EXIT_CODE = 75
