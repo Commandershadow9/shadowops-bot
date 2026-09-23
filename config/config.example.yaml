@@ -392,6 +392,13 @@ projects:
     critical: true
     ci_workflows:
       - "Web Quality"
+    # Zwei Spuren seit 22.09.2026 (ZERODOX Spec 2026-09-22-deploy-zwei-spuren):
+    # Der PR-Lauf prüft kein E2E mehr, der Main-Lauf ist die einzige Quelle.
+    # Beide Kurzschlüsse deshalb AUS — der Bot wartet auf `Web Quality` für
+    # den Merge-SHA selbst. Rückweg: ERST hier `true`, DANN `push: main` in
+    # web-quality.yml austragen (#3230).
+    ci_wait_pr_head_reuse: false
+    ci_wait_tree_sha_reuse: false
     deploy:
       # Harte Zeitgrenze fuer den Deploy-Aufruf (ci_mixin.py, ZERODOX#3447).
       # Greift NACH dem CI-Warten — zaehlt nur die Zeit des deploy_project()-Calls.
