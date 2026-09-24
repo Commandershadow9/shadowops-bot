@@ -20,6 +20,11 @@ try:  # pragma: no cover - Import-Pfad haengt von pythonpath ab
 except ImportError:  # pragma: no cover
     from src.utils.alert_humanizer import format_downtime  # type: ignore[no-redef]
 
+try:  # pragma: no cover - Import-Pfad haengt von pythonpath ab
+    from integrations.github_integration import deploy_feedback
+except ImportError:  # pragma: no cover
+    from src.integrations.github_integration import deploy_feedback  # type: ignore[no-redef]
+
 # ⚠️ Bewusst 'shadowops.deployment' und NICHT getLogger(__name__).
 #
 # Die Handler des Bots haengen am Logger 'shadowops' (src/bot.py:497). Ein
@@ -266,7 +271,12 @@ class DeploymentManager:
                 'test_command': deploy_config.get('test_command', 'pytest'),
                 'post_deploy_command': deploy_config.get('post_deploy_command', None),
                 'health_check_url': project_config.get('monitor', {}).get('url', ''),
-                'service_name': deploy_config.get('service_name', None)
+                'service_name': deploy_config.get('service_name', None),
+                # ZERODOX#3638: GitHub-Deploy-Rueckmeldung (PR-Kommentar +
+                # Commit-Status) braucht die Repo-URL und den Abschalt-
+                # Schalter je Projekt — siehe deploy_feedback.ist_aktiviert().
+                'repo_url': project_config.get('repo_url') or project_config.get('repository_url'),
+                'github_deploy_feedback': project_config.get('github_deploy_feedback'),
             }
 
             status = "✅" if deploy_enabled else "⏭️ (deploy disabled)"
@@ -383,7 +393,7 @@ class DeploymentManager:
             if not is_self_deploy:
                 # Normale Projekte: Volles Deployment mit allen Schritten
                 await self._send_deployment_started(
-                    project_name, deploy_branch, deploy_context=context
+                    project_name, deploy_branch, deploy_context=context, project=project
                 )
 
             current_stage = "Projektpfad prüfen"
@@ -438,7 +448,7 @@ class DeploymentManager:
                 result['success'] = True
                 result['duration_seconds'] = duration
                 self.logger.info(f"✅ Self-deploy: {project_name} ({duration:.1f}s) — Restart in 5s")
-                await self._send_deployment_success(project_name, deploy_branch, duration, result)
+                await self._send_deployment_success(project_name, deploy_branch, duration, result, project=project)
                 import subprocess
                 subprocess.Popen(
                     ['bash', '-c', 'sleep 5 && sudo systemctl restart shadowops-bot'],
@@ -490,7 +500,7 @@ class DeploymentManager:
             self.logger.info(f"✅ Deployment successful: {project_name} ({duration:.1f}s)")
 
             # Send Discord notification: Deployment success
-            await self._send_deployment_success(project_name, deploy_branch, duration, result)
+            await self._send_deployment_success(project_name, deploy_branch, duration, result, project=project)
 
             return result
 
@@ -559,7 +569,7 @@ class DeploymentManager:
                     await self._send_deployment_update(project_name, f"❌ Rollback failed: {rollback_error}")
 
             # Send Discord notification: Deployment failure
-            await self._send_deployment_failure(project_name, deploy_branch, duration, result)
+            await self._send_deployment_failure(project_name, deploy_branch, duration, result, project=project)
 
             return result
 
@@ -578,7 +588,7 @@ class DeploymentManager:
             # Dieselbe detaillierte Abschlussmeldung wie bei erwarteten Fehlern
             # verwenden, damit keine gelbe Fortschrittsmeldung stehen bleibt.
             await self._send_deployment_failure(
-                project_name, deploy_branch, duration, result
+                project_name, deploy_branch, duration, result, project=project, is_exception=True
             )
 
             return result
@@ -1145,11 +1155,45 @@ class DeploymentManager:
             )
         return self.bot.get_channel(self.deployment_channel_id)
 
+    async def _report_deploy_to_github(
+        self,
+        project: Optional[Dict],
+        *,
+        phase: str,
+        deploy_context: Optional[Dict] = None,
+        result: Optional[Dict] = None,
+        duration: Optional[float] = None,
+        is_exception: bool = False,
+    ) -> None:
+        """Meldet den Deploy-Ausgang zusaetzlich an GitHub (ZERODOX#3638).
+
+        Duenner, eigens abgesicherter Wrapper um `deploy_feedback.report()`:
+        Selbst wenn dort ein unerwarteter Bug steckt (z.B. falsch geformte
+        Daten), darf das NIE den Deploy oder die schon gesendete Discord-
+        Meldung nachtraeglich zu Fall bringen — deshalb ein eigenes
+        try/except zusaetzlich zur internen Fail-Soft-Logik des Moduls.
+        """
+        try:
+            await deploy_feedback.report(
+                self.bot,
+                project,
+                phase=phase,
+                deploy_context=deploy_context,
+                result=result,
+                duration=duration,
+                is_exception=is_exception,
+            )
+        except Exception as exc:
+            self.logger.warning(
+                f"⚠️ GitHub-Deploy-Rueckmeldung fehlgeschlagen: {exc}"
+            )
+
     async def _send_deployment_started(
         self,
         project_name: str,
         branch: str,
         deploy_context: Optional[Dict] = None,
+        project: Optional[Dict] = None,
     ):
         """Erstellt eine editierbare Discord-Statusmeldung für den Deploy."""
         if not hasattr(self, '_deploy_steps'):
@@ -1163,16 +1207,21 @@ class DeploymentManager:
         self.logger.info(f"🚀 Deployment gestartet: {project_name} ({branch})")
 
         channel = self._kanal_fuer(project_name)
-        if not channel:
-            return
-        embed = self._build_progress_embed(project_name, branch, "Deployment wird vorbereitet …")
-        try:
-            self._deploy_messages[project_name] = await channel.send(embed=embed)
-        except Exception as exc:
-            self.logger.error(
-                f"❌ Deploy-Startmeldung konnte nicht gesendet werden: {exc}",
-                exc_info=True,
-            )
+        if channel:
+            embed = self._build_progress_embed(project_name, branch, "Deployment wird vorbereitet …")
+            try:
+                self._deploy_messages[project_name] = await channel.send(embed=embed)
+            except Exception as exc:
+                self.logger.error(
+                    f"❌ Deploy-Startmeldung konnte nicht gesendet werden: {exc}",
+                    exc_info=True,
+                )
+
+        # ZERODOX#3638: GitHub-Rueckmeldung — unabhaengig vom Discord-Kanal,
+        # deshalb nicht im "if channel"-Zweig oben.
+        await self._report_deploy_to_github(
+            project, phase='started', deploy_context=deploy_context
+        )
 
     def _build_progress_embed(
         self, project_name: str, branch: str, current: str
@@ -1242,148 +1291,165 @@ class DeploymentManager:
         getattr(self, '_deploy_contexts', {}).pop(project_name, None)
 
     async def _send_deployment_success(
-        self, project_name: str, branch: str, duration: float, result: Dict
+        self, project_name: str, branch: str, duration: float, result: Dict,
+        project: Optional[Dict] = None,
     ):
         """Send Discord notification when deployment succeeds"""
         channel = self._kanal_fuer(project_name)
-        if not channel:
-            return
+        if channel:
+            steps = getattr(self, '_deploy_steps', {}).get(project_name, [])
+            ok, total, _ = _summarize_steps(steps)
 
-        steps = getattr(self, '_deploy_steps', {}).get(project_name, [])
-        ok, total, _ = _summarize_steps(steps)
+            # Klartext-Zusammenfassung statt bloßer Erfolgsmeldung
+            if total > 0:
+                summary = f"**{project_name}** erfolgreich deployt — alle {total} Schritte ok."
+            else:
+                summary = f"**{project_name}** erfolgreich deployt."
 
-        # Klartext-Zusammenfassung statt bloßer Erfolgsmeldung
-        if total > 0:
-            summary = f"**{project_name}** erfolgreich deployt — alle {total} Schritte ok."
-        else:
-            summary = f"**{project_name}** erfolgreich deployt."
+            embed = discord.Embed(
+                title=f"✅ Deployment erfolgreich: {project_name}",
+                description=summary,
+                color=discord.Color.green(),
+                timestamp=datetime.now(timezone.utc)
+            )
 
-        embed = discord.Embed(
-            title=f"✅ Deployment erfolgreich: {project_name}",
-            description=summary,
-            color=discord.Color.green(),
-            timestamp=datetime.now(timezone.utc)
+            embed.add_field(name="Projekt", value=f"`{project_name}`", inline=True)
+            embed.add_field(name="Branch", value=f"`{branch}`", inline=True)
+            embed.add_field(name="Dauer", value=_format_deploy_duration(duration), inline=True)
+
+            trigger = _format_deploy_trigger(result.get('deploy_context'))
+            if trigger:
+                embed.add_field(name="Auslöser", value=trigger[:1024], inline=False)
+
+            # Gesammelte Deploy-Steps als Timeline (Detail, unter der Zusammenfassung)
+            if steps:
+                embed.add_field(name="Verlauf", value="\n".join(steps[-10:])[:1024], inline=False)
+                self._deploy_steps.pop(project_name, None)  # Cleanup
+
+            await self._publish_final_embed(project_name, channel, embed)
+
+            # External-Guilds benachrichtigen (Kunden-Discord)
+            await self._forward_deploy_to_external(project_name, embed)
+
+        # ZERODOX#3638: GitHub-Rueckmeldung — unabhaengig vom Discord-Kanal.
+        await self._report_deploy_to_github(
+            project, phase='success', result=result, duration=duration
         )
 
-        embed.add_field(name="Projekt", value=f"`{project_name}`", inline=True)
-        embed.add_field(name="Branch", value=f"`{branch}`", inline=True)
-        embed.add_field(name="Dauer", value=_format_deploy_duration(duration), inline=True)
-
-        trigger = _format_deploy_trigger(result.get('deploy_context'))
-        if trigger:
-            embed.add_field(name="Auslöser", value=trigger[:1024], inline=False)
-
-        # Gesammelte Deploy-Steps als Timeline (Detail, unter der Zusammenfassung)
-        if steps:
-            embed.add_field(name="Verlauf", value="\n".join(steps[-10:])[:1024], inline=False)
-            self._deploy_steps.pop(project_name, None)  # Cleanup
-
-        await self._publish_final_embed(project_name, channel, embed)
-
-        # External-Guilds benachrichtigen (Kunden-Discord)
-        await self._forward_deploy_to_external(project_name, embed)
-
     async def _send_deployment_failure(
-        self, project_name: str, branch: str, duration: float, result: Dict
+        self, project_name: str, branch: str, duration: float, result: Dict,
+        project: Optional[Dict] = None, is_exception: bool = False,
     ):
         """Send Discord notification when deployment fails"""
         channel = self._kanal_fuer(project_name)
-        if not channel:
-            return
+        if channel:
+            error = result.get('error', 'Unknown error')
+            rolled_back = result.get('rolled_back', False)
 
-        error = result.get('error', 'Unknown error')
-        rolled_back = result.get('rolled_back', False)
+            steps = getattr(self, '_deploy_steps', {}).get(project_name, [])
+            ok, total, failed_step = _summarize_steps(steps)
 
-        steps = getattr(self, '_deploy_steps', {}).get(project_name, [])
-        ok, total, failed_step = _summarize_steps(steps)
+            failed_stage = result.get('failed_stage')
+            # Klartext-Zusammenfassung: wie weit kam das Deployment?
+            if total > 0:
+                summary = (
+                    f"**{project_name}** wurde nach {ok} erfolgreichen "
+                    "Statusmeldungen abgebrochen."
+                )
+            else:
+                summary = f"**{project_name}** Deployment fehlgeschlagen."
+            if failed_stage:
+                summary += f" Fehler in Phase: **{failed_stage}**."
 
-        failed_stage = result.get('failed_stage')
-        # Klartext-Zusammenfassung: wie weit kam das Deployment?
-        if total > 0:
-            summary = (
-                f"**{project_name}** wurde nach {ok} erfolgreichen "
-                "Statusmeldungen abgebrochen."
+            embed = discord.Embed(
+                title=f"❌ Deployment fehlgeschlagen: {project_name}",
+                description=summary,
+                color=discord.Color.red(),
+                timestamp=datetime.now(timezone.utc)
             )
-        else:
-            summary = f"**{project_name}** Deployment fehlgeschlagen."
-        if failed_stage:
-            summary += f" Fehler in Phase: **{failed_stage}**."
 
-        embed = discord.Embed(
-            title=f"❌ Deployment fehlgeschlagen: {project_name}",
-            description=summary,
-            color=discord.Color.red(),
-            timestamp=datetime.now(timezone.utc)
+            embed.add_field(name="Projekt", value=f"`{project_name}`", inline=True)
+            embed.add_field(name="Branch", value=f"`{branch}`", inline=True)
+            embed.add_field(name="Dauer", value=_format_deploy_duration(duration), inline=True)
+
+            trigger = _format_deploy_trigger(result.get('deploy_context'))
+            if trigger:
+                embed.add_field(name="Auslöser", value=trigger[:1024], inline=False)
+
+            # Fehlgeschlagener Schritt klar hervorgehoben (vor der Roh-Fehlermeldung)
+            if failed_step is not None:
+                embed.add_field(name="⛔ Fehlgeschlagen bei", value=failed_step[:1024], inline=False)
+
+            embed.add_field(
+                name="Fehlerursache", value=_concise_deploy_error(error), inline=False
+            )
+            if len(error) > 1000:
+                error = "..." + error[-997:]
+            error = error.replace("```", "'''")
+            embed.add_field(name="Technische Details", value=f"```{error}```", inline=False)
+
+            rollback_msg = "✅ Rollback erfolgreich" if rolled_back else "❌ Kein Rollback"
+            embed.add_field(name="Rollback", value=rollback_msg, inline=True)
+
+            # Gesammelte Deploy-Steps als vollständiger Verlauf (Detail)
+            if steps:
+                embed.add_field(name="Verlauf", value="\n".join(steps[-10:])[:1024], inline=False)
+                self._deploy_steps.pop(project_name, None)
+
+            await self._publish_final_embed(project_name, channel, embed)
+
+            # External-Guilds benachrichtigen (Kunden-Discord)
+            await self._forward_deploy_to_external(project_name, embed)
+
+        # ZERODOX#3638: GitHub-Rueckmeldung — unabhaengig vom Discord-Kanal.
+        await self._report_deploy_to_github(
+            project, phase='failure', result=result, duration=duration,
+            is_exception=is_exception,
         )
-
-        embed.add_field(name="Projekt", value=f"`{project_name}`", inline=True)
-        embed.add_field(name="Branch", value=f"`{branch}`", inline=True)
-        embed.add_field(name="Dauer", value=_format_deploy_duration(duration), inline=True)
-
-        trigger = _format_deploy_trigger(result.get('deploy_context'))
-        if trigger:
-            embed.add_field(name="Auslöser", value=trigger[:1024], inline=False)
-
-        # Fehlgeschlagener Schritt klar hervorgehoben (vor der Roh-Fehlermeldung)
-        if failed_step is not None:
-            embed.add_field(name="⛔ Fehlgeschlagen bei", value=failed_step[:1024], inline=False)
-
-        embed.add_field(
-            name="Fehlerursache", value=_concise_deploy_error(error), inline=False
-        )
-        if len(error) > 1000:
-            error = "..." + error[-997:]
-        error = error.replace("```", "'''")
-        embed.add_field(name="Technische Details", value=f"```{error}```", inline=False)
-
-        rollback_msg = "✅ Rollback erfolgreich" if rolled_back else "❌ Kein Rollback"
-        embed.add_field(name="Rollback", value=rollback_msg, inline=True)
-
-        # Gesammelte Deploy-Steps als vollständiger Verlauf (Detail)
-        if steps:
-            embed.add_field(name="Verlauf", value="\n".join(steps[-10:])[:1024], inline=False)
-            self._deploy_steps.pop(project_name, None)
-
-        await self._publish_final_embed(project_name, channel, embed)
-
-        # External-Guilds benachrichtigen (Kunden-Discord)
-        await self._forward_deploy_to_external(project_name, embed)
 
     async def _send_deployment_exception(
-        self, project_name: str, error: str, duration: float
+        self, project_name: str, error: str, duration: float,
+        project: Optional[Dict] = None,
     ):
         """Send Discord notification when deployment crashes with exception"""
         channel = self._kanal_fuer(project_name)
-        if not channel:
-            return
+        if channel:
+            embed = discord.Embed(
+                title="💥 Deployment Exception",
+                description=f"**{project_name}** deployment crashed with unexpected error",
+                color=discord.Color.dark_red(),
+                timestamp=datetime.now(timezone.utc)
+            )
 
-        embed = discord.Embed(
-            title="💥 Deployment Exception",
-            description=f"**{project_name}** deployment crashed with unexpected error",
-            color=discord.Color.dark_red(),
-            timestamp=datetime.now(timezone.utc)
+            embed.add_field(name="Project", value=project_name, inline=True)
+            embed.add_field(name="Duration", value=f"{duration:.1f}s", inline=True)
+
+            # Truncate error if too long
+            if len(error) > 500:
+                error = error[:497] + "..."
+            embed.add_field(name="Exception", value=f"```{error}```", inline=False)
+
+            embed.add_field(
+                name="⚠️ Action Required",
+                value="Manual intervention may be required. Check logs for details.",
+                inline=False
+            )
+
+            try:
+                await channel.send(embed=embed)
+                self.logger.debug(f"📢 Sent deployment exception notification for {project_name}")
+            except Exception as e:
+                self.logger.error(f"❌ Failed to send Discord notification: {e}", exc_info=True)
+
+        # ZERODOX#3638: GitHub-Rueckmeldung. Diese Methode hat aktuell keinen
+        # Aufrufer (kein `deploy_context`/`result` verfuegbar) — der Aufruf
+        # bleibt trotzdem konsistent zu den anderen drei Send-Methoden und
+        # no-opt korrekt (kein commit_sha → nichts zu verankern), falls
+        # kuenftig ein Aufrufer hinzukommt.
+        await self._report_deploy_to_github(
+            project, phase='failure', result={'error': error}, duration=duration,
+            is_exception=True,
         )
-
-        embed.add_field(name="Project", value=project_name, inline=True)
-        embed.add_field(name="Duration", value=f"{duration:.1f}s", inline=True)
-
-        # Truncate error if too long
-        if len(error) > 500:
-            error = error[:497] + "..."
-        embed.add_field(name="Exception", value=f"```{error}```", inline=False)
-
-        embed.add_field(
-            name="⚠️ Action Required",
-            value="Manual intervention may be required. Check logs for details.",
-            inline=False
-        )
-
-        try:
-            await channel.send(embed=embed)
-            self.logger.debug(f"📢 Sent deployment exception notification for {project_name}")
-        except Exception as e:
-            self.logger.error(f"❌ Failed to send Discord notification: {e}", exc_info=True)
-
 
     async def _forward_deploy_to_external(self, project_name: str, embed: discord.Embed):
         """Deployment-Embed an externe Guilds weiterleiten (Kunden-Discord)."""
