@@ -20,6 +20,11 @@ try:  # pragma: no cover - Import-Pfad haengt von pythonpath ab
 except ImportError:  # pragma: no cover
     from src.utils.alert_humanizer import format_downtime  # type: ignore[no-redef]
 
+try:  # pragma: no cover - Import-Pfad haengt von pythonpath ab
+    from integrations.github_integration import deploy_feedback
+except ImportError:  # pragma: no cover
+    from src.integrations.github_integration import deploy_feedback  # type: ignore[no-redef]
+
 # ⚠️ Bewusst 'shadowops.deployment' und NICHT getLogger(__name__).
 #
 # Die Handler des Bots haengen am Logger 'shadowops' (src/bot.py:497). Ein
@@ -266,7 +271,12 @@ class DeploymentManager:
                 'test_command': deploy_config.get('test_command', 'pytest'),
                 'post_deploy_command': deploy_config.get('post_deploy_command', None),
                 'health_check_url': project_config.get('monitor', {}).get('url', ''),
-                'service_name': deploy_config.get('service_name', None)
+                'service_name': deploy_config.get('service_name', None),
+                # ZERODOX#3638: GitHub-Deploy-Rueckmeldung (PR-Kommentar +
+                # Commit-Status) braucht die Repo-URL und den Abschalt-
+                # Schalter je Projekt — siehe deploy_feedback.ist_aktiviert().
+                'repo_url': project_config.get('repo_url') or project_config.get('repository_url'),
+                'github_deploy_feedback': project_config.get('github_deploy_feedback'),
             }
 
             status = "✅" if deploy_enabled else "⏭️ (deploy disabled)"
