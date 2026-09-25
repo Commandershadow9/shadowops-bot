@@ -20,7 +20,7 @@
 | Discord | discord.py | siehe requirements.txt |
 | Datenbank | PostgreSQL | 3 DBs: security_analyst, agent_learning, seo_agent |
 | Cache | Redis | — |
-| AI Primary | Codex CLI | gpt-4o / gpt-5.3-codex / o3 |
+| AI Primary | Codex CLI | gpt-4o / gpt-5.5 / o3 |
 | AI Fallback | Claude CLI | claude-sonnet-4-6 / claude-opus-4-6 |
 | Container | Docker | mit Trivy fuer Scans |
 | Service | systemd | `/etc/systemd/system/shadowops-bot.service` |
@@ -42,9 +42,9 @@
 shadowops-bot/
 ├── src/
 │   ├── bot.py                    # Haupt-Bot
-│   ├── cogs/                     # Slash-Commands (admin, inspector, monitoring)
+│   ├── cogs/                     # Slash-Commands (admin, inspector, monitoring, claude_cli, cron_heartbeat, crowdsec_notfall, customer_setup_commands, phase_5e_health_aggregator)
 │   ├── integrations/             # Externe Systeme (siehe unten)
-│   ├── patch_notes/              # Patch Notes Pipeline v6 (5-Stufen State Machine, ~2100 Zeilen)
+│   ├── patch_notes/              # Patch Notes Pipeline v6 (5-Stufen State Machine) + ki_einordnung.py (KI-Fallback fuer uncategorized Commits, seit PR #517)
 │   ├── schemas/                  # JSON-Schemas fuer Structured Output (fix_strategy, patch_notes, incident_analysis, jules_review)
 │   └── utils/                    # config, logging, embeds, state, alert_humanizer, health_server, message_handler, circuit_breaker, changelog_parser, process_lock
 ├── tests/
@@ -91,12 +91,12 @@ shadowops-bot/
 - `knowledge_base.py` — SQL Learning (fix_attempts, fix_verifications, finding_quality, scan_coverage)
 - `code_analyzer.py` — Code Structure Analyzer (Git-History + AST)
 - `context_manager.py` — RAG: Project-Context + DO-NOT-TOUCH + Infra
-- `github_integration/` — Webhooks mit HMAC-SHA256 Verification + Jules Workflow (Package: core, webhook_mixin, event_handlers_mixin, jules_workflow_mixin, notifications_mixin, ci_mixin, agent_review/)
+- `github_integration/` — Webhooks mit HMAC-SHA256 Verification + Jules Workflow (Package: core, webhook_mixin, event_handlers_mixin, jules_workflow_mixin, notifications_mixin, ci_mixin, agent_review/). `deploy_feedback.py` (seit PR #554 / ZERODOX#3638): spiegelt jedes Deploy-Ergebnis zusaetzlich nach GitHub — Commit-Status `zerodox/deploy` (pending/success/failure) + EIN sich selbst aktualisierender PR-Kommentar je Deploy (PATCH statt neuer Kommentare). Default-AN nur fuer `zerodox`, andere Projekte opt-in via `github_deploy_feedback: true`. Fail-soft: alle Fehler landen nur im Log, nie im Deploy-Ablauf.
 - `security_engine/` — Autonomer SecurityScanAgent (scan_agent.py), CircuitBreaker, DB-Layer (db.py), Fixer-Adapters, ActivityMonitor, LearningBridge, Prompts (Package: engine, scan_agent, reactive, proactive, deep_scan, executor, fixer_adapters, learning_bridge, activity_monitor, prompts, models, db, migrations)
 - `security_engine/team/` — Security-Agent-Team (**W1 LIVE seit 2026-07-09, 7d-Soak läuft**, #290/PR #339): `contracts.py` (SecurityJob/JobResult), `base_worker.py` (Lifecycle/Exception-Isolation), `orchestrator.py` (Fan-out + trigger-Durchreichung), `orchestrator_main.py` (**echter `sec:trigger`-Subscribe-Loop**), `runner.py`, `workers/npm_audit_worker.py`. **Betrieb:** systemd-User-Units `security-orchestrator` + `security-npm-audit-worker` (env: `~/.config/shadowops-security-team.env`, chmod 600, Redis-Auth!), `SECURITY_TEAM_ENABLED=true`, Live-Config-Sektion `security_team:` (guildscout+zerodox, npm_audit). Crons: Trigger 05:23, `scripts/security-job-reaper.sh` 06:41, `scripts/security-soak-compare.sh` 07:31 (`logs/security-soak-w1.log`). Selbstüberwachung: `security-freshness-watchdog` (pg-freshness auf `sec_jobs`, 26h). Monolith bleibt bis Soak-Ende (~2026-07-16) Source-of-Truth für LLM-Scans. Spec v2: `docs/design/2026-07-09-security-agent-team-v2-spec.md` (Fix-Kanal = Claude-CLI + PR-Gate, Jules tot; 5 Wellen), Plan: `docs/plans/2026-07-09-security-agent-team-w1.md`.
 - `fixers/` — Konkrete Fix-Implementierungen: fail2ban_fixer.py, crowdsec_fixer.py, aide_fixer.py, trivy_fixer.py, walg_fixer.py
 - `project_monitor.py` — Multi-Project Health-Checks + **Zentrale Monitoring-Engine** (2026-06, #277): deklaratives `checks:`-Inventar pro Projekt in config.yaml via `check_definitions.py`/`check_runner.py`/`heal_executor.py`/`maintenance_gate.py`. Check-Typen `http` (+header/POST/json_path/json_schema), `script`, `container` (network-attached). Gestuftes Heal (reversibel-autonom / approval / alert-only) + Circuit-Breaker + Maintenance-Gate (`/maintenance`-Command). 6 ZERODOX-Checks live (analytics-bridge mit Auto-Heal real verifiziert), Watchdogs bleiben als externer Dead-Man (Defense-in-Depth). **Import-Regel:** paket-intern relativ (`from .x`), NICHT `from src.integrations.x` (Bot läuft PYTHONPATH=src). Spec: `docs/2026-06-09-zentrales-monitoring-auto-health-design.md`, Inventar: `docs/MONITORING_INVENTORY.md`, Pläne: `docs/plans/2026-06-{09,10}-monitoring-*.md`.
-- `deployment_manager.py` — Auto-Deploy mit Backup/Rollback. Eine editierbare Discord-Meldung zeigt den laufenden Schritt (bei langem Post-Deploy alle 30 s), danach Erfolg oder Fehlerphase samt technischen Details. GitHub-Kontext enthält Commit sowie – wenn ermittelbar – PR und referenzierte Issues. **WICHTIG:** Project-Name-Lookup ist dash↔underscore-tolerant (`mayday-sim` ↔ `mayday_sim`, seit 2026-05-25 — siehe `.claude/rules/safety.md`). Gleiche Logik in `github_integration/ci_mixin.py:_trigger_deployment()`.
+- `deployment_manager.py` — Auto-Deploy mit Backup/Rollback. Eine editierbare Discord-Meldung zeigt den laufenden Schritt (bei langem Post-Deploy alle 30 s), danach Erfolg oder Fehlerphase samt technischen Details. GitHub-Kontext enthält Commit sowie – wenn ermittelbar – PR und referenzierte Issues. **Queuing (seit PR #545):** Trifft ein neuer Auftrag ein, während ein Deploy läuft, wird er vorgemerkt (nicht verworfen) und als Hintergrundaufgabe nachgeholt (`_nachhol_deploy`); pro Projekt max. ein vorgemerkter Auftrag, Obergrenze `NACHHOL_MAX=3`. **WICHTIG:** Project-Name-Lookup ist dash↔underscore-tolerant (`mayday-sim` ↔ `mayday_sim`, seit 2026-05-25 — siehe `.claude/rules/safety.md`). Gleiche Logik in `github_integration/ci_mixin.py:_trigger_deployment()`.
 - `incident_manager.py` — Incident Threads in Discord
 - `customer_notifications.py` — Customer-Facing Alerts (Multi-Guild)
 - `fail2ban.py` / `crowdsec.py` / `aide.py` / `docker.py` — Security-Event-Quellen (Monitoring-Integrationen)
