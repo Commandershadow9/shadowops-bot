@@ -387,6 +387,10 @@ projects:
     # Remote-Stand gezwungen. Dort darf niemand arbeiten.
     deploy_path: "/home/cmdshadow/ZERODOX-deploy"
     repo_url: "https://github.com/Commandershadow9/ZERODOX"
+    # Spiegelt jedes Deploy-Ergebnis nach GitHub (Commit-Status + PR-Kommentar,
+    # github_integration/deploy_feedback.py, PR #554). Default AN fuer 'zerodox'
+    # (im Code verankert); andere Projekte setzen diesen Key explizit auf true.
+    github_deploy_feedback: true
     services:
       - "zerodox-web"
     critical: true
