@@ -387,6 +387,10 @@ projects:
     # Remote-Stand gezwungen. Dort darf niemand arbeiten.
     deploy_path: "/home/cmdshadow/ZERODOX-deploy"
     repo_url: "https://github.com/Commandershadow9/ZERODOX"
+    # Spiegelt jedes Deploy-Ergebnis nach GitHub (Commit-Status + PR-Kommentar,
+    # github_integration/deploy_feedback.py, PR #554). Default AN fuer 'zerodox'
+    # (im Code verankert); andere Projekte setzen diesen Key explizit auf true.
+    github_deploy_feedback: true
     services:
       - "zerodox-web"
     critical: true
@@ -400,6 +404,11 @@ projects:
     ci_wait_pr_head_reuse: false
     ci_wait_tree_sha_reuse: false
     deploy:
+      # Harte Zeitgrenze fuer den Deploy-Aufruf (ci_mixin.py, ZERODOX#3447).
+      # Greift NACH dem CI-Warten — zaehlt nur die Zeit des deploy_project()-Calls.
+      # Default 45 min ist ~10x die gemessene Laufzeit; nur bei haengendem Deploy
+      # sinnvoll zu verringern (Achtung: zu klein bricht gesunde, langsame Deploys ab).
+      hard_timeout_min: 45
       # ZERODOX#2267: Ein erfolgreicher push-CI-Lauf auf main gleicht nach
       # 120 s den produktiven buildSha mit dem aktuellen Branch-HEAD ab und
       # holt einen zuvor wegen roter/pending CI abgebrochenen Deploy nach.
