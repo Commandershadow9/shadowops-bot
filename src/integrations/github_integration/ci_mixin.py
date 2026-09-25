@@ -423,7 +423,12 @@ class CIMixin:
             # am 17.08.2026 einen Stand liegen lassen, den blosses Abwarten
             # ausgeliefert haette. Begrenzt bleibt es trotzdem — ueber die
             # Deadline (timeout_sec), nicht ueber max_attempts.
-            if ergebnis != "transient":
+            #
+            # "superseded" (ZERODOX#3328, Sammel-Zug) gehoert aus demselben
+            # Grund dazu: branch_sha war zum Startzeitpunkt dieser Runde
+            # bereits ueberholt, die naechste Runde prueft ohnehin den dann
+            # aktuellen Kopf erneut — auch das kein verbrauchter Versuch.
+            if ergebnis not in ("transient", "superseded"):
                 attempts += 1
                 if attempts >= max_attempts:
                     break
@@ -1212,6 +1217,7 @@ class CIMixin:
         pr_head_reuse_enabled: bool = True,
         push_commit_shas: Optional[List[str]] = None,
         ausgelieferter_sha: Optional[str] = None,
+        branch: Optional[str] = None,
     ) -> Literal[
         "success",
         "failure",
@@ -1220,6 +1226,7 @@ class CIMixin:
         "docs_only",
         "no_workflows",
         "api_unavailable",
+        "superseded",
     ]:
         """
         Wait for required CI workflows on a given commit to complete.
@@ -1730,6 +1737,35 @@ class CIMixin:
             saw_any_relevant = True
 
             if any_failed:
+                conclusion = str(failed_run.get("conclusion") or "").lower()
+                # ZERODOX#3328 (Sammel-Zug, 22.09.2026): Web Quality laeuft
+                # seither mit `cancel-in-progress: true` — ein neuerer Merge
+                # bricht den CI-Lauf des aelteren Merges ab, geprueft und
+                # ausgeliefert wird nur der neueste Stand. Ohne diese
+                # Unterscheidung wertete `_klassifiziere_workflow_runs`
+                # "cancelled" als FEHLGESCHLAGEN (`_CI_FAILURE_CONCLUSIONS`) —
+                # jeder ueberholte Merge loeste einen Fehlalarm aus (belegt
+                # 23.09.2026 01:49 fuer a50e956, ae31de6), obwohl der neuere
+                # Merge den Stand ohnehin gesammelt ausliefert.
+                #
+                # Unterscheidung: Steht `branch` inzwischen auf einem ANDEREN
+                # SHA als dem hier gewarteten, war der Abbruch der Sammel-Zug
+                # — "superseded", kein Fehler. Steht `branch` noch auf
+                # `merged_sha`, war der Abbruch ein echter manueller Cancel
+                # (oder etwas anderes) und bleibt "failure" wie bisher. Ist
+                # der Kopf nicht ermittelbar (API-Fehler) oder fehlt `branch`,
+                # bleibt es fail-closed bei "failure" — lieber ein Alarm zu
+                # viel als ein verschluckter echter Fehlschlag.
+                if conclusion == "cancelled" and branch:
+                    head_sha = await self._fetch_branch_head_sha(repo_full_name, branch)
+                    if head_sha and head_sha != merged_sha:
+                        self.logger.info(
+                            f"↻ _wait_for_ci_completion: Stand {merged_sha[:7]} "
+                            f"überholt durch {head_sha[:7]} — der neuere Merge "
+                            "liefert gesammelt aus."
+                        )
+                        return "superseded"
+
                 self.logger.warning(
                     f"❌ _wait_for_ci_completion: CI FAILED fuer {merged_sha[:7]} "
                     f"(workflow={failed_run.get('name')}, conclusion={failed_run.get('conclusion')})"
@@ -1999,7 +2035,22 @@ class CIMixin:
                     pr_head_reuse_enabled=pr_head_reuse_enabled,
                     push_commit_shas=push_commit_shas,
                     ausgelieferter_sha=ausgelieferter_sha,
+                    branch=branch,
                 )
+                if outcome == "superseded":
+                    # ZERODOX#3328: Sammel-Zug — der gewartete Stand wurde
+                    # abgebrochen, WEIL ein neuerer Merge eingetroffen ist.
+                    # Der INFO-Log mit beiden SHAs steht bereits in
+                    # _wait_for_ci_completion; hier nur die Konsequenzen:
+                    # Reservierung freigeben (der neuere Merge braucht sie),
+                    # KEIN Discord-Alarm, KEIN deploy.sh-Aufruf.
+                    self.logger.info(
+                        f"↻ _trigger_deployment: {repo_name}@{commit_sha} überholt "
+                        "durch einen neueren Merge — kein Fehler, kein Deploy fuer "
+                        "diesen Stand."
+                    )
+                    self._release_deploy(repo_name, full_sha)
+                    return "superseded"
                 if outcome == "failure":
                     await self._send_ci_wait_alert(
                         outcome="failure",
