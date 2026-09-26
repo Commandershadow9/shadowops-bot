@@ -193,3 +193,58 @@ async def test_fehlschlagender_neuversuch_post_bleibt_failure():
     assert retry_key not in h._ci_cancelled_retry_versucht, (
         "Ein fehlgeschlagener POST darf die Markierung nicht setzen."
     )
+
+
+def _run_versuch(conclusion: str, versuch: int, status: str = "completed"):
+    lauf = _run("Web Quality", conclusion, run_id=1)
+    lauf["status"] = status
+    lauf["run_attempt"] = versuch
+    return lauf
+
+
+@pytest.mark.asyncio
+async def test_veraltete_listenantwort_direkt_nach_neuversuch_ist_kein_failure():
+    """(e) Race: Direkt nach `rerun-failed-jobs` liefert die Listenabfrage noch
+    den ALTEN Versuch (run_attempt=1, cancelled). Das ist kein endgueltiges
+    'failure' — weiter pollen, bis Versuch 2 gruen durch ist."""
+    h = _NeuversuchHarness(
+        run_sequenzen=[
+            [_run_versuch("cancelled", 1)],
+            [_run_versuch("cancelled", 1)],  # veraltet
+            [_run_versuch(None, 2, status="in_progress")],
+            [_run_versuch("success", 2)],
+        ],
+        rerun_ergebnis=True,
+    )
+
+    ergebnis = await _warte(h)
+
+    assert ergebnis == "success", f"Veraltete Antwort darf nicht FAILED sein, gemessen: {ergebnis}"
+    assert len(h._rerun_aufrufe) == 1, "Genau ein Neuversuch erwartet."
+    retry_key = f"Commandershadow9/ZERODOX:{MERGED_SHA}:1"
+    assert h._ci_cancelled_retry_versucht[retry_key] == 1, (
+        "Gemerkt werden muss der run_attempt zum Zeitpunkt des Neuversuchs."
+    )
+
+
+@pytest.mark.asyncio
+async def test_hoeherer_versuch_erneut_cancelled_bleibt_failure():
+    """(f) Versuch 2 (run_attempt > gemerkt) ist wieder 'cancelled' →
+    endgueltig 'failure' mit dem Hinweis auf den bereits erfolgten Neuversuch."""
+    h = _NeuversuchHarness(
+        run_sequenzen=[
+            [_run_versuch("cancelled", 1)],
+            [_run_versuch("cancelled", 1)],  # veraltet
+            [_run_versuch("cancelled", 2)],
+        ],
+        rerun_ergebnis=True,
+    )
+
+    with patch.object(h.logger, "warning") as mock_warning:
+        ergebnis = await _warte(h)
+
+    assert ergebnis == "failure", f"gemessen: {ergebnis}"
+    assert len(h._rerun_aufrufe) == 1
+    assert any(
+        "bereits erfolgt" in str(c.args[0]) for c in mock_warning.call_args_list if c.args
+    )

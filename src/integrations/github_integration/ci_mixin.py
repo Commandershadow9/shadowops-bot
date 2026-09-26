@@ -218,6 +218,27 @@ def _klassifiziere_workflow_runs(
     return relevant, latest_per_workflow, all_completed, any_failed, failed_run, pending_names
 
 
+def _ist_versuchsnummer(wert) -> bool:
+    """True fuer eine echte `run_attempt`-Zahl (int, nicht bool)."""
+    return type(wert) is int
+
+
+def _ist_veralteter_versuch(gemerkt, run: Dict) -> bool:
+    """ZERODOX#2920 (Race): Ist dieses "cancelled" noch der ALTE Versuch vor
+    dem automatischen Neuversuch?
+
+    `gemerkt` ist der Wert aus `_ci_cancelled_retry_versucht` — der
+    `run_attempt` zum Zeitpunkt des Neuversuchs, oder `True`, wenn er damals
+    im Payload fehlte. Nur wenn beide Seiten eine echte Versuchsnummer tragen
+    und die aktuelle nicht hoeher ist, gilt die Antwort als veraltet. Fehlt
+    eine der Zahlen, bleibt es konservativ beim endgueltigen "failure".
+    """
+    aktuell = run.get("run_attempt")
+    if not (_ist_versuchsnummer(gemerkt) and _ist_versuchsnummer(aktuell)):
+        return False
+    return aktuell <= gemerkt
+
+
 def _nur_cancelled_ohne_echten_fehlschlag(
     latest_per_workflow: Dict[str, Dict],
 ) -> Optional[List[Dict]]:
@@ -1875,6 +1896,23 @@ class CIMixin:
                                 if f"{repo_full_name}:{merged_sha}:{run.get('id')}"
                                 not in self._ci_cancelled_retry_versucht
                             ]
+                            # ZERODOX#2920 (Race): Nach `rerun-failed-jobs` behaelt
+                            # der Lauf seine `id`, GitHub erhoeht nur `run_attempt`.
+                            # Die Listenabfrage kann direkt danach noch den ALTEN
+                            # Versuch als "cancelled" liefern. Ein gemerkter Lauf,
+                            # dessen `run_attempt` nicht ueber dem beim Neuversuch
+                            # gemerkten Wert liegt, ist deshalb veraltet — kein
+                            # endgueltiges "failure", sondern weiter pollen.
+                            veraltete_antworten = [
+                                run
+                                for run in cancelled_runs
+                                if _ist_veralteter_versuch(
+                                    self._ci_cancelled_retry_versucht.get(
+                                        f"{repo_full_name}:{merged_sha}:{run.get('id')}"
+                                    ),
+                                    run,
+                                )
+                            ]
                             if offene_neuversuche:
                                 neuversuch_ausgeloest = False
                                 for run in offene_neuversuche:
@@ -1885,7 +1923,14 @@ class CIMixin:
                                         repo_full_name, run.get("id")
                                     )
                                     if erfolg:
-                                        self._ci_cancelled_retry_versucht[retry_key] = True
+                                        # Wert statt True: der `run_attempt` zum
+                                        # Zeitpunkt des Neuversuchs. Fehlt er im
+                                        # Payload, bleibt es bei True (konservativ:
+                                        # ein weiteres "cancelled" ist endgueltig).
+                                        versuch = run.get("run_attempt")
+                                        self._ci_cancelled_retry_versucht[retry_key] = (
+                                            versuch if _ist_versuchsnummer(versuch) else True
+                                        )
                                         # FIFO-Begrenzung auf ~200 Eintraege — sonst
                                         # waechst der Speicher mit jedem Merge
                                         # unbegrenzt (Bot-Laufzeit ueber Wochen/
@@ -1913,6 +1958,17 @@ class CIMixin:
                                 if neuversuch_ausgeloest:
                                     await asyncio.sleep(poll_interval_s)
                                     continue
+                            elif veraltete_antworten:
+                                self.logger.info(
+                                    "⏳ ZERODOX#2920: _wait_for_ci_completion: "
+                                    f"{[r.get('name') for r in veraltete_antworten]} fuer "
+                                    f"{merged_sha[:7]} meldet noch den abgebrochenen "
+                                    "Versuch vor dem Neuversuch (run_attempt nicht "
+                                    "hoeher als gemerkt) — veraltete Listenantwort, "
+                                    f"weiter pollen ({poll_interval_s}s)."
+                                )
+                                await asyncio.sleep(poll_interval_s)
+                                continue
                             else:
                                 self.logger.warning(
                                     "❌ _wait_for_ci_completion: CI FAILED fuer "

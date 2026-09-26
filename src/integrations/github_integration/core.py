@@ -200,7 +200,8 @@ class GitHubIntegration(JulesWorkflowMixin,
         # als FEHLGESCHLAGEN zu gelten — Runner-Last kann Jobs abbrechen, ohne
         # dass ein Test wirklich rot war. Begrenzt auf ~200 Eintraege (aeltester
         # zuerst raus), sonst waechst der Speicher mit jedem Merge unbegrenzt.
-        self._ci_cancelled_retry_versucht: "OrderedDict[str, bool]" = OrderedDict()
+        # Wert: `run_attempt` beim Neuversuch (int) oder True, wenn er fehlte.
+        self._ci_cancelled_retry_versucht: "OrderedDict[str, int | bool]" = OrderedDict()
 
         # Enterprise Hardening: Concurrency Lock + AI Circuit Breaker
         self._patch_notes_lock = asyncio.Lock()
