@@ -20,6 +20,7 @@ fail-closed bei "failure" — lieber ein Alarm zu viel als ein verschluckter
 echter Fehlschlag.
 """
 import logging
+from collections import OrderedDict
 from unittest.mock import AsyncMock, patch
 
 import pytest
@@ -41,6 +42,15 @@ class _WaitCancelledHarness(CIMixin):
         self.logger = logging.getLogger("test-ci-wait-cancelled")
         self._branch_head = branch_head
         self.branch_head_aufrufe = 0
+        # ZERODOX#2920: Dieser Harness bildet nur die superseded/failure-Weiche
+        # ab, nicht den Neuversuch — das Attribut muss trotzdem existieren,
+        # weil die Produktionslogik in core.py normalerweise dafuer sorgt.
+        self._ci_cancelled_retry_versucht = OrderedDict()
+
+    async def _rerun_cancelled_workflow_run(self, repo_full_name: str, run_id) -> bool:
+        # Kein echter Netzwerkaufruf in diesem Test — die superseded/failure-
+        # Weiche ist hier das Testziel, nicht der Neuversuch selbst.
+        return False
 
     async def _fetch_workflow_runs_for_sha(self, repo_full_name: str, head_sha: str):
         return {

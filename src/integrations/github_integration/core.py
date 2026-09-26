@@ -6,6 +6,7 @@ Handles webhook events, auto-deployment, and Discord notifications
 import asyncio
 import json
 import logging
+from collections import OrderedDict
 from types import SimpleNamespace
 from typing import Dict, Callable, Optional
 
@@ -193,6 +194,13 @@ class GitHubIntegration(JulesWorkflowMixin,
         # #478: Hintergrund-Tasks fuer Auto-Deploy. Der Webhook-Handler darf nicht
         # synchron auf den (minutenlangen) Deploy warten — sonst 504 (GitHub-Timeout).
         self._deploy_tasks: set = set()
+        # ZERODOX#2920: Ein "cancelled"-Lauf bei UNVERAENDERTEM Branch-Kopf (kein
+        # Sammel-Zug-Fall, siehe ci_mixin._wait_for_ci_completion) loest EINMAL
+        # je (repo, sha, run_id) einen automatischen Neuversuch aus, statt sofort
+        # als FEHLGESCHLAGEN zu gelten — Runner-Last kann Jobs abbrechen, ohne
+        # dass ein Test wirklich rot war. Begrenzt auf ~200 Eintraege (aeltester
+        # zuerst raus), sonst waechst der Speicher mit jedem Merge unbegrenzt.
+        self._ci_cancelled_retry_versucht: "OrderedDict[str, bool]" = OrderedDict()
 
         # Enterprise Hardening: Concurrency Lock + AI Circuit Breaker
         self._patch_notes_lock = asyncio.Lock()

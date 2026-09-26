@@ -1,0 +1,195 @@
+"""ZERODOX#2920: Ein "cancelled"-Lauf bei UNVERAENDERTEM Branch-Kopf ist kein
+zwangslaeufiger Fehlschlag.
+
+Hintergrund: `test_ci_wait_cancelled_ueberholt.py` deckt bereits den Fall ab,
+in dem der Branch-Kopf beim Abbruch bereits weitergezogen ist (Sammel-Zug,
+Ergebnis "superseded"). Dieser Testfall betrifft die Gegenprobe: Der Kopf
+steht noch auf `merged_sha`, also KEIN Sammel-Zug — trotzdem wertete
+`_wait_for_ci_completion` bisher jedes "cancelled" sofort als "FEHLGESCHLAGEN"
+und schickte den Alert "CI FAILED (conclusion=cancelled)". Belegt: Runner-Last
+kann Jobs abbrechen, ohne dass ein Test wirklich rot lief.
+
+Neues Verhalten: Sind ALLE nicht-gruenen relevanten Laeufe "cancelled" (keiner
+"failure"/"timed_out"/... darunter), wird fuer den betroffenen Lauf GENAU
+EINMAL `rerun-failed-jobs` angestossen (`_rerun_cancelled_workflow_run`,
+Markierung in `self._ci_cancelled_retry_versucht`) und danach normal
+weitergepollt. Ein zweites "cancelled" NACH bereits erfolgtem Neuversuch
+bleibt "failure" wie bisher, nur mit einem Hinweistext im Log. Schlaegt der
+POST selbst fehl, bleibt es ebenfalls beim heutigen "failure"-Verhalten, ohne
+dass eine Ausnahme nach aussen dringt.
+"""
+import logging
+from collections import OrderedDict
+from unittest.mock import AsyncMock, patch
+
+import pytest
+
+from src.integrations.github_integration.ci_mixin import CIMixin
+
+MERGED_SHA = "a50e956aa9d6be6d540e2ef0c20d3ffca07323f1"
+
+
+class _NeuversuchHarness(CIMixin):
+    """Minimaler Harness fuer _wait_for_ci_completion mit einem
+    unveraenderten Branch-Kopf (kein Sammel-Zug) und konfigurierbarer
+    Run-Sequenz je Poll-Zyklus.
+
+    `run_sequenzen` ist eine Liste von workflow_runs-Listen — ein Eintrag
+    je Poll-Aufruf; nach dem letzten Eintrag wird der letzte wiederholt.
+    `rerun_ergebnis` steuert, ob `_rerun_cancelled_workflow_run` Erfolg
+    meldet (True) oder fehlschlaegt (False)."""
+
+    def __init__(self, run_sequenzen, rerun_ergebnis=True, vorbelegte_retries=None):
+        self.logger = logging.getLogger("test-ci-wait-cancelled-neuversuch")
+        self._run_sequenzen = run_sequenzen
+        self._poll_index = 0
+        self._rerun_ergebnis = rerun_ergebnis
+        self._rerun_aufrufe = []
+        self._ci_cancelled_retry_versucht = vorbelegte_retries or OrderedDict()
+
+    async def _fetch_workflow_runs_for_sha(self, repo_full_name: str, head_sha: str):
+        idx = min(self._poll_index, len(self._run_sequenzen) - 1)
+        runs = self._run_sequenzen[idx]
+        self._poll_index += 1
+        return {"workflow_runs": runs}
+
+    async def _fetch_commit_files(self, repo_full_name: str, sha: str):
+        return ["src/module.py"]
+
+    async def _fetch_branch_head_sha(self, repo_full_name: str, branch: str):
+        # Kopf bleibt unveraendert — kein Sammel-Zug-Fall.
+        return MERGED_SHA
+
+    async def _rerun_cancelled_workflow_run(self, repo_full_name: str, run_id) -> bool:
+        self._rerun_aufrufe.append((repo_full_name, run_id))
+        return self._rerun_ergebnis
+
+
+def _run(name: str, conclusion: str, run_id: int = 1):
+    return {
+        "name": name,
+        "path": f".github/workflows/{name.lower().replace(' ', '-')}.yml",
+        "status": "completed",
+        "conclusion": conclusion,
+        "created_at": "2026-09-26T01:49:00Z",
+        "id": run_id,
+    }
+
+
+async def _warte(h: _NeuversuchHarness, **kwargs):
+    with patch("asyncio.sleep", new=AsyncMock(return_value=None)):
+        return await h._wait_for_ci_completion(
+            repo_full_name="Commandershadow9/ZERODOX",
+            merged_sha=MERGED_SHA,
+            workflow_names=["Web Quality"],
+            max_wait_min=1,
+            admin_merge_grace_min=0,
+            branch="main",
+            **kwargs,
+        )
+
+
+@pytest.mark.asyncio
+async def test_cancelled_bei_unveraendertem_kopf_loest_neuversuch_aus_dann_success():
+    """(a) cancelled + unveraenderter Kopf → POST feuert einmal, danach
+    liefert der naechste Poll einen gruenen Lauf → Gesamtergebnis 'success'."""
+    h = _NeuversuchHarness(
+        run_sequenzen=[
+            [_run("Web Quality", "cancelled", run_id=1)],
+            [_run("Web Quality", "success", run_id=1)],
+        ],
+        rerun_ergebnis=True,
+    )
+
+    ergebnis = await _warte(h)
+
+    assert ergebnis == "success", (
+        f"Nach erfolgreichem Neuversuch und gruenem Folgelauf muss 'success' "
+        f"stehen, gemessen: {ergebnis}"
+    )
+    assert len(h._rerun_aufrufe) == 1, (
+        f"Der Neuversuch muss GENAU EINMAL ausgeloest werden, gemessen: "
+        f"{len(h._rerun_aufrufe)}"
+    )
+    retry_key = f"Commandershadow9/ZERODOX:{MERGED_SHA}:1"
+    assert retry_key in h._ci_cancelled_retry_versucht, (
+        "Der erfolgreiche Neuversuch muss in der Markierung stehen."
+    )
+
+
+@pytest.mark.asyncio
+async def test_zweites_cancelled_nach_bereits_erfolgtem_neuversuch_bleibt_failure():
+    """(b) Ein zweites 'cancelled' fuer denselben Lauf, NACHDEM der Neuversuch
+    bereits erfolgt ist → 'failure' mit Hinweistext auf den bereits erfolgten
+    Neuversuch (kein zweiter POST)."""
+    retry_key = f"Commandershadow9/ZERODOX:{MERGED_SHA}:1"
+    h = _NeuversuchHarness(
+        run_sequenzen=[[_run("Web Quality", "cancelled", run_id=1)]],
+        rerun_ergebnis=True,
+        vorbelegte_retries=OrderedDict({retry_key: True}),
+    )
+
+    with patch.object(h.logger, "warning") as mock_warning:
+        ergebnis = await _warte(h)
+
+    assert ergebnis == "failure", (
+        f"Ein zweites 'cancelled' nach bereits erfolgtem Neuversuch muss "
+        f"'failure' bleiben, gemessen: {ergebnis}"
+    )
+    assert len(h._rerun_aufrufe) == 0, (
+        "Es darf KEIN zweiter Neuversuch fuer denselben Lauf ausgeloest werden."
+    )
+    hinweis_gefunden = any(
+        "bereits erfolgt" in str(call.args[0]) if call.args else False
+        for call in mock_warning.call_args_list
+    )
+    assert hinweis_gefunden, (
+        "Der Log-Text muss erklaeren, dass ein automatischer Neuversuch "
+        "bereits erfolgt ist, statt einfach nur 'FAILED' zu melden."
+    )
+
+
+@pytest.mark.asyncio
+async def test_echter_fehlschlag_loest_keinen_neuversuch_aus():
+    """(c) 'failure' (kein 'cancelled') → kein POST, 'failure' exakt wie
+    bisher."""
+    h = _NeuversuchHarness(
+        run_sequenzen=[[_run("Web Quality", "failure", run_id=1)]],
+        rerun_ergebnis=True,
+    )
+
+    ergebnis = await _warte(h)
+
+    assert ergebnis == "failure", f"Ein echter Fehlschlag bleibt 'failure', gemessen: {ergebnis}"
+    assert len(h._rerun_aufrufe) == 0, (
+        "Ein echter Fehlschlag (conclusion=failure) darf NIE einen "
+        "automatischen Neuversuch ausloesen."
+    )
+
+
+@pytest.mark.asyncio
+async def test_fehlschlagender_neuversuch_post_bleibt_failure():
+    """(d) Der POST fuer den Neuversuch selbst schlaegt fehl →
+    'failure' exakt wie im bisherigen Verhalten, keine Ausnahme nach aussen."""
+    h = _NeuversuchHarness(
+        run_sequenzen=[[_run("Web Quality", "cancelled", run_id=1)]],
+        rerun_ergebnis=False,
+    )
+
+    ergebnis = await _warte(h)
+
+    assert ergebnis == "failure", (
+        f"Schlaegt der Neuversuch-POST fehl, bleibt es beim heutigen "
+        f"Verhalten 'failure', gemessen: {ergebnis}"
+    )
+    assert len(h._rerun_aufrufe) == 1, (
+        "Der Neuversuch muss versucht worden sein (sonst waere dieser Test "
+        "keine Probe auf den Fehlerfall)."
+    )
+    # Ein fehlgeschlagener POST darf NICHT als 'schon versucht' markiert
+    # werden — sonst bekaeme ein spaeterer echter Neuversuch nie mehr eine
+    # Chance.
+    retry_key = f"Commandershadow9/ZERODOX:{MERGED_SHA}:1"
+    assert retry_key not in h._ci_cancelled_retry_versucht, (
+        "Ein fehlgeschlagener POST darf die Markierung nicht setzen."
+    )

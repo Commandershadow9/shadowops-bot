@@ -218,6 +218,41 @@ def _klassifiziere_workflow_runs(
     return relevant, latest_per_workflow, all_completed, any_failed, failed_run, pending_names
 
 
+def _nur_cancelled_ohne_echten_fehlschlag(
+    latest_per_workflow: Dict[str, Dict],
+) -> Optional[List[Dict]]:
+    """ZERODOX#2920: Prueft, ob JEDER nicht-gruen abgeschlossene Lauf in
+    `latest_per_workflow` die Ursache "cancelled" traegt — kein einziger
+    echter "failure"/"timed_out"/... darunter ist.
+
+    `_klassifiziere_workflow_runs` bricht bei der ERSTEN nicht-gruenen
+    Klassifikation ab (`break` oben) und liefert dafuer nur EINEN
+    `failed_run` zurueck. Bei mehreren relevanten Workflows koennte das
+    sowohl den falschen Lauf treffen als auch einen echten Fehlschlag neben
+    einem "cancelled" verdecken. Diese Funktion scannt deshalb ALLE
+    Eintraege in `latest_per_workflow` selbststaendig.
+
+    Returns:
+        Liste der "cancelled"-Laeufe, wenn ALLE nicht-gruenen abgeschlossenen
+        Laeufe "cancelled" sind. `None`, sobald mindestens ein Lauf mit einer
+        ANDEREN Fehlschlag-Ursache darunter ist, oder wenn ueberhaupt kein
+        "cancelled"-Lauf gefunden wurde — dann bleibt es beim heutigen
+        Verhalten, kein Sonderfall.
+    """
+    cancelled_runs: List[Dict] = []
+    for run in latest_per_workflow.values():
+        status = str(run.get("status") or "").lower()
+        if status != "completed":
+            continue
+        conclusion = str(run.get("conclusion") or "").lower()
+        if conclusion not in _CI_FAILURE_CONCLUSIONS:
+            continue
+        if conclusion != "cancelled":
+            return None
+        cancelled_runs.append(run)
+    return cancelled_runs or None
+
+
 class CIMixin:
 
     def _schedule_ci_success_reconcile(
@@ -575,6 +610,59 @@ class CIMixin:
         except Exception as e:
             self.logger.error(f"❌ Fehler beim Laden des Workflow Runs: {e}", exc_info=True)
             return None
+
+    async def _rerun_cancelled_workflow_run(
+        self,
+        repo_full_name: str,
+        run_id,
+    ) -> bool:
+        """ZERODOX#2920: Stoesst fuer einen "cancelled"-Lauf bei unveraendertem
+        Branch-Kopf EINEN automatischen Neuversuch an, statt den Merge sofort
+        als FEHLGESCHLAGEN zu werten — Runner-Last kann Jobs abbrechen, ohne
+        dass ein Test wirklich rot lief.
+
+        Endpoint-Wahl `rerun-failed-jobs` statt des vollen `rerun`: Der
+        "Re-run failed jobs"-Endpunkt fuehrt nachweislich auch Jobs mit dem
+        Ergebnis "cancelled" erneut aus (nicht nur "failure") und startet dabei
+        NICHT den kompletten Workflow neu, sondern nur die nicht-gruenen Jobs
+        — guenstiger und schneller als `/rerun` bei einem grossen Workflow wie
+        "Web Quality".
+
+        Fail-soft wie `_fetch_workflow_run`: Ein Fehler wird geloggt und als
+        `False` zurueckgegeben, NIE nach aussen geworfen — der Aufrufer bleibt
+        dann beim heutigen "failure"-Verhalten.
+        """
+        if not repo_full_name or not run_id:
+            return False
+        url = (
+            f"https://api.github.com/repos/{repo_full_name}/actions/runs/"
+            f"{run_id}/rerun-failed-jobs"
+        )
+        headers = {
+            "Accept": "application/vnd.github+json",
+        }
+        token = self._get_github_token()
+        if token:
+            headers["Authorization"] = f"token {token}"
+        try:
+            async with aiohttp.ClientSession(headers=headers) as session:
+                async with session.post(url, timeout=20) as resp:
+                    if resp.status not in (200, 201):
+                        body = await resp.text()
+                        self.logger.warning(
+                            "⚠️ ZERODOX#2920: Neuversuch fuer Run "
+                            f"{run_id} ({repo_full_name}) fehlgeschlagen "
+                            f"({resp.status}): {body}"
+                        )
+                        return False
+                    return True
+        except Exception as e:
+            self.logger.error(
+                "❌ ZERODOX#2920: Fehler beim Neuversuch fuer Run "
+                f"{run_id} ({repo_full_name}): {e}",
+                exc_info=True,
+            )
+            return False
 
     async def _fetch_workflow_runs_for_sha(
         self,
@@ -1765,6 +1853,74 @@ class CIMixin:
                             "liefert gesammelt aus."
                         )
                         return "superseded"
+
+                    # ZERODOX#2920 (26.09.2026): Der Branch-Kopf steht noch auf
+                    # `merged_sha` (kein Sammel-Zug) — trotzdem ist "cancelled"
+                    # nicht zwangslaeufig ein echter Testfehlschlag: Runner-Last
+                    # bricht Jobs ab, ohne dass ein Test wirklich rot lief. Ist
+                    # JEDER nicht-gruene relevante Lauf "cancelled" (kein echtes
+                    # "failure"/"timed_out" darunter) und wurde fuer genau diesen
+                    # Lauf noch KEIN automatischer Neuversuch unternommen, wird er
+                    # EINMAL ueber `rerun-failed-jobs` angestossen und danach
+                    # normal weitergepollt — das Wartefenster (`deadline`) laeuft
+                    # dabei unveraendert weiter, es wird NICHT zurueckgesetzt.
+                    if head_sha == merged_sha:
+                        cancelled_runs = _nur_cancelled_ohne_echten_fehlschlag(
+                            latest_per_workflow
+                        )
+                        if cancelled_runs:
+                            offene_neuversuche = [
+                                run
+                                for run in cancelled_runs
+                                if f"{repo_full_name}:{merged_sha}:{run.get('id')}"
+                                not in self._ci_cancelled_retry_versucht
+                            ]
+                            if offene_neuversuche:
+                                neuversuch_ausgeloest = False
+                                for run in offene_neuversuche:
+                                    retry_key = (
+                                        f"{repo_full_name}:{merged_sha}:{run.get('id')}"
+                                    )
+                                    erfolg = await self._rerun_cancelled_workflow_run(
+                                        repo_full_name, run.get("id")
+                                    )
+                                    if erfolg:
+                                        self._ci_cancelled_retry_versucht[retry_key] = True
+                                        # FIFO-Begrenzung auf ~200 Eintraege — sonst
+                                        # waechst der Speicher mit jedem Merge
+                                        # unbegrenzt (Bot-Laufzeit ueber Wochen/
+                                        # Monate ohne Neustart).
+                                        while len(self._ci_cancelled_retry_versucht) > 200:
+                                            self._ci_cancelled_retry_versucht.popitem(
+                                                last=False
+                                            )
+                                        neuversuch_ausgeloest = True
+                                        self.logger.warning(
+                                            "🔁 ZERODOX#2920: _wait_for_ci_completion: "
+                                            f"{run.get('name')} fuer {merged_sha[:7]} war "
+                                            "'cancelled' bei unveraendertem Branch-Kopf — "
+                                            "automatischer Neuversuch ausgeloest "
+                                            "(rerun-failed-jobs), kein Fehlalarm."
+                                        )
+                                    else:
+                                        self.logger.warning(
+                                            "⚠️ ZERODOX#2920: _wait_for_ci_completion: "
+                                            f"Neuversuch fuer {run.get('name')} "
+                                            f"({merged_sha[:7]}) konnte nicht ausgeloest "
+                                            "werden — bleibt beim heutigen Verhalten "
+                                            "(FAILED)."
+                                        )
+                                if neuversuch_ausgeloest:
+                                    await asyncio.sleep(poll_interval_s)
+                                    continue
+                            else:
+                                self.logger.warning(
+                                    "❌ _wait_for_ci_completion: CI FAILED fuer "
+                                    f"{merged_sha[:7]} — abgebrochen (cancelled), "
+                                    "automatischer Neuversuch bereits erfolgt "
+                                    "(ZERODOX#2920)."
+                                )
+                                return "failure"
 
                 self.logger.warning(
                     f"❌ _wait_for_ci_completion: CI FAILED fuer {merged_sha[:7]} "
