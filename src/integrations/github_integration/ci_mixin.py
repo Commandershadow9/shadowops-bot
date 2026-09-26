@@ -10,6 +10,7 @@ import time
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Dict, List, Literal, Optional
+from collections import OrderedDict
 
 import aiohttp
 import discord
@@ -216,6 +217,24 @@ def _klassifiziere_workflow_runs(
             break
 
     return relevant, latest_per_workflow, all_completed, any_failed, failed_run, pending_names
+
+
+def _beschreibe_letzten_ci_zustand(gesehene_laeufe: Dict[str, Dict]) -> str:
+    """ZERODOX#2891: Menschenlesbarer Satz zum zuletzt gesehenen Zustand der
+    noch nicht abgeschlossenen Laeufe — fuer Wartelog und Timeout-Alarm.
+    Leerer String, wenn nichts Offenes gesehen wurde."""
+    teile = []
+    for wf_name, lauf in gesehene_laeufe.items():
+        status = str(lauf.get("status") or "").lower()
+        if not status or status == "completed":
+            continue
+        if status == "in_progress":
+            teile.append(f"{wf_name} lief zuletzt (in_progress)")
+        elif status in {"queued", "waiting", "requested", "pending"}:
+            teile.append(f"{wf_name} wartete zuletzt auf einen Runner ({status})")
+        else:
+            teile.append(f"{wf_name} zuletzt im Status {status}")
+    return "; ".join(teile)
 
 
 def _ist_versuchsnummer(wert) -> bool:
@@ -1469,6 +1488,13 @@ class CIMixin:
         # Docstring oben) — poll_interval_s wird danach nicht mehr verändert.
         poll_interval_s = max(1, int(poll_interval_sec))
         saw_any_relevant = False
+        # ZERODOX#2891: Je Wartevorgang die gesehenen relevanten Laeufe merken
+        # (Workflow-Name → id, API-URL, zuletzt gesehener Status). Die
+        # Listenabfrage nach head_sha ist eventually consistent — ein bereits
+        # gesehener Lauf kann darin wieder fehlen (31.08.2026: gruener Web-
+        # Quality-Lauf 32 min unsichtbar, Timeout). Fehlt ein gemerkter Lauf,
+        # wird er per Run-ID direkt nachgefragt.
+        gesehene_laeufe: Dict[str, Dict] = {}
         # 17.08.2026: Wurde die API waehrend der gesamten Frist nie gelesen, ist
         # die CI-Lage unbekannt — das darf nicht als "kein Workflow vorhanden"
         # aus der Schleife kommen. Gezaehlt werden beide Seiten, damit sich der
@@ -1779,6 +1805,55 @@ class CIMixin:
                 pending_names,
             ) = _klassifiziere_workflow_runs(all_runs, workflow_names_lower)
 
+            # ZERODOX#2891: Gemerkte Laeufe, die in dieser Listenantwort fehlen,
+            # einzeln nachfragen und in die Klassifikation einspeisen — die
+            # bestehende Auswertung (success/failure/cancelled/superseded/
+            # Neuversuch) greift dadurch unveraendert.
+            nachgereicht = []
+            for wf_name, gemerkt in gesehene_laeufe.items():
+                if wf_name in latest_per_workflow or not gemerkt.get("url"):
+                    continue
+                try:
+                    einzel = await self._fetch_workflow_run(gemerkt["url"])
+                except Exception as e:  # fail-soft: wie bisher weiter pollen
+                    einzel = None
+                    self.logger.info(
+                        f"ℹ️ ZERODOX#2891: Nachfrage fuer Lauf {gemerkt.get('id')} "
+                        f"({wf_name}) fehlgeschlagen: {e}"
+                    )
+                if isinstance(einzel, dict) and einzel:
+                    self.logger.info(
+                        f"🔎 ZERODOX#2891: {wf_name} ({gemerkt.get('id')}) fehlt in der "
+                        f"Listenabfrage fuer {merged_sha[:7]} — per Run-ID nachgefragt: "
+                        f"status={einzel.get('status')}, "
+                        f"conclusion={einzel.get('conclusion')}."
+                    )
+                    nachgereicht.append(einzel)
+                else:
+                    self.logger.info(
+                        f"ℹ️ ZERODOX#2891: {wf_name} ({gemerkt.get('id')}) fehlt in der "
+                        f"Listenabfrage fuer {merged_sha[:7]}, Nachfrage ohne Ergebnis — "
+                        "weiter pollen."
+                    )
+            if nachgereicht:
+                all_runs = list(all_runs) + nachgereicht
+                (
+                    relevant,
+                    latest_per_workflow,
+                    all_completed,
+                    any_failed,
+                    failed_run,
+                    pending_names,
+                ) = _klassifiziere_workflow_runs(all_runs, workflow_names_lower)
+
+            for wf_name, lauf in latest_per_workflow.items():
+                gesehene_laeufe[wf_name] = {
+                    "id": lauf.get("id"),
+                    "url": lauf.get("url") or gesehene_laeufe.get(wf_name, {}).get("url"),
+                    "status": str(lauf.get("status") or "").lower(),
+                }
+            self._merke_letzten_ci_zustand(repo_full_name, merged_sha, gesehene_laeufe)
+
             if not relevant:
                 # ZERODOX#1985/#3230: Der Docs-only-Check laeuft inzwischen VOR
                 # der Schleife (siehe oben) — hier bleibt nur noch die einmalige
@@ -1991,9 +2066,11 @@ class CIMixin:
                 )
                 return "success"
 
+            zustand_text = _beschreibe_letzten_ci_zustand(gesehene_laeufe)
             self.logger.info(
                 f"⏳ _wait_for_ci_completion: warte weiter auf {pending_names} "
                 f"fuer {merged_sha[:7]} (next poll in {poll_interval_s}s)"
+                + (f" — {zustand_text}" if zustand_text else "")
             )
             await asyncio.sleep(poll_interval_s)
 
@@ -2014,11 +2091,28 @@ class CIMixin:
             )
             return "missing"
 
+        zustand_text = _beschreibe_letzten_ci_zustand(gesehene_laeufe)
         self.logger.warning(
             f"⏰ _wait_for_ci_completion: TIMEOUT nach {max_wait_min}min "
             f"fuer {repo_full_name}@{merged_sha[:7]}"
+            + (f" — {zustand_text}" if zustand_text else "")
         )
         return "timeout"
+
+    def _merke_letzten_ci_zustand(
+        self, repo_full_name: str, merged_sha: str, gesehene_laeufe: Dict[str, Dict]
+    ) -> None:
+        """ZERODOX#2891: Legt den zuletzt gesehenen Laufzustand fuer den
+        Timeout-Alarm ab (begrenzt auf ~50 Eintraege, aeltester zuerst raus)."""
+        speicher = getattr(self, "_ci_wait_letzter_zustand", None)
+        if speicher is None:
+            speicher = OrderedDict()
+            self._ci_wait_letzter_zustand = speicher
+        schluessel = f"{repo_full_name}:{merged_sha}"
+        speicher.pop(schluessel, None)
+        speicher[schluessel] = {k: dict(v) for k, v in gesehene_laeufe.items()}
+        while len(speicher) > 50:
+            speicher.popitem(last=False)
 
     async def _send_ci_wait_alert(
         self,
@@ -2065,13 +2159,20 @@ class CIMixin:
                     f"**deploy.sh wurde NICHT getriggert.** Manueller Check noetig."
                 )
             elif outcome == "timeout":
+                # ZERODOX#2891: zuletzt gesehener Zustand (queued/in_progress)
+                zustand_text = _beschreibe_letzten_ci_zustand(
+                    getattr(self, "_ci_wait_letzter_zustand", {}).get(
+                        f"{repo_full_name}:{merged_sha}", {}
+                    )
+                )
                 title = f"⏰ {repo_name}: Deploy zurueckgestellt — CI nicht durch"
                 color = 0xF1C40F
                 description = (
                     f"Welle-9.10-Schutz: CI-Workflows ({', '.join(workflow_names) or '—'}) "
                     f"sind nach {max_wait_min} Minuten fuer Commit `{merged_sha[:7]}` "
                     f"noch nicht alle completed.\n\n"
-                    f"**deploy.sh wurde NICHT getriggert.** Sobald CI gruen ist, "
+                    + (f"Zuletzt gesehen: {zustand_text}.\n\n" if zustand_text else "")
+                    + f"**deploy.sh wurde NICHT getriggert.** Sobald CI gruen ist, "
                     f"deploy.sh manuell triggern."
                 )
             elif outcome == "api_unavailable":
