@@ -10,6 +10,7 @@ import time
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Dict, List, Literal, Optional
+from collections import OrderedDict
 
 import aiohttp
 import discord
@@ -216,6 +217,80 @@ def _klassifiziere_workflow_runs(
             break
 
     return relevant, latest_per_workflow, all_completed, any_failed, failed_run, pending_names
+
+
+def _beschreibe_letzten_ci_zustand(gesehene_laeufe: Dict[str, Dict]) -> str:
+    """ZERODOX#2891: Menschenlesbarer Satz zum zuletzt gesehenen Zustand der
+    noch nicht abgeschlossenen Laeufe — fuer Wartelog und Timeout-Alarm.
+    Leerer String, wenn nichts Offenes gesehen wurde."""
+    teile = []
+    for wf_name, lauf in gesehene_laeufe.items():
+        status = str(lauf.get("status") or "").lower()
+        if not status or status == "completed":
+            continue
+        if status == "in_progress":
+            teile.append(f"{wf_name} lief zuletzt (in_progress)")
+        elif status in {"queued", "waiting", "requested", "pending"}:
+            teile.append(f"{wf_name} wartete zuletzt auf einen Runner ({status})")
+        else:
+            teile.append(f"{wf_name} zuletzt im Status {status}")
+    return "; ".join(teile)
+
+
+def _ist_versuchsnummer(wert) -> bool:
+    """True fuer eine echte `run_attempt`-Zahl (int, nicht bool)."""
+    return type(wert) is int
+
+
+def _ist_veralteter_versuch(gemerkt, run: Dict) -> bool:
+    """ZERODOX#2920 (Race): Ist dieses "cancelled" noch der ALTE Versuch vor
+    dem automatischen Neuversuch?
+
+    `gemerkt` ist der Wert aus `_ci_cancelled_retry_versucht` — der
+    `run_attempt` zum Zeitpunkt des Neuversuchs, oder `True`, wenn er damals
+    im Payload fehlte. Nur wenn beide Seiten eine echte Versuchsnummer tragen
+    und die aktuelle nicht hoeher ist, gilt die Antwort als veraltet. Fehlt
+    eine der Zahlen, bleibt es konservativ beim endgueltigen "failure".
+    """
+    aktuell = run.get("run_attempt")
+    if not (_ist_versuchsnummer(gemerkt) and _ist_versuchsnummer(aktuell)):
+        return False
+    return aktuell <= gemerkt
+
+
+def _nur_cancelled_ohne_echten_fehlschlag(
+    latest_per_workflow: Dict[str, Dict],
+) -> Optional[List[Dict]]:
+    """ZERODOX#2920: Prueft, ob JEDER nicht-gruen abgeschlossene Lauf in
+    `latest_per_workflow` die Ursache "cancelled" traegt — kein einziger
+    echter "failure"/"timed_out"/... darunter ist.
+
+    `_klassifiziere_workflow_runs` bricht bei der ERSTEN nicht-gruenen
+    Klassifikation ab (`break` oben) und liefert dafuer nur EINEN
+    `failed_run` zurueck. Bei mehreren relevanten Workflows koennte das
+    sowohl den falschen Lauf treffen als auch einen echten Fehlschlag neben
+    einem "cancelled" verdecken. Diese Funktion scannt deshalb ALLE
+    Eintraege in `latest_per_workflow` selbststaendig.
+
+    Returns:
+        Liste der "cancelled"-Laeufe, wenn ALLE nicht-gruenen abgeschlossenen
+        Laeufe "cancelled" sind. `None`, sobald mindestens ein Lauf mit einer
+        ANDEREN Fehlschlag-Ursache darunter ist, oder wenn ueberhaupt kein
+        "cancelled"-Lauf gefunden wurde — dann bleibt es beim heutigen
+        Verhalten, kein Sonderfall.
+    """
+    cancelled_runs: List[Dict] = []
+    for run in latest_per_workflow.values():
+        status = str(run.get("status") or "").lower()
+        if status != "completed":
+            continue
+        conclusion = str(run.get("conclusion") or "").lower()
+        if conclusion not in _CI_FAILURE_CONCLUSIONS:
+            continue
+        if conclusion != "cancelled":
+            return None
+        cancelled_runs.append(run)
+    return cancelled_runs or None
 
 
 class CIMixin:
@@ -575,6 +650,69 @@ class CIMixin:
         except Exception as e:
             self.logger.error(f"❌ Fehler beim Laden des Workflow Runs: {e}", exc_info=True)
             return None
+
+    async def _rerun_cancelled_workflow_run(
+        self,
+        repo_full_name: str,
+        run_id,
+    ) -> bool:
+        """ZERODOX#2920: Stoesst fuer einen "cancelled"-Lauf bei unveraendertem
+        Branch-Kopf EINEN automatischen Neuversuch an, statt den Merge sofort
+        als FEHLGESCHLAGEN zu werten — Runner-Last kann Jobs abbrechen, ohne
+        dass ein Test wirklich rot lief.
+
+        Endpoint-Wahl `rerun-failed-jobs` statt des vollen `rerun`: Der
+        "Re-run failed jobs"-Endpunkt fuehrt nachweislich auch Jobs mit dem
+        Ergebnis "cancelled" erneut aus (nicht nur "failure") und startet dabei
+        NICHT den kompletten Workflow neu, sondern nur die nicht-gruenen Jobs
+        — guenstiger und schneller als `/rerun` bei einem grossen Workflow wie
+        "Web Quality".
+
+        Fail-soft wie `_fetch_workflow_run`: Ein Fehler wird geloggt und als
+        `False` zurueckgegeben, NIE nach aussen geworfen — der Aufrufer bleibt
+        dann beim heutigen "failure"-Verhalten.
+        """
+        if not repo_full_name or not run_id:
+            return False
+        url = (
+            f"https://api.github.com/repos/{repo_full_name}/actions/runs/"
+            f"{run_id}/rerun-failed-jobs"
+        )
+        headers = {
+            "Accept": "application/vnd.github+json",
+        }
+        token = self._get_github_token()
+        if token:
+            headers["Authorization"] = f"token {token}"
+        try:
+            async with aiohttp.ClientSession(headers=headers) as session:
+                async with session.post(url, timeout=20) as resp:
+                    if resp.status in (403, 404):
+                        body = await resp.text()
+                        self.logger.warning(
+                            "⚠️ ZERODOX#2920: Neuversuch für Run "
+                            f"{run_id} ({repo_full_name}) abgelehnt "
+                            f"({resp.status}) — Token fehlt das Recht actions:write "
+                            "— automatischer Neuversuch (#2920) ist damit "
+                            f"wirkungslos. Antwort: {body}"
+                        )
+                        return False
+                    if resp.status not in (200, 201):
+                        body = await resp.text()
+                        self.logger.warning(
+                            "⚠️ ZERODOX#2920: Neuversuch fuer Run "
+                            f"{run_id} ({repo_full_name}) fehlgeschlagen "
+                            f"({resp.status}): {body}"
+                        )
+                        return False
+                    return True
+        except Exception as e:
+            self.logger.error(
+                "❌ ZERODOX#2920: Fehler beim Neuversuch fuer Run "
+                f"{run_id} ({repo_full_name}): {e}",
+                exc_info=True,
+            )
+            return False
 
     async def _fetch_workflow_runs_for_sha(
         self,
@@ -1215,6 +1353,7 @@ class CIMixin:
         poll_interval_sec: int = 20,
         tree_sha_reuse_enabled: bool = True,
         pr_head_reuse_enabled: bool = True,
+        cancelled_retry_enabled: bool = True,
         push_commit_shas: Optional[List[str]] = None,
         ausgelieferter_sha: Optional[str] = None,
         branch: Optional[str] = None,
@@ -1313,6 +1452,12 @@ class CIMixin:
             pr_head_reuse_enabled: PR-Head-Wiederverwendung ohne
                 Tree-Bedingung (ZERODOX#3328 Paket A, project_config-Key
                 `ci_wait_pr_head_reuse`) an/aus. Default True.
+            cancelled_retry_enabled: Automatischer Neuversuch eines
+                "cancelled"-Laufs bei unverändertem Branch-Kopf (ZERODOX#2920,
+                project_config-Key `ci_wait_cancelled_retry`). Default True;
+                False = Verhalten vor #2920 ("cancelled" ist sofort "failure").
+                Wer einen Deploy per Abbruch im GitHub-UI stoppen will:
+                zweimal abbrechen oder diesen Schalter auf false.
 
                 ⚠️ Dieser Schalter gehoert zu `push: main` in
                 `web-quality.yml`. Wer ihn auf False setzt, WAEHREND dort kein
@@ -1360,6 +1505,13 @@ class CIMixin:
         # Docstring oben) — poll_interval_s wird danach nicht mehr verändert.
         poll_interval_s = max(1, int(poll_interval_sec))
         saw_any_relevant = False
+        # ZERODOX#2891: Je Wartevorgang die gesehenen relevanten Laeufe merken
+        # (Workflow-Name → id, API-URL, zuletzt gesehener Status). Die
+        # Listenabfrage nach head_sha ist eventually consistent — ein bereits
+        # gesehener Lauf kann darin wieder fehlen (31.08.2026: gruener Web-
+        # Quality-Lauf 32 min unsichtbar, Timeout). Fehlt ein gemerkter Lauf,
+        # wird er per Run-ID direkt nachgefragt.
+        gesehene_laeufe: Dict[str, Dict] = {}
         # 17.08.2026: Wurde die API waehrend der gesamten Frist nie gelesen, ist
         # die CI-Lage unbekannt — das darf nicht als "kein Workflow vorhanden"
         # aus der Schleife kommen. Gezaehlt werden beide Seiten, damit sich der
@@ -1670,6 +1822,55 @@ class CIMixin:
                 pending_names,
             ) = _klassifiziere_workflow_runs(all_runs, workflow_names_lower)
 
+            # ZERODOX#2891: Gemerkte Laeufe, die in dieser Listenantwort fehlen,
+            # einzeln nachfragen und in die Klassifikation einspeisen — die
+            # bestehende Auswertung (success/failure/cancelled/superseded/
+            # Neuversuch) greift dadurch unveraendert.
+            nachgereicht = []
+            for wf_name, gemerkt in gesehene_laeufe.items():
+                if wf_name in latest_per_workflow or not gemerkt.get("url"):
+                    continue
+                try:
+                    einzel = await self._fetch_workflow_run(gemerkt["url"])
+                except Exception as e:  # fail-soft: wie bisher weiter pollen
+                    einzel = None
+                    self.logger.info(
+                        f"ℹ️ ZERODOX#2891: Nachfrage fuer Lauf {gemerkt.get('id')} "
+                        f"({wf_name}) fehlgeschlagen: {e}"
+                    )
+                if isinstance(einzel, dict) and einzel:
+                    self.logger.info(
+                        f"🔎 ZERODOX#2891: {wf_name} ({gemerkt.get('id')}) fehlt in der "
+                        f"Listenabfrage fuer {merged_sha[:7]} — per Run-ID nachgefragt: "
+                        f"status={einzel.get('status')}, "
+                        f"conclusion={einzel.get('conclusion')}."
+                    )
+                    nachgereicht.append(einzel)
+                else:
+                    self.logger.info(
+                        f"ℹ️ ZERODOX#2891: {wf_name} ({gemerkt.get('id')}) fehlt in der "
+                        f"Listenabfrage fuer {merged_sha[:7]}, Nachfrage ohne Ergebnis — "
+                        "weiter pollen."
+                    )
+            if nachgereicht:
+                all_runs = list(all_runs) + nachgereicht
+                (
+                    relevant,
+                    latest_per_workflow,
+                    all_completed,
+                    any_failed,
+                    failed_run,
+                    pending_names,
+                ) = _klassifiziere_workflow_runs(all_runs, workflow_names_lower)
+
+            for wf_name, lauf in latest_per_workflow.items():
+                gesehene_laeufe[wf_name] = {
+                    "id": lauf.get("id"),
+                    "url": lauf.get("url") or gesehene_laeufe.get(wf_name, {}).get("url"),
+                    "status": str(lauf.get("status") or "").lower(),
+                }
+            self._merke_letzten_ci_zustand(repo_full_name, merged_sha, gesehene_laeufe)
+
             if not relevant:
                 # ZERODOX#1985/#3230: Der Docs-only-Check laeuft inzwischen VOR
                 # der Schleife (siehe oben) — hier bleibt nur noch die einmalige
@@ -1766,6 +1967,134 @@ class CIMixin:
                         )
                         return "superseded"
 
+                    # ZERODOX#2920 (26.09.2026): Der Branch-Kopf steht noch auf
+                    # `merged_sha` (kein Sammel-Zug) — trotzdem ist "cancelled"
+                    # nicht zwangslaeufig ein echter Testfehlschlag: Runner-Last
+                    # bricht Jobs ab, ohne dass ein Test wirklich rot lief. Ist
+                    # JEDER nicht-gruene relevante Lauf "cancelled" (kein echtes
+                    # "failure"/"timed_out" darunter) und wurde fuer genau diesen
+                    # Lauf noch KEIN automatischer Neuversuch unternommen, wird er
+                    # EINMAL ueber `rerun-failed-jobs` angestossen und danach
+                    # normal weitergepollt — das Wartefenster (`deadline`) laeuft
+                    # dabei unveraendert weiter, es wird NICHT zurueckgesetzt.
+                    if head_sha == merged_sha and cancelled_retry_enabled:
+                        cancelled_runs = _nur_cancelled_ohne_echten_fehlschlag(
+                            latest_per_workflow
+                        )
+                        if cancelled_runs:
+                            offene_neuversuche = [
+                                run
+                                for run in cancelled_runs
+                                if f"{repo_full_name}:{merged_sha}:{run.get('id')}"
+                                not in self._ci_cancelled_retry_versucht
+                            ]
+                            # ZERODOX#2920 (Race): Nach `rerun-failed-jobs` behaelt
+                            # der Lauf seine `id`, GitHub erhoeht nur `run_attempt`.
+                            # Die Listenabfrage kann direkt danach noch den ALTEN
+                            # Versuch als "cancelled" liefern. Ein gemerkter Lauf,
+                            # dessen `run_attempt` nicht ueber dem beim Neuversuch
+                            # gemerkten Wert liegt, ist deshalb veraltet — kein
+                            # endgueltiges "failure", sondern weiter pollen.
+                            veraltete_antworten = [
+                                run
+                                for run in cancelled_runs
+                                if _ist_veralteter_versuch(
+                                    self._ci_cancelled_retry_versucht.get(
+                                        f"{repo_full_name}:{merged_sha}:{run.get('id')}"
+                                    ),
+                                    run,
+                                )
+                            ]
+                            if offene_neuversuche:
+                                neuversuch_ausgeloest = False
+                                for run in offene_neuversuche:
+                                    retry_key = (
+                                        f"{repo_full_name}:{merged_sha}:{run.get('id')}"
+                                    )
+                                    # Review-Nacharbeit (#2920): Kopf unmittelbar
+                                    # vor JEDEM POST erneut lesen. Ein Neuversuch
+                                    # für einen alten Stand tritt in die
+                                    # Concurrency-Gruppe mit cancel-in-progress ein
+                                    # und bricht dort den Lauf des NEUEREN Merges
+                                    # ab. Kopf weitergerückt → "superseded" wie
+                                    # oben; Kopf nicht lesbar → kein POST.
+                                    kopf_vor_post = await self._fetch_branch_head_sha(
+                                        repo_full_name, branch
+                                    )
+                                    if kopf_vor_post and kopf_vor_post != merged_sha:
+                                        self.logger.info(
+                                            f"↻ _wait_for_ci_completion: Stand {merged_sha[:7]} "
+                                            f"überholt durch {kopf_vor_post[:7]} — der neuere Merge "
+                                            "liefert gesammelt aus."
+                                        )
+                                        return "superseded"
+                                    if not kopf_vor_post:
+                                        self.logger.warning(
+                                            "⚠️ ZERODOX#2920: _wait_for_ci_completion: "
+                                            "Branch-Kopf vor dem Neuversuch nicht lesbar — "
+                                            f"kein Neuversuch für {run.get('name')} "
+                                            f"({merged_sha[:7]})."
+                                        )
+                                        continue
+                                    erfolg = await self._rerun_cancelled_workflow_run(
+                                        repo_full_name, run.get("id")
+                                    )
+                                    if erfolg:
+                                        # Wert statt True: der `run_attempt` zum
+                                        # Zeitpunkt des Neuversuchs. Fehlt er im
+                                        # Payload, bleibt es bei True (konservativ:
+                                        # ein weiteres "cancelled" ist endgueltig).
+                                        versuch = run.get("run_attempt")
+                                        self._ci_cancelled_retry_versucht[retry_key] = (
+                                            versuch if _ist_versuchsnummer(versuch) else True
+                                        )
+                                        # FIFO-Begrenzung auf ~200 Eintraege — sonst
+                                        # waechst der Speicher mit jedem Merge
+                                        # unbegrenzt (Bot-Laufzeit ueber Wochen/
+                                        # Monate ohne Neustart).
+                                        while len(self._ci_cancelled_retry_versucht) > 200:
+                                            self._ci_cancelled_retry_versucht.popitem(
+                                                last=False
+                                            )
+                                        neuversuch_ausgeloest = True
+                                        self.logger.warning(
+                                            "🔁 ZERODOX#2920: _wait_for_ci_completion: "
+                                            f"{run.get('name')} fuer {merged_sha[:7]} war "
+                                            "'cancelled' bei unveraendertem Branch-Kopf — "
+                                            "automatischer Neuversuch ausgeloest "
+                                            "(rerun-failed-jobs), kein Fehlalarm."
+                                        )
+                                    else:
+                                        self.logger.warning(
+                                            "⚠️ ZERODOX#2920: _wait_for_ci_completion: "
+                                            f"Neuversuch fuer {run.get('name')} "
+                                            f"({merged_sha[:7]}) konnte nicht ausgeloest "
+                                            "werden — bleibt beim heutigen Verhalten "
+                                            "(FAILED)."
+                                        )
+                                if neuversuch_ausgeloest:
+                                    await asyncio.sleep(poll_interval_s)
+                                    continue
+                            elif veraltete_antworten:
+                                self.logger.info(
+                                    "⏳ ZERODOX#2920: _wait_for_ci_completion: "
+                                    f"{[r.get('name') for r in veraltete_antworten]} fuer "
+                                    f"{merged_sha[:7]} meldet noch den abgebrochenen "
+                                    "Versuch vor dem Neuversuch (run_attempt nicht "
+                                    "hoeher als gemerkt) — veraltete Listenantwort, "
+                                    f"weiter pollen ({poll_interval_s}s)."
+                                )
+                                await asyncio.sleep(poll_interval_s)
+                                continue
+                            else:
+                                self.logger.warning(
+                                    "❌ _wait_for_ci_completion: CI FAILED fuer "
+                                    f"{merged_sha[:7]} — abgebrochen (cancelled), "
+                                    "automatischer Neuversuch bereits erfolgt "
+                                    "(ZERODOX#2920)."
+                                )
+                                return "failure"
+
                 self.logger.warning(
                     f"❌ _wait_for_ci_completion: CI FAILED fuer {merged_sha[:7]} "
                     f"(workflow={failed_run.get('name')}, conclusion={failed_run.get('conclusion')})"
@@ -1773,15 +2102,34 @@ class CIMixin:
                 return "failure"
 
             if all_completed:
+                # Review-Nacharbeit (#2920): Wurde für diesen Stand ein
+                # Neuversuch angestossen und ist main inzwischen weiter, ist der
+                # grüne Neuversuch ein überholter Stand — "superseded" statt
+                # "success", damit kein alter Stand ausgeliefert wird.
+                praefix = f"{repo_full_name}:{merged_sha}:"
+                if branch and any(
+                    str(k).startswith(praefix)
+                    for k in getattr(self, "_ci_cancelled_retry_versucht", {})
+                ):
+                    kopf_jetzt = await self._fetch_branch_head_sha(repo_full_name, branch)
+                    if kopf_jetzt and kopf_jetzt != merged_sha:
+                        self.logger.info(
+                            f"↻ _wait_for_ci_completion: Stand {merged_sha[:7]} "
+                            f"überholt durch {kopf_jetzt[:7]} — der neuere Merge "
+                            "liefert gesammelt aus."
+                        )
+                        return "superseded"
                 self.logger.info(
                     f"✅ _wait_for_ci_completion: alle CI-Workflows fuer {merged_sha[:7]} "
                     f"erfolgreich ({list(latest_per_workflow.keys())})"
                 )
                 return "success"
 
+            zustand_text = _beschreibe_letzten_ci_zustand(gesehene_laeufe)
             self.logger.info(
                 f"⏳ _wait_for_ci_completion: warte weiter auf {pending_names} "
                 f"fuer {merged_sha[:7]} (next poll in {poll_interval_s}s)"
+                + (f" — {zustand_text}" if zustand_text else "")
             )
             await asyncio.sleep(poll_interval_s)
 
@@ -1802,11 +2150,28 @@ class CIMixin:
             )
             return "missing"
 
+        zustand_text = _beschreibe_letzten_ci_zustand(gesehene_laeufe)
         self.logger.warning(
             f"⏰ _wait_for_ci_completion: TIMEOUT nach {max_wait_min}min "
             f"fuer {repo_full_name}@{merged_sha[:7]}"
+            + (f" — {zustand_text}" if zustand_text else "")
         )
         return "timeout"
+
+    def _merke_letzten_ci_zustand(
+        self, repo_full_name: str, merged_sha: str, gesehene_laeufe: Dict[str, Dict]
+    ) -> None:
+        """ZERODOX#2891: Legt den zuletzt gesehenen Laufzustand fuer den
+        Timeout-Alarm ab (begrenzt auf ~50 Eintraege, aeltester zuerst raus)."""
+        speicher = getattr(self, "_ci_wait_letzter_zustand", None)
+        if speicher is None:
+            speicher = OrderedDict()
+            self._ci_wait_letzter_zustand = speicher
+        schluessel = f"{repo_full_name}:{merged_sha}"
+        speicher.pop(schluessel, None)
+        speicher[schluessel] = {k: dict(v) for k, v in gesehene_laeufe.items()}
+        while len(speicher) > 50:
+            speicher.popitem(last=False)
 
     async def _send_ci_wait_alert(
         self,
@@ -1817,6 +2182,7 @@ class CIMixin:
         merged_sha: str,
         workflow_names: List[str],
         max_wait_min: int,
+        nachhol_in_min: Optional[int] = None,
     ) -> None:
         """
         Welle 9.10 (2026-05-11): Discord-Alert bei abgebrochenem Deploy.
@@ -1853,14 +2219,25 @@ class CIMixin:
                     f"**deploy.sh wurde NICHT getriggert.** Manueller Check noetig."
                 )
             elif outcome == "timeout":
+                # ZERODOX#2891: zuletzt gesehener Zustand (queued/in_progress)
+                zustand_text = _beschreibe_letzten_ci_zustand(
+                    getattr(self, "_ci_wait_letzter_zustand", {}).get(
+                        f"{repo_full_name}:{merged_sha}", {}
+                    )
+                )
                 title = f"⏰ {repo_name}: Deploy zurueckgestellt — CI nicht durch"
                 color = 0xF1C40F
                 description = (
                     f"Welle-9.10-Schutz: CI-Workflows ({', '.join(workflow_names) or '—'}) "
                     f"sind nach {max_wait_min} Minuten fuer Commit `{merged_sha[:7]}` "
                     f"noch nicht alle completed.\n\n"
-                    f"**deploy.sh wurde NICHT getriggert.** Sobald CI gruen ist, "
+                    + (f"Zuletzt gesehen: {zustand_text}.\n\n" if zustand_text else "")
+                    + f"**deploy.sh wurde NICHT getriggert.** Sobald CI gruen ist, "
                     f"deploy.sh manuell triggern."
+                    + (
+                        f"\n\nNachhol-Abgleich in {nachhol_in_min} min eingeplant."
+                        if nachhol_in_min is not None else ""
+                    )
                 )
             elif outcome == "api_unavailable":
                 title = f"🌐 {repo_name}: Deploy zurueckgestellt — GitHub nicht erreichbar"
@@ -2006,6 +2383,12 @@ class CIMixin:
                 pr_head_reuse_enabled = bool(
                     project_config.get('ci_wait_pr_head_reuse', True)
                 )
+                # ZERODOX#2920: automatischer Neuversuch bei "cancelled".
+                # Wer einen Deploy per Abbruch im GitHub-UI stoppen will:
+                # zweimal abbrechen oder diesen Schalter auf false.
+                cancelled_retry_enabled = bool(
+                    project_config.get('ci_wait_cancelled_retry', True)
+                )
                 # ZERODOX#3391: Der zuletzt AUSGELIEFERTE Stand — HEAD des
                 # Deploy-Baums, den `deploy_project` per `git pull` pflegt.
                 # Damit prüft die Docs-only-Erkennung den Diff "live → HEAD"
@@ -2033,6 +2416,7 @@ class CIMixin:
                     poll_interval_sec=poll_interval_sec,
                     tree_sha_reuse_enabled=tree_sha_reuse_enabled,
                     pr_head_reuse_enabled=pr_head_reuse_enabled,
+                    cancelled_retry_enabled=cancelled_retry_enabled,
                     push_commit_shas=push_commit_shas,
                     ausgelieferter_sha=ausgelieferter_sha,
                     branch=branch,
@@ -2067,6 +2451,24 @@ class CIMixin:
                 # Wert durch, landet er unten im Weiter-deployen-Zweig — ein
                 # Deploy ohne jede CI-Pruefung. Ein Test haelt das fest.
                 if outcome in {"timeout", "missing", "api_unavailable"}:
+                    # ZERODOX#2891: Nach einem Timeout holte bisher nichts den
+                    # Stand nach — 36 Timeouts in 30 Tagen, davon 27 mit später
+                    # grünem Lauf; live blieb der alte Stand bis zum nächsten
+                    # Merge. Deshalb EINMAL verzögert nachholen (je Projekt
+                    # höchstens ein ausstehender Task, nie für shadowops-bot).
+                    nachhol_in_min = None
+                    if outcome == "timeout":
+                        planen = getattr(self, 'plane_nachhol_abgleich', None)
+                        if callable(planen):
+                            try:
+                                if planen(repo_name, anlass="CI-Timeout") is True:
+                                    nachhol_in_min = max(
+                                        1, round(self.nachhol_abgleich_delay_sec_effektiv() / 60)
+                                    )
+                            except Exception as e:
+                                self.logger.warning(
+                                    f"⚠️ Nachhol-Abgleich {repo_name} nicht planbar: {e}"
+                                )
                     await self._send_ci_wait_alert(
                         outcome=outcome,
                         repo_name=repo_name,
@@ -2075,6 +2477,7 @@ class CIMixin:
                         merged_sha=full_sha,
                         workflow_names=workflow_names,
                         max_wait_min=max_wait_min,
+                        nachhol_in_min=nachhol_in_min,
                     )
                     self._release_deploy(repo_name, full_sha)
                     # "api_unavailable" ist ausdruecklich transient: Die CI-Lage

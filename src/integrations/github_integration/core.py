@@ -6,6 +6,7 @@ Handles webhook events, auto-deployment, and Discord notifications
 import asyncio
 import json
 import logging
+from collections import OrderedDict
 from types import SimpleNamespace
 from typing import Dict, Callable, Optional
 
@@ -15,6 +16,7 @@ from .webhook_mixin import WebhookMixin
 from .polling_mixin import PollingMixin
 from .event_handlers_mixin import EventHandlersMixin
 from .ci_mixin import CIMixin
+from .start_abgleich_mixin import StartAbgleichMixin
 from .state_mixin import StateMixin
 from .git_ops_mixin import GitOpsMixin
 from .notifications_mixin import NotificationsMixin
@@ -35,7 +37,7 @@ def _dict_to_namespace(d: dict) -> SimpleNamespace:
 
 
 class GitHubIntegration(JulesWorkflowMixin,
-                         WebhookMixin, PollingMixin, EventHandlersMixin, CIMixin,
+                         WebhookMixin, PollingMixin, EventHandlersMixin, CIMixin, StartAbgleichMixin,
                          StateMixin, GitOpsMixin, NotificationsMixin, AIPatchNotesMixin):
     """
     GitHub webhook integration for deployment automation
@@ -83,6 +85,12 @@ class GitHubIntegration(JulesWorkflowMixin,
         self.auto_deploy_enabled = github_config.get('auto_deploy', False)
         self.deploy_branches = github_config.get('deploy_branches', ['main', 'master'])
         self.auto_create_webhooks = github_config.get('auto_create_webhooks', False)
+        # ZERODOX#3447: Verzögerung des einmaligen Start-Abgleichs (Sekunden).
+        self.start_abgleich_delay_sec = github_config.get('start_abgleich_delay_sec', 105)
+        self._start_abgleich_task = None
+        # ZERODOX#2891: Verzögerung des Nachhol-Abgleichs nach CI-Timeout.
+        self.nachhol_abgleich_delay_sec = github_config.get('nachhol_abgleich_delay_sec', 900)
+        self._nachhol_abgleich_tasks = {}
         self.webhook_public_url = github_config.get('webhook_public_url', '')
         self.webhook_events = github_config.get('webhook_events', ['push', 'pull_request', 'release'])
         self.local_polling_enabled = github_config.get('local_polling_enabled', True)
@@ -193,6 +201,14 @@ class GitHubIntegration(JulesWorkflowMixin,
         # #478: Hintergrund-Tasks fuer Auto-Deploy. Der Webhook-Handler darf nicht
         # synchron auf den (minutenlangen) Deploy warten — sonst 504 (GitHub-Timeout).
         self._deploy_tasks: set = set()
+        # ZERODOX#2920: Ein "cancelled"-Lauf bei UNVERAENDERTEM Branch-Kopf (kein
+        # Sammel-Zug-Fall, siehe ci_mixin._wait_for_ci_completion) loest EINMAL
+        # je (repo, sha, run_id) einen automatischen Neuversuch aus, statt sofort
+        # als FEHLGESCHLAGEN zu gelten — Runner-Last kann Jobs abbrechen, ohne
+        # dass ein Test wirklich rot war. Begrenzt auf ~200 Eintraege (aeltester
+        # zuerst raus), sonst waechst der Speicher mit jedem Merge unbegrenzt.
+        # Wert: `run_attempt` beim Neuversuch (int) oder True, wenn er fehlte.
+        self._ci_cancelled_retry_versucht: "OrderedDict[str, int | bool]" = OrderedDict()
 
         # Enterprise Hardening: Concurrency Lock + AI Circuit Breaker
         self._patch_notes_lock = asyncio.Lock()
