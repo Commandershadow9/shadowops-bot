@@ -55,6 +55,10 @@ class StartAbgleichMixin:
         ``path`` taugt dafür nicht (ZERODOX#2344) — dort steht, was gerade
         ausgecheckt ist; ein Feature-Branch darin ergäbe bei jedem Start einen
         falschen Deploy-Auftrag.
+
+        Nicht abgedeckt: Nach einem Rollback (rsync ohne ``.git``) bleibt der
+        HEAD des Deploy-Baums auf dem neuen Stand, obwohl der alte läuft —
+        diesen Fall erkennt der Abgleich bewusst nicht.
         """
         kandidaten = []
         projects = getattr(self.config, 'projects', {}) or {}
@@ -65,7 +69,11 @@ class StartAbgleichMixin:
                 continue
             if not project_config.get('deploy_path'):
                 continue
-            repo_url = str(project_config.get('repo_url') or '')
+            # SSH-Form (git@github.com:owner/repo.git) zerlegt `urlparse` nicht
+            # in einen Pfad — vorher auf https normalisieren.
+            repo_url = self._normalize_repo_url(
+                str(project_config.get('repo_url') or '')
+            ) or ''
             teile = [t for t in urlparse(repo_url).path.strip('/').split('/') if t]
             if len(teile) < 2:
                 continue

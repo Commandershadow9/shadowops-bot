@@ -687,6 +687,16 @@ class CIMixin:
         try:
             async with aiohttp.ClientSession(headers=headers) as session:
                 async with session.post(url, timeout=20) as resp:
+                    if resp.status in (403, 404):
+                        body = await resp.text()
+                        self.logger.warning(
+                            "⚠️ ZERODOX#2920: Neuversuch für Run "
+                            f"{run_id} ({repo_full_name}) abgelehnt "
+                            f"({resp.status}) — Token fehlt das Recht actions:write "
+                            "— automatischer Neuversuch (#2920) ist damit "
+                            f"wirkungslos. Antwort: {body}"
+                        )
+                        return False
                     if resp.status not in (200, 201):
                         body = await resp.text()
                         self.logger.warning(
@@ -1343,6 +1353,7 @@ class CIMixin:
         poll_interval_sec: int = 20,
         tree_sha_reuse_enabled: bool = True,
         pr_head_reuse_enabled: bool = True,
+        cancelled_retry_enabled: bool = True,
         push_commit_shas: Optional[List[str]] = None,
         ausgelieferter_sha: Optional[str] = None,
         branch: Optional[str] = None,
@@ -1441,6 +1452,12 @@ class CIMixin:
             pr_head_reuse_enabled: PR-Head-Wiederverwendung ohne
                 Tree-Bedingung (ZERODOX#3328 Paket A, project_config-Key
                 `ci_wait_pr_head_reuse`) an/aus. Default True.
+            cancelled_retry_enabled: Automatischer Neuversuch eines
+                "cancelled"-Laufs bei unverändertem Branch-Kopf (ZERODOX#2920,
+                project_config-Key `ci_wait_cancelled_retry`). Default True;
+                False = Verhalten vor #2920 ("cancelled" ist sofort "failure").
+                Wer einen Deploy per Abbruch im GitHub-UI stoppen will:
+                zweimal abbrechen oder diesen Schalter auf false.
 
                 ⚠️ Dieser Schalter gehoert zu `push: main` in
                 `web-quality.yml`. Wer ihn auf False setzt, WAEHREND dort kein
@@ -1960,7 +1977,7 @@ class CIMixin:
                     # EINMAL ueber `rerun-failed-jobs` angestossen und danach
                     # normal weitergepollt — das Wartefenster (`deadline`) laeuft
                     # dabei unveraendert weiter, es wird NICHT zurueckgesetzt.
-                    if head_sha == merged_sha:
+                    if head_sha == merged_sha and cancelled_retry_enabled:
                         cancelled_runs = _nur_cancelled_ohne_echten_fehlschlag(
                             latest_per_workflow
                         )
@@ -1994,6 +2011,31 @@ class CIMixin:
                                     retry_key = (
                                         f"{repo_full_name}:{merged_sha}:{run.get('id')}"
                                     )
+                                    # Review-Nacharbeit (#2920): Kopf unmittelbar
+                                    # vor JEDEM POST erneut lesen. Ein Neuversuch
+                                    # für einen alten Stand tritt in die
+                                    # Concurrency-Gruppe mit cancel-in-progress ein
+                                    # und bricht dort den Lauf des NEUEREN Merges
+                                    # ab. Kopf weitergerückt → "superseded" wie
+                                    # oben; Kopf nicht lesbar → kein POST.
+                                    kopf_vor_post = await self._fetch_branch_head_sha(
+                                        repo_full_name, branch
+                                    )
+                                    if kopf_vor_post and kopf_vor_post != merged_sha:
+                                        self.logger.info(
+                                            f"↻ _wait_for_ci_completion: Stand {merged_sha[:7]} "
+                                            f"überholt durch {kopf_vor_post[:7]} — der neuere Merge "
+                                            "liefert gesammelt aus."
+                                        )
+                                        return "superseded"
+                                    if not kopf_vor_post:
+                                        self.logger.warning(
+                                            "⚠️ ZERODOX#2920: _wait_for_ci_completion: "
+                                            "Branch-Kopf vor dem Neuversuch nicht lesbar — "
+                                            f"kein Neuversuch für {run.get('name')} "
+                                            f"({merged_sha[:7]})."
+                                        )
+                                        continue
                                     erfolg = await self._rerun_cancelled_workflow_run(
                                         repo_full_name, run.get("id")
                                     )
@@ -2060,6 +2102,23 @@ class CIMixin:
                 return "failure"
 
             if all_completed:
+                # Review-Nacharbeit (#2920): Wurde für diesen Stand ein
+                # Neuversuch angestossen und ist main inzwischen weiter, ist der
+                # grüne Neuversuch ein überholter Stand — "superseded" statt
+                # "success", damit kein alter Stand ausgeliefert wird.
+                praefix = f"{repo_full_name}:{merged_sha}:"
+                if branch and any(
+                    str(k).startswith(praefix)
+                    for k in getattr(self, "_ci_cancelled_retry_versucht", {})
+                ):
+                    kopf_jetzt = await self._fetch_branch_head_sha(repo_full_name, branch)
+                    if kopf_jetzt and kopf_jetzt != merged_sha:
+                        self.logger.info(
+                            f"↻ _wait_for_ci_completion: Stand {merged_sha[:7]} "
+                            f"überholt durch {kopf_jetzt[:7]} — der neuere Merge "
+                            "liefert gesammelt aus."
+                        )
+                        return "superseded"
                 self.logger.info(
                     f"✅ _wait_for_ci_completion: alle CI-Workflows fuer {merged_sha[:7]} "
                     f"erfolgreich ({list(latest_per_workflow.keys())})"
@@ -2319,6 +2378,12 @@ class CIMixin:
                 pr_head_reuse_enabled = bool(
                     project_config.get('ci_wait_pr_head_reuse', True)
                 )
+                # ZERODOX#2920: automatischer Neuversuch bei "cancelled".
+                # Wer einen Deploy per Abbruch im GitHub-UI stoppen will:
+                # zweimal abbrechen oder diesen Schalter auf false.
+                cancelled_retry_enabled = bool(
+                    project_config.get('ci_wait_cancelled_retry', True)
+                )
                 # ZERODOX#3391: Der zuletzt AUSGELIEFERTE Stand — HEAD des
                 # Deploy-Baums, den `deploy_project` per `git pull` pflegt.
                 # Damit prüft die Docs-only-Erkennung den Diff "live → HEAD"
@@ -2346,6 +2411,7 @@ class CIMixin:
                     poll_interval_sec=poll_interval_sec,
                     tree_sha_reuse_enabled=tree_sha_reuse_enabled,
                     pr_head_reuse_enabled=pr_head_reuse_enabled,
+                    cancelled_retry_enabled=cancelled_retry_enabled,
                     push_commit_shas=push_commit_shas,
                     ausgelieferter_sha=ausgelieferter_sha,
                     branch=branch,

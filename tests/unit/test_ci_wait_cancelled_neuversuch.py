@@ -248,3 +248,136 @@ async def test_hoeherer_versuch_erneut_cancelled_bleibt_failure():
     assert any(
         "bereits erfolgt" in str(c.args[0]) for c in mock_warning.call_args_list if c.args
     )
+
+
+# --- Review-Nacharbeit (#2920): Kopf vor dem POST, Schalter, 403-Hinweis ---
+
+
+class _KopfFolgeHarness(_NeuversuchHarness):
+    """Wie `_NeuversuchHarness`, aber der Branch-Kopf folgt einer Liste —
+    je Aufruf ein Eintrag, danach bleibt der letzte stehen."""
+
+    def __init__(self, kopf_folge, **kwargs):
+        super().__init__(**kwargs)
+        self._kopf_folge = kopf_folge
+        self._kopf_aufrufe = 0
+
+    async def _fetch_branch_head_sha(self, repo_full_name: str, branch: str):
+        idx = min(self._kopf_aufrufe, len(self._kopf_folge) - 1)
+        self._kopf_aufrufe += 1
+        return self._kopf_folge[idx]
+
+
+NEUER_SHA = "f" * 40
+
+
+@pytest.mark.asyncio
+async def test_kopf_vor_post_weitergerueckt_ist_superseded_ohne_post():
+    """Zwischen der ersten Kopf-Abfrage und dem POST rückt main weiter →
+    'superseded', KEIN Neuversuch (er bräche den Lauf des neueren Merges ab)."""
+    h = _KopfFolgeHarness(
+        kopf_folge=[MERGED_SHA, NEUER_SHA],
+        run_sequenzen=[[_run("Web Quality", "cancelled", run_id=1)]],
+    )
+
+    ergebnis = await _warte(h)
+
+    assert ergebnis == "superseded", f"gemessen: {ergebnis}"
+    assert h._rerun_aufrufe == [], "Bei weitergerücktem Kopf darf kein POST feuern."
+
+
+@pytest.mark.asyncio
+async def test_kopf_vor_post_unlesbar_kein_post_bleibt_failure():
+    """Kopf vor dem POST nicht lesbar (None) → kein POST, heutiges 'failure'."""
+    h = _KopfFolgeHarness(
+        kopf_folge=[MERGED_SHA, None],
+        run_sequenzen=[[_run("Web Quality", "cancelled", run_id=1)]],
+    )
+
+    ergebnis = await _warte(h)
+
+    assert ergebnis == "failure", f"gemessen: {ergebnis}"
+    assert h._rerun_aufrufe == [], "Ohne lesbaren Kopf darf kein POST feuern."
+
+
+@pytest.mark.asyncio
+async def test_gruener_neuversuch_bei_weitergeruecktem_kopf_ist_superseded():
+    """Neuversuch erfolgt, Folgelauf grün — aber main ist inzwischen weiter →
+    'superseded' statt 'success' (kein alter Stand wird ausgeliefert)."""
+    h = _KopfFolgeHarness(
+        kopf_folge=[MERGED_SHA, MERGED_SHA, NEUER_SHA],
+        run_sequenzen=[
+            [_run("Web Quality", "cancelled", run_id=1)],
+            [_run("Web Quality", "success", run_id=1)],
+        ],
+    )
+
+    ergebnis = await _warte(h)
+
+    assert ergebnis == "superseded", f"gemessen: {ergebnis}"
+    assert len(h._rerun_aufrufe) == 1
+
+
+@pytest.mark.asyncio
+async def test_schalter_aus_kein_neuversuch():
+    """`ci_wait_cancelled_retry: false` → Verhalten vor #2920: kein POST, 'failure'."""
+    h = _NeuversuchHarness(
+        run_sequenzen=[[_run("Web Quality", "cancelled", run_id=1)]],
+    )
+
+    ergebnis = await _warte(h, cancelled_retry_enabled=False)
+
+    assert ergebnis == "failure", f"gemessen: {ergebnis}"
+    assert h._rerun_aufrufe == [], "Bei abgeschaltetem Schalter darf kein POST feuern."
+
+
+class _FakeResp:
+    def __init__(self, status, body=""):
+        self.status = status
+        self._body = body
+
+    async def text(self):
+        return self._body
+
+    async def __aenter__(self):
+        return self
+
+    async def __aexit__(self, *a):
+        return False
+
+
+class _FakeSession:
+    def __init__(self, status, *a, **kw):
+        self._status = status
+
+    def post(self, url, timeout=None):
+        return _FakeResp(self._status, '{"message":"Resource not accessible by integration"}')
+
+    async def __aenter__(self):
+        return self
+
+    async def __aexit__(self, *a):
+        return False
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("status", [403, 404])
+async def test_403_warnung_nennt_actions_write(status, caplog):
+    """403/404 beim POST → Warnung benennt das fehlende Recht actions:write."""
+
+    class _Echt(CIMixin):
+        def __init__(self):
+            self.logger = logging.getLogger("test-ci-wait-403")
+
+        def _get_github_token(self):
+            return "x"
+
+    h = _Echt()
+    with patch(
+        "src.integrations.github_integration.ci_mixin.aiohttp.ClientSession",
+        new=lambda *a, **kw: _FakeSession(status),
+    ), caplog.at_level(logging.WARNING, logger="test-ci-wait-403"):
+        erfolg = await h._rerun_cancelled_workflow_run("Commandershadow9/ZERODOX", 42)
+
+    assert erfolg is False
+    assert "actions:write" in caplog.text, caplog.text

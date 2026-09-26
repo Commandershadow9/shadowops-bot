@@ -1108,7 +1108,8 @@ class ShadowOpsBot(commands.Bot):
                 await self.github_integration.ensure_project_webhooks()
                 # ZERODOX#3447: Merge-Webhooks aus der Startphase gehen verloren —
                 # einmal verzögert gegen main abgleichen und nachholen (fail-soft).
-                self.github_integration.schedule_start_abgleich()
+                if self.github_integration.enabled:
+                    self.github_integration.schedule_start_abgleich()
                 if self.github_integration.enabled:
                     self.logger.info("✅ [5/6] GitHub Integration gestartet (Webhook Server läuft)")
                 else:

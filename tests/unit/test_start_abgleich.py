@@ -10,13 +10,14 @@ from types import SimpleNamespace
 
 import pytest
 
+from src.integrations.github_integration.git_ops_mixin import GitOpsMixin
 from src.integrations.github_integration.start_abgleich_mixin import StartAbgleichMixin
 
 REMOTE = "b" * 40
 DEPLOYED = "a" * 40
 
 
-class _Harness(StartAbgleichMixin):
+class _Harness(StartAbgleichMixin, GitOpsMixin):
     def __init__(self, tmp_path, *, remote=REMOTE, deployed=DEPLOYED, aktiv=False,
                  remote_fehler=False, git_fehler=False, projekte=None):
         self.logger = logging.getLogger("test-start-abgleich")
@@ -177,3 +178,19 @@ async def test_schedule_ohne_auto_deploy_plant_nichts(tmp_path):
     h.auto_deploy_enabled = False
     assert h.schedule_start_abgleich() is False
     assert h._start_abgleich_task is None
+
+
+def test_ssh_repo_url_wird_korrekt_zerlegt(tmp_path):
+    """Review-Nacharbeit: git@github.com:owner/repo.git ergibt owner/repo."""
+    projekte = {
+        "zerodox": {
+            "enabled": True,
+            "deploy_path": str(tmp_path / "deploy"),
+            "repo_url": "git@github.com:Commandershadow9/ZERODOX.git",
+        },
+    }
+    h = _Harness(tmp_path, projekte=projekte)
+    kandidaten = h._start_abgleich_kandidaten()
+    assert [(n, f) for n, f, _ in kandidaten] == [
+        ("ZERODOX", "Commandershadow9/ZERODOX")
+    ]
