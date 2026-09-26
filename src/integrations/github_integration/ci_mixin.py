@@ -2182,6 +2182,7 @@ class CIMixin:
         merged_sha: str,
         workflow_names: List[str],
         max_wait_min: int,
+        nachhol_in_min: Optional[int] = None,
     ) -> None:
         """
         Welle 9.10 (2026-05-11): Discord-Alert bei abgebrochenem Deploy.
@@ -2233,6 +2234,10 @@ class CIMixin:
                     + (f"Zuletzt gesehen: {zustand_text}.\n\n" if zustand_text else "")
                     + f"**deploy.sh wurde NICHT getriggert.** Sobald CI gruen ist, "
                     f"deploy.sh manuell triggern."
+                    + (
+                        f"\n\nNachhol-Abgleich in {nachhol_in_min} min eingeplant."
+                        if nachhol_in_min is not None else ""
+                    )
                 )
             elif outcome == "api_unavailable":
                 title = f"🌐 {repo_name}: Deploy zurueckgestellt — GitHub nicht erreichbar"
@@ -2446,6 +2451,24 @@ class CIMixin:
                 # Wert durch, landet er unten im Weiter-deployen-Zweig — ein
                 # Deploy ohne jede CI-Pruefung. Ein Test haelt das fest.
                 if outcome in {"timeout", "missing", "api_unavailable"}:
+                    # ZERODOX#2891: Nach einem Timeout holte bisher nichts den
+                    # Stand nach — 36 Timeouts in 30 Tagen, davon 27 mit später
+                    # grünem Lauf; live blieb der alte Stand bis zum nächsten
+                    # Merge. Deshalb EINMAL verzögert nachholen (je Projekt
+                    # höchstens ein ausstehender Task, nie für shadowops-bot).
+                    nachhol_in_min = None
+                    if outcome == "timeout":
+                        planen = getattr(self, 'plane_nachhol_abgleich', None)
+                        if callable(planen):
+                            try:
+                                if planen(repo_name, anlass="CI-Timeout") is True:
+                                    nachhol_in_min = max(
+                                        1, round(self.nachhol_abgleich_delay_sec_effektiv() / 60)
+                                    )
+                            except Exception as e:
+                                self.logger.warning(
+                                    f"⚠️ Nachhol-Abgleich {repo_name} nicht planbar: {e}"
+                                )
                     await self._send_ci_wait_alert(
                         outcome=outcome,
                         repo_name=repo_name,
@@ -2454,6 +2477,7 @@ class CIMixin:
                         merged_sha=full_sha,
                         workflow_names=workflow_names,
                         max_wait_min=max_wait_min,
+                        nachhol_in_min=nachhol_in_min,
                     )
                     self._release_deploy(repo_name, full_sha)
                     # "api_unavailable" ist ausdruecklich transient: Die CI-Lage

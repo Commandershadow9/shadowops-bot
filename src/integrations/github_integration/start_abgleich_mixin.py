@@ -25,6 +25,11 @@ _DEFAULT_START_ABGLEICH_DELAY_SEC = 105
 # wieder ab und deployt wieder — eine Neustart-Schleife. Nur loggen.
 _SELF_DEPLOY_REPOS = {'shadowops_bot'}
 
+# ZERODOX#2891: Verzögerung des Nachhol-Abgleichs nach einem CI-Timeout.
+# Der Timeout heißt "CI war nach max_wait_min noch nicht durch", nicht "rot" —
+# 15 min später ist der Lauf meist fertig und der Stand deploybar.
+_DEFAULT_NACHHOL_ABGLEICH_DELAY_SEC = 900
+
 
 class StartAbgleichMixin:
 
@@ -46,6 +51,103 @@ class StartAbgleichMixin:
         except Exception as e:
             self.logger.warning(f"⚠️ Start-Abgleich konnte nicht geplant werden: {e}")
             return False
+
+    def nachhol_abgleich_delay_sec_effektiv(self) -> int:
+        try:
+            return max(0, int(getattr(
+                self, 'nachhol_abgleich_delay_sec', _DEFAULT_NACHHOL_ABGLEICH_DELAY_SEC
+            )))
+        except (TypeError, ValueError):
+            return _DEFAULT_NACHHOL_ABGLEICH_DELAY_SEC
+
+    def plane_nachhol_abgleich(
+        self,
+        repo_key: str,
+        delay_sec: Optional[int] = None,
+        anlass: str = "CI-Timeout",
+    ) -> bool:
+        """Plant EINEN verzögerten Abgleich für genau dieses Projekt (fail-soft).
+
+        ZERODOX#2891: Endete das CI-Warten mit "timeout", gab der Deploy die
+        Reservierung frei und meldete Discord-Alarm — danach holte nichts den
+        Stand nach, live blieb der alte Stand bis zum nächsten Merge. Gemessen:
+        36 Timeouts in 30 Tagen, davon 27 mit einem später GRÜNEN Lauf. Der
+        Nachhol-Abgleich nutzt denselben Kern wie der Start-Abgleich
+        (Deploy-Baum-HEAD gegen Remote-HEAD, Per-SHA-Sperre, Einstieg über
+        `_trigger_deployment` mit erneutem CI-Warten).
+
+        Begrenzung: je Projekt höchstens EIN ausstehender Task. Ein zweiter
+        Timeout — auch der des Nachhol-Deploys selbst — plant keinen weiteren;
+        so entsteht bei dauerhaft hängender CI keine Endlos-Kette.
+        Rückgabe: True, wenn ein Task eingeplant wurde.
+        """
+        try:
+            if not getattr(self, 'auto_deploy_enabled', False):
+                return False
+            normalisiert = str(repo_key or '').lower().replace('-', '_')
+            if not normalisiert or normalisiert in _SELF_DEPLOY_REPOS:
+                return False
+            tasks = getattr(self, '_nachhol_abgleich_tasks', None)
+            if not isinstance(tasks, dict):
+                tasks = {}
+                self._nachhol_abgleich_tasks = tasks
+            bestehend = tasks.get(normalisiert)
+            if bestehend is not None and not bestehend.done():
+                self.logger.info(
+                    f"ℹ️ Nachhol-Abgleich {repo_key}: bereits eingeplant — kein zweiter Task."
+                )
+                return False
+            kandidat = None
+            for repo_name, repo_full_name, project_config in self._start_abgleich_kandidaten():
+                if repo_name.lower().replace('-', '_') == normalisiert:
+                    kandidat = (repo_name, repo_full_name, project_config)
+                    break
+            if kandidat is None:
+                self.logger.info(
+                    f"ℹ️ Nachhol-Abgleich {repo_key}: kein Projekt mit deploy_path — nicht eingeplant."
+                )
+                return False
+            if delay_sec is None:
+                delay_sec = self.nachhol_abgleich_delay_sec_effektiv()
+            delay_sec = max(0, int(delay_sec))
+            tasks[normalisiert] = asyncio.create_task(
+                self._nachhol_abgleich(normalisiert, *kandidat, delay_sec, anlass)
+            )
+            self.logger.info(
+                f"⏳ Nachhol-Abgleich {repo_key} in {delay_sec} s eingeplant ({anlass})."
+            )
+            return True
+        except Exception as e:
+            self.logger.warning(f"⚠️ Nachhol-Abgleich {repo_key} konnte nicht geplant werden: {e}")
+            return False
+
+    async def _nachhol_abgleich(
+        self,
+        task_key: str,
+        repo_name: str,
+        repo_full_name: str,
+        project_config: Dict,
+        delay_sec: int,
+        anlass: str,
+    ) -> None:
+        try:
+            if delay_sec:
+                await asyncio.sleep(delay_sec)
+            await self._start_abgleich_projekt(
+                repo_name, repo_full_name, project_config,
+                anlass=f"Nachhol-Abgleich ({anlass})",
+            )
+        except asyncio.CancelledError:
+            raise
+        except Exception as e:
+            self.logger.warning(f"⚠️ Nachhol-Abgleich {repo_name} fehlgeschlagen: {e}")
+        finally:
+            # Erst NACH dem Trigger freigeben: Läuft der Nachhol-Deploy selbst
+            # in einen Timeout, sieht plane_nachhol_abgleich diesen Task noch
+            # als ausstehend und plant keinen weiteren (keine Kette).
+            tasks = getattr(self, '_nachhol_abgleich_tasks', None)
+            if isinstance(tasks, dict) and tasks.get(task_key) is asyncio.current_task():
+                tasks.pop(task_key, None)
 
     def _start_abgleich_kandidaten(self) -> List[Tuple[str, str, Dict]]:
         """(repo_name, repo_full_name, project_config) je Projekt mit eigenem Deploy-Baum.
@@ -98,8 +200,13 @@ class StartAbgleichMixin:
         repo_name: str,
         repo_full_name: str,
         project_config: Dict,
+        anlass: str = "Start-Abgleich",
     ) -> Optional[str]:
-        """Gleicht ein Projekt ab. Rückgabe nur für Tests/Logs."""
+        """Gleicht ein Projekt ab. Rückgabe nur für Tests/Logs.
+
+        Gemeinsamer Kern von Start- und Nachhol-Abgleich; `anlass` steht nur
+        im Log.
+        """
         branch = 'main'
         if branch not in (getattr(self, 'deploy_branches', None) or []):
             return None
@@ -107,19 +214,19 @@ class StartAbgleichMixin:
         remote_sha = await self._fetch_branch_head_sha(repo_full_name, branch)
         if not remote_sha:
             self.logger.warning(
-                f"⚠️ Start-Abgleich {repo_name}: Remote-HEAD von {branch} nicht lesbar — übersprungen."
+                f"⚠️ {anlass} {repo_name}: Remote-HEAD von {branch} nicht lesbar — übersprungen."
             )
             return None
 
         deploy_path = Path(project_config['deploy_path'])
         if not deploy_path.exists():
-            self.logger.warning(f"⚠️ Start-Abgleich {repo_name}: {deploy_path} fehlt — übersprungen.")
+            self.logger.warning(f"⚠️ {anlass} {repo_name}: {deploy_path} fehlt — übersprungen.")
             return None
         # Bewusst kein `git fetch`: Verglichen wird der ausgelieferte Stand
         # (HEAD) mit GitHub, nicht mit einem lokalen Remote-Ref.
         deployed_sha = self._get_commit_sha(deploy_path, 'HEAD')
         if not deployed_sha:
-            self.logger.warning(f"⚠️ Start-Abgleich {repo_name}: HEAD in {deploy_path} nicht lesbar.")
+            self.logger.warning(f"⚠️ {anlass} {repo_name}: HEAD in {deploy_path} nicht lesbar.")
             return None
 
         # Kein Fehlalarm nach Docs-only-Merges: Auch dann deployt der Bot
@@ -132,14 +239,14 @@ class StartAbgleichMixin:
         # misst dieser Abgleich den Baum und nicht den Health-Endpoint.)
         if deployed_sha == remote_sha:
             self.logger.info(
-                f"✅ Start-Abgleich {repo_name}: Deploy-Baum steht auf {branch} ({remote_sha[:7]})."
+                f"✅ {anlass} {repo_name}: Deploy-Baum steht auf {branch} ({remote_sha[:7]})."
             )
             return "aktuell"
 
         if self._normalize_repo_name(repo_name).replace('-', '_') in _SELF_DEPLOY_REPOS:
             self.logger.warning(
-                f"⚠️ Start-Abgleich {repo_name}: {deployed_sha[:7]} != {branch} {remote_sha[:7]}, "
-                "Self-Deploy wird beim Start bewusst nicht angestossen (Neustart-Schleife)."
+                f"⚠️ {anlass} {repo_name}: {deployed_sha[:7]} != {branch} {remote_sha[:7]}, "
+                "Self-Deploy wird bewusst nicht angestossen (Neustart-Schleife)."
             )
             return "self"
 
@@ -147,7 +254,7 @@ class StartAbgleichMixin:
             # Ein laufender Deploy zieht vor dem Bau origin/main nach, der
             # Re-Poll danach holt einen noch neueren Stand.
             self.logger.info(
-                f"ℹ️ Start-Abgleich {repo_name}: Deploy läuft bereits — kein Nachholen."
+                f"ℹ️ {anlass} {repo_name}: Deploy läuft bereits — kein Nachholen."
             )
             return "aktiv"
 
@@ -158,14 +265,14 @@ class StartAbgleichMixin:
         # eintreffender Webhook die hier reservierte SHA.
         if not self._reserve_deploy(repo_name, remote_sha):
             self.logger.info(
-                f"ℹ️ Start-Abgleich {repo_name}@{remote_sha[:7]}: bereits durch einen anderen "
+                f"ℹ️ {anlass} {repo_name}@{remote_sha[:7]}: bereits durch einen anderen "
                 "Trigger reserviert — kein doppelter Deploy."
             )
             return "reserviert"
 
         self.logger.warning(
-            f"🔁 Start-Abgleich {repo_name}: Deploy-Baum {deployed_sha[:7]} != {branch} "
-            f"{remote_sha[:7]} — verlorener Merge-Auftrag aus der Startphase, Nachhol-Deploy."
+            f"🔁 {anlass} {repo_name}: Deploy-Baum {deployed_sha[:7]} != {branch} "
+            f"{remote_sha[:7]} — Auftrag nicht ausgeführt, Nachhol-Deploy."
         )
         # Einstieg ist _trigger_deployment — derselbe, den der Push-Webhook und
         # der Re-Poll benutzen. Damit gelten CI-Wartefenster, Sammel-Zug

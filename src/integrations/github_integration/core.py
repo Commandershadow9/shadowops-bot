@@ -88,6 +88,9 @@ class GitHubIntegration(JulesWorkflowMixin,
         # ZERODOX#3447: Verzögerung des einmaligen Start-Abgleichs (Sekunden).
         self.start_abgleich_delay_sec = github_config.get('start_abgleich_delay_sec', 105)
         self._start_abgleich_task = None
+        # ZERODOX#2891: Verzögerung des Nachhol-Abgleichs nach CI-Timeout.
+        self.nachhol_abgleich_delay_sec = github_config.get('nachhol_abgleich_delay_sec', 900)
+        self._nachhol_abgleich_tasks = {}
         self.webhook_public_url = github_config.get('webhook_public_url', '')
         self.webhook_events = github_config.get('webhook_events', ['push', 'pull_request', 'release'])
         self.local_polling_enabled = github_config.get('local_polling_enabled', True)
