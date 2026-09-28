@@ -6,11 +6,15 @@ Wants=network-online.target
 [Service]
 Type=oneshot
 EnvironmentFile=-%h/.config/shadowops-watchdog.env
-ExecStart=%h/shadowops-bot/scripts/disk-hygiene-watchdog.sh
+# ZERODOX#3858: `systemd --user` laeuft nur mit der primaeren Gruppe — `docker`
+# fehlt. Ohne `sg docker` scheiterte JEDER docker-Aufruf still (permission
+# denied), und der Watchdog meldete seit jeher „builder-cache: 0" als Erfolg.
+# `sg` braucht setgid; deshalb KEIN `NoNewPrivileges=true` (sonst:
+# „sg: setgid() failed: Operation not permitted").
+ExecStart=/usr/bin/sg docker -c "%h/shadowops-bot/scripts/disk-hygiene-watchdog.sh"
 StandardOutput=journal
 StandardError=journal
 SyslogIdentifier=disk-hygiene-watchdog
-NoNewPrivileges=true
 PrivateTmp=true
 
 [Install]

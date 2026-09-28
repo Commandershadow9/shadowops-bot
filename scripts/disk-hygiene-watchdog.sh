@@ -75,7 +75,11 @@ source "$(dirname "${BASH_SOURCE[0]}")/lib/ghcr-tag-cap.sh" 2>/dev/null || true
 GHCR_REPO="${DISK_GHCR_REPO:-ghcr.io/commandershadow9/zerodox-web}"
 GHCR_KEEP="${DISK_GHCR_KEEP:-10}"
 ghcr_note=""
-if declare -f ghcr_tag_cap >/dev/null 2>&1; then
+# „Kann nicht nachsehen" ist etwas anderes als „nichts zu tun" (#3858): Ohne
+# Docker-Zugriff laeuft jeder Prune ins Leere und saehe wie Erfolg aus.
+docker_ok=1
+docker info >/dev/null 2>&1 || docker_ok=0
+if [ "$docker_ok" = "1" ] && declare -f ghcr_tag_cap >/dev/null 2>&1; then
   ghcr_out=$(ghcr_tag_cap "$GHCR_REPO" "$GHCR_KEEP" "${DISK_GHCR_DRY_RUN:-0}")
   ghcr_entfernt=$(printf '%s\n' "$ghcr_out" | grep -c '^entfernt ' || true)
   if [ "${ghcr_entfernt:-0}" -gt 0 ]; then
@@ -146,6 +150,10 @@ extra_findings=""
 add_finding() {
   if [ -n "$extra_findings" ]; then extra_findings="${extra_findings}"$'\n'"$1"; else extra_findings="$1"; fi
 }
+
+if [ "$docker_ok" = "0" ]; then
+  add_finding "Kein Docker-Zugriff (docker info scheitert) — Auto-Prune und GHCR-Begrenzung laufen ins Leere. Unit mit \`sg docker -c\` gestartet?"
+fi
 
 # Auto-Prune ohne Wirkung ist ein Befund, kein Erfolg (ZERODOX#3858): Am
 # 27.09.2026 meldete der Lauf „builder-cache: 0, Disk 81% -> 81%" als
