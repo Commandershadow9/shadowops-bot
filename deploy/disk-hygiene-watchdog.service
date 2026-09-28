@@ -15,7 +15,12 @@ ExecStart=/usr/bin/sg docker -c "%h/shadowops-bot/scripts/disk-hygiene-watchdog.
 StandardOutput=journal
 StandardError=journal
 SyslogIdentifier=disk-hygiene-watchdog
-PrivateTmp=true
+# Bewusst KEIN PrivateTmp (ZERODOX#3858): In User-Units baut es einen
+# User-Namespace, in dem die Gruppe `docker` nicht abgebildet ist —
+# `sg: setgid() failed: Invalid argument`, der Dienst startet nicht. Zudem soll
+# der Watchdog das ECHTE /tmp messen (DISK_EXTRA_MOUNTS), nicht ein privates,
+# leeres (vgl. ~/.claude/rules/self-maintenance.md).
+PrivateTmp=false
 
 [Install]
 WantedBy=default.target
