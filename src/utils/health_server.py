@@ -14,7 +14,7 @@ from email.utils import format_datetime
 from typing import Optional
 from xml.sax.saxutils import escape as xml_escape
 
-from src.utils.bind_hosts import bind_hosts
+from utils.bind_hosts import bind_hosts
 
 logger = logging.getLogger("shadowops.health")
 
