@@ -4,7 +4,11 @@
 # Stufe 1 (auto) bei Disk >= DISK_WARN_PCT: docker builder/image prune + journald vacuum.
 # Stufe 2 (alarm) bei Disk >= DISK_CRIT_PCT NACH Prune: Discord-Alarm mit Top-Verbrauchern.
 #
-# Sicherheit: rührt AUSSCHLIESSLICH Docker-Cache/dangling-Images + journald an.
+# Stufe 0 (immer): alte GHCR-Tags von zerodox-web auf die N neuesten begrenzen
+# (ZERODOX#3858, lib/ghcr-tag-cap.sh — nur `docker rmi <repo>:<tag>`).
+#
+# Sicherheit: rührt AUSSCHLIESSLICH Docker-Cache/dangling-Images, alte
+# GHCR-Deploy-Tags (Stufe 0) + journald an.
 # Niemals Volumes, Projektordner, /srv/vault, .env, Worktrees.
 # Prune bleibt dangling-only (`-f`, NIE `-a`/`-af`): schuetzt u.a. das getaggte
 # ZERODOX-Rollback-Image `zerodox-zerodox-web:rollback` (#1186) — ein `-a`-Prune
@@ -62,6 +66,27 @@ disk_pct() { df --output=pcent "${1:-$MOUNT}" | tail -1 | tr -dc '0-9'; }
 # Vorraete: Wer nur einen misst, sieht die Haelfte und haelt sie fuer das Ganze.
 inode_pct() { df --output=ipcent "${1:-$MOUNT}" 2>/dev/null | tail -1 | tr -dc '0-9'; }
 
+# Stufe 0 (immer, schwellenunabhaengig): GHCR-Tags von zerodox-web begrenzen
+# (ZERODOX#3858). Bei ~60 Deploy-Images am Tag waere eine Schwelle zu spaet —
+# am 27.09.2026 lag die Platte bei 80 %, der Deploy brach bei 19 % frei ab, noch
+# bevor DISK_WARN_PCT griff. Nur `docker rmi <repo>:<tag>`, Invariante in der Lib.
+# shellcheck source=lib/ghcr-tag-cap.sh
+source "$(dirname "${BASH_SOURCE[0]}")/lib/ghcr-tag-cap.sh" 2>/dev/null || true
+GHCR_REPO="${DISK_GHCR_REPO:-ghcr.io/commandershadow9/zerodox-web}"
+GHCR_KEEP="${DISK_GHCR_KEEP:-10}"
+ghcr_note=""
+if declare -f ghcr_tag_cap >/dev/null 2>&1; then
+  ghcr_out=$(ghcr_tag_cap "$GHCR_REPO" "$GHCR_KEEP" "${DISK_GHCR_DRY_RUN:-0}")
+  ghcr_entfernt=$(printf '%s\n' "$ghcr_out" | grep -c '^entfernt ' || true)
+  if [ "${ghcr_entfernt:-0}" -gt 0 ]; then
+    ghcr_note="GHCR-Tags entfernt: ${ghcr_entfernt} (behalten: ${GHCR_KEEP} neueste)"
+    echo "[disk-hygiene] $ghcr_note"
+  fi
+  if [ "${DISK_GHCR_DRY_RUN:-0}" = "1" ] && [ -n "$ghcr_out" ]; then
+    echo "[disk-hygiene] Trockenlauf GHCR:"; printf '%s\n' "$ghcr_out"
+  fi
+fi
+
 pct_before=$(disk_pct)
 
 last_alert_at=""
@@ -97,7 +122,7 @@ if [ "$pct_before" -ge "$WARN_PCT" ]; then
   docker image prune -f >/dev/null 2>&1 || true
   journalctl --vacuum-size="$JOURNAL_CAP" >/dev/null 2>&1 || true
   pct_after=$(disk_pct)
-  freed_note="builder-cache: ${bc:-0}, Disk ${pct_before}% -> ${pct_after}%"
+  freed_note="builder-cache: ${bc:-0}, Disk ${pct_before}% -> ${pct_after}%${ghcr_note:+, $ghcr_note}"
   echo "[disk-hygiene] Auto-Prune: $freed_note"
 
   # Defense-in-depth-Tripwire: war der :rollback-Tag VOR dem Prune da und ist
@@ -121,6 +146,13 @@ extra_findings=""
 add_finding() {
   if [ -n "$extra_findings" ]; then extra_findings="${extra_findings}"$'\n'"$1"; else extra_findings="$1"; fi
 }
+
+# Auto-Prune ohne Wirkung ist ein Befund, kein Erfolg (ZERODOX#3858): Am
+# 27.09.2026 meldete der Lauf „builder-cache: 0, Disk 81% -> 81%" als
+# Normalbetrieb, eine halbe Stunde bevor der Deploy an zu wenig Platz scheiterte.
+if [ "$pct_before" -ge "$WARN_PCT" ] && [ "$pct_after" -ge "$pct_before" ]; then
+  add_finding "${MOUNT} — Auto-Prune ohne Wirkung (${pct_before}% -> ${pct_after}%, Schwelle ${WARN_PCT}%). Was belegt die Platte? \`docker system df\`"
+fi
 
 ipct_main=$(inode_pct "$MOUNT" || echo "")
 if [ -n "$ipct_main" ] && [ "$ipct_main" -ge "$CRIT_PCT" ]; then
