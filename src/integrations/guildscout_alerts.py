@@ -13,6 +13,8 @@ from datetime import datetime, timezone
 from aiohttp import web
 import discord
 
+from src.utils.bind_hosts import bind_hosts
+
 logger = logging.getLogger('shadowops')
 
 
@@ -81,10 +83,12 @@ class GuildScoutAlertsHandler:
 
         self.runner = web.AppRunner(self.app)
         await self.runner.setup()
-        # WICHTIG: 0.0.0.0 weil Docker-Container den Host über 172.17.0.1 erreichen
-        # Absicherung über UFW (nur 172.16.0.0/12) + HMAC-Signaturen
+        # ZERODOX#3212: statt 0.0.0.0 nur 127.0.0.1 + alle Docker-Bridges
+        # (docker0, br-*) — das Routing-Netz für diesen Webhook liegt z. B.
+        # unter 172.18.0.1, nicht unter der Standard-Bridge 172.17.0.1.
+        # Absicherung zusätzlich über UFW (nur 172.16.0.0/12) + HMAC-Signaturen.
         self.site = web.TCPSite(
-            self.runner, '0.0.0.0', self.webhook_port,
+            self.runner, host=bind_hosts(), port=self.webhook_port,
             reuse_address=True, reuse_port=True
         )
         await self.site.start()
