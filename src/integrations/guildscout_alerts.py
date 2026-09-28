@@ -13,7 +13,7 @@ from datetime import datetime, timezone
 from aiohttp import web
 import discord
 
-from src.utils.bind_hosts import bind_hosts
+from utils.bind_hosts import bind_hosts
 
 logger = logging.getLogger('shadowops')
 
