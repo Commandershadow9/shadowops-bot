@@ -570,6 +570,29 @@ class DeploymentManager:
             # als "transient"/"superseded" und alarmiert dort bewusst nicht.
             return result
 
+        except PostDeployPreflightAbortError as e:
+            # ZERODOX#3515: deploy.sh ist im Pre-Flight ausgestiegen (z. B.
+            # Migration-Drift ohne --migrate, rotes CI-Gate) — VOR dem Build,
+            # die Seite läuft unverändert. Ein echter Fehlschlag, der eine
+            # Handlung braucht, deshalb die normale Fehlermeldung. Aber KEIN
+            # Rollback: Es gibt nichts zurückzurollen, und der Rollback war
+            # am 29.09.2026 genau der Schritt, der viermal in vier Minuten die
+            # Claude-Worktrees leerte.
+            self.logger.error(f"⛔ Deploy im Pre-Flight abgebrochen (kein Rollback): {e}")
+
+            result['error'] = str(e)
+            result['failed_stage'] = current_stage
+            result['duration_seconds'] = time.time() - start_time
+            await self._send_deployment_update(
+                project_name,
+                f"⛔ {current_stage}: Pre-Flight abgebrochen — nichts ausgeliefert, "
+                f"kein Rollback nötig.",
+            )
+            await self._send_deployment_failure(
+                project_name, deploy_branch, result['duration_seconds'], result, project=project
+            )
+            return result
+
         except DeploymentError as e:
             # Deployment failed, attempt rollback
             self.logger.error(f"❌ Deployment failed: {e}")
@@ -750,7 +773,9 @@ class DeploymentManager:
                 'rsync', '-rlptD',
                 '--no-perms', '--no-group', '--no-owner',
                 *[f'--exclude={muster}' for muster in DEPLOY_BACKUP_EXCLUDES],
-                str(project['path']) + '/',
+                # ZERODOX#3515: gesichert wird der Baum, den dieser Deploy
+                # verändert — siehe `_backup_rollback_path`.
+                str(self._backup_rollback_path(project)) + '/',
                 str(backup_path) + '/'
             ]
 
@@ -794,7 +819,7 @@ class DeploymentManager:
             )
             await asyncio.to_thread(
                 shutil.copytree,
-                project['path'],
+                self._backup_rollback_path(project),
                 backup_path,
                 ignore=ignore,
                 dirs_exist_ok=True,
@@ -843,6 +868,30 @@ class DeploymentManager:
             Pfad, in dem Git-Schritt, Tests und post-deploy laufen sollen
         """
         return Path(project.get('deploy_path') or project['path'])
+
+    def _backup_rollback_path(self, project: Dict) -> Path:
+        """
+        Baum, den Deploy-Backup und Rollback sichern bzw. zurücksetzen.
+
+        ZERODOX#3515: Bis zum 30.09.2026 arbeiteten beide auf `project['path']`
+        — bei ZERODOX der Arbeitsbaum `~/ZERODOX`, in dem Menschen und parallele
+        Claude-Sessions arbeiten und unter `.claude/worktrees/` ihre Worktrees
+        liegen. Seit ZERODOX#2344 ändert der Deploy diesen Baum aber gar nicht
+        mehr: Git-Schritt, Tests und post-deploy laufen in `deploy_path`.
+
+        Der Rollback setzte damit einen Baum zurück, den der Deploy nie
+        angefasst hatte — per `rsync --delete` auf den Stand vom Deploy-Start.
+        Zu reparieren gab es dort nichts; gelöscht wurde, was seither
+        entstanden war, und (bis zur gemeinsamen Exclude-Liste) alle
+        getrackten Dateien aller Worktrees. Am 29.09.2026 viermal in vier
+        Minuten, jedes Mal ausgelöst von einem Pre-Flight-Abbruch, vor dem
+        nichts ausgeliefert worden war.
+
+        Deshalb gilt: Backup und Rollback folgen dem Baum, den der Deploy
+        verändert. Ohne `deploy_path` ist das wie bisher `path` (No-op für
+        alle Projekte ohne eigenen Deploy-Baum).
+        """
+        return self._deploy_path(project)
 
     async def _git_pull(self, project: Dict, branch: str):
         """
@@ -994,6 +1043,8 @@ class DeploymentManager:
             message = "\n".join(parts)
             if process.returncode == _POST_DEPLOY_TEMPFAIL_EXIT_CODE:
                 raise PostDeployTempfailError(message)
+            if process.returncode == _POST_DEPLOY_PREFLIGHT_EXIT_CODE:
+                raise PostDeployPreflightAbortError(message)
             raise DeploymentError(message)
 
     async def _restart_service(self, project: Dict):
@@ -1102,7 +1153,9 @@ class DeploymentManager:
                 *[f'--exclude={muster}' for muster in DEPLOY_BACKUP_EXCLUDES],
                 '--no-perms', '--no-group', '--no-owner',
                 str(backup_path) + '/',
-                str(project['path']) + '/'
+                # ZERODOX#3515: NIE der Arbeitsbaum, wenn es einen eigenen
+                # Deploy-Baum gibt — siehe `_backup_rollback_path`.
+                str(self._backup_rollback_path(project)) + '/'
             ]
 
             process = await asyncio.create_subprocess_exec(
@@ -1122,11 +1175,12 @@ class DeploymentManager:
             project['name'],
             "⚠️ rsync fehlt, nutze Python-Rollback (langsamer).",
         )
-        await asyncio.to_thread(self._purge_project_path, project['path'])
+        ziel = self._backup_rollback_path(project)
+        await asyncio.to_thread(self._purge_project_path, ziel)
         await asyncio.to_thread(
             shutil.copytree,
             backup_path,
-            project['path'],
+            ziel,
             dirs_exist_ok=True,
         )
 
@@ -1559,6 +1613,31 @@ class PostDeployTempfailError(DeploymentError):
     ist.
     """
     pass
+
+
+class PostDeployPreflightAbortError(DeploymentError):
+    """
+    deploy.sh ist im Pre-Flight ausgestiegen, bevor es etwas verändert hat
+    (ZERODOX#3515) — Migration-Drift ohne `--migrate`, rotes CI-Gate,
+    Systemcheck. Anders als EX_TEMPFAIL ist das ein echter Fehlschlag, der
+    gemeldet werden muss; anders als ein Abbruch NACH dem Build gibt es aber
+    nichts zurückzurollen. `deploy_project()` meldet deshalb, rollt aber
+    nicht zurück.
+
+    Vertrag: deploy.sh beendet sich in solchen Fällen mit
+    `_POST_DEPLOY_PREFLIGHT_EXIT_CODE`. Bis deploy.sh das tut, endet ein
+    Pre-Flight-Abbruch weiter mit exit 1 und löst den Rollback aus — der
+    seit ZERODOX#3515 aber nur noch den Deploy-Baum betrifft
+    (`_backup_rollback_path`), nie den Arbeitsbaum.
+    """
+    pass
+
+
+# ZERODOX#3515: deploy.sh's Exitcode für "im Pre-Flight abgebrochen, nichts
+# verändert". 78 = EX_CONFIG aus sysexits.h ("Konfiguration/Voraussetzung
+# fehlt") — kollidiert weder mit 1 (Fehler), 75 (EX_TEMPFAIL) noch mit den
+# Shell-Konventionen 126/127/128+n.
+_POST_DEPLOY_PREFLIGHT_EXIT_CODE = 78
 
 
 # ZERODOX#3328: deploy.sh's eigener Exitcode fuer "voruebergehend verhindert,
