@@ -621,6 +621,20 @@ agent_review:
     codex: false
 
 # ╔═══════════════════════════════════════════════════════════════════════════╗
+# ║ SYSTEM-LEVEL ENV-VAR-OVERRIDES (nicht in config.yaml — nur als Env-Var) ║
+# ╚═══════════════════════════════════════════════════════════════════════════╝
+# Die folgenden Variablen werden via os.environ gelesen und haben KEINEN
+# config.yaml-Aequivalent. Sie dienen als Notfall-Override auf Serverebene.
+#
+# SHADOWOPS_BIND_HOSTS   — Komma-getrennte Liste von Bind-Adressen fuer Health-
+#                          Server (Port 8766) und GuildScout-Webhook (Port 9091).
+#                          Default: automatisch ermittelt (127.0.0.1 + alle
+#                          Docker-Bridge-Interfaces docker0 und br-*).
+#                          Nur setzen, wenn die Auto-Erkennung falsch liegt.
+#                          Beispiel: SHADOWOPS_BIND_HOSTS=127.0.0.1,172.20.0.1
+#                          (src/utils/bind_hosts.py, ZERODOX#3212)
+
+# ╔═══════════════════════════════════════════════════════════════════════════╗
 # ║ ENDE DER KONFIGURATION                                                   ║
 # ║                                                                           ║
 # ║ NÄCHSTE SCHRITTE:                                                        ║
