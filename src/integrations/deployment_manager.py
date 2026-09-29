@@ -55,6 +55,42 @@ logger = logging.getLogger('shadowops.deployment')
 _STEP_FAIL_MARKERS = ("❌", "fehlgeschlagen", "failed", "error", "fehler", "abort")
 
 
+# ZERODOX#3515: Backup- und Rollback-rsync teilen sich diese eine Liste.
+#
+# Was der Backup-rsync per --exclude auslaesst, existiert im Backup schlicht
+# nicht. Faehrt der Rollback-rsync mit --delete darueber und kennt denselben
+# Ausschluss nicht, loescht er es aus dem LIVE-Baum, weil es "im Backup fehlt"
+# — ein Rollback wuerde es sonst so lesen, als sei es seit dem Backup neu
+# entstanden und darum zu entfernen.
+#
+# Genau das geschah am 20.-22.09.2026 viermal: ZERODOX#3447 nahm
+# `.claude/worktrees` und `.next` in den Backup-Ausschluss auf, der
+# Rollback-Aufruf blieb unveraendert. Jeder Rollback loeschte damit die
+# getrackten Dateien in ALLEN parallelen Claude-Worktrees (~5300 Dateien je
+# Vorfall). Vorher hielten zwei separate Listen exakt in dem Moment
+# zusammen, in dem sie es am dringendsten muessten — direkt nach einer
+# Aenderung an nur einer davon. Eine gemeinsame Konstante macht dieses
+# Auseinanderlaufen strukturell unmoeglich statt nur dokumentiert verboten.
+#
+# ⚠️ `.claude/worktrees` MIT Pfad, nicht nur `worktrees`: Im ZERODOX-Baum
+# liegt daneben ein unversioniertes `worktrees/` mit anderem Inhalt. Ein
+# blosser Basisname schluesse beide aus.
+DEPLOY_BACKUP_EXCLUDES: Tuple[str, ...] = (
+    ".git",
+    ".env",
+    ".venv",
+    "__pycache__",
+    "*.pyc",
+    "node_modules",
+    "venv",
+    "backups",
+    "logs",
+    "uploads",
+    ".claude/worktrees",
+    ".next",
+)
+
+
 def _summarize_steps(steps: List[str]) -> Tuple[int, int, Optional[str]]:
     """Fasst gesammelte Deploy-Steps zusammen.
 
@@ -534,6 +570,29 @@ class DeploymentManager:
             # als "transient"/"superseded" und alarmiert dort bewusst nicht.
             return result
 
+        except PostDeployPreflightAbortError as e:
+            # ZERODOX#3515: deploy.sh ist im Pre-Flight ausgestiegen (z. B.
+            # Migration-Drift ohne --migrate, rotes CI-Gate) — VOR dem Build,
+            # die Seite läuft unverändert. Ein echter Fehlschlag, der eine
+            # Handlung braucht, deshalb die normale Fehlermeldung. Aber KEIN
+            # Rollback: Es gibt nichts zurückzurollen, und der Rollback war
+            # am 29.09.2026 genau der Schritt, der viermal in vier Minuten die
+            # Claude-Worktrees leerte.
+            self.logger.error(f"⛔ Deploy im Pre-Flight abgebrochen (kein Rollback): {e}")
+
+            result['error'] = str(e)
+            result['failed_stage'] = current_stage
+            result['duration_seconds'] = time.time() - start_time
+            await self._send_deployment_update(
+                project_name,
+                f"⛔ {current_stage}: Pre-Flight abgebrochen — nichts ausgeliefert, "
+                f"kein Rollback nötig.",
+            )
+            await self._send_deployment_failure(
+                project_name, deploy_branch, result['duration_seconds'], result, project=project
+            )
+            return result
+
         except DeploymentError as e:
             # Deployment failed, attempt rollback
             self.logger.error(f"❌ Deployment failed: {e}")
@@ -691,43 +750,32 @@ class DeploymentManager:
             # Create backup using rsync for efficiency
             # --no-perms --no-group --no-owner: Avoid chgrp/chown errors when source
             # files are owned by Docker container user (uid 1001, gid 65533)
+            #
+            # ZERODOX#3447 (Herkunft der Liste) + ZERODOX#3515 (warum sie eine
+            # gemeinsame Konstante mit dem Rollback ist): siehe
+            # DEPLOY_BACKUP_EXCLUDES oben.
+            #
+            # Gemessen am 19.09.2026 an zerodox_20260918_145640 — 22 GB:
+            #
+            #     18   GB  .claude/worktrees/  Arbeitskopien paralleler
+            #                                  Claude-Sessions
+            #      4,1 GB  web/.next/          Build-Output, den der Deploy
+            #                                  ohnehin neu erzeugt
+            #     ~0,2 GB                      alles Uebrige — der Code,
+            #                                  also der einzige Grund fuer
+            #                                  dieses Backup
+            #
+            # Die Folgen trug jeder Deploy: Das Backup brauchte 5m28s von
+            # 10m46s Gesamtzeit (18.09., 14:56:40 bis 15:02:08), fuenf
+            # Staende je Projekt belegten 112 GB, und bei rund 21 Merges am
+            # Tag schrieb der Bot etwa 460 GB taeglich auf die NVMe.
             cmd = [
                 'rsync', '-rlptD',
                 '--no-perms', '--no-group', '--no-owner',
-                '--exclude=.git',
-                '--exclude=.env',
-                '--exclude=.venv',
-                '--exclude=__pycache__',
-                '--exclude=*.pyc',
-                '--exclude=node_modules',
-                '--exclude=venv',
-                '--exclude=backups',
-                '--exclude=logs',
-                '--exclude=uploads',
-                # ZERODOX#3447: Was reproduzierbar oder fluechtig ist, gehoert
-                # nicht ins Deploy-Backup.
-                #
-                # Gemessen am 19.09.2026 an zerodox_20260918_145640 — 22 GB:
-                #
-                #     18   GB  .claude/worktrees/  Arbeitskopien paralleler
-                #                                  Claude-Sessions
-                #      4,1 GB  web/.next/          Build-Output, den der Deploy
-                #                                  ohnehin neu erzeugt
-                #     ~0,2 GB                      alles Uebrige — der Code,
-                #                                  also der einzige Grund fuer
-                #                                  dieses Backup
-                #
-                # Die Folgen trug jeder Deploy: Das Backup brauchte 5m28s von
-                # 10m46s Gesamtzeit (18.09., 14:56:40 bis 15:02:08), fuenf
-                # Staende je Projekt belegten 112 GB, und bei rund 21 Merges am
-                # Tag schrieb der Bot etwa 460 GB taeglich auf die NVMe.
-                #
-                # ⚠️ `.claude/worktrees` MIT Pfad, nicht nur `worktrees`: Im
-                # ZERODOX-Baum liegt daneben ein unversioniertes `worktrees/`
-                # mit anderem Inhalt. Ein blosser Basisname schluesse beide aus.
-                '--exclude=.claude/worktrees',
-                '--exclude=.next',
-                str(project['path']) + '/',
+                *[f'--exclude={muster}' for muster in DEPLOY_BACKUP_EXCLUDES],
+                # ZERODOX#3515: gesichert wird der Baum, den dieser Deploy
+                # verändert — siehe `_backup_rollback_path`.
+                str(self._backup_rollback_path(project)) + '/',
                 str(backup_path) + '/'
             ]
 
@@ -771,7 +819,7 @@ class DeploymentManager:
             )
             await asyncio.to_thread(
                 shutil.copytree,
-                project['path'],
+                self._backup_rollback_path(project),
                 backup_path,
                 ignore=ignore,
                 dirs_exist_ok=True,
@@ -820,6 +868,30 @@ class DeploymentManager:
             Pfad, in dem Git-Schritt, Tests und post-deploy laufen sollen
         """
         return Path(project.get('deploy_path') or project['path'])
+
+    def _backup_rollback_path(self, project: Dict) -> Path:
+        """
+        Baum, den Deploy-Backup und Rollback sichern bzw. zurücksetzen.
+
+        ZERODOX#3515: Bis zum 30.09.2026 arbeiteten beide auf `project['path']`
+        — bei ZERODOX der Arbeitsbaum `~/ZERODOX`, in dem Menschen und parallele
+        Claude-Sessions arbeiten und unter `.claude/worktrees/` ihre Worktrees
+        liegen. Seit ZERODOX#2344 ändert der Deploy diesen Baum aber gar nicht
+        mehr: Git-Schritt, Tests und post-deploy laufen in `deploy_path`.
+
+        Der Rollback setzte damit einen Baum zurück, den der Deploy nie
+        angefasst hatte — per `rsync --delete` auf den Stand vom Deploy-Start.
+        Zu reparieren gab es dort nichts; gelöscht wurde, was seither
+        entstanden war, und (bis zur gemeinsamen Exclude-Liste) alle
+        getrackten Dateien aller Worktrees. Am 29.09.2026 viermal in vier
+        Minuten, jedes Mal ausgelöst von einem Pre-Flight-Abbruch, vor dem
+        nichts ausgeliefert worden war.
+
+        Deshalb gilt: Backup und Rollback folgen dem Baum, den der Deploy
+        verändert. Ohne `deploy_path` ist das wie bisher `path` (No-op für
+        alle Projekte ohne eigenen Deploy-Baum).
+        """
+        return self._deploy_path(project)
 
     async def _git_pull(self, project: Dict, branch: str):
         """
@@ -971,6 +1043,8 @@ class DeploymentManager:
             message = "\n".join(parts)
             if process.returncode == _POST_DEPLOY_TEMPFAIL_EXIT_CODE:
                 raise PostDeployTempfailError(message)
+            if process.returncode == _POST_DEPLOY_PREFLIGHT_EXIT_CODE:
+                raise PostDeployPreflightAbortError(message)
             raise DeploymentError(message)
 
     async def _restart_service(self, project: Dict):
@@ -1054,7 +1128,7 @@ class DeploymentManager:
             # --no-perms --no-group --no-owner: Avoid chgrp/chown errors when
             # files were originally owned by Docker container user
             #
-            # WICHTIG: Gleiche Excludes wie beim Backup + .env/.venv!
+            # WICHTIG: Gleiche Excludes wie beim Backup, ueber DEPLOY_BACKUP_EXCLUDES!
             # Ohne --exclude=.git würde --delete das Git-Repo löschen,
             # weil .git NICHT im Backup enthalten ist (Vorfall 2026-03-20).
             #
@@ -1065,19 +1139,23 @@ class DeploymentManager:
             # zu unlink-en. Diese Dateien gehören Docker-Container-User (UID
             # 1001), Bot läuft als cmdshadow (UID 1000) → Permission denied.
             # 2-Tage-Auto-Deploy-Blockade nach ZERODOX-PRs #705, #707, #708.
+            #
+            # ZERODOX#3515 (20.-22.09.2026): ZERODOX#3447 hatte
+            # `.claude/worktrees` und `.next` nur der Backup-Liste hinzugefuegt,
+            # nicht dieser hier — der Kommentar "Gleiche Excludes wie beim
+            # Backup" stimmte seither nicht mehr. Jeder Rollback loeschte damit
+            # per --delete alle getrackten Dateien in ALLEN parallelen
+            # Claude-Worktrees, viermal belegt, je ~5300 Dateien. Seither
+            # ziehen beide Kommandos aus DEPLOY_BACKUP_EXCLUDES — zwei Kopien
+            # derselben Liste koennen nicht mehr auseinanderlaufen.
             cmd = [
                 'rsync', '-rlptD', '--delete',
-                '--exclude=.git',
-                '--exclude=.env',
-                '--exclude=.venv',
-                '--exclude=node_modules',
-                '--exclude=__pycache__',
-                '--exclude=backups',
-                '--exclude=logs',
-                '--exclude=uploads',
+                *[f'--exclude={muster}' for muster in DEPLOY_BACKUP_EXCLUDES],
                 '--no-perms', '--no-group', '--no-owner',
                 str(backup_path) + '/',
-                str(project['path']) + '/'
+                # ZERODOX#3515: NIE der Arbeitsbaum, wenn es einen eigenen
+                # Deploy-Baum gibt — siehe `_backup_rollback_path`.
+                str(self._backup_rollback_path(project)) + '/'
             ]
 
             process = await asyncio.create_subprocess_exec(
@@ -1097,11 +1175,12 @@ class DeploymentManager:
             project['name'],
             "⚠️ rsync fehlt, nutze Python-Rollback (langsamer).",
         )
-        await asyncio.to_thread(self._purge_project_path, project['path'])
+        ziel = self._backup_rollback_path(project)
+        await asyncio.to_thread(self._purge_project_path, ziel)
         await asyncio.to_thread(
             shutil.copytree,
             backup_path,
-            project['path'],
+            ziel,
             dirs_exist_ok=True,
         )
 
@@ -1534,6 +1613,31 @@ class PostDeployTempfailError(DeploymentError):
     ist.
     """
     pass
+
+
+class PostDeployPreflightAbortError(DeploymentError):
+    """
+    deploy.sh ist im Pre-Flight ausgestiegen, bevor es etwas verändert hat
+    (ZERODOX#3515) — Migration-Drift ohne `--migrate`, rotes CI-Gate,
+    Systemcheck. Anders als EX_TEMPFAIL ist das ein echter Fehlschlag, der
+    gemeldet werden muss; anders als ein Abbruch NACH dem Build gibt es aber
+    nichts zurückzurollen. `deploy_project()` meldet deshalb, rollt aber
+    nicht zurück.
+
+    Vertrag: deploy.sh beendet sich in solchen Fällen mit
+    `_POST_DEPLOY_PREFLIGHT_EXIT_CODE`. Bis deploy.sh das tut, endet ein
+    Pre-Flight-Abbruch weiter mit exit 1 und löst den Rollback aus — der
+    seit ZERODOX#3515 aber nur noch den Deploy-Baum betrifft
+    (`_backup_rollback_path`), nie den Arbeitsbaum.
+    """
+    pass
+
+
+# ZERODOX#3515: deploy.sh's Exitcode für "im Pre-Flight abgebrochen, nichts
+# verändert". 78 = EX_CONFIG aus sysexits.h ("Konfiguration/Voraussetzung
+# fehlt") — kollidiert weder mit 1 (Fehler), 75 (EX_TEMPFAIL) noch mit den
+# Shell-Konventionen 126/127/128+n.
+_POST_DEPLOY_PREFLIGHT_EXIT_CODE = 78
 
 
 # ZERODOX#3328: deploy.sh's eigener Exitcode fuer "voruebergehend verhindert,
