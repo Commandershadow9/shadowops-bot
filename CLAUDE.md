@@ -46,7 +46,7 @@ shadowops-bot/
 │   ├── integrations/             # Externe Systeme (siehe unten)
 │   ├── patch_notes/              # Patch Notes Pipeline v6 (5-Stufen State Machine) + ki_einordnung.py (KI-Fallback fuer uncategorized Commits, seit PR #517)
 │   ├── schemas/                  # JSON-Schemas fuer Structured Output (fix_strategy, patch_notes, incident_analysis, jules_review)
-│   └── utils/                    # config, logging, embeds, state, alert_humanizer, health_server, message_handler, circuit_breaker, changelog_parser, process_lock
+│   └── utils/                    # config, logging, embeds, state, alert_humanizer, health_server, message_handler, circuit_breaker, changelog_parser, process_lock, bind_hosts
 ├── tests/
 │   ├── unit/                     # 700+ Unit-Tests
 │   ├── integration/              # End-to-End-Workflows
@@ -146,7 +146,7 @@ Zusätzlich zum internen `project_monitor.py` laufen 14 unabhängige user-system
 | `ai-agent-framework-watchdog` | systemd | guildscout-feedback-agent, zerodox-support-agent, seo-agent |
 | `cmdshadow-design-watchdog` | systemd-result | cmdshadow-design-healthcheck.service (max_age=36h, 1h-Cycle) |
 | `memory-watchdog` | meminfo | RAM ≥90% oder Swap ≥80% auf VPS, Frühwarnung vor OOM-Cascade (seit 2026-05-25, Vorfall logind-Kill durch earlyoom) |
-| `disk-hygiene-watchdog` | disk + auto-prune | Auto-Prune (docker builder/image + journald) bei Disk >85%, Alarm >90% (stündlich, Selbstpflege seit 2026-05-30) |
+| `disk-hygiene-watchdog` | disk + auto-prune | Stufe 0 (immer): GHCR-Deploy-Tags auf N neueste begrenzen (`scripts/lib/ghcr-tag-cap.sh`, env `DISK_GHCR_REPO`/`DISK_GHCR_KEEP`). Stufe 1: Auto-Prune (docker builder/image + journald) bei Disk >85%. Stufe 2: Alarm >90% (stündlich, ZERODOX#3858) |
 | `doku-drift-watchdog` | doku-drift | Container-Ports vs. Port-Map + MEMORY.md-Limit (<200), nur Alarm (täglich 06:30, Selbstpflege seit 2026-05-30) |
 | `ki-cost-watchdog` | ki-cost | Token/Kosten-Rollup Claude+Codex aus JSONL + Anomalie-Alarm (täglich 07:15, Selbstpflege seit 2026-05-30) |
 | `shadowops-backup-test` | — | monatlich 1. d. Monats, Wrapper um `~/ZERODOX/scripts/backup-test.sh` |
@@ -285,6 +285,8 @@ Worker-Konventionen:
 - [config/DO-NOT-TOUCH.md](./config/DO-NOT-TOUCH.md)
 
 ## Letztes Update dieser Datei
+
+2026-09-29 — bind_hosts + GHCR-Tag-Cap dokumentiert (PRs #551/#560-#563 / ZERODOX#3212/#3858): `src/utils/bind_hosts.py` (neu) liefert die Bind-Adress-Liste fuer Health-Server und GuildScout-Webhook-Handler — `127.0.0.1` plus alle Docker-Bridge-Interfaces (`docker0`, `br-*`) statt `0.0.0.0`. Env `SHADOWOPS_BIND_HOSTS` ueberschreibt die Auto-Erkennung. `disk-hygiene-watchdog` hat jetzt Stufe 0 (schwellenunabhaengig): `scripts/lib/ghcr-tag-cap.sh` begrenzt GHCR-Deploy-Tags auf `DISK_GHCR_KEEP` neueste (`DISK_GHCR_REPO`, `DISK_GHCR_DRY_RUN`). `deploy/disk-hygiene-watchdog.service` laeuft ohne `PrivateTmp` + via `sg docker` (ZERODOX#3858: `--user`-Units hatten keinen Docker-Namespace-Zugriff, jeder Prune lieferte still „0 entfernt"). CLAUDE.md: `bind_hosts` in utils-Liste ergaenzt, Watchdog-Tabelle auf Stufen-Beschreibung erweitert.
 
 2026-09-26 — Deploy-Kette gehaertet (PR #556 / ZERODOX#2920/#2891/#3447): `ci_mixin.py` behandelt `cancelled` CI-Laeufe jetzt als einmalig-wiederholbare Fluktuationen statt sofortiger Failures. `start_abgleich_mixin.py` (neues Modul) holt beim Bot-Start Merge-Auftraege nach, die waehrend der ~130s-Startphase eingingen und nie zugestellt wurden. Beide Fixes addressieren ZERODOX-Vorfaelle mit verlorenem Auto-Deploy. CLAUDE.md: `github_integration/`-Paketliste um `start_abgleich_mixin` ergaenzt, ci_mixin- und start_abgleich-Verhalten dokumentiert.
 
