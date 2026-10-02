@@ -1,0 +1,17 @@
+[Unit]
+Description=ZenKAI Health Watchdog — Health-Check + Discord-Alert
+Documentation=https://github.com/Commandershadow9/ZenKAI-API
+After=network-online.target
+
+[Service]
+Type=oneshot
+EnvironmentFile=-/home/cmdshadow/.config/shadowops-watchdog.env
+Environment=WATCHDOG_SERVICE_NAME=zenkai
+# Lokal statt über Traefik: misst den Container, nicht die Domain (die prüft external-uptime.yml)
+Environment=WATCHDOG_HEALTH_URL=http://127.0.0.1:8097/health
+Environment=WATCHDOG_REQUIRE_BOT_READY=0
+Environment="WATCHDOG_HEALTH_JQ_FILTER=.status == \"ok\""
+ExecStart=/home/cmdshadow/shadowops-bot/scripts/service-watchdog.sh
+SuccessExitStatus=0 1
+StandardOutput=journal
+StandardError=journal
