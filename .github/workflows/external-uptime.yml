@@ -33,6 +33,7 @@ jobs:
           TARGETS=(
             "ZERODOX|https://zerodox.de/api/health|.status|ok"
             "GuildScout|https://guildscout.eu/health|.data.status|healthy"
+            "ZenKAI|https://zenkai.guildscout.eu/health|.status|ok"
           )
           FAILURES=""
           for t in "${TARGETS[@]}"; do

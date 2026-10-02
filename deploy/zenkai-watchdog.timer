@@ -1,0 +1,13 @@
+[Unit]
+Description=ZenKAI Watchdog Timer — alle 5 Minuten (mit Jitter)
+Documentation=https://github.com/Commandershadow9/ZenKAI-API
+
+[Timer]
+OnBootSec=5min
+OnUnitActiveSec=5min
+RandomizedDelaySec=45s
+AccuracySec=15s
+Persistent=false
+
+[Install]
+WantedBy=timers.target
