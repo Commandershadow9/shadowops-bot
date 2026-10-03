@@ -20,7 +20,7 @@
 | Discord | discord.py | siehe requirements.txt |
 | Datenbank | PostgreSQL | 3 DBs: security_analyst, agent_learning, seo_agent |
 | Cache | Redis | — |
-| AI Primary | Codex CLI | gpt-4o / gpt-5.3-codex / o3 |
+| AI Primary | Codex CLI | gpt-4o / gpt-5.5 / o3 |
 | AI Fallback | Claude CLI | claude-sonnet-4-6 / claude-opus-4-6 |
 | Container | Docker | mit Trivy fuer Scans |
 | Service | systemd | `/etc/systemd/system/shadowops-bot.service` |
@@ -42,11 +42,11 @@
 shadowops-bot/
 ├── src/
 │   ├── bot.py                    # Haupt-Bot
-│   ├── cogs/                     # Slash-Commands (admin, inspector, monitoring)
+│   ├── cogs/                     # Slash-Commands (admin, inspector, monitoring, claude_cli, cron_heartbeat, crowdsec_notfall, customer_setup_commands, phase_5e_health_aggregator)
 │   ├── integrations/             # Externe Systeme (siehe unten)
-│   ├── patch_notes/              # Patch Notes Pipeline v6 (5-Stufen State Machine, ~2100 Zeilen)
+│   ├── patch_notes/              # Patch Notes Pipeline v6 (5-Stufen State Machine) + ki_einordnung.py (KI-Fallback fuer uncategorized Commits, seit PR #517)
 │   ├── schemas/                  # JSON-Schemas fuer Structured Output (fix_strategy, patch_notes, incident_analysis, jules_review)
-│   └── utils/                    # config, logging, embeds, state, alert_humanizer, health_server, message_handler, circuit_breaker, changelog_parser, process_lock
+│   └── utils/                    # config, logging, embeds, state, alert_humanizer, health_server, message_handler, circuit_breaker, changelog_parser, process_lock, bind_hosts
 ├── tests/
 │   ├── unit/                     # 700+ Unit-Tests
 │   ├── integration/              # End-to-End-Workflows
@@ -91,12 +91,12 @@ shadowops-bot/
 - `knowledge_base.py` — SQL Learning (fix_attempts, fix_verifications, finding_quality, scan_coverage)
 - `code_analyzer.py` — Code Structure Analyzer (Git-History + AST)
 - `context_manager.py` — RAG: Project-Context + DO-NOT-TOUCH + Infra
-- `github_integration/` — Webhooks mit HMAC-SHA256 Verification + Jules Workflow (Package: core, webhook_mixin, event_handlers_mixin, jules_workflow_mixin, notifications_mixin, ci_mixin, agent_review/)
+- `github_integration/` — Webhooks mit HMAC-SHA256 Verification + Jules Workflow (Package: core, webhook_mixin, event_handlers_mixin, jules_workflow_mixin, notifications_mixin, ci_mixin, start_abgleich_mixin, agent_review/). `deploy_feedback.py` (seit PR #554 / ZERODOX#3638): spiegelt jedes Deploy-Ergebnis zusaetzlich nach GitHub — Commit-Status `zerodox/deploy` (pending/success/failure) + EIN sich selbst aktualisierender PR-Kommentar je Deploy (PATCH statt neuer Kommentare). Default-AN nur fuer `zerodox`, andere Projekte opt-in via `github_deploy_feedback: true`. Fail-soft: alle Fehler landen nur im Log, nie im Deploy-Ablauf. `start_abgleich_mixin.py` (seit PR #556 / ZERODOX#3447): holt beim Bot-Start verlorene Merge-Auftraege nach — trifft ein PR-Merge-Webhook in der ~130s-Startphase ein (Webhook-Server noch nicht bereit), stellt GitHub ihn nicht erneut zu; der Mixin gleicht beim Start offene PRs gegen bereits bekannte Deploy-SHAs ab und loest fehlende ab. `ci_mixin.py` (seit PR #556 / ZERODOX#2920): `cancelled` CI-Laeufe werden einmal per (repo, sha, run_id) automatisch neu angestossen (`_rerun_cancelled_workflow_run`) statt sofort als FAILED zu werten. Ein zweiter Abbruch nach Neuversuch gilt als echte Failure. Dedup via gespeichertem `run_attempt` — veraltete Ergebnisse des urspruenglichen Abbruchs werden uebersprungen.
 - `security_engine/` — Autonomer SecurityScanAgent (scan_agent.py), CircuitBreaker, DB-Layer (db.py), Fixer-Adapters, ActivityMonitor, LearningBridge, Prompts (Package: engine, scan_agent, reactive, proactive, deep_scan, executor, fixer_adapters, learning_bridge, activity_monitor, prompts, models, db, migrations)
 - `security_engine/team/` — Security-Agent-Team (**W1 LIVE seit 2026-07-09, 7d-Soak läuft**, #290/PR #339): `contracts.py` (SecurityJob/JobResult), `base_worker.py` (Lifecycle/Exception-Isolation), `orchestrator.py` (Fan-out + trigger-Durchreichung), `orchestrator_main.py` (**echter `sec:trigger`-Subscribe-Loop**), `runner.py`, `workers/npm_audit_worker.py`. **Betrieb:** systemd-User-Units `security-orchestrator` + `security-npm-audit-worker` (env: `~/.config/shadowops-security-team.env`, chmod 600, Redis-Auth!), `SECURITY_TEAM_ENABLED=true`, Live-Config-Sektion `security_team:` (guildscout+zerodox, npm_audit). Crons: Trigger 05:23, `scripts/security-job-reaper.sh` 06:41, `scripts/security-soak-compare.sh` 07:31 (`logs/security-soak-w1.log`). Selbstüberwachung: `security-freshness-watchdog` (pg-freshness auf `sec_jobs`, 26h). Monolith bleibt bis Soak-Ende (~2026-07-16) Source-of-Truth für LLM-Scans. Spec v2: `docs/design/2026-07-09-security-agent-team-v2-spec.md` (Fix-Kanal = Claude-CLI + PR-Gate, Jules tot; 5 Wellen), Plan: `docs/plans/2026-07-09-security-agent-team-w1.md`.
 - `fixers/` — Konkrete Fix-Implementierungen: fail2ban_fixer.py, crowdsec_fixer.py, aide_fixer.py, trivy_fixer.py, walg_fixer.py
 - `project_monitor.py` — Multi-Project Health-Checks + **Zentrale Monitoring-Engine** (2026-06, #277): deklaratives `checks:`-Inventar pro Projekt in config.yaml via `check_definitions.py`/`check_runner.py`/`heal_executor.py`/`maintenance_gate.py`. Check-Typen `http` (+header/POST/json_path/json_schema), `script`, `container` (network-attached). Gestuftes Heal (reversibel-autonom / approval / alert-only) + Circuit-Breaker + Maintenance-Gate (`/maintenance`-Command). 6 ZERODOX-Checks live (analytics-bridge mit Auto-Heal real verifiziert), Watchdogs bleiben als externer Dead-Man (Defense-in-Depth). **Import-Regel:** paket-intern relativ (`from .x`), NICHT `from src.integrations.x` (Bot läuft PYTHONPATH=src). Spec: `docs/2026-06-09-zentrales-monitoring-auto-health-design.md`, Inventar: `docs/MONITORING_INVENTORY.md`, Pläne: `docs/plans/2026-06-{09,10}-monitoring-*.md`.
-- `deployment_manager.py` — Auto-Deploy mit Backup/Rollback. Eine editierbare Discord-Meldung zeigt den laufenden Schritt (bei langem Post-Deploy alle 30 s), danach Erfolg oder Fehlerphase samt technischen Details. GitHub-Kontext enthält Commit sowie – wenn ermittelbar – PR und referenzierte Issues. **WICHTIG:** Project-Name-Lookup ist dash↔underscore-tolerant (`mayday-sim` ↔ `mayday_sim`, seit 2026-05-25 — siehe `.claude/rules/safety.md`). Gleiche Logik in `github_integration/ci_mixin.py:_trigger_deployment()`.
+- `deployment_manager.py` — Auto-Deploy mit Backup/Rollback. Eine editierbare Discord-Meldung zeigt den laufenden Schritt (bei langem Post-Deploy alle 30 s), danach Erfolg oder Fehlerphase samt technischen Details. GitHub-Kontext enthält Commit sowie – wenn ermittelbar – PR und referenzierte Issues. **Queuing (seit PR #545):** Trifft ein neuer Auftrag ein, während ein Deploy läuft, wird er vorgemerkt (nicht verworfen) und als Hintergrundaufgabe nachgeholt (`_nachhol_deploy`); pro Projekt max. ein vorgemerkter Auftrag, Obergrenze `NACHHOL_MAX=3`. **Pre-Flight-Abbruch (seit PR #565 / ZERODOX#3515):** `deploy.sh` exit 78 (EX_CONFIG) → `PostDeployPreflightAbortError` → Fehlermeldung aber kein Rollback (Arbeitsbaum unverändert). Backup- und Rollback-rsync nutzen dieselbe Modul-Konstante `DEPLOY_BACKUP_EXCLUDES` (kein Auseinanderlaufen der --exclude-Listen). **WICHTIG:** Project-Name-Lookup ist dash↔underscore-tolerant (`mayday-sim` ↔ `mayday_sim`, seit 2026-05-25 — siehe `.claude/rules/safety.md`). Gleiche Logik in `github_integration/ci_mixin.py:_trigger_deployment()`.
 - `incident_manager.py` — Incident Threads in Discord
 - `customer_notifications.py` — Customer-Facing Alerts (Multi-Guild)
 - `fail2ban.py` / `crowdsec.py` / `aide.py` / `docker.py` — Security-Event-Quellen (Monitoring-Integrationen)
@@ -130,7 +130,7 @@ shadowops-bot/
 
 ## Externes Monitoring (seit 2026-05-17 — Defense-in-Depth)
 
-Zusätzlich zum internen `project_monitor.py` laufen 14 unabhängige user-systemd Watchdogs (Zyklen: 5–15 min je nach Watchdog, cmdshadow-design 1h, Selbstpflege-Watchdogs stündlich/täglich, Backup-Test monatlich) und posten Down/Recovery direkt via Discord-Webhook in `#🩺-uptime-alerts` (NICHT über den Bot — funktioniert auch wenn shadowops-bot tot ist):
+Zusätzlich zum internen `project_monitor.py` laufen 15 unabhängige user-systemd Watchdogs (Zyklen: 5–15 min je nach Watchdog, cmdshadow-design 1h, Selbstpflege-Watchdogs stündlich/täglich, Backup-Test monatlich) und posten Down/Recovery direkt via Discord-Webhook in `#🩺-uptime-alerts` (NICHT über den Bot — funktioniert auch wenn shadowops-bot tot ist):
 
 | Watchdog | Mode | Target |
 |---|---|---|
@@ -146,9 +146,10 @@ Zusätzlich zum internen `project_monitor.py` laufen 14 unabhängige user-system
 | `ai-agent-framework-watchdog` | systemd | guildscout-feedback-agent, zerodox-support-agent, seo-agent |
 | `cmdshadow-design-watchdog` | systemd-result | cmdshadow-design-healthcheck.service (max_age=36h, 1h-Cycle) |
 | `memory-watchdog` | meminfo | RAM ≥90% oder Swap ≥80% auf VPS, Frühwarnung vor OOM-Cascade (seit 2026-05-25, Vorfall logind-Kill durch earlyoom) |
-| `disk-hygiene-watchdog` | disk + auto-prune | Auto-Prune (docker builder/image + journald) bei Disk >85%, Alarm >90% (stündlich, Selbstpflege seit 2026-05-30) |
+| `disk-hygiene-watchdog` | disk + auto-prune | Stufe 0 (immer): GHCR-Deploy-Tags auf N neueste begrenzen (`scripts/lib/ghcr-tag-cap.sh`, env `DISK_GHCR_REPO`/`DISK_GHCR_KEEP`). Stufe 1: Auto-Prune (docker builder/image + journald) bei Disk >85%. Stufe 2: Alarm >90% (stündlich, ZERODOX#3858) |
 | `doku-drift-watchdog` | doku-drift | Container-Ports vs. Port-Map + MEMORY.md-Limit (<200), nur Alarm (täglich 06:30, Selbstpflege seit 2026-05-30) |
 | `ki-cost-watchdog` | ki-cost | Token/Kosten-Rollup Claude+Codex aus JSONL + Anomalie-Alarm (täglich 07:15, Selbstpflege seit 2026-05-30) |
+| `zenkai-watchdog` | http + jq-filter | http://127.0.0.1:8097/health, filter=`.status == "ok"`, Zyklus 5 min (lokal; externer Uptime-Check via external-uptime.yml, seit #570) |
 | `shadowops-backup-test` | — | monatlich 1. d. Monats, Wrapper um `~/ZERODOX/scripts/backup-test.sh` |
 
 **Script:** `scripts/service-watchdog.sh` (generisch, parametrisiert) und `scripts/bot-watchdog.sh` (Backward-Compat). **Service-Files:** `deploy/<name>-watchdog.{service,timer}`. **Webhook-Config:** `~/.config/shadowops-watchdog.env` (chmod 600). **Setup-Anleitung:** [`deploy/MONITORING_SETUP.md`](./deploy/MONITORING_SETUP.md).
@@ -285,6 +286,10 @@ Worker-Konventionen:
 - [config/DO-NOT-TOUCH.md](./config/DO-NOT-TOUCH.md)
 
 ## Letztes Update dieser Datei
+
+2026-09-29 — bind_hosts + GHCR-Tag-Cap dokumentiert (PRs #551/#560-#563 / ZERODOX#3212/#3858): `src/utils/bind_hosts.py` (neu) liefert die Bind-Adress-Liste fuer Health-Server und GuildScout-Webhook-Handler — `127.0.0.1` plus alle Docker-Bridge-Interfaces (`docker0`, `br-*`) statt `0.0.0.0`. Env `SHADOWOPS_BIND_HOSTS` ueberschreibt die Auto-Erkennung. `disk-hygiene-watchdog` hat jetzt Stufe 0 (schwellenunabhaengig): `scripts/lib/ghcr-tag-cap.sh` begrenzt GHCR-Deploy-Tags auf `DISK_GHCR_KEEP` neueste (`DISK_GHCR_REPO`, `DISK_GHCR_DRY_RUN`). `deploy/disk-hygiene-watchdog.service` laeuft ohne `PrivateTmp` + via `sg docker` (ZERODOX#3858: `--user`-Units hatten keinen Docker-Namespace-Zugriff, jeder Prune lieferte still „0 entfernt"). CLAUDE.md: `bind_hosts` in utils-Liste ergaenzt, Watchdog-Tabelle auf Stufen-Beschreibung erweitert.
+
+2026-09-26 — Deploy-Kette gehaertet (PR #556 / ZERODOX#2920/#2891/#3447): `ci_mixin.py` behandelt `cancelled` CI-Laeufe jetzt als einmalig-wiederholbare Fluktuationen statt sofortiger Failures. `start_abgleich_mixin.py` (neues Modul) holt beim Bot-Start Merge-Auftraege nach, die waehrend der ~130s-Startphase eingingen und nie zugestellt wurden. Beide Fixes addressieren ZERODOX-Vorfaelle mit verlorenem Auto-Deploy. CLAUDE.md: `github_integration/`-Paketliste um `start_abgleich_mixin` ergaenzt, ci_mixin- und start_abgleich-Verhalten dokumentiert.
 
 2026-07-09 — Security-Agent-Team Phase 0 + W1 (#290 / PRs #333, #338, #339 — alle gemerged + live): **Phase 0:** AI-Kern des Monolithen war seit 07.07. komplett tot — Doppel-Ursache: `security_analyst.model gpt-5.3-codex` vom ChatGPT-Abo nicht mehr unterstützt (HTTP 400) + hartcodierter Claude-CLI-Pfad `~/.local/bin/claude` existiert seit npm-Umzug nicht mehr (FileNotFoundError in Fallback UND Fix-Phase). Fixes: `resolve_claude_cli_path()` (env `CLAUDE_CLI_PATH` → configured → which → Fallback-Liste), Live-Config auf `gpt-5.5` (real getestet; `gpt-5.5-codex` → 400), Reflection-KeyError `'"quality_score"'` = `str.format()` auf Template mit JSON-Beispiel → `render_reflection_prompt()` mit `.replace()`, stale Server-Fakten (Debian 12/8 GB → Debian 13/64 GB) in 7 Prompt-Stellen, fail2ban aus Tool-Listen (nicht installiert, #295). **Live verifiziert:** Session #539 OK via codex/gpt-5.5 (6 Findings/6 Issues) — dabei nächsten verdeckten Bug gefangen: Fix-Phase crashte bei LLM-`summary` als dict (`dict + str`) → #338. **W1 (PR #339, zweistufig subagent-reviewt):** `orchestrator_main` = echter `sec:trigger`-Subscribe-Loop, `trigger`-Durchreichung, Trigger-/Reaper-/Soak-Scripts, `security-freshness-watchdog`, Modell-Default-Hygiene repo-weit. Reviews fingen CRITICAL (`findings` hat `found_at`, NICHT `created_at` — Soak-Script wäre stumm gewesen) + IMPORTANT (psql-Command-Tag-Off-by-one bei `RETURNING 1 | wc -l` → CTE-Zählung; gleicher Bug im SEO-Reaper gefixt, agents@a472627). **Ops:** Units + env-Datei (600) + 3 Crons (05:23/06:41/07:31) installiert, erster E2E-Lauf 2×`ok`/14 Findings (GuildScout: 1 CRITICAL + 4 HIGH npm!), Watchdog getestet + Timer aktiv. **7d-Soak bis ~2026-07-16**, dann W2. Dazu Phase-0-Ops: Trivy 0.72.0 + Daily-Scan 04:15 reaktiviert (`~/scripts/trivy-daily-scan.sh`, Bot-Format; Erstlauf 15 Images: 15 CRITICAL/242 HIGH), kptr_restrict=1, Backup-Dirs 700/750, Dashboard-Binding 127.0.0.1, 9 obsolete Issues geschlossen (#313 #314 #295 #310 #311 #327 #328 #330 #331). Spec v2: `docs/design/2026-07-09-security-agent-team-v2-spec.md`.
 
