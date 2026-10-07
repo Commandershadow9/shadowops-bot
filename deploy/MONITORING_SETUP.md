@@ -203,6 +203,7 @@ echo '{"last_status":"up","last_alert_at":"","consecutive_failures":0}' \
 | `disk-hygiene` | disk + auto-prune | Auto-Prune (docker builder/image + journald) bei Disk >85%, Alarm >90% (Selbstpflege seit 2026-05-30) | 1 h | — |
 | `doku-drift` | doku-drift | Container-Ports vs. Port-Map + MEMORY.md-Limit (<200), nur Alarm (Selbstpflege seit 2026-05-30) | täglich 06:30 | — |
 | `ki-cost` | ki-cost | Token/Kosten-Rollup Claude+Codex aus JSONL + Anomalie-Alarm (Selbstpflege seit 2026-05-30) | täglich 07:15 | — |
+| `zenkai` | http + jq-filter | http://127.0.0.1:8097/health, filter `.status == "ok"`, lokal; externer Uptime-Check via `.github/workflows/external-uptime.yml` (seit #570) | 5 min | 5 min |
 
 Pro Service:
 - **🔴 \<service\> DOWN** — nach 2 konsekutiven Failures (= ~10 Minuten Downtime).
@@ -232,6 +233,7 @@ systemctl --user list-timers \
   mayday-sim-watchdog.timer mayday-ci-runner-watchdog.timer mayday-sim-build-drift-watchdog.timer \
   ai-agent-framework-watchdog.timer \
   cmdshadow-design-watchdog.timer \
+  zenkai-watchdog.timer \
   shadowops-backup-test.timer
 
 # Letzten 50 Läufe pro Service
