@@ -633,6 +633,25 @@ agent_review:
 #                          Nur setzen, wenn die Auto-Erkennung falsch liegt.
 #                          Beispiel: SHADOWOPS_BIND_HOSTS=127.0.0.1,172.20.0.1
 #                          (src/utils/bind_hosts.py, ZERODOX#3212)
+#
+# ZERODOX_AGENT_API_KEY  — API-Key fuer den ZERODOX-Agent-Endpunkt, der von
+#                          phase_5e_health_aggregator.py abgefragt wird.
+#                          Pflichtfeld wenn Phase-5e-Health-Aggregation aktiv ist
+#                          (src/cogs/phase_5e_health_aggregator.py).
+#
+# CRITICAL_CHANNEL_ID    — Fallback-Discord-Channel-ID fuer CronHeartbeatCog,
+#                          wenn channels.critical nicht in config.yaml oder
+#                          data/state.json gesetzt ist. Nur als Notfall-Override.
+#                          (src/cogs/cron_heartbeat.py)
+#
+# DISK_GHCR_REPO         — GHCR-Repository fuer den disk-hygiene-watchdog
+#                          (z.B. ghcr.io/commandershadow9/zerodox). Pflichtfeld
+#                          wenn der watchdog GHCR-Tag-Cap ausfuehren soll.
+#                          (scripts/lib/ghcr-tag-cap.sh, ZERODOX#3858)
+#
+# DISK_GHCR_KEEP         — Anzahl der neuesten Deploy-Tags die behalten werden
+#                          (Default: 5). Nur setzen wenn Abweichung noetig.
+#                          (scripts/lib/ghcr-tag-cap.sh, ZERODOX#3858)
 
 # ╔═══════════════════════════════════════════════════════════════════════════╗
 # ║ ENDE DER KONFIGURATION                                                   ║
