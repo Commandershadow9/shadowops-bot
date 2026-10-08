@@ -643,15 +643,6 @@ agent_review:
 #                          wenn channels.critical nicht in config.yaml oder
 #                          data/state.json gesetzt ist. Nur als Notfall-Override.
 #                          (src/cogs/cron_heartbeat.py)
-#
-# DISK_GHCR_REPO         — GHCR-Repository fuer den disk-hygiene-watchdog
-#                          (z.B. ghcr.io/commandershadow9/zerodox). Pflichtfeld
-#                          wenn der watchdog GHCR-Tag-Cap ausfuehren soll.
-#                          (scripts/lib/ghcr-tag-cap.sh, ZERODOX#3858)
-#
-# DISK_GHCR_KEEP         — Anzahl der neuesten Deploy-Tags die behalten werden
-#                          (Default: 5). Nur setzen wenn Abweichung noetig.
-#                          (scripts/lib/ghcr-tag-cap.sh, ZERODOX#3858)
 
 # ╔═══════════════════════════════════════════════════════════════════════════╗
 # ║ ENDE DER KONFIGURATION                                                   ║
