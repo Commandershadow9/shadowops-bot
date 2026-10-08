@@ -477,6 +477,25 @@ check_health_pg_freshness() {
     return 0
 }
 
+# ─── Health-Check (command-Mode) ───────────────────────────────────────
+# Fuehrt $WATCHDOG_COMMAND aus; dessen ERSTE Stdout-Zeile ist das Ergebnis
+# ("UP" oder "DOWN:<Grund>"). stderr geht ungefiltert ins Journal (Messdetails).
+# Ein leeres/ungueltiges Ergebnis gilt als DOWN, nie als UP — "nicht messbar"
+# darf nicht wie "gesund" aussehen. Erstes Muster: dns-resolver-check.sh.
+check_health_command() {
+    if [[ -z "${WATCHDOG_COMMAND:-}" ]]; then
+        echo "DOWN:no_command_configured"
+        return 1
+    fi
+    local out
+    out=$($WATCHDOG_COMMAND | head -n1) || true
+    case "$out" in
+        UP) echo "UP"; return 0 ;;
+        DOWN:*) echo "$out"; return 1 ;;
+        *) echo "DOWN:command_ungueltige_ausgabe"; return 1 ;;
+    esac
+}
+
 # ─── Health-Check Dispatcher ───────────────────────────────────────────
 check_health() {
     case "${WATCHDOG_MODE:-http}" in
@@ -485,6 +504,7 @@ check_health() {
         systemd-result) check_health_systemd_result ;;
         container)      check_health_container ;;
         pg-freshness)   check_health_pg_freshness ;;
+        command)        check_health_command ;;
         *)              echo "DOWN:invalid_mode_${WATCHDOG_MODE}"
                         return 1
                         ;;

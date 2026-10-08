@@ -1,0 +1,13 @@
+[Unit]
+Description=Timer: DNS-Resolver-Check alle 5 Min (ZERODOX #4259)
+
+[Timer]
+OnBootSec=3min
+OnUnitActiveSec=5min
+RandomizedDelaySec=20s
+AccuracySec=30s
+Persistent=false
+Unit=dns-resolver-watchdog.service
+
+[Install]
+WantedBy=timers.target

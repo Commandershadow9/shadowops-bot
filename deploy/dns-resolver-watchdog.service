@@ -1,0 +1,31 @@
+[Unit]
+Description=DNS-Resolver Watchdog — Unbound auf 127.0.0.1 und 172.17.0.1 (ZERODOX #4259)
+Documentation=https://github.com/Commandershadow9/ZERODOX/issues/4259
+# Anlass: Hetzner-Resolver-Störung vom 08.10.2026 legte zerodox-web lahm.
+# Seit dem Umstieg auf Unbound ist der Resolver unser eigener Dienst — und
+# damit auch unser eigener Ausfall. Dieser Wächter prüft die WIRKUNG (Namen
+# werden aufgelöst), nicht nur den Prozess.
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+EnvironmentFile=-/home/cmdshadow/.config/shadowops-watchdog.env
+Environment=WATCHDOG_SERVICE_NAME=dns-resolver
+# Muss zum Timer passen (5 min), sonst wertet /admin/systemstatus falsch (#2452).
+Environment=WATCHDOG_TAKT_SEK=300
+Environment=WATCHDOG_MODE=command
+Environment=WATCHDOG_COMMAND=/home/cmdshadow/shadowops-bot/scripts/dns-resolver-check.sh
+Environment=WATCHDOG_HEALTH_URL=dns://127.0.0.1+172.17.0.1
+Environment=WATCHDOG_STATE_FILE=/home/cmdshadow/shadowops-bot/data/watchdog_state_dns-resolver.json
+# Kein Docker-Zugriff nötig; dig und `systemctl is-active` (System-Unit) laufen
+# als normaler User. PrivateTmp ist unschädlich — der Wächter liest nichts aus /tmp.
+ExecStart=/home/cmdshadow/shadowops-bot/scripts/service-watchdog.sh
+StandardOutput=journal
+StandardError=journal
+SyslogIdentifier=dns-resolver-watchdog
+NoNewPrivileges=true
+PrivateTmp=true
+
+[Install]
+WantedBy=default.target
