@@ -38,6 +38,8 @@ UNIT="${DNS_WATCHDOG_UNIT:-unbound.service}"
 # gemessen; mit -b 127.0.0.1 NOERROR). Container-Quellen sind nicht betroffen —
 # gemessen wird daher der Listener, nicht diese Host-Eigenheit.
 DNS_BIND="${DNS_WATCHDOG_BIND:-127.0.0.1}"
+# Anzeigename im Meldetext (Reserve-Resolver nennt sich anders als der Haupt-Resolver).
+LABEL="${DNS_WATCHDOG_LABEL:-Resolver}"
 
 if ! command -v dig >/dev/null 2>&1; then
     echo "DOWN:nicht_messbar_dig_fehlt"
@@ -51,7 +53,7 @@ if [[ "$UNIT" != "-" ]]; then
     fi
     state="$(systemctl is-active "$UNIT" 2>/dev/null || true)"
     if [[ "$state" != "active" ]]; then
-        echo "DOWN:Resolver antwortet nicht ($UNIT=${state:-unbekannt})"
+        echo "DOWN:$LABEL antwortet nicht ($UNIT=${state:-unbekannt})"
         exit 0
     fi
 fi
@@ -78,9 +80,9 @@ for target in $TARGETS; do
         esac
     done
     if (( antworten == 0 )); then
-        grund="${grund:+$grund; }Resolver antwortet nicht (@$target, 0 von $gesamt Namen)"
+        grund="${grund:+$grund; }$LABEL antwortet nicht (@$target, 0 von $gesamt Namen)"
     elif (( fehl * 2 > gesamt )); then
-        grund="${grund:+$grund; }Resolver antwortet, Auflösung scheitert (@$target, $fehl von $gesamt Namen SERVFAIL/Timeout)"
+        grund="${grund:+$grund; }$LABEL antwortet, Auflösung scheitert (@$target, $fehl von $gesamt Namen SERVFAIL/Timeout)"
     else
         echo "[dns] @$target ok — Ø $((ms_summe / antworten)) ms über $antworten Antworten" >&2
     fi

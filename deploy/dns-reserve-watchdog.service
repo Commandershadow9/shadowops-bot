@@ -1,0 +1,32 @@
+[Unit]
+Description=DNS-Reserve-Resolver Watchdog — Unbound auf der Runner-VM 10.8.0.10 (ZERODOX #4261)
+Documentation=https://github.com/Commandershadow9/ZERODOX/issues/4261
+# Getrennt vom dns-resolver-watchdog, damit die Meldung sagt, WAS ausfiel.
+# Die Reserve lauscht nur auf 10.8.0.10:53 und beantwortet nur Quelle 10.8.0.1
+# (sonst REFUSED) — daher DNS_WATCHDOG_BIND. Die Unit läuft auf der VM und wird
+# hier nicht geprüft (DNS_WATCHDOG_UNIT=-).
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+EnvironmentFile=-/home/cmdshadow/.config/shadowops-watchdog.env
+Environment=WATCHDOG_SERVICE_NAME=dns-reserve
+Environment=WATCHDOG_TAKT_SEK=300
+Environment=WATCHDOG_MODE=command
+Environment=WATCHDOG_COMMAND=/home/cmdshadow/shadowops-bot/scripts/dns-resolver-check.sh
+Environment=WATCHDOG_HEALTH_URL=dns://10.8.0.10
+Environment=WATCHDOG_STATE_FILE=/home/cmdshadow/shadowops-bot/data/watchdog_state_dns-reserve.json
+Environment=DNS_WATCHDOG_TARGETS=10.8.0.10
+Environment=DNS_WATCHDOG_BIND=10.8.0.1
+Environment=DNS_WATCHDOG_UNIT=-
+Environment="DNS_WATCHDOG_LABEL=Reserve-Resolver (Runner-VM 10.8.0.10)"
+ExecStart=/home/cmdshadow/shadowops-bot/scripts/service-watchdog.sh
+StandardOutput=journal
+StandardError=journal
+SyslogIdentifier=dns-reserve-watchdog
+NoNewPrivileges=true
+PrivateTmp=true
+
+[Install]
+WantedBy=default.target
