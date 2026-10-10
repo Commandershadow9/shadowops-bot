@@ -206,6 +206,7 @@ echo '{"last_status":"up","last_alert_at":"","consecutive_failures":0}' \
 | `ki-cost` | ki-cost | Token/Kosten-Rollup Claude+Codex aus JSONL + Anomalie-Alarm (Selbstpflege seit 2026-05-30) | täglich 07:15 | — |
 | `zenkai` | http + jq-filter | http://127.0.0.1:8097/health, filter `.status == "ok"`, lokal; externer Uptime-Check via `.github/workflows/external-uptime.yml` (seit #570) | 5 min | 5 min |
 | `dns-resolver` | command | `scripts/dns-resolver-check.sh` — prüft Unbound (127.0.0.1 + 172.17.0.1) per dig auf echte Auflösung (nicht nur `systemctl is-active`), ZERODOX #4259 | 5 min | 3 min |
+| `dns-reserve` | command | `scripts/dns-resolver-check.sh` mit `DNS_WATCHDOG_TARGETS=10.8.0.10` — Reserve-Resolver auf Runner-VM 10.8.0.10, ZERODOX #4261 | 5 min | 3 min |
 
 Pro Service:
 - **🔴 \<service\> DOWN** — nach 2 konsekutiven Failures (= ~10 Minuten Downtime).
@@ -237,6 +238,7 @@ systemctl --user list-timers \
   cmdshadow-design-watchdog.timer \
   zenkai-watchdog.timer \
   dns-resolver-watchdog.timer \
+  dns-reserve-watchdog.timer \
   shadowops-backup-test.timer
 
 # Letzten 50 Läufe pro Service

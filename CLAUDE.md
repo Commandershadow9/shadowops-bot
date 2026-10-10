@@ -131,7 +131,7 @@ shadowops-bot/
 
 ## Externes Monitoring (seit 2026-05-17 — Defense-in-Depth)
 
-Zusätzlich zum internen `project_monitor.py` laufen 16 unabhängige user-systemd Watchdogs (Zyklen: 5–15 min je nach Watchdog, cmdshadow-design 1h, Selbstpflege-Watchdogs stündlich/täglich, Backup-Test monatlich) und posten Down/Recovery direkt via Discord-Webhook in `#🩺-uptime-alerts` (NICHT über den Bot — funktioniert auch wenn shadowops-bot tot ist):
+Zusätzlich zum internen `project_monitor.py` laufen 17 unabhängige user-systemd Watchdogs (Zyklen: 5–15 min je nach Watchdog, cmdshadow-design 1h, Selbstpflege-Watchdogs stündlich/täglich, Backup-Test monatlich) und posten Down/Recovery direkt via Discord-Webhook in `#🩺-uptime-alerts` (NICHT über den Bot — funktioniert auch wenn shadowops-bot tot ist):
 
 | Watchdog | Mode | Target |
 |---|---|---|
@@ -152,6 +152,7 @@ Zusätzlich zum internen `project_monitor.py` laufen 16 unabhängige user-system
 | `ki-cost-watchdog` | ki-cost | Token/Kosten-Rollup Claude+Codex aus JSONL + Anomalie-Alarm (täglich 07:15, Selbstpflege seit 2026-05-30) |
 | `zenkai-watchdog` | http + jq-filter | http://127.0.0.1:8097/health, filter=`.status == "ok"`, Zyklus 5 min (lokal; externer Uptime-Check via external-uptime.yml, seit #570) |
 | `dns-resolver-watchdog` | command | `scripts/dns-resolver-check.sh` — prüft Unbound (127.0.0.1 + 172.17.0.1) per dig auf Auflösung (nicht nur Prozessstatus), Zyklus 5 min (Anlass: Hetzner-Störung 2026-10-08 → zerodox-web down, ZERODOX #4259) |
+| `dns-reserve-watchdog` | command | `scripts/dns-resolver-check.sh` mit `DNS_WATCHDOG_TARGETS=10.8.0.10` — prüft Reserve-Resolver (Unbound) auf Runner-VM 10.8.0.10, Zyklus 5 min (ZERODOX #4261; getrennt vom dns-resolver-watchdog damit der Alert sagt, WAS ausgefallen ist) |
 | `shadowops-backup-test` | — | monatlich 1. d. Monats, Wrapper um `~/ZERODOX/scripts/backup-test.sh` |
 
 **Script:** `scripts/service-watchdog.sh` (generisch, parametrisiert) und `scripts/bot-watchdog.sh` (Backward-Compat). **Service-Files:** `deploy/<name>-watchdog.{service,timer}`. **Webhook-Config:** `~/.config/shadowops-watchdog.env` (chmod 600). **Setup-Anleitung:** [`deploy/MONITORING_SETUP.md`](./deploy/MONITORING_SETUP.md).
