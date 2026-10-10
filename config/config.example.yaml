@@ -410,6 +410,13 @@ projects:
       ci_success_reconcile_max_attempts: 2
     monitor:
       enabled: true
+      # Auto-Rollback aus dem Monitoring (remediation_command mit --rollback)
+      # greift nur, wenn der letzte erfolgreiche Deploy hoechstens so viele
+      # Minuten zurueckliegt (ZERODOX#4255 K4). Sonst nur Meldung. Unbekannter
+      # Deploy-Zeitpunkt = kein Rollback. Wert <= 0: nie zurueckrollen.
+      # Der Zeitpunkt kommt aus der State-Datei von deploy.sh.
+      rollback_fenster_min: 15
+      # deploy_state_file: ~/.zerodox-deploy-state.json
       checks:
         # buildSha-Drift-Backstop (Issue #1720): Fallback-Netz FALLS der
         # Re-Poll nach Deploy (ci_mixin.py, _repoll_after_deploy) das aktive

@@ -431,3 +431,73 @@ class TestHumanizedEmbeds:
         # Downtime-Klartext in Beschreibung
         assert 'Ausfall-Dauer' in embed.description
         assert 'Min' in embed.description
+
+
+class TestRollbackFenster:
+    """ZERODOX#4255 K4: Monitoring-Rollback nur kurz nach einem Deploy."""
+
+    ROLLBACK = 'cd /x && bash scripts/deploy.sh --rollback "Grund" --yes'
+
+    def _setup(self, tmp_path, minuten_her, command=None):
+        import json
+        state = tmp_path / 'state.json'
+        if minuten_her is not None:
+            zeit = datetime.now(timezone.utc) - timedelta(minutes=minuten_her)
+            state.write_text(json.dumps(
+                {'lastSuccessfulTimestamp': zeit.strftime('%Y-%m-%dT%H:%M:%SZ')}))
+        config = MagicMock()
+        config.projects = {}
+        monitor = ProjectMonitor(Mock(), config)
+        project = ProjectStatus('ZERODOX', {
+            'url': 'https://x', 'remediation_command': command or self.ROLLBACK,
+            'remediation_threshold': 1, 'deploy_state_file': str(state)})
+        project.consecutive_failures = 3
+        monitor._melde_rollback_uebersprungen = AsyncMock()
+        return monitor, project
+
+    @pytest.mark.asyncio
+    async def test_innerhalb_des_fensters_wird_zurueckgerollt(self, tmp_path):
+        monitor, project = self._setup(tmp_path, 5)
+        with patch('asyncio.create_subprocess_shell', new=AsyncMock()) as sh:
+            sh.return_value.communicate = AsyncMock(return_value=(b'', b''))
+            sh.return_value.returncode = 0
+            await monitor._attempt_remediation(project, 'err')
+        sh.assert_called_once()
+        monitor._melde_rollback_uebersprungen.assert_not_called()
+
+    @pytest.mark.asyncio
+    async def test_ausserhalb_des_fensters_nur_melden(self, tmp_path):
+        monitor, project = self._setup(tmp_path, 120)
+        with patch('asyncio.create_subprocess_shell', new=AsyncMock()) as sh:
+            await monitor._attempt_remediation(project, 'err')
+        sh.assert_not_called()
+        monitor._melde_rollback_uebersprungen.assert_awaited_once()
+
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize('fall', ['fehlt', 'kaputt'])
+    async def test_unbekannter_deploy_zeitpunkt_nur_melden(self, tmp_path, fall):
+        monitor, project = self._setup(tmp_path, None)
+        if fall == 'kaputt':
+            (tmp_path / 'state.json').write_text('{kein json')
+        with patch('asyncio.create_subprocess_shell', new=AsyncMock()) as sh:
+            await monitor._attempt_remediation(project, 'err')
+        sh.assert_not_called()
+        monitor._melde_rollback_uebersprungen.assert_awaited_once()
+
+    @pytest.mark.asyncio
+    async def test_befehl_ohne_rollback_bleibt_unberuehrt(self, tmp_path):
+        monitor, project = self._setup(tmp_path, 999, command='docker compose up -d api')
+        with patch('asyncio.create_subprocess_shell', new=AsyncMock()) as sh:
+            sh.return_value.communicate = AsyncMock(return_value=(b'', b''))
+            sh.return_value.returncode = 0
+            await monitor._attempt_remediation(project, 'err')
+        sh.assert_called_once()
+
+    @pytest.mark.asyncio
+    async def test_meldung_nennt_grund_und_sendet(self, tmp_path):
+        monitor, project = self._setup(tmp_path, 120)
+        kanal = AsyncMock()
+        monitor._statuskanal_fuer = Mock(return_value=kanal)
+        await ProjectMonitor._melde_rollback_uebersprungen(monitor, project, 'err', 120.0)
+        text = kanal.send.await_args.args[0]
+        assert 'bewusst nicht' in text and '120 min' in text

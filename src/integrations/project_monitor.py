@@ -117,6 +117,15 @@ class ProjectStatus:
         self.timeout = config.get('timeout', 10)
         self.remediation_command = config.get('remediation_command')
         self.remediation_threshold = config.get('remediation_threshold', 3)
+        # ZERODOX#4255 K4: Ein Auto-Rollback aus dem Monitoring greift nur, solange
+        # der letzte erfolgreiche Deploy hoechstens so viele Minuten zurueckliegt.
+        # Danach wird nur gemeldet. Wert <= 0 = nie zurueckrollen.
+        self.rollback_fenster_min = config.get('rollback_fenster_min', 15)
+        # State-Datei, die deploy.sh nach jedem erfolgreichen Deploy schreibt
+        # (lastSuccessfulTimestamp) und aus der derselbe Rollback liest.
+        self.deploy_state_file = os.path.expanduser(
+            config.get('deploy_state_file', '~/.zerodox-deploy-state.json')
+        )
         self.log_file = config.get('log_file')
         self.log_pattern = config.get('log_pattern')
         self.log_tail_bytes = config.get('log_tail_bytes', 50000)
@@ -888,6 +897,59 @@ class ProjectMonitor:
 
         self._save_state()
 
+    @staticmethod
+    def _ist_rollback_befehl(project: ProjectStatus) -> bool:
+        return '--rollback' in (project.remediation_command or '')
+
+    def _minuten_seit_letztem_deploy(self, project: ProjectStatus) -> Optional[float]:
+        """Minuten seit dem letzten erfolgreichen Deploy; None = unbekannt.
+
+        Quelle ist `lastSuccessfulTimestamp` aus der State-Datei von deploy.sh.
+        Fehlende/kaputte Datei oder ein Zeitpunkt in der Zukunft gelten als
+        unbekannt.
+        """
+        try:
+            with open(project.deploy_state_file, encoding='utf-8') as f:
+                roh = json.load(f)['lastSuccessfulTimestamp']
+            zeit = datetime.fromisoformat(str(roh).replace('Z', '+00:00'))
+            if zeit.tzinfo is None:
+                zeit = zeit.replace(tzinfo=timezone.utc)
+            minuten = (datetime.now(timezone.utc) - zeit).total_seconds() / 60
+        except Exception as e:
+            self.logger.warning(
+                f"Deploy-Zeitpunkt fuer {project.name} nicht lesbar "
+                f"({project.deploy_state_file}): {e}"
+            )
+            return None
+        if minuten < -2:  # Uhrenabweichung tolerieren, sonst unplausibel
+            return None
+        return max(minuten, 0.0)
+
+    async def _melde_rollback_uebersprungen(
+        self, project: ProjectStatus, error: str, minuten: Optional[float]
+    ):
+        fenster = project.rollback_fenster_min
+        if minuten is None:
+            grund = "Der Zeitpunkt des letzten Deploys ist unbekannt."
+        else:
+            grund = (
+                f"Der letzte Deploy liegt {minuten:.0f} min zurück "
+                f"(Fenster: {fenster} min)."
+            )
+        text = (
+            f"⚠️ **{project.name}**: {project.consecutive_failures} Health-Fehler in Folge "
+            f"({error}). Es wurde **bewusst nicht** zurückgerollt. {grund} "
+            f"Ein Rollback gilt nur direkt nach einem Deploy; der Fehler hat dann "
+            f"vermutlich eine andere Ursache. Bitte manuell prüfen."
+        )
+        self.logger.warning(f"🛑 Auto-Rollback für {project.name} übersprungen: {grund}")
+        try:
+            channel = self._statuskanal_fuer(project.name)
+            if channel:
+                await channel.send(text)
+        except Exception as e:
+            self.logger.error(f"Meldung zum übersprungenen Rollback fehlgeschlagen: {e}")
+
     async def _attempt_remediation(self, project: ProjectStatus, error: str):
         """Attempt automatic remediation after repeated failures."""
         if not project.remediation_command:
@@ -896,6 +958,14 @@ class ProjectMonitor:
             return
         if project.consecutive_failures < project.remediation_threshold:
             return
+
+        if self._ist_rollback_befehl(project):
+            minuten = self._minuten_seit_letztem_deploy(project)
+            if minuten is None or minuten > project.rollback_fenster_min:
+                # Fail-safe: Ein falscher Rollback ist schlimmer als ein Alarm.
+                project.remediation_triggered = True  # nur einmal je Vorfall melden
+                await self._melde_rollback_uebersprungen(project, error, minuten)
+                return
 
         project.remediation_triggered = True
         self.logger.warning(
