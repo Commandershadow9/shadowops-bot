@@ -11,6 +11,7 @@ Fixes file integrity issues detected by AIDE:
 import asyncio
 import logging
 import os
+import shlex
 import shutil
 import time
 from dataclasses import dataclass
@@ -484,8 +485,13 @@ class AideFixer:
         try:
             repo_dir = os.path.dirname(file_path)
 
+            # Finding #561: file_path stammt aus AIDE-Integrity-Events und kann
+            # durch Dateinamen auf dem ueberwachten System beeinflusst sein —
+            # shlex.quote() verhindert Command-Injection ueber den Dateinamen.
+            safe_basename = shlex.quote(os.path.basename(file_path))
+
             result = await self.executor.execute(
-                f"git checkout HEAD -- {os.path.basename(file_path)}",
+                f"git checkout HEAD -- {safe_basename}",
                 working_dir=repo_dir,
                 timeout=30
             )
@@ -500,8 +506,13 @@ class AideFixer:
         """Scan file for malware using ClamAV"""
 
         try:
+            # Finding #561: file_path kommt aus AIDE-Events (potenziell durch
+            # Dateinamen auf dem ueberwachten System beeinflussbar) — escapen
+            # vor der Shell-Interpolation.
+            safe_path = shlex.quote(file_path)
+
             result = await self.executor.execute(
-                f"clamscan --no-summary {file_path}",
+                f"clamscan --no-summary {safe_path}",
                 timeout=60
             )
 

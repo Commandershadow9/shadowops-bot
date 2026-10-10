@@ -71,6 +71,19 @@ class CommandExecutorConfig:
         r'init\s+6',              # init 6
     ])
 
+    # Echte Command-Injection-Indikatoren (Finding #561): gezielt auf
+    # Substitutions-Syntax und Semikolon-verkettete destruktive Befehle,
+    # NICHT auf pauschale Shell-Metazeichen wie &&/||/| — die nutzen ca.
+    # 10 Call-Sites bewusst in fest kodierten Kommando-Templates.
+    injection_patterns: List[str] = field(default_factory=lambda: [
+        r'\$\([^)]*\)',                              # Command-Substitution $(...)
+        r'`[^`]+`',                                   # Backtick-Substitution
+        r';\s*(rm|curl|wget|dd|mv|nc|ncat|bash|sh|python\d*|perl|ruby|eval|exec)\b',
+                                                       # Semikolon vor destruktivem/ausfuehrendem Befehl
+        r'\|\s*(bash|sh|python\d*|perl|ruby)\b',       # Download-und-Ausfuehren-Pipe (z.B. curl ... | bash)
+        r'/dev/tcp/',                                  # Bash-Reverse-Shell-Redirect
+    ])
+
 
 class CommandExecutor:
     """
@@ -260,6 +273,16 @@ class CommandExecutor:
                     f"🚨 BLOCKED: Command contains dangerous pattern '{pattern}': {command}"
                 )
 
+        # Check for Command-Injection-Indikatoren (Finding #561): $(...), Backticks,
+        # Semikolon-Verkettung vor destruktiven Befehlen, Download-und-Ausfuehren-Pipes.
+        # Bewusst getrennt von dangerous_patterns, weil es echte Injection-Syntax prueft
+        # statt einzelner Befehlsnamen.
+        for pattern in self.config.injection_patterns:
+            if re.search(pattern, command, re.IGNORECASE):
+                raise ValueError(
+                    f"🚨 BLOCKED: Command contains injection pattern '{pattern}': {command}"
+                )
+
         # Basic syntax check
         if not command.strip():
             raise ValueError("🚨 BLOCKED: Empty command")
@@ -267,6 +290,38 @@ class CommandExecutor:
         # Check for null bytes
         if '\0' in command:
             raise ValueError("🚨 BLOCKED: Command contains null bytes")
+
+        # Weiche Warnung (nicht blockierend): Shell-Metazeichen im Kommando
+        # protokollieren, wenn sie NICHT bereits durch die harten Checks oben
+        # erfasst wurden. Dient der Nachvollziehbarkeit bei Kommandos, die aus
+        # extern beeinflussbaren Daten zusammengesetzt wurden (z.B. Dateinamen
+        # aus AIDE-Events) — sollte im Regelfall bereits per shlex.quote()
+        # entschaerft sein; taucht die Warnung dennoch auf, lohnt ein Blick.
+        self._warn_on_unquoted_metacharacters(command)
+
+    @staticmethod
+    def _warn_on_unquoted_metacharacters(command: str) -> bool:
+        """
+        Loggt eine Warnung, wenn das Kommando Shell-Metazeichen enthaelt, die auf
+        unsauber interpolierten (nicht per shlex.quote() escapten) Input hindeuten
+        koennen. Blockiert nichts — reine Sichtbarkeit fuer Audits/Debugging.
+
+        Args:
+            command: Vollstaendiges Kommando (nach den harten Injection-Checks)
+
+        Returns:
+            True wenn eine Warnung geloggt wurde, sonst False
+        """
+        import re
+
+        suspicious = re.search(r'[;&$`]|\$\{', command)
+        if suspicious:
+            logger.warning(
+                f"⚠️ Command enthaelt Shell-Metazeichen ('{suspicious.group()}') — "
+                f"pruefen, ob interpolierte Werte per shlex.quote() escaped sind: {command}"
+            )
+            return True
+        return False
 
     async def _validate_syntax(self, command: str) -> CommandResult:
         """
