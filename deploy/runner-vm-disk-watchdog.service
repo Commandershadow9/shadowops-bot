@@ -20,6 +20,7 @@ Wants=network-online.target
 Type=oneshot
 EnvironmentFile=-/home/cmdshadow/.config/shadowops-watchdog.env
 Environment=WATCHDOG_SERVICE_NAME=runner-vm-disk
+Environment=WATCHDOG_TAKT_SEK=1800
 Environment=WATCHDOG_HEALTH_URL=http://10.8.0.10:9100/health
 Environment=WATCHDOG_MODE=http
 Environment=WATCHDOG_REQUIRE_BOT_READY=0
@@ -30,7 +31,14 @@ Environment=WATCHDOG_REQUIRE_BOT_READY=0
 # leerzeichen` am Leerzeichen um. Ohne sie kam nur `.components.disk.used_percent`
 # an, jq lieferte die Zahl statt eines Wahrheitswerts, und der Watchdog wertete
 # das als ungueltigen Filter — ein Fehlalarm bei voellig gesunder VM (08.08.2026).
-Environment="WATCHDOG_HEALTH_JQ_FILTER=.components.disk.used_percent < 85"
+# Seit 11.10.2026 zusätzlich die Inodes von /tmp (ZERODOX #4332/#4333): /tmp ist
+# auf der VM ein tmpfs mit fester Inode-Zahl und lief zu 100 % voll, während `/`
+# 49 GB frei hatte — alle Unit-Jobs scheiterten mit ENOSPC, dieser Watchdog sah
+# nichts. Die Komponente `tmp` liefert /opt/runner-health/app.py (Patch #4333).
+# `// 100` an BEIDEN Werten: In jq ist `null < 85` TRUE. Fehlt eine Komponente
+# (app.py aus der Sicherung zurückgespielt, Messfehler im Dienst), meldete der
+# Filter ohne Rückfallwert "gesund". "Kann nicht nachsehen" ist ein Alarm.
+Environment="WATCHDOG_HEALTH_JQ_FILTER=(.components.disk.used_percent // 100) < 85 and (.components.tmp.inode_used_percent // 100) < 85"
 Environment=WATCHDOG_STATE_FILE=/home/cmdshadow/shadowops-bot/data/watchdog_state_runner-vm-disk.json
 ExecStart=/home/cmdshadow/shadowops-bot/scripts/service-watchdog.sh
 StandardOutput=journal
