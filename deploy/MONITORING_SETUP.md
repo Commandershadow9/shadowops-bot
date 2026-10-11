@@ -27,12 +27,13 @@
 ```
 
 Alle Watchdogs nutzen `scripts/service-watchdog.sh` — ein generisches
-Script, parametrisiert via Env-Vars. Fünf Modi:
+Script, parametrisiert via Env-Vars. Sechs Modi:
 - `WATCHDOG_MODE=http` (Default): curl auf `WATCHDOG_HEALTH_URL`
 - `WATCHDOG_MODE=systemd`: prüft `systemctl is-active` für jede Unit in `WATCHDOG_SYSTEMD_UNITS` (Komma-separiert)
 - `WATCHDOG_MODE=systemd-result`: prüft Result + Alter (`ExecMainStartTimestamp`) des letzten Laufs für oneshot/Daily-Jobs. `WATCHDOG_MAX_AGE_HOURS` (Default 36h) — bei `stale_*h` → DOWN.
 - `WATCHDOG_MODE=container`: prüft Docker-State + Healthcheck eines Containers (`WATCHDOG_CONTAINER`) via `docker inspect`. Für kritische Container ohne Host-Port.
 - `WATCHDOG_MODE=pg-freshness` (seit 2026-06-27): führt `WATCHDOG_PG_QUERY` gegen einen Postgres-Container (`WATCHDOG_PG_CONTAINER`/`_USER`/`_DB`) aus; die Query MUSS eine Zahl = Alter in Stunden liefern, DOWN wenn > `WATCHDOG_MAX_AGE_HOURS` (Default 49h). Prüft die **Wirkung** eines Dienstes (z.B. frischer DB-Eintrag), nicht nur die Prozess-Existenz — fängt Services, die `active` sind aber deren Arbeit still scheitert (Vorfall seo-agent 2026-06-27).
+- `WATCHDOG_MODE=command` (seit ZERODOX #4259): führt `WATCHDOG_COMMAND` aus; die erste Stdout-Zeile des Scripts MUSS `UP` oder `DOWN:<Grund>` sein. Stderr geht ungefiltert ins Journal (Messdetails). Sinnvoll wenn weder HTTP-Endpoint noch systemd-Unit den relevanten Ausfall zeigen (z.B. DNS-Auflösung).
 
 **Optionaler JSON-Pfad-Filter (http-Mode):** `WATCHDOG_HEALTH_JQ_FILTER` — wenn gesetzt, wird der HTTP-Statuscode ignoriert und stattdessen eine jq-Boolean-Expression gegen den Response-Body ausgewertet. Nützlich wenn ein Endpoint HTTP 503 zurückgibt sobald *irgendeine* Komponente kaputt ist, aber nur eine bestimmte Komponente überwacht werden soll. Beispiel: `WATCHDOG_HEALTH_JQ_FILTER=.components.ci_runner.ok`. Test-Coverage: `tests/unit/test_service_watchdog_jq_filter.py`.
 
@@ -203,6 +204,9 @@ echo '{"last_status":"up","last_alert_at":"","consecutive_failures":0}' \
 | `disk-hygiene` | disk + auto-prune | Auto-Prune (docker builder/image + journald) bei Disk >85%, Alarm >90% (Selbstpflege seit 2026-05-30) | 1 h | — |
 | `doku-drift` | doku-drift | Container-Ports vs. Port-Map + MEMORY.md-Limit (<200), nur Alarm (Selbstpflege seit 2026-05-30) | täglich 06:30 | — |
 | `ki-cost` | ki-cost | Token/Kosten-Rollup Claude+Codex aus JSONL + Anomalie-Alarm (Selbstpflege seit 2026-05-30) | täglich 07:15 | — |
+| `zenkai` | http + jq-filter | http://127.0.0.1:8097/health, filter `.status == "ok"`, lokal; externer Uptime-Check via `.github/workflows/external-uptime.yml` (seit #570) | 5 min | 5 min |
+| `dns-resolver` | command | `scripts/dns-resolver-check.sh` — prüft Unbound (127.0.0.1 + 172.17.0.1) per dig auf echte Auflösung (nicht nur `systemctl is-active`), ZERODOX #4259 | 5 min | 3 min |
+| `dns-reserve` | command | `scripts/dns-resolver-check.sh` mit `DNS_WATCHDOG_TARGETS=10.8.0.10` — Reserve-Resolver auf Runner-VM 10.8.0.10, ZERODOX #4261 | 5 min | 3 min |
 
 Pro Service:
 - **🔴 \<service\> DOWN** — nach 2 konsekutiven Failures (= ~10 Minuten Downtime).
@@ -232,6 +236,9 @@ systemctl --user list-timers \
   mayday-sim-watchdog.timer mayday-ci-runner-watchdog.timer mayday-sim-build-drift-watchdog.timer \
   ai-agent-framework-watchdog.timer \
   cmdshadow-design-watchdog.timer \
+  zenkai-watchdog.timer \
+  dns-resolver-watchdog.timer \
+  dns-reserve-watchdog.timer \
   shadowops-backup-test.timer
 
 # Letzten 50 Läufe pro Service

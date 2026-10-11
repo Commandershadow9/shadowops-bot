@@ -35,9 +35,9 @@ Automatisierter Security-Fix-Workflow mit Google Jules + Claude Opus Review:
 - ✅ **Projekt-Security-Profile**: Angriffsoberflächen, Auth-Mechanismen, Secrets-Orte pro Projekt
 
 ### 🤖 **Dual-Engine AI System (v4.0)**
-- ✅ **Codex CLI (Primary, 97%)**: gpt-4o (fast), gpt-5.3-codex (standard), o3 (thinking)
+- ✅ **Codex CLI (Primary, 97%)**: gpt-4o (fast), gpt-5.5 (standard), o3 (thinking)
 - ✅ **Claude CLI (Fallback + Verify, 3%)**: claude-sonnet-4-6 (standard), claude-opus-4-6 (thinking)
-- ✅ **Config-basierter TaskRouter**: Routing nach Severity (CRITICAL→o3, HIGH→gpt-5.3-codex, LOW→gpt-4o)
+- ✅ **Config-basierter TaskRouter**: Routing nach Severity (CRITICAL→o3, HIGH→gpt-5.5, LOW→gpt-4o)
 - ✅ **Quota-aware Failover**: Provider-Limits werden aus CLI-Output erkannt; Weekly-Deep scannt bei Claude-Limit automatisch via Codex weiter
 - ✅ **SmartQueue**: 3 parallele Analysen (Semaphore), serieller Fix-Lock, Circuit Breaker, Batch-Erkennung
 - ✅ **VerificationPipeline**: 4-Stufen Pre-Push (Confidence ≥85% → Tests → Claude-Verify → KB-Check)
@@ -87,7 +87,12 @@ Event → TaskRouter → Codex CLI (Primary)
 - `/docker` - Letzte Docker Scan Ergebnisse
 - `/aide` - AIDE Integrity Check Status
 
+#### CrowdSec Notfall (Owner-only)
+- `/sperren` - Aktive CrowdSec-Sperrliste anzeigen (ephemeral)
+- `/entsperren <ip>` - IP-Adresse aus CrowdSec-Sperre entfernen
+
 #### Auto-Remediation
+- `/maintenance <scope> <on|off> [minutes] [reason]` - Auto-Heal pausieren/fortsetzen, global oder pro Projekt (Admin)
 - `/remediation-stats` - Auto-Remediation Statistiken (Admin)
 - `/stop-all-fixes` - EMERGENCY: Stoppt alle laufenden Fixes (Admin)
 - `/set-approval-mode [mode]` - Ändere Approval Mode (paranoid/auto/dry-run) (Admin)
@@ -187,23 +192,25 @@ sudo journalctl -u shadowops-bot -f
 
 Der Bot erstellt automatisch alle benötigten Channels beim ersten Start:
 
-**🤖 Auto-Remediation Kategorie:**
-- `🚨-security-alerts` - Sicherheits-Alarme
-- `✅-approval-requests` - Fix-Genehmigungen
-- `⚙️-execution-logs` - Execution-Logs
-- `📊-stats` - Tägliche Statistiken
-- `🧠-ai-learning` - AI Learning Logs
-- `🔧-code-fixes` - Code Fixer Logs
-- `⚡-orchestrator` - Orchestrator Logs
-
-> ℹ️ **Channel-Fallbacks**: Falls die Auto-Remediation-Notification-IDs nicht gesetzt sind, nutzt der Bot automatisch die IDs aus `channels.*` (z.B. `channels.ai_learning`, `channels.code_fixes`, `channels.orchestrator`). So bleiben AI-Learning und Discord-Logs aktiv, selbst wenn die Notifications-Section fehlt.
-
-**🌐 Multi-Project Kategorie (v3.1):**
-- `👥-customer-alerts` - Kunden-sichtbare Alerts
-- `📊-customer-status` - Projekt-Status Updates
+**🔐 Betrieb & Sicherheit** (sichtbar fuer alle):
+- `🩺-uptime-alerts` - Uptime-Watchdog-Alarme
+- `🚨-critical` - Kritische Sicherheitsmeldungen
+- `🛡️-crowdsec` - CrowdSec-Alarme
+- `🐳-docker` - Docker-Scan-Ergebnisse
 - `🚀-deployment-log` - Deployment-Benachrichtigungen
 
-> 💡 **Tipp**: Der Bot updated die Config automatisch mit allen Channel-IDs!
+**🤖 KI-Werkstatt** (sichtbar fuer alle):
+- `✋-approvals` - Fix-Genehmigungen
+- `🧠-ai-learning` - AI Learning Logs
+- `⚡-orchestrator` - Orchestrator Logs
+- `🔧-code-fixes` - Code Fixer Logs
+
+**Pro-Projekt-Kategorie** (je Projekt eine eigene Kategorie, nur fuer die jeweilige Rolle sichtbar):
+- Wird ueber `discord_category` in `config.yaml` je Projekt konfiguriert
+- Kanal wird beim Botstart automatisch angelegt; ohne `discord_category` faellt er in eine gemeinsame Kategorie `📢 Updates & CI`
+- Einmalige Server-Ersteinrichtung (Rollen + Kategorien): `python3 scripts/discord_struktur.py`
+
+> Tipp: Der Bot updated die Config automatisch mit den Channel-IDs neu erstellter Kanaele.
 
 ## ⚙️ Konfiguration
 
@@ -219,28 +226,18 @@ discord:
 ai:
   enabled: true
 
-  primary:
-    engine: codex
+  codex:
     models:
       fast: gpt-4o
-      standard: gpt-5.3-codex
+      standard: gpt-5.5
       thinking: o3
-    timeout: 300
 
-  fallback:
-    engine: claude
-    cli_path: /home/user/.local/bin/claude
+  claude:
+    # cli_path wird automatisch aufgeloest: env CLAUDE_CLI_PATH → which claude → npm-global
     models:
       fast: claude-sonnet-4-6
       standard: claude-sonnet-4-6
       thinking: claude-opus-4-6
-    timeout: 300
-
-  routing:
-    critical_analysis: { engine: codex, model: thinking }
-    high_analysis: { engine: codex, model: standard }
-    low_analysis: { engine: codex, model: fast }
-    critical_verify: { engine: claude, model: thinking }
 
 auto_remediation:
   enabled: true
@@ -493,12 +490,12 @@ See [CHANGELOG.md](./CHANGELOG.md) for the full version history.
 
 - **Total Lines of Code**: 20,000+
 - **AI Engines**: 2 (Codex CLI + Claude CLI)
-- **AI Models**: 6 (gpt-4o, gpt-5.3-codex, o3, claude-sonnet-4-6, claude-opus-4-6)
+- **AI Models**: 5 (gpt-4o, gpt-5.5, o3, claude-sonnet-4-6, claude-opus-4-6)
 - **Security Integrations**: 4 (Fail2ban, CrowdSec, AIDE, Trivy)
 - **PostgreSQL Databases**: 3 (security_analyst: 21 Tabellen, agent_learning: 7 Tabellen, seo_agent: 11 Tabellen)
 - **Learning Pipeline Tables**: 11 (Security: fix_attempts, fix_verifications, finding_quality, scan_coverage · Shared: agent_feedback, agent_quality_scores, agent_knowledge · Patch Notes: pn_generations, pn_variants, pn_examples · SEO: seo_fix_impact)
 - **Scan Areas**: 10 (firewall, ssh, docker, permissions, packages, services, logs, network, credentials, dependencies)
-- **Discord Commands**: 16 (inkl. /agent-stats, /claude)
+- **Discord Commands**: 23 (inkl. /agent-stats, /claude, /maintenance, /sperren, /entsperren)
 - **Monitored Projects**: 3 (GuildScout, ZERODOX, AI Agents)
 - **Auto Discord-Posts**: Session-Summaries, Feedback-Auswertungen, Weekly Summary, Meilensteine
 
