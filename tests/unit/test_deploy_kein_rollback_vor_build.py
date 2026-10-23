@@ -133,6 +133,8 @@ async def test_preflight_abbruch_loest_keinen_rollback_aus(mgr):
     assert ergebnis['success'] is False
     assert ergebnis['rolled_back'] is False
     assert "Migration-Drift" in ergebnis['error']
+    # #567: eigenes Kennzeichen, sonst liest die Rückmeldung „Rollback fehlgeschlagen“.
+    assert ergebnis['preflight_abort'] is True
     # Ein echter Fehlschlag, der eine Handlung braucht — er wird gemeldet.
     mgr._send_deployment_failure.assert_awaited_once()
     assert mgr.active_deployments['zerodox'] is False
