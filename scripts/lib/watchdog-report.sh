@@ -116,7 +116,15 @@ _takt_aus_timer() {
             e1="$(date -d "$t1" +%s 2>/dev/null)" || return 0
             e2="$(date -d "$t2" +%s 2>/dev/null)" || return 0
             if [[ -n "$e1" && -n "$e2" ]] && (( e2 > e1 )); then
-                echo $(( e2 - e1 ))
+                local abstand=$(( e2 - e1 ))
+                # ⚠️ Über eine Zeitumstellung ist ein Kalendertag 23 oder 25 h lang
+                # (gemessen 23.10.2026 vor dem 25.10.: 90000 statt 86400). Abstände ab
+                # einem Tag minus einer Stunde auf ganze Tage runden — die Umstellung
+                # verschiebt um höchstens ±3600 s, ein Tagestakt bleibt ein Tagestakt.
+                if (( abstand >= 82800 )); then
+                    abstand=$(( (abstand + 43200) / 86400 * 86400 ))
+                fi
+                echo "$abstand"
                 return 0
             fi
         fi
