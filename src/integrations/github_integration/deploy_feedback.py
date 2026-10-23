@@ -114,6 +114,8 @@ def _rollback_zeile(result: Optional[Dict], is_exception: bool) -> Tuple[str, bo
     - kein Backup erstellt  → nichts wurde ausgeliefert, alte Version laeuft
       weiter (Abbruch kam VOR dem Deploy-Schritt).
     - Backup + Rollback ok  → alte Version laeuft wieder.
+    - Pre-Flight-Abbruch (`preflight_abort`) → nichts ausgeliefert, kein Rollback
+      nötig, obwohl `backup_created` bereits gesetzt ist (#567).
     - Backup + KEIN Rollback → Rollback wurde versucht und ist gescheitert
       (der einzige Zweig, der `rolled_back` nicht setzt, obwohl ein Backup
       existiert — siehe `deploy_project()`s `except DeploymentError`-Ast).
@@ -124,6 +126,11 @@ def _rollback_zeile(result: Optional[Dict], is_exception: bool) -> Tuple[str, bo
         # und den Betreiber informieren, statt Erfolg vorzutaeuschen.
         return ("⚠️ nichts ausgeliefert, alte Version läuft weiter", True)
 
+    if result.get('preflight_abort'):
+        # shadowops-bot#567: Pre-Flight-Abbruch (Exit 78) — vor dem Bau, es gab nichts
+        # zurückzurollen. `backup_created` ist dabei schon gesetzt und darf nicht als
+        # gescheiterter Rollback gelesen werden.
+        return ("⚠️ Pre-Flight abgebrochen — nichts ausgeliefert, kein Rollback nötig", False)
     if result.get('rolled_back'):
         return ("✅ alte Version läuft weiter", False)
     if not result.get('backup_created'):

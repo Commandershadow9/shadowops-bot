@@ -580,6 +580,10 @@ class DeploymentManager:
             # Claude-Worktrees leerte.
             self.logger.error(f"⛔ Deploy im Pre-Flight abgebrochen (kein Rollback): {e}")
 
+            # shadowops-bot#567: `backup_created` steht hier schon auf True (vor dem
+            # Post-Deploy-Schritt gesetzt). Ohne eigenes Kennzeichen las die
+            # Rückmeldung daraus „Rollback fehlgeschlagen“ (ZERODOX#4816, 22.10.2026).
+            result['preflight_abort'] = True
             result['error'] = str(e)
             result['failed_stage'] = current_stage
             result['duration_seconds'] = time.time() - start_time

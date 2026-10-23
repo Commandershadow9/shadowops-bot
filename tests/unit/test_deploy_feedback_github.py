@@ -158,6 +158,15 @@ class TestRollbackZeile:
         assert "fehlgeschlagen" in zeile
         assert mention is True
 
+    def test_preflight_abbruch_mit_backup_ist_kein_gescheiterter_rollback(self):
+        # #567 / ZERODOX#4816: Exit 78 im Pre-Flight, `backup_created` schon gesetzt.
+        zeile, mention = df._rollback_zeile(
+            {"backup_created": True, "rolled_back": False, "preflight_abort": True}, False
+        )
+        assert "Pre-Flight abgebrochen" in zeile
+        assert "fehlgeschlagen" not in zeile
+        assert mention is False
+
 
 # ---------------------------------------------------------------------------
 # Zustandstexte
