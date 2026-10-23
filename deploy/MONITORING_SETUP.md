@@ -203,6 +203,16 @@ echo '{"last_status":"up","last_alert_at":"","consecutive_failures":0}' \
 | `disk-hygiene` | disk + auto-prune | Auto-Prune (docker builder/image + journald) bei Disk >85%, Alarm >90% (Selbstpflege seit 2026-05-30) | 1 h | — |
 | `doku-drift` | doku-drift | Container-Ports vs. Port-Map + MEMORY.md-Limit (<200), nur Alarm (Selbstpflege seit 2026-05-30) | täglich 06:30 | — |
 | `ki-cost` | ki-cost | Token/Kosten-Rollup Claude+Codex aus JSONL + Anomalie-Alarm (Selbstpflege seit 2026-05-30) | täglich 07:15 | — |
+| `zenkai` | http + jq-filter | http://127.0.0.1:8097/health, filter `.status == "ok"` (PR #570) | 5 min | 5 min |
+| `runner-vm-disk` | http + jq-filter | http://10.8.0.10:9100/health — Disk+Inodes Runner-VM, Alert <85% frei (ZERODOX #2148/#4333) | 30 min | 9 min |
+| `mcp` | http | https://mcp.zerodox.de/.well-known/oauth-authorization-server (ZERODOX MCP-Erreichbarkeit) | 5 min | 4 min |
+| `mcp-drift` | build-drift | ZERODOX MCP Container läuft mit HEAD-Code + Audit-Protokoll aktuell (scripts/mcp-drift-watchdog.sh) | 1 h | 7 min |
+| `nightly-suite` | GitHub CI | Alarm wenn Vollsuite dauerhaft rot ist (ZERODOX #2467) | 6 h | 14 min |
+| `prozess-hygiene` | process | Verwaiste claude-/codex-Prozesse toter Sitzungen bereinigen | 12 h | 17 min |
+| `dns-resolver` | command | Unbound 127.0.0.1+172.17.0.1 Auflösung via scripts/dns-resolver-check.sh (ZERODOX #4259) | 5 min | 3 min |
+| `dns-reserve` | command | Reserve-Unbound Runner-VM 10.8.0.10 Auflösung (ZERODOX #4261) | 5 min | 4 min |
+| `seo-deep-audit-freshness` | pg-freshness | seo_agent-DB: letzter zerodox-Deep-Audit < 195h (Wochen-Strategie 2026-07-17) | 6 h | 11 min |
+| `security-freshness` | pg-freshness | security_analyst-DB: `sec_jobs` frisch < 26h (Security-Agent-Team) | 1 h | 11 min |
 
 Pro Service:
 - **🔴 \<service\> DOWN** — nach 2 konsekutiven Failures (= ~10 Minuten Downtime).
@@ -230,8 +240,17 @@ systemctl --user list-timers \
   zerodox-watchdog.timer zerodox-akquise-ai-watchdog.timer \
   guildscout-watchdog.timer \
   mayday-sim-watchdog.timer mayday-ci-runner-watchdog.timer mayday-sim-build-drift-watchdog.timer \
+  mayday-scheduler-watchdog.timer \
   ai-agent-framework-watchdog.timer \
+  zenkai-watchdog.timer \
+  runner-vm-disk-watchdog.timer mcp-watchdog.timer mcp-drift-watchdog.timer \
+  nightly-suite-watchdog.timer prozess-hygiene-watchdog.timer \
+  dns-resolver-watchdog.timer dns-reserve-watchdog.timer \
+  seo-audit-freshness-watchdog.timer seo-output-freshness-watchdog.timer \
+  seo-deep-audit-freshness-watchdog.timer security-freshness-watchdog.timer \
   cmdshadow-design-watchdog.timer \
+  disk-hygiene-watchdog.timer doku-drift-watchdog.timer ki-cost-watchdog.timer \
+  memory-watchdog.timer \
   shadowops-backup-test.timer
 
 # Letzten 50 Läufe pro Service
