@@ -106,6 +106,11 @@ Event → TaskRouter → Codex CLI (Primary)
 #### Multi-Project Management
 - `/projekt-status [name]` - Status für spezifisches Projekt (Uptime, Response Time, Health)
 - `/alle-projekte` - Übersicht aller überwachten Projekte
+- `/maintenance <scope> <state> [minutes] [reason]` - Auto-Heal pausieren/fortsetzen, Scope: Projekt oder `global` (Admin)
+
+#### CrowdSec Notfall (Owner-only)
+- `/sperren` - Aktive CrowdSec IP-Sperren anzeigen
+- `/entsperren <ip>` - CrowdSec IP-Sperre aufheben
 
 #### Mobile Workflow (Owner-only)
 - `/claude [prompt] [project] [model] [timeout]` - Headless Claude-Session auf dem Server starten und Antwort in Discord empfangen (owner-only)
@@ -431,7 +436,7 @@ shadowops-bot/
 │   └── logrotate.conf                  # Log-Rotation
 ├── deploy/                             # Deployment + Watchdogs
 │   ├── shadowops-bot.service           # systemd Bot-Service
-│   ├── *-watchdog.{service,timer}      # Externe Uptime-Watchdogs (14 Watchdogs: HTTP/systemd/jq-filter/build-drift/state-drift)
+│   ├── *-watchdog.{service,timer}      # Externe Uptime-Watchdogs (27 Watchdogs: HTTP/systemd/jq-filter/build-drift/state-drift/pg-freshness/process/command)
 │   ├── shadowops-watchdog.env.example  # Webhook-Env Template
 │   └── MONITORING_SETUP.md             # Setup-Anleitung Watchdogs
 ├── .github/
@@ -493,12 +498,12 @@ See [CHANGELOG.md](./CHANGELOG.md) for the full version history.
 
 - **Total Lines of Code**: 20,000+
 - **AI Engines**: 2 (Codex CLI + Claude CLI)
-- **AI Models**: 6 (gpt-4o, gpt-5.3-codex, o3, claude-sonnet-4-6, claude-opus-4-6)
+- **AI Models**: 5 (gpt-4o, gpt-5.5, o3, claude-sonnet-4-6, claude-opus-4-6)
 - **Security Integrations**: 4 (Fail2ban, CrowdSec, AIDE, Trivy)
 - **PostgreSQL Databases**: 3 (security_analyst: 21 Tabellen, agent_learning: 7 Tabellen, seo_agent: 11 Tabellen)
 - **Learning Pipeline Tables**: 11 (Security: fix_attempts, fix_verifications, finding_quality, scan_coverage · Shared: agent_feedback, agent_quality_scores, agent_knowledge · Patch Notes: pn_generations, pn_variants, pn_examples · SEO: seo_fix_impact)
 - **Scan Areas**: 10 (firewall, ssh, docker, permissions, packages, services, logs, network, credentials, dependencies)
-- **Discord Commands**: 16 (inkl. /agent-stats, /claude)
+- **Discord Commands**: 22 (inkl. /agent-stats, /claude, /sperren, /maintenance)
 - **Monitored Projects**: 3 (GuildScout, ZERODOX, AI Agents)
 - **Auto Discord-Posts**: Session-Summaries, Feedback-Auswertungen, Weekly Summary, Meilensteine
 
