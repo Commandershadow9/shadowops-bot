@@ -42,7 +42,7 @@
 shadowops-bot/
 ├── src/
 │   ├── bot.py                    # Haupt-Bot
-│   ├── cogs/                     # Slash-Commands (admin, inspector, monitoring)
+│   ├── cogs/                     # Slash-Commands + Hintergrundtasks (admin, inspector, monitoring, claude_cli, cron_heartbeat, crowdsec_notfall, customer_setup_commands, phase_5e_health_aggregator)
 │   ├── integrations/             # Externe Systeme (siehe unten)
 │   ├── patch_notes/              # Patch Notes Pipeline v6 (5-Stufen State Machine, ~2100 Zeilen)
 │   ├── schemas/                  # JSON-Schemas fuer Structured Output (fix_strategy, patch_notes, incident_analysis, jules_review)
@@ -91,11 +91,11 @@ shadowops-bot/
 - `knowledge_base.py` — SQL Learning (fix_attempts, fix_verifications, finding_quality, scan_coverage)
 - `code_analyzer.py` — Code Structure Analyzer (Git-History + AST)
 - `context_manager.py` — RAG: Project-Context + DO-NOT-TOUCH + Infra
-- `github_integration/` — Webhooks mit HMAC-SHA256 Verification + Jules Workflow (Package: core, webhook_mixin, event_handlers_mixin, jules_workflow_mixin, notifications_mixin, ci_mixin, agent_review/)
+- `github_integration/` — Webhooks mit HMAC-SHA256 Verification + Jules Workflow (Package: core, webhook_mixin, event_handlers_mixin, jules_workflow_mixin, notifications_mixin, ci_mixin, deploy_feedback, agent_review/)
 - `security_engine/` — Autonomer SecurityScanAgent (scan_agent.py), CircuitBreaker, DB-Layer (db.py), Fixer-Adapters, ActivityMonitor, LearningBridge, Prompts (Package: engine, scan_agent, reactive, proactive, deep_scan, executor, fixer_adapters, learning_bridge, activity_monitor, prompts, models, db, migrations)
 - `security_engine/team/` — Security-Agent-Team (**W1 LIVE seit 2026-07-09, 7d-Soak läuft**, #290/PR #339): `contracts.py` (SecurityJob/JobResult), `base_worker.py` (Lifecycle/Exception-Isolation), `orchestrator.py` (Fan-out + trigger-Durchreichung), `orchestrator_main.py` (**echter `sec:trigger`-Subscribe-Loop**), `runner.py`, `workers/npm_audit_worker.py`. **Betrieb:** systemd-User-Units `security-orchestrator` + `security-npm-audit-worker` (env: `~/.config/shadowops-security-team.env`, chmod 600, Redis-Auth!), `SECURITY_TEAM_ENABLED=true`, Live-Config-Sektion `security_team:` (guildscout+zerodox, npm_audit). Crons: Trigger 05:23, `scripts/security-job-reaper.sh` 06:41, `scripts/security-soak-compare.sh` 07:31 (`logs/security-soak-w1.log`). Selbstüberwachung: `security-freshness-watchdog` (pg-freshness auf `sec_jobs`, 26h). Monolith bleibt bis Soak-Ende (~2026-07-16) Source-of-Truth für LLM-Scans. Spec v2: `docs/design/2026-07-09-security-agent-team-v2-spec.md` (Fix-Kanal = Claude-CLI + PR-Gate, Jules tot; 5 Wellen), Plan: `docs/plans/2026-07-09-security-agent-team-w1.md`.
 - `fixers/` — Konkrete Fix-Implementierungen: fail2ban_fixer.py, crowdsec_fixer.py, aide_fixer.py, trivy_fixer.py, walg_fixer.py
-- `project_monitor.py` — Multi-Project Health-Checks + **Zentrale Monitoring-Engine** (2026-06, #277): deklaratives `checks:`-Inventar pro Projekt in config.yaml via `check_definitions.py`/`check_runner.py`/`heal_executor.py`/`maintenance_gate.py`. Check-Typen `http` (+header/POST/json_path/json_schema), `script`, `container` (network-attached). Gestuftes Heal (reversibel-autonom / approval / alert-only) + Circuit-Breaker + Maintenance-Gate (`/maintenance`-Command). 6 ZERODOX-Checks live (analytics-bridge mit Auto-Heal real verifiziert), Watchdogs bleiben als externer Dead-Man (Defense-in-Depth). **Import-Regel:** paket-intern relativ (`from .x`), NICHT `from src.integrations.x` (Bot läuft PYTHONPATH=src). Spec: `docs/2026-06-09-zentrales-monitoring-auto-health-design.md`, Inventar: `docs/MONITORING_INVENTORY.md`, Pläne: `docs/plans/2026-06-{09,10}-monitoring-*.md`.
+- `project_monitor.py` — Multi-Project Health-Checks + **Zentrale Monitoring-Engine** (2026-06, #277): deklaratives `checks:`-Inventar pro Projekt in config.yaml via `check_definitions.py`/`check_runner.py`/`heal_executor.py`/`maintenance_gate.py`. Check-Typen `http` (+header/POST/json_path/json_schema), `script`, `container` (network-attached). Gestuftes Heal (reversibel-autonom / approval / alert-only) + Circuit-Breaker + Maintenance-Gate (`/maintenance`-Command). **Rollback-Fenster:** Monitoring-Rollback-Befehle (`remediation_command` mit `--rollback`) greifen nur, wenn der letzte erfolgreiche Deploy hoechstens `rollback_fenster_min` Minuten zurueckliegt (Default 15, ZERODOX#4255 K4 / PR #593). Unbekannter Deploy-Zeitpunkt = kein Rollback. 6 ZERODOX-Checks live (analytics-bridge mit Auto-Heal real verifiziert), Watchdogs bleiben als externer Dead-Man (Defense-in-Depth). **Import-Regel:** paket-intern relativ (`from .x`), NICHT `from src.integrations.x` (Bot läuft PYTHONPATH=src). Spec: `docs/2026-06-09-zentrales-monitoring-auto-health-design.md`, Inventar: `docs/MONITORING_INVENTORY.md`, Pläne: `docs/plans/2026-06-{09,10}-monitoring-*.md`.
 - `deployment_manager.py` — Auto-Deploy mit Backup/Rollback. Eine editierbare Discord-Meldung zeigt den laufenden Schritt (bei langem Post-Deploy alle 30 s), danach Erfolg oder Fehlerphase samt technischen Details. GitHub-Kontext enthält Commit sowie – wenn ermittelbar – PR und referenzierte Issues. **WICHTIG:** Project-Name-Lookup ist dash↔underscore-tolerant (`mayday-sim` ↔ `mayday_sim`, seit 2026-05-25 — siehe `.claude/rules/safety.md`). Gleiche Logik in `github_integration/ci_mixin.py:_trigger_deployment()`.
 - `incident_manager.py` — Incident Threads in Discord
 - `customer_notifications.py` — Customer-Facing Alerts (Multi-Guild)
@@ -130,7 +130,7 @@ shadowops-bot/
 
 ## Externes Monitoring (seit 2026-05-17 — Defense-in-Depth)
 
-Zusätzlich zum internen `project_monitor.py` laufen 14 unabhängige user-systemd Watchdogs (Zyklen: 5–15 min je nach Watchdog, cmdshadow-design 1h, Selbstpflege-Watchdogs stündlich/täglich, Backup-Test monatlich) und posten Down/Recovery direkt via Discord-Webhook in `#🩺-uptime-alerts` (NICHT über den Bot — funktioniert auch wenn shadowops-bot tot ist):
+Zusätzlich zum internen `project_monitor.py` laufen 27 unabhängige user-systemd Watchdogs (Zyklen: 5–30 min je nach Watchdog, Selbstpflege-Watchdogs stündlich/täglich/wöchentlich, Backup-Test monatlich) und posten Down/Recovery direkt via Discord-Webhook in `#🩺-uptime-alerts` (NICHT über den Bot — funktioniert auch wenn shadowops-bot tot ist):
 
 | Watchdog | Mode | Target |
 |---|---|---|
@@ -149,6 +149,18 @@ Zusätzlich zum internen `project_monitor.py` laufen 14 unabhängige user-system
 | `disk-hygiene-watchdog` | disk + auto-prune | Auto-Prune (docker builder/image + journald) bei Disk >85%, Alarm >90% (stündlich, Selbstpflege seit 2026-05-30) |
 | `doku-drift-watchdog` | doku-drift | Container-Ports vs. Port-Map + MEMORY.md-Limit (<200), nur Alarm (täglich 06:30, Selbstpflege seit 2026-05-30) |
 | `ki-cost-watchdog` | ki-cost | Token/Kosten-Rollup Claude+Codex aus JSONL + Anomalie-Alarm (täglich 07:15, Selbstpflege seit 2026-05-30) |
+| `zenkai-watchdog` | http + jq-filter | http://127.0.0.1:8097/health, filter=`.status == "ok"` (seit PR #570) |
+| `runner-vm-disk-watchdog` | http + jq-filter | http://10.8.0.10:9100/health — Disk+Inodes der Runner-VM, Alert <85 % frei (ZERODOX #2148/#4333) |
+| `mcp-watchdog` | http | https://mcp.zerodox.de/.well-known/oauth-authorization-server — ZERODOX MCP-Server Erreichbarkeit |
+| `mcp-drift-watchdog` | build-drift | ZERODOX MCP Container läuft mit HEAD-Code + Audit-Protokoll aktuell (scripts/mcp-drift-watchdog.sh) |
+| `nightly-suite-watchdog` | GitHub CI | Alarm wenn Vollsuite dauerhaft rot ist (6h-Zyklus, ZERODOX #2467) |
+| `prozess-hygiene-watchdog` | process | Raeumt verwaiste claude-/codex-Prozesse toter Sitzungen ab (12h-Zyklus) |
+| `dns-resolver-watchdog` | command | Unbound 127.0.0.1+172.17.0.1 aufloesung verifiziert via scripts/dns-resolver-check.sh (ZERODOX #4259) |
+| `dns-reserve-watchdog` | command | Reserve-Unbound auf Runner-VM 10.8.0.10 aufloesung verifiziert (ZERODOX #4261) |
+| `seo-audit-freshness-watchdog` | pg-freshness | seo_agent DB: letzter zerodox-Audit < 49h (`seo_audits.completed_at`) |
+| `seo-deep-audit-freshness-watchdog` | pg-freshness | seo_agent DB: letzter zerodox-Deep-Audit < 195h (Wochen-Strategie 2026-07-17) |
+| `seo-output-freshness-watchdog` | pg-freshness | seo_agent DB: Ausgabe-Stau-Detektion — kein Issue/PR trotz frischer Insights > 216h |
+| `security-freshness-watchdog` | pg-freshness | security_analyst DB: `sec_jobs` frisch < 26h (Security-Agent-Team Soak-Monitor) |
 | `shadowops-backup-test` | — | monatlich 1. d. Monats, Wrapper um `~/ZERODOX/scripts/backup-test.sh` |
 
 **Script:** `scripts/service-watchdog.sh` (generisch, parametrisiert) und `scripts/bot-watchdog.sh` (Backward-Compat). **Service-Files:** `deploy/<name>-watchdog.{service,timer}`. **Webhook-Config:** `~/.config/shadowops-watchdog.env` (chmod 600). **Setup-Anleitung:** [`deploy/MONITORING_SETUP.md`](./deploy/MONITORING_SETUP.md).
