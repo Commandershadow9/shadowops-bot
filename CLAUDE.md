@@ -42,7 +42,7 @@
 shadowops-bot/
 ├── src/
 │   ├── bot.py                    # Haupt-Bot
-│   ├── cogs/                     # Slash-Commands (admin, inspector, monitoring)
+│   ├── cogs/                     # Slash-Commands + Hintergrundtasks (admin, inspector, monitoring, claude_cli, cron_heartbeat, crowdsec_notfall, customer_setup_commands, phase_5e_health_aggregator)
 │   ├── integrations/             # Externe Systeme (siehe unten)
 │   ├── patch_notes/              # Patch Notes Pipeline v6 (5-Stufen State Machine, ~2100 Zeilen)
 │   ├── schemas/                  # JSON-Schemas fuer Structured Output (fix_strategy, patch_notes, incident_analysis, jules_review)
