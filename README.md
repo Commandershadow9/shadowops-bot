@@ -35,9 +35,9 @@ Automatisierter Security-Fix-Workflow mit Google Jules + Claude Opus Review:
 - ✅ **Projekt-Security-Profile**: Angriffsoberflächen, Auth-Mechanismen, Secrets-Orte pro Projekt
 
 ### 🤖 **Dual-Engine AI System (v4.0)**
-- ✅ **Codex CLI (Primary, 97%)**: gpt-4o (fast), gpt-5.3-codex (standard), o3 (thinking)
+- ✅ **Codex CLI (Primary, 97%)**: gpt-4o (fast), gpt-5.5 (standard), o3 (thinking)
 - ✅ **Claude CLI (Fallback + Verify, 3%)**: claude-sonnet-4-6 (standard), claude-opus-4-6 (thinking)
-- ✅ **Config-basierter TaskRouter**: Routing nach Severity (CRITICAL→o3, HIGH→gpt-5.3-codex, LOW→gpt-4o)
+- ✅ **Config-basierter TaskRouter**: Routing nach Severity (CRITICAL→o3, HIGH→gpt-5.5, LOW→gpt-4o)
 - ✅ **Quota-aware Failover**: Provider-Limits werden aus CLI-Output erkannt; Weekly-Deep scannt bei Claude-Limit automatisch via Codex weiter
 - ✅ **SmartQueue**: 3 parallele Analysen (Semaphore), serieller Fix-Lock, Circuit Breaker, Batch-Erkennung
 - ✅ **VerificationPipeline**: 4-Stufen Pre-Push (Confidence ≥85% → Tests → Claude-Verify → KB-Check)
@@ -228,7 +228,7 @@ ai:
     engine: codex
     models:
       fast: gpt-4o
-      standard: gpt-5.3-codex
+      standard: gpt-5.5
       thinking: o3
     timeout: 300
 
