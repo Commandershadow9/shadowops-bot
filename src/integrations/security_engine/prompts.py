@@ -102,6 +102,7 @@ zerodox-web (3000 intern), zerodox-db (5434)
 - Port 9090 (GitHub Webhook) auf 0.0.0.0 — GEWOLLT (Traefik)
 - Port 9091 (Alerts) auf 0.0.0.0 — KORREKT (UFW: nur Docker 172.16.0.0/12, wie 8766)
 - Docker-Container erreichen Host ueber 172.17.0.1 (Docker-Bridge)
+- SSH: AllowTcpForwarding local in /etc/ssh/sshd_config.d/99-hardening.conf ist GEWOLLT (VS Code Remote-SSH braucht lokale Tunnel). KEIN Finding, NICHT auf 'no' setzen.
 
 ## Ausgabe-Schema
 
@@ -203,6 +204,7 @@ Fuer JEDES aktive Projekt den Quellcode pruefen:
 - Port 8766/9090 auf 0.0.0.0 — GEWOLLT (UFW/Traefik geschuetzt)
 - Port 9091 auf 127.0.0.1 — KORREKT
 - Docker-Bridge 172.17.0.1 fuer Host-Zugriff
+- SSH: AllowTcpForwarding local in /etc/ssh/sshd_config.d/99-hardening.conf ist GEWOLLT (VS Code Remote-SSH braucht lokale Tunnel). KEIN Finding, NICHT auf 'no' setzen.
 
 ## Ausgabe-Schema
 
@@ -345,6 +347,7 @@ Es gibt KEIN "Ueberspringen". Alles wird entweder direkt gefixt oder als PR ange
 | UFW-Regeln | Blockiert moeglicherweise Docker-Traffic |
 | systemd Unit-Files | Falscher Bind/Port bricht Service |
 | Traefik-Labels | Externe Erreichbarkeit bricht |
+| SSH-Konfiguration (/etc/ssh/, sshd_config.d/) | Admin sperrt sich aus. AllowTcpForwarding local ist Pflicht fuer VS Code Remote-SSH. Vorfall 2026-11-01. |
 
 ## Ausgabe
 
