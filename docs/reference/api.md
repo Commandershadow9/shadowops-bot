@@ -1,7 +1,7 @@
 ---
 title: 🔧 ShadowOps API Documentation v5.1
 status: active
-last_reviewed: 2026-05-18
+last_reviewed: 2026-09-16
 owner: CommanderShadow9
 ---
 
@@ -332,12 +332,110 @@ Starts a headless Claude CLI session on the server and returns the output as Dis
 **Security notes:**
 - Project paths are a fixed whitelist — no path traversal possible
 - Any user other than the owner receives an ephemeral error
-- Requires `claude` CLI at `~/.local/bin/claude`
+- Claude CLI path resolved dynamically: `CLAUDE_CLI_PATH` env → `which claude` → npm-global fallback
 
 **Example:**
 ```
 /claude prompt:"run tests in shadowops" project:shadowops model:sonnet
 ```
+
+---
+
+### CrowdSec Emergency Commands
+
+> These commands exist because CrowdSec's `deny_action: DROP` blocks all ports including WireGuard (51820/udp). Since SSH is only reachable via VPN, a false positive on the operator's IP can cause complete lockout. The bot runs on the same server but communicates outbound to Discord — an inbound block does not affect it.
+>
+> Runbook: `ZERODOX/docs/runbooks/2026-09-10-von-crowdsec-ausgesperrt.md`
+
+#### `/sperren`
+Lists all active CrowdSec IP bans.
+
+**Permissions:** Application Owner only (stricter than Administrator — checked via `bot.is_owner()`)
+**Parameters:** None
+**Returns:** Embed listing up to 20 active IP bans with:
+- IP address, ban duration, country, network
+- Scenario that triggered the ban
+- `⛔` marker for hard scenarios (`.env`, `/wp-admin`, path traversal) that a legitimate visitor never triggers
+
+**Example:**
+```
+/sperren
+```
+
+**Notes:**
+- Response is ephemeral (only visible to the command issuer)
+- Shows "no active ban" if the IP is clean (indicates the block is elsewhere — see runbook)
+
+#### `/entsperren <ip>`
+Removes an IP address from CrowdSec bans immediately.
+
+**Permissions:** Application Owner only
+**Parameters:**
+- `ip` (required): Single IP address to unban (e.g., `82.115.116.41`). CIDR ranges are intentionally not supported.
+
+**Returns:** Confirmation embed with number of lifted decisions and the scenario that caused the ban.
+
+**Example:**
+```
+/entsperren 82.115.116.41
+```
+
+**Error cases:**
+- Exit code 65: Invalid IP format
+- `KEINE_SPERRE` prefix in output: No active ban found for that IP
+
+**Security:** Delegates to `/usr/local/bin/zerodox-crowdsec-entsperren` via `create_subprocess_exec` (no shell). Input validation happens in the wrapper, not in the cog. All uses are logged to the system journal.
+
+---
+
+### Monitoring Engine Commands
+
+#### `/maintenance <scope> <state> [minutes] [reason]`
+Pauses or resumes Auto-Heal for a specific project or globally. Health checks continue running — only automatic healing is suppressed.
+
+**Permissions:** Administrator
+**Parameters:**
+- `scope` (required): Project name (e.g., `guildscout`, `zerodox`) or `global` to affect all projects
+- `state` (required): `on` to pause healing, `off` to resume
+- `minutes` (optional): Maintenance window duration in minutes (default: 60)
+- `reason` (optional): Free-text reason logged to audit trail
+
+**Returns:** Confirmation message from MaintenanceGate with effective scope and duration.
+
+**Example:**
+```
+/maintenance guildscout on 30 "Deploying schema migration"
+/maintenance global off
+```
+
+**Notes:**
+- Requires `project_monitor` and `MaintenanceGate` to be initialized
+- Ongoing health-check alerts are still sent during maintenance; only the auto-fix action is suppressed
+
+---
+
+### Server Setup Commands
+
+#### `/setup-customer-server`
+Automatically creates the required monitoring channels with correct permissions on the current Discord server. Used when onboarding a new customer server for GuildScout monitoring.
+
+**Permissions:** Administrator
+**Parameters:** None
+**Returns:** Ephemeral confirmation with a `config.yaml` snippet listing created channel IDs ready to paste into the project configuration.
+
+**Example:**
+```
+/setup-customer-server
+```
+
+**Created channels:**
+- GuildScout-specific monitoring category with announcement, alerts, and status channels
+- Permissions set to bot-writable, read-only for members
+
+**Error cases:**
+- Bot missing `Manage Channels` permission
+- Channels already exist
+- `customer_server_setup` integration not initialized
 
 ---
 
@@ -379,28 +477,18 @@ channels:
 ai:
   enabled: true
 
-  primary:
-    engine: codex
+  codex:
     models:
       fast: gpt-4o
-      standard: gpt-5.3-codex
+      standard: gpt-5.5
       thinking: o3
-    timeout: 300
 
-  fallback:
-    engine: claude
-    cli_path: /home/user/.local/bin/claude
+  claude:
+    # cli_path wird dynamisch aufgeloest: env CLAUDE_CLI_PATH → which claude → npm-global
     models:
       fast: claude-sonnet-4-6
       standard: claude-sonnet-4-6
       thinking: claude-opus-4-6
-    timeout: 300
-
-  routing:
-    critical_analysis: { engine: codex, model: thinking }
-    high_analysis: { engine: codex, model: standard }
-    low_analysis: { engine: codex, model: fast }
-    critical_verify: { engine: claude, model: thinking }
 
 # ========================================
 # AUTO-REMEDIATION CONFIGURATION
