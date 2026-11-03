@@ -89,6 +89,7 @@ shadowops-bot/
 - `orchestrator/` — Multi-Event-Batching (10s Fenster) + Approval-Flow (Package: core, batch_mixin, planner_mixin, executor_mixin, recovery_mixin, discord_mixin, models)
 - `event_watcher.py` — Lauscht auf Fail2ban/CrowdSec/AIDE/Docker-Events
 - `knowledge_base.py` — SQL Learning (fix_attempts, fix_verifications, finding_quality, scan_coverage)
+- `ai_learning/` — Continuous Learning System (Package: `continuous_learning_agent.py` analysiert Git-Commits, Security-Events, System-Behavior via AI Engine + Discord-Reports; `knowledge_db.py` persistente SQLite-DB `data/knowledge.db` fuer Erkenntnisse/Health-Snapshots/Fix-Historie; `knowledge_synthesizer.py` extrahiert Langzeit-Pattern). Aktiv verdrahtet in `bot.py` + `auto_fix_manager.py`. Unterscheidet sich von `knowledge_base.py` (PostgreSQL, fix_attempts) durch SQLite + breiteren Lern-Scope.
 - `code_analyzer.py` — Code Structure Analyzer (Git-History + AST)
 - `context_manager.py` — RAG: Project-Context + DO-NOT-TOUCH + Infra
 - `github_integration/` — Webhooks mit HMAC-SHA256 Verification + Jules Workflow (Package: core, webhook_mixin, event_handlers_mixin, jules_workflow_mixin, notifications_mixin, ci_mixin, deploy_feedback, agent_review/)
@@ -285,7 +286,7 @@ Worker-Konventionen:
 
 ## Statistik (Stand v5.1)
 
-20.000+ LoC, 700+ Tests, 3 PostgreSQL DBs (21+7+11 Tabellen), 4 Security-Integrationen, 22 Discord-Commands, 3 Monitored Projects (GuildScout, ZERODOX, AI Agents).
+20.000+ LoC, 700+ Tests, 3 PostgreSQL DBs (21+7+11 Tabellen), 4 Security-Integrationen, 23 Discord-Commands, 3 Monitored Projects (GuildScout, ZERODOX, AI Agents).
 
 ## Aktuelle Doku
 
@@ -297,6 +298,8 @@ Worker-Konventionen:
 - [config/DO-NOT-TOUCH.md](./config/DO-NOT-TOUCH.md)
 
 ## Letztes Update dieser Datei
+
+2026-11-03 — Doku-Kurator: ai_learning/-Package in Modulliste ergaenzt (ContinuousLearningAgent, KnowledgeDB, KnowledgeSynthesizer — aktiv in bot.py + auto_fix_manager.py); Discord-Commands-Zaehler auf 23 korrigiert.
 
 2026-11-01 — Doku-Kurator: Stale W1-Soak-Note korrigiert (Soak abgeschlossen 2026-07-16); Watchdog-Tabelle auf 27 Einträge aktualisiert (dns-resolver, dns-reserve, runner-vm-disk, zenkai, seo-freshness-Watchdogs u.a. ergänzt); deploy_feedback in github_integration-Modulliste; rollback_fenster_min-Note in project_monitor-Beschreibung.
 
