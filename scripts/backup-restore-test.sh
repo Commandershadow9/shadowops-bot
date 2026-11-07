@@ -47,19 +47,16 @@ send_discord_alert() {
     local desc_short
     desc_short=$(echo "$description" | head -c 1800)
 
+    # ⚠️ Payload per jq bauen statt Heredoc — die Log-Ausgabe enthält Anführungszeichen,
+    # Backslashes und Zeilenumbrüche, die in einem Heredoc den JSON brechen (HTTP 400).
     local payload
-    payload=$(cat <<EOF
-{
-  "username": "ShadowOps Backup-Monitor",
-  "embeds": [{
-    "title": "$title",
-    "description": "$desc_short",
-    "color": $color,
-    "footer": {"text": "Host: $HOSTNAME_SHORT — $TS — Log: $LOG_FILE"}
-  }]
-}
-EOF
-)
+    payload=$(jq -n \
+        --arg title "$title" \
+        --arg desc "$desc_short" \
+        --argjson color "$color" \
+        --arg footer "Host: $HOSTNAME_SHORT — $TS — Log: $LOG_FILE" \
+        '{username: "ShadowOps Backup-Monitor", embeds: [{title: $title, description: $desc, color: $color, footer: {text: $footer}}]}'
+    )
 
     local http_code
     http_code=$(curl -s -o /tmp/backup_alert_resp.json -w "%{http_code}" \
