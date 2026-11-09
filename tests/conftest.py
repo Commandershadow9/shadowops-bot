@@ -15,6 +15,19 @@ from datetime import datetime
 # EVENT LOOP FIXTURES
 # ============================================================================
 
+@pytest.fixture(autouse=True)
+def _deploy_sperre_vom_host_isolieren(monkeypatch, tmp_path_factory):
+    """shadowops-bot#674: Der CI-Reconcile prüft für ZERODOX die echte
+    Deploy-Sperre (`$HOME/.zerodox-deploy.lock`, über /proc/locks). Liefe die
+    Testsuite auf dem Server, während dort gerade deployt wird, warteten alle
+    Reconcile-Tests auf diese fremde Sperre. Deshalb zeigt die Variable, die
+    auch deploy.sh auswertet, in Tests auf eine Datei, die es nicht gibt."""
+    monkeypatch.setenv(
+        "ZERODOX_DEPLOY_LOCK_FILE",
+        str(tmp_path_factory.getbasetemp() / "keine-zerodox-deploy.lock"),
+    )
+
+
 @pytest.fixture(scope="session")
 def event_loop():
     """Create event loop for async tests"""
