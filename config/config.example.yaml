@@ -408,6 +408,13 @@ projects:
       ci_success_reconcile_poll_sec: 30
       ci_success_reconcile_timeout_sec: 1800
       ci_success_reconcile_max_attempts: 2
+      # shadowops-bot#674: Hält ein FREMDER Lauf (MCP-Läufer, manueller Deploy)
+      # diese Sperre, startet der Reconcile keinen Nachhol-Deploy, sondern
+      # wartet bis zum Ende der Sperre (gelesen über /proc/locks, nie selbst
+      # gesperrt). Ohne Eintrag gilt für zerodox derselbe Pfad wie in deploy.sh:
+      # ${ZERODOX_DEPLOY_LOCK_FILE:-$HOME/.zerodox-deploy.lock}. Leerer Wert
+      # schaltet die Erkennung ab. Andere Projekte nur mit explizitem Eintrag.
+      # lock_file: ~/.zerodox-deploy.lock
     monitor:
       enabled: true
       # Auto-Rollback aus dem Monitoring (remediation_command mit --rollback)
