@@ -5,6 +5,7 @@ CI polling and deployment methods for GitHubIntegration.
 import asyncio
 import base64
 import logging
+import os
 import re
 import time
 from datetime import datetime, timezone
@@ -15,7 +16,62 @@ from collections import OrderedDict
 import aiohttp
 import discord
 
+from . import deploy_feedback
+
 logger = logging.getLogger('shadowops')
+
+# shadowops-bot#674: Kernel-Tabelle aller Dateisperren. Darüber sieht der Bot,
+# ob ein FREMDER Lauf die Deploy-Sperre hält, ohne selbst nach ihr zu greifen.
+_PROC_LOCKS = Path('/proc/locks')
+
+
+def _flock_gehalten(pfad: Path, proc_locks: Path = _PROC_LOCKS) -> Optional[bool]:
+    """Hält irgendein Prozess eine Sperre auf `pfad`? (shadowops-bot#674)
+
+    Rückgabe: ``True`` = gehalten, ``False`` = frei (auch: Datei fehlt),
+    ``None`` = nicht feststellbar.
+
+    ⚠️ **Bewusst nur lesend über ``/proc/locks``, nie per ``flock(LOCK_NB)``.**
+    MCP-Läufer und ``deploy.sh`` nehmen die Sperre ebenfalls nicht-blockierend.
+    Hielte der Bot sie für seine Probe auch nur Mikrosekunden, bräche ein
+    genau dann startender Deploy mit Exit 75 ab — die Probe würde den Fehler
+    erzeugen, gegen den sie gebaut ist.
+
+    Zeilenformat (Kernel ``fs/locks.c``)::
+
+        1: FLOCK  ADVISORY  WRITE 3109610 09:02:4988716 0 EOF
+        2: -> FLOCK  ADVISORY  WRITE 3109611 09:02:4988716 0 EOF   (wartend)
+
+    Gerät steht hexadezimal als ``MAJOR:MINOR``, dahinter dezimal die Inode.
+    Wartende Anforderungen (``->``) halten nichts und zählen nicht.
+    """
+    try:
+        st = os.stat(pfad)
+    except FileNotFoundError:
+        # Ohne Datei kann niemand eine Sperre auf ihr halten.
+        return False
+    except OSError:
+        return None
+    try:
+        zeilen = proc_locks.read_text().splitlines()
+    except OSError:
+        return None
+    major, minor = os.major(st.st_dev), os.minor(st.st_dev)
+    for zeile in zeilen:
+        teile = zeile.split()
+        if len(teile) < 6 or teile[1] == '->':
+            continue
+        try:
+            maj_hex, min_hex, inode = teile[5].split(':')
+            if (
+                int(inode) == st.st_ino
+                and int(maj_hex, 16) == major
+                and int(min_hex, 16) == minor
+            ):
+                return True
+        except ValueError:
+            continue
+    return False
 
 # Welle 9.10 (2026-05-11): Welche Conclusions als "Failure" gelten und
 # _trigger_deployment abbrechen (kein deploy.sh-Call).
@@ -401,6 +457,81 @@ class CIMixin:
             if key.lower() == repo_name.lower() or key.lower().replace('-', '_') == normalized
         )
 
+    def _deploy_sperr_datei(self, repo_name: str, project_config: Dict) -> Optional[Path]:
+        """Pfad der Deploy-Sperre, die das Deploy-Skript des Projekts nimmt (#674).
+
+        ``deploy.lock_file`` in der Projekt-Config gewinnt; ein leerer Wert
+        schaltet die Erkennung ab. Ohne Eintrag gilt nur für ZERODOX ein Default,
+        und zwar dieselbe Auflösung wie in ``ZERODOX/scripts/deploy.sh`` und im
+        MCP-Läufer: ``${ZERODOX_DEPLOY_LOCK_FILE:-$HOME/.zerodox-deploy.lock}``.
+        Das Bot-eigene ``deploy.sh`` erbt die Umgebung des Bots und nimmt damit
+        genau diese Datei. Alle anderen Projekte: ``None``, Verhalten wie bisher.
+        """
+        deploy_config = project_config.get('deploy') or {}
+        if 'lock_file' in deploy_config:
+            wert = deploy_config.get('lock_file')
+            return Path(str(wert)).expanduser() if wert else None
+        if repo_name.lower().replace('-', '_') == 'zerodox':
+            return Path(
+                os.environ.get('ZERODOX_DEPLOY_LOCK_FILE')
+                or (Path.home() / '.zerodox-deploy.lock')
+            )
+        return None
+
+    def _fremde_deploy_sperre(self, repo_name: str, project_config: Dict) -> Optional[Path]:
+        """Liefert den Sperrpfad, wenn gerade ein FREMDER Lauf die Sperre hält (#674).
+
+        Fremd heißt: Die Sperre ist gehalten, aber kein Bot-eigener Deploy läuft
+        (dessen ``deploy.sh`` hielte sie sonst selbst). Typisch der MCP-Läufer
+        (``deploy_mit_migration``) oder ein manueller Lauf aus einer Session.
+
+        Nicht feststellbar (keine Sperrdatei konfiguriert, ``/proc/locks`` nicht
+        lesbar) → ``None``, also Verhalten wie vor #674: Der Reconcile versucht
+        den Deploy, und ``deploy.sh`` schützt sich mit seiner eigenen Sperre.
+        """
+        if self._deployment_is_active(repo_name):
+            return None
+        pfad = self._deploy_sperr_datei(repo_name, project_config)
+        if pfad is None:
+            return None
+        return pfad if _flock_gehalten(pfad) is True else None
+
+    async def _deploy_status_nachziehen(self, repo_name: str, sha: str, live_sha: str) -> None:
+        """Setzt ``zerodox/deploy`` nachträglich auf ``success`` (#674).
+
+        Nur für einen Stand, der GEMESSEN live ist und dessen Status noch auf
+        ``pending`` steht — der Bot hat dann einen eigenen Versuch begonnen, den
+        ein fremder Deploy überholt hat (Exit 75 an der Sperre). Läuft gerade ein
+        Bot-eigener Deploy, meldet der sein Ergebnis selbst; hier nichts tun.
+        Alle Prüfungen auf GitHub-Seite (Status lesen, fail-closed) liegen in
+        ``deploy_feedback.melde_fremd_ausgeliefert``. Fehler dürfen den
+        Reconcile nie abbrechen.
+        """
+        try:
+            if self._deployment_is_active(repo_name):
+                return
+            manager = getattr(self, 'deployment_manager', None)
+            projekte = getattr(manager, 'projects', None)
+            if not isinstance(projekte, dict):
+                return
+            normalized = repo_name.lower().replace('-', '_')
+            projekt = next(
+                (
+                    wert for schluessel, wert in projekte.items()
+                    if schluessel.lower().replace('-', '_') == normalized
+                ),
+                None,
+            )
+            if not projekt:
+                return
+            await deploy_feedback.melde_fremd_ausgeliefert(
+                getattr(manager, 'bot', None), projekt, sha=sha, live_sha=live_sha
+            )
+        except Exception as e:
+            self.logger.warning(
+                f"⚠️ CI-Reconcile: Deploy-Status fuer {repo_name}@{sha[:7]} nicht nachgezogen: {e}"
+            )
+
     async def _reconcile_ci_success_deployment(
         self,
         repo_name: str,
@@ -430,11 +561,31 @@ class CIMixin:
         deadline = time.monotonic() + timeout_sec
         attempts = 0
         head_wechsel_gemeldet = False
+        fremde_sperre_gemeldet = False
 
         if delay_sec:
             await asyncio.sleep(delay_sec)
 
         while time.monotonic() < deadline:
+            # shadowops-bot#674: Hält ein FREMDER Lauf (MCP-Läufer, manueller
+            # Deploy) die Sperre, wird nichts versucht und nichts gemessen —
+            # erst nach Ende der Sperre geht es weiter. Ohne diese Prüfung lief
+            # am 09.11.2026 alle ~40 s ein Versuch an: jeder setzte vor
+            # deploy.sh einen neuen `pending`-Status, scheiterte mit Exit 75,
+            # galt als "transient" und verbrauchte deshalb keinen Versuch
+            # ("Nachhol-Deploy 1/2" elfmal in Folge).
+            fremde_sperre = self._fremde_deploy_sperre(repo_name, project_config)
+            if fremde_sperre is not None:
+                if not fremde_sperre_gemeldet:
+                    self.logger.info(
+                        f"⏸️ CI-Reconcile {repo_name}@{successful_sha[:7]} wartet auf fremden "
+                        f"Deploy (Sperre {fremde_sperre} gehalten) — kein Nachhol-Deploy, "
+                        f"erneute Pruefung nach Ende der Sperre."
+                    )
+                    fremde_sperre_gemeldet = True
+                await asyncio.sleep(poll_sec)
+                continue
+
             branch_sha = await self._fetch_branch_head_sha(repo_full_name, branch)
             if not branch_sha:
                 await asyncio.sleep(poll_sec)
@@ -465,6 +616,9 @@ class CIMixin:
                 self.logger.info(
                     f"✅ CI-Reconcile: {repo_name} live bereits aktuell ({live_sha[:7]})."
                 )
+                # #674: Hat ein fremder Deploy ausgeliefert, steht der Status
+                # eines abgebrochenen Bot-Versuchs sonst für immer auf `pending`.
+                await self._deploy_status_nachziehen(repo_name, branch_sha, live_sha)
                 return
 
             if self._deployment_is_active(repo_name):

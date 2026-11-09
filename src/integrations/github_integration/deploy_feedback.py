@@ -56,6 +56,13 @@ STATUS_CONTEXT = "zerodox/deploy"
 # Datenverlust, nur ein zweiter Kommentar statt eines aktualisierten).
 _COMMENT_IDS: Dict[Tuple[str, str], int] = {}
 
+# shadowops-bot#674: PR-Nummer je (repo_slug, sha), gemerkt beim Start. Ein
+# Bot-Versuch, den ein fremder Deploy (MCP-Läufer) an der Sperre überholt, endet
+# ohne Abschlussmeldung; der CI-Reconcile zieht sie später nach und braucht
+# dafür den PR. Die Nachhol-Versuche des Reconcile selbst kennen ihn nicht.
+# Gleiche Lebensdauer wie `_COMMENT_IDS` (Prozess-Speicher).
+_PR_NUMMERN: Dict[Tuple[str, str], int] = {}
+
 _MARKER_PREFIX = "<!-- zerodox-deploy-status sha="
 
 
@@ -154,7 +161,8 @@ async def _set_commit_status(
     state: str,
     description: str,
     target_url: Optional[str] = None,
-) -> None:
+) -> bool:
+    """Setzt den Commit-Status. Rückgabe: ``True`` bei HTTP 200/201 (#674)."""
     payload = {
         "state": state,
         "context": STATUS_CONTEXT,
@@ -174,9 +182,10 @@ async def _set_commit_status(
                     f"⚠️ Commit-Status ({state}) fuer {repo_slug}@{sha[:7]} "
                     f"fehlgeschlagen ({resp.status}): {body[:300]}"
                 )
-        return None
+                return False
+        return True
 
-    await _http_call(_call)
+    return bool(await _http_call(_call))
 
 
 async def _upsert_pr_comment(
@@ -360,6 +369,8 @@ async def report(
     sha7 = sha[:7]
     pr_number = deploy_context.get('pr_number')
     health_check_url = (project or {}).get('health_check_url') or None
+    if pr_number and str(pr_number).isdigit():
+        _PR_NUMMERN[(repo_slug, sha)] = int(pr_number)
 
     if phase == 'started':
         status_state, status_desc, comment_body = (
@@ -409,6 +420,151 @@ async def report(
                 await _upsert_pr_comment(session, repo_slug, int(pr_number), sha, comment_body)
 
     await _http_call(_run)
+
+
+def _text_fremd_ausgeliefert(sha7: str, health_check_url: Optional[str]) -> str:
+    now = _jetzt_berlin().strftime("%H:%M")
+    zeile = (
+        f"✅ **Live** — Stand `{sha7}` ist ausgeliefert, und zwar über einen "
+        "fremden Deploy-Lauf (z. B. MCP-Läufer oder manuell), nicht über den Bot. "
+        f"Der Bot hat um {now} Uhr gemessen: `buildSha` = `{sha7}`."
+    )
+    if health_check_url:
+        zeile += f"\nNachprüfen: {health_check_url} → `buildSha`."
+    return zeile
+
+
+async def _lies_deploy_status(
+    session: aiohttp.ClientSession, repo_slug: str, sha: str
+) -> Optional[str]:
+    """Aktueller Zustand von `zerodox/deploy` für `sha` (shadowops-bot#674).
+
+    Rückgabe: der Zustand (``pending``, ``success`` …), ``""`` wenn es für
+    diesen Context keinen Status gibt, ``None`` wenn GitHub nicht lesbar war.
+    Der kombinierte Status liefert je Context nur den neuesten Eintrag.
+    """
+    url = f"https://api.github.com/repos/{repo_slug}/commits/{sha}/status?per_page=100"
+
+    async def _call():
+        async with session.get(
+            url, timeout=aiohttp.ClientTimeout(total=TIMEOUT_SECONDS)
+        ) as resp:
+            if resp.status != 200:
+                body = await resp.text()
+                logger.warning(
+                    f"⚠️ Commit-Status fuer {repo_slug}@{sha[:7]} nicht lesbar "
+                    f"({resp.status}): {body[:300]}"
+                )
+                return None
+            data = await resp.json()
+            for eintrag in data.get("statuses") or []:
+                if eintrag.get("context") == STATUS_CONTEXT:
+                    return str(eintrag.get("state") or "")
+            return ""
+
+    return await _http_call(_call)
+
+
+async def melde_fremd_ausgeliefert(
+    bot,
+    project: Optional[Dict],
+    *,
+    sha: str,
+    live_sha: Optional[str],
+) -> bool:
+    """Zieht `zerodox/deploy` auf `success`, wenn ein fremder Deploy ausgeliefert hat.
+
+    shadowops-bot#674: Ein Bot-Versuch, der an der Sperre eines fremden Laufs
+    (MCP-Läufer) mit Exit 75 scheitert, hat seinen Status schon auf `pending`
+    gesetzt und meldet danach nichts mehr. Ausgeliefert wird der Stand trotzdem,
+    nur eben vom fremden Lauf. Ohne Nachzug bleibt der Status für immer
+    `pending`, und wer nach Runbook auf ihn schaut, hält den Stand für hängend.
+
+    Setzt `success` NUR, wenn alle drei Bedingungen gelten:
+
+    1. ``live_sha == sha``, also gemessen und nicht angenommen. Der Aufrufer
+       misst den Health-Endpoint; hier wird es ein zweites Mal verglichen,
+       damit kein künftiger Aufrufer es überspringen kann.
+    2. Der aktuelle Status von `zerodox/deploy` für `sha` ist lesbar
+       (fail-closed: nicht lesbar → kein `success`).
+    3. Er steht auf `pending`. Kein Status, `success` oder `failure` → nichts
+       tun. So legt diese Funktion nie für fremde Stände einen Status an und
+       setzt höchstens EIN `success` je Stand (danach steht er nicht mehr auf
+       `pending`).
+
+    Den PR-Kommentar zieht sie nach, wenn die PR-Nummer aus dem Start bekannt
+    ist (`_PR_NUMMERN`). Nach einem Bot-Neustart ist sie es nicht. Dann wird nur
+    der Status gesetzt.
+
+    Rückgabe: ``True``, wenn ein `success` gesetzt wurde.
+    """
+    if not ist_aktiviert(project):
+        return False
+
+    sha = str(sha or "").strip()
+    live = str(live_sha or "").strip()
+    if not sha or not live or live != sha:
+        logger.info(
+            f"ℹ️ Deploy-Status {sha[:7] or '?'}: live {live[:7] or 'unbekannt'} ≠ Stand — "
+            "kein success."
+        )
+        return False
+
+    repo_slug = _parse_repo_slug(str((project or {}).get("repo_url") or ""))
+    if not repo_slug:
+        logger.warning(
+            f"⚠️ GitHub-Deploy-Rueckmeldung: repo_url fehlt/ungueltig fuer "
+            f"'{(project or {}).get('name')}' — Nachzug uebersprungen."
+        )
+        return False
+
+    token = _get_token(bot)
+    if not token:
+        logger.warning(
+            "⚠️ GitHub-Deploy-Rueckmeldung: kein GitHub-Token konfiguriert — Nachzug uebersprungen."
+        )
+        return False
+
+    sha7 = sha[:7]
+    health_check_url = (project or {}).get("health_check_url") or None
+    headers = {
+        "Accept": "application/vnd.github+json",
+        "Authorization": f"token {token}",
+    }
+
+    async def _run() -> bool:
+        async with aiohttp.ClientSession(headers=headers) as session:
+            zustand = await _lies_deploy_status(session, repo_slug, sha)
+            if zustand is None:
+                logger.warning(
+                    f"⚠️ Deploy-Status {repo_slug}@{sha7} nicht lesbar — kein success (fail-closed)."
+                )
+                return False
+            if zustand != "pending":
+                return False
+            now = _jetzt_berlin().strftime("%H:%M")
+            gesetzt = await _set_commit_status(
+                session,
+                repo_slug,
+                sha,
+                "success",
+                f"Live über fremden Deploy-Lauf (z. B. MCP-Läufer) · buildSha {sha7} gemessen {now}",
+            )
+            if not gesetzt:
+                return False
+            pr_number = _PR_NUMMERN.get((repo_slug, sha))
+            if pr_number:
+                await _upsert_pr_comment(
+                    session, repo_slug, pr_number, sha,
+                    _text_fremd_ausgeliefert(sha7, health_check_url),
+                )
+            logger.info(
+                f"✅ Deploy-Status {repo_slug}@{sha7}: pending → success (fremder Deploy, "
+                f"live gemessen){'' if pr_number else ' — PR unbekannt, kein Kommentar'}."
+            )
+            return True
+
+    return bool(await _http_call(_run))
 
 
 def _get_token(bot) -> Optional[str]:
