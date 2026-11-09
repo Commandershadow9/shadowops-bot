@@ -452,7 +452,7 @@ async def _lies_deploy_status(
             if resp.status != 200:
                 body = await resp.text()
                 logger.warning(
-                    f"⚠️ Commit-Status fuer {repo_slug}@{sha[:7]} nicht lesbar "
+                    f"⚠️ Commit-Status für {repo_slug}@{sha[:7]} nicht lesbar "
                     f"({resp.status}): {body[:300]}"
                 )
                 return None
@@ -513,15 +513,15 @@ async def melde_fremd_ausgeliefert(
     repo_slug = _parse_repo_slug(str((project or {}).get("repo_url") or ""))
     if not repo_slug:
         logger.warning(
-            f"⚠️ GitHub-Deploy-Rueckmeldung: repo_url fehlt/ungueltig fuer "
-            f"'{(project or {}).get('name')}' — Nachzug uebersprungen."
+            f"⚠️ GitHub-Deploy-Rückmeldung: repo_url fehlt/ungültig für "
+            f"'{(project or {}).get('name')}' — Nachzug übersprungen."
         )
         return False
 
     token = _get_token(bot)
     if not token:
         logger.warning(
-            "⚠️ GitHub-Deploy-Rueckmeldung: kein GitHub-Token konfiguriert — Nachzug uebersprungen."
+            "⚠️ GitHub-Deploy-Rückmeldung: kein GitHub-Token konfiguriert — Nachzug übersprungen."
         )
         return False
 

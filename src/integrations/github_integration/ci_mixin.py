@@ -529,7 +529,7 @@ class CIMixin:
             )
         except Exception as e:
             self.logger.warning(
-                f"⚠️ CI-Reconcile: Deploy-Status fuer {repo_name}@{sha[:7]} nicht nachgezogen: {e}"
+                f"⚠️ CI-Reconcile: Deploy-Status für {repo_name}@{sha[:7]} nicht nachgezogen: {e}"
             )
 
     async def _reconcile_ci_success_deployment(
@@ -580,7 +580,7 @@ class CIMixin:
                     self.logger.info(
                         f"⏸️ CI-Reconcile {repo_name}@{successful_sha[:7]} wartet auf fremden "
                         f"Deploy (Sperre {fremde_sperre} gehalten) — kein Nachhol-Deploy, "
-                        f"erneute Pruefung nach Ende der Sperre."
+                        f"erneute Prüfung nach Ende der Sperre."
                     )
                     fremde_sperre_gemeldet = True
                 await asyncio.sleep(poll_sec)
