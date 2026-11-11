@@ -109,6 +109,32 @@ Shows results of the last Docker security scan (Trivy).
 /docker
 ```
 
+#### `/sperren`
+Shows the current active CrowdSec bans. Betreiber-only (owner role check).
+
+**Permissions:** Betreiber (owner role)
+**Parameters:** None
+**Returns:** Embed with up to 20 active IP bans, duration, scenario, and origin country. Hard scenarios (`.env`, `/wp-admin`, path traversal) are marked with `⛔`.
+
+**Example:**
+```
+/sperren
+```
+
+#### `/entsperren <ip>`
+Removes an IP from the active CrowdSec ban. Betreiber-only.
+
+**Permissions:** Betreiber (owner role)
+**Parameters:**
+- `ip` (required): IP address to unban, e.g. `82.115.116.41`
+
+**Returns:** Confirmation or error message
+
+**Example:**
+```
+/entsperren 82.115.116.41
+```
+
 ---
 
 ### Patch Notes Commands
@@ -210,6 +236,24 @@ Changes the auto-remediation approval mode.
 - **Paranoid**: Maximum safety, approve every fix manually
 - **Auto**: Balanced, only critical fixes need approval
 - **Dry-Run**: Test mode, no actual execution
+
+#### `/maintenance <scope> <on|off> [minutes] [reason]`
+Toggles maintenance mode for a project or scope via `maintenance_gate`. While maintenance mode is active, automated health-check healings for the affected scope are suppressed.
+
+**Permissions:** Administrator
+**Parameters:**
+- `scope` (required): Project name or `all`
+- `on|off` (required): Enable or disable maintenance mode
+- `minutes` (optional): Duration in minutes; omit for indefinite
+- `reason` (optional): Free-text reason logged to Discord
+
+**Returns:** Confirmation embed with active maintenance windows
+
+**Example:**
+```
+/maintenance zerodox on 30 Deploying migration
+/maintenance zerodox off
+```
 
 ---
 
