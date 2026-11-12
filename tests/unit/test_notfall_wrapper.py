@@ -81,3 +81,28 @@ STARTER = Path(__file__).resolve().parents[2] / "scripts" / "notfall" / "hel1" /
 def test_starter_laesst_keine_ssh_optionen_durch(args):
     r = subprocess.run(["bash", str(STARTER), *args], capture_output=True, text=True, timeout=10)
     assert r.returncode == 64, (args, r.stderr)
+
+
+def test_inodes_meldet_distroless_als_nicht_messbar(tmp_path):
+    """Ein Image ohne ls (wollomatic/socket-proxy) darf keinen Fehlertext wie
+    "OCI" als Inode ausgeben, sonst hält der Agent den Socket für tot."""
+    bin_ = tmp_path / "bin"
+    bin_.mkdir()
+    (bin_ / "docker").write_text(
+        '#!/bin/bash\n'
+        'case "$1" in\n'
+        '  ps) printf "proxy-mit-ls\\nproxy-distroless\\n" ;;\n'
+        '  inspect) echo x ;;\n'
+        '  exec) [ "$2" = proxy-mit-ls ] && echo "4711 /var/run/docker.sock" && exit 0\n'
+        '        echo "OCI runtime exec failed: exec: \\"ls\\": not found" >&2; exit 126 ;;\n'
+        'esac\n'
+    )
+    (bin_ / "sg").write_text('#!/bin/bash\nexec bash -c "$3"\n')
+    for f in bin_.iterdir():
+        f.chmod(0o755)
+    env = {**os.environ, "PATH": f"{bin_}:{os.environ['PATH']}",
+           "SSH_ORIGINAL_COMMAND": "inodes", "NOTFALL_WRAPPER_LOG": str(tmp_path / "w.log")}
+    r = subprocess.run(["bash", str(SCRIPT)], env=env, capture_output=True, text=True, timeout=30)
+    assert "proxy-mit-ls 4711" in r.stdout
+    assert "proxy-distroless nicht-messbar" in r.stdout
+    assert "OCI" not in r.stdout
