@@ -26,6 +26,7 @@ case "$url" in
   https://ntfy.sh/v1/health|https://api.hetzner.cloud/v1) [ "${FAKE_BLIND:-0}" = 1 ] && exit 7; exit 0 ;;
   *ntfy.sh/*) exit 0 ;;
   *api.github.com/*/dispatches) echo "DISPATCH $*" >> "$FAKE_LOG"; echo "${FAKE_GH_CODE:-204}"; exit 0 ;;
+  *api.github.com/*/notbetrieb.yml) echo "PATCHECK $*" >> "$FAKE_LOG"; echo "${FAKE_PAT_CODE:-200}"; exit 0 ;;
   */rrsets/*/A/actions/set_records) echo "SET $*" >> "$FAKE_LOG"; [ -n "$out" ] && echo '{}' > "$out"; echo 201; exit 0 ;;
   */rrsets/*/A) [ -n "$out" ] && printf '{"rrset":{"records":[{"value":"%s"}]}}' "${FAKE_DNS:-88.99.160.210}" > "$out"; echo 200; exit 0 ;;
 esac
@@ -333,3 +334,18 @@ def test_github_von_hand_an_stoesst_sofort_an_und_status_zeigt_github():
 def test_dns_token_hat_vorrang_vor_github():
     _, log, gesetzt, _ = _lauf(tot_seit(601), gh=GH, **TOT)
     assert _anstoesse(log) == [] and len(gesetzt) == 1
+
+
+def test_github_pat_wird_taeglich_geprueft_und_ungueltig_einmal_gemeldet():
+    _, log, _, d = _lauf({}, token="", gh=GH)
+    assert "PATCHECK" in log and d("pat_geprueft") and "Schlüssel ungültig" not in log
+    assert GH not in log
+    _, log, _, _ = _lauf({"pat_geprueft": vor(3600)}, token="", gh=GH)
+    assert "PATCHECK" not in log
+    _, log, _, d = _lauf({}, token="", gh=GH, pat_code="401")
+    assert "Schlüssel ungültig" in log and d("gemeldet_pat")
+
+
+def test_ohne_github_keine_pat_pruefung():
+    _, log, _, _ = _lauf({}, token="")
+    assert "PATCHECK" not in log

@@ -96,6 +96,22 @@ github_da() { ! token_da && [[ "${GITHUB_DISPATCH_TOKEN:-}" =~ ^github_pat_[A-Za
 GH_WORKFLOW="${NOTSCHALTER_WORKFLOW:-https://api.github.com/repos/Commandershadow9/zerodox-notschalter/actions/workflows/notbetrieb.yml/dispatches}"
 NS="${NOTBETRIEB_NS:-hydrogen.ns.hetzner.com}"
 ANSTOSS_PAUSE_S="${NOTBETRIEB_ANSTOSS_PAUSE_S:-300}"
+pat_pruefen() { # einmal je 24 h: gilt der GitHub-Schlüssel noch? (läuft nach max. 1 Jahr ab)
+  github_da || return 0
+  local letzt; letzt="$(zahl pat_geprueft)"
+  [ -n "$letzt" ] && [ $(( $(jetzt) - letzt )) -lt 86400 ] && return 0
+  local code
+  code=$(printf 'header = "Authorization: Bearer %s"\n' "$GITHUB_DISPATCH_TOKEN" \
+    | curl -s -m 20 -K - -H "Accept: application/vnd.github+json" -o /dev/null -w '%{http_code}' \
+      "${GH_WORKFLOW%/dispatches}")
+  case "$code" in
+    200) setze pat_geprueft "$(jetzt)"; weg gemeldet_pat ;;
+    401|403|404) setze pat_geprueft "$(jetzt)"
+      einmal_melden gemeldet_pat 4 "Notbetrieb: GitHub-Schlüssel ungültig" \
+        "Der Schlüssel, mit dem HEL1 die Umschaltung anstößt, wird abgelehnt (HTTP $code, vermutlich abgelaufen). Bis zur Erneuerung fällt die Kette auf „von Hand umschalten“ zurück." ;;
+    *) log "PAT-Prüfung: HTTP ${code:-keine Antwort} (nächster Versuch beim nächsten Lauf)" ;;
+  esac
+}
 dns_ns() { dig +short +time=5 +tries=2 A "${1:-zerodox.de}" "@$NS" 2>/dev/null | head -1; }
 anstossen() { # anstossen <aktion> [ohne-pause] → GitHub-Workflow „Notbetrieb“ starten
   local a="$1" letzt; letzt="$(zahl "angestossen_$a")"
@@ -267,6 +283,7 @@ lauf() {
     else
       weg tot_seit; weg gemeldet_nicht_bereit; weg gemeldet_dns_fremd; weg gemeldet_hand_an
       abgleich
+      pat_pruefen
       vorposten_merken
       if [ "$(spiegel_alter)" -ge "$SPIEGEL_ALT_S" ]; then
         einmal_melden gemeldet_spiegel_alt 3 "Notbetrieb: Spiegel veraltet" \
