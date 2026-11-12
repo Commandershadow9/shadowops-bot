@@ -345,6 +345,10 @@ Es gibt KEIN "Ueberspringen". Alles wird entweder direkt gefixt oder als PR ange
 | UFW-Regeln | Blockiert moeglicherweise Docker-Traffic |
 | systemd Unit-Files | Falscher Bind/Port bricht Service |
 | Traefik-Labels | Externe Erreichbarkeit bricht |
+| Docker-Engine-Pakete (`docker-ce`, `containerd.io`) | Upgrade startet dockerd neu → neuer `docker.sock`, Socket-Proxies behalten die tote Inode, Traefik verliert alle Router. Vorfall 2026-11-12: zerodox.de + mcp.zerodox.de ~1 h 404. Statt `apt upgrade -y` nur gezielt `apt-get install --only-upgrade <pakete>` OHNE diese beiden; Docker-Update als Issue melden (Betreiber macht es tagsüber). |
+| Neustart von Traefik / Socket-Proxies | Traefik hält Router nur im Speicher; Neustart bei kaputtem Proxy = Totalausfall aller Domains |
+
+Nach JEDER System-Aenderung zusaetzlich von aussen pruefen: `curl -s -o /dev/null -w '%{{http_code}}' https://zerodox.de/api/health` muss 200 liefern. Sonst sofort Rollback und Meldung.
 
 ## Ausgabe
 
