@@ -5,6 +5,7 @@ Loads and manages project knowledge base for context-aware AI analysis.
 Provides relevant context to AI models for better security decision-making.
 """
 
+import threading
 import os
 from pathlib import Path
 from typing import Dict, List, Optional, Any
@@ -120,7 +121,15 @@ class ContextManager:
 
             # === INITIALIZE CODE ANALYSIS ===
             if self.enable_code_analysis:
-                self._initialize_code_analyzers()
+                # Vorfall 12.11.2026: Die Analyse dauert bei ZERODOX mehrere Minuten
+                # und hielt den ganzen Bot-Start auf (kein Health-Server, kein
+                # Deploy-Webhook). Sie laeuft jetzt im Hintergrund; alle Leser von
+                # code_analyzers kommen mit einem leeren Dict zurecht.
+                threading.Thread(
+                    target=self._initialize_code_analyzers,
+                    name="code-analyse",
+                    daemon=True,
+                ).start()
 
             # === INITIALIZE LOG LEARNING ===
             if self.enable_log_learning:
@@ -167,6 +176,9 @@ class ContextManager:
         # Get project paths from config (same as Git analyzers)
         project_paths = self._get_project_paths()
 
+        # Eigenes Dict, am Ende in EINEM Schritt getauscht: Leser in anderen
+        # Threads sehen nie ein halb gefuelltes Dict (dict changed size).
+        fertig: Dict[str, CodeAnalyzer] = {}
         for project_name, project_path in project_paths.items():
             try:
                 analyzer = CodeAnalyzer(str(project_path))
@@ -175,7 +187,7 @@ class ContextManager:
                 results = analyzer.analyze_all()
                 stats = analyzer.get_statistics()
 
-                self.code_analyzers[project_name] = analyzer
+                fertig[project_name] = analyzer
                 logger.info(
                     f"✅ Code analysis active for {project_name} "
                     f"({stats['files']} files, {stats['lines']} LOC)"
@@ -184,6 +196,7 @@ class ContextManager:
             except Exception as e:
                 logger.warning(f"⚠️ Could not initialize Code Analysis for {project_name}: {e}")
 
+        self.code_analyzers = fertig
         if self.code_analyzers:
             logger.info(f"🧠 Code analysis ready for {len(self.code_analyzers)} project(s)")
         else:
