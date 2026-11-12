@@ -6,8 +6,13 @@
 #   bash ~/shadowops-bot/scripts/notfall/notbetrieb/inbetriebnahme.sh
 #
 # Schritte: Spiegel-Schlüssel → HEL1 einrichten → erster Spiegel → Webserver starten →
-# DNS-Token nach HEL1 (nur für Benutzer notbetrieb lesbar) → TTL von zerodox.de auf 60 s →
-# Probelauf über notbetrieb-test.zerodox.de → Spiegel-Timer einschalten → Endkontrolle.
+# sicherstellen, dass KEIN DNS-Token auf HEL1 liegt → TTL von zerodox.de auf 60 s →
+# Probelauf über notbetrieb-test.zerodox.de (vom Hauptserver aus) → Spiegel-Timer → Endkontrolle.
+#
+# ⚠️ Der DNS-Token gehört NICHT nach HEL1: HEL1 ist CI-Host, die Runner sind in der docker-Gruppe
+# und damit root-äquivalent; der Token könnte die ganze Zone samt MX übernehmen. Ohne Token
+# meldet der Umschalter „von Hand umschalten“ (README, Sicherheitsgrenzen).
+# Der Token geht an curl nur über stdin (-K -), nie als Prozessargument.
 # Am Kunden-DNS (zerodox.de A) ändert das Skript NUR die TTL, nicht das Ziel.
 set -euo pipefail
 HIER="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
@@ -35,20 +40,30 @@ sg docker -c "$HIER/notbetrieb-spiegel.sh"
 schritt "4/8 Webserver auf HEL1 starten (braucht die Spiegeldaten)"
 ssh "$HEL1" 'bash /root/notbetrieb-einrichtung/einrichten-hel1.sh /root/notbetrieb-einrichtung/id_ed25519_notbetrieb_spiegel.pub'
 
-schritt "5/8 DNS-Token nach HEL1"
-{ tr -d '\r\n' <"$TOKEN_DATEI"; echo; } | ssh "$HEL1" 'set -e; f=/etc/notbetrieb/notbetrieb.env; read -r t
-  { grep -v "^HCLOUD_TOKEN=" "$f" || true; printf "HCLOUD_TOKEN=%s\n" "$t"; } >"$f.neu"
-  chown notbetrieb:notbetrieb "$f.neu"; chmod 600 "$f.neu"; mv "$f.neu" "$f"
-  systemctl restart notbetrieb-umschalter; echo "Token hinterlegt, nur für notbetrieb lesbar: $(stat -c "%a %U" "$f")"'
+schritt "5/8 DNS-Token: bewusst NICHT auf HEL1 (ein vorhandener wird entfernt)"
+ssh "$HEL1" 'set -e; f=/etc/notbetrieb/notbetrieb.env
+  if grep -q "^HCLOUD_TOKEN=" "$f"; then
+    { grep -v "^HCLOUD_TOKEN=" "$f" || true; } >"$f.neu"
+    chown notbetrieb:notbetrieb "$f.neu"; chmod 600 "$f.neu"; mv "$f.neu" "$f"
+    systemctl restart notbetrieb-umschalter; echo "Token von HEL1 entfernt"
+  else
+    echo "kein Token auf HEL1: ok"
+  fi'
 
 schritt "6/8 TTL zerodox.de A → 60 s (Ziel bleibt unverändert)"
-code=$(curl -s -o /dev/null -w '%{http_code}' -X POST -H "Authorization: Bearer $(cat "$TOKEN_DATEI")" \
-  -H 'Content-Type: application/json' -d '{"ttl":60}' \
-  "https://api.hetzner.cloud/v1/zones/$ZONE_ID/rrsets/@/A/actions/change_ttl")
+# printf ist ein Builtin: Der Token erscheint in keiner Prozessliste.
+code=$(printf 'header = "Authorization: Bearer %s"\n' "$(tr -d '\r\n' <"$TOKEN_DATEI")" \
+  | curl -s -K - -o /dev/null -w '%{http_code}' -X POST \
+    -H 'Content-Type: application/json' -d '{"ttl":60}' \
+    "https://api.hetzner.cloud/v1/zones/$ZONE_ID/rrsets/@/A/actions/change_ttl")
 echo "change_ttl: HTTP $code"
 
-schritt "7/8 Probelauf ohne Kunden (notbetrieb-test.zerodox.de)"
-ssh "$HEL1" 'sudo -u notbetrieb /opt/notbetrieb/notbetrieb-umschalter.sh test-dns'
+schritt "7/8 Probelauf ohne Kunden (notbetrieb-test.zerodox.de, vom Hauptserver aus)"
+# Token nur als Umgebung dieses einen Aufrufs (nicht in ps sichtbar), Zustand in einem Wegwerf-Verzeichnis.
+probe_state="$(mktemp -d)"
+HCLOUD_TOKEN="$(tr -d '\r\n' <"$TOKEN_DATEI")" NOTBETRIEB_STATE="$probe_state" \
+  bash "$HIER/notbetrieb-umschalter.sh" test-dns
+rm -rf "$probe_state"
 
 schritt "8/8 Spiegel-Timer auf dem Hauptserver"
 systemctl --user link "$HOME/shadowops-bot/deploy/notbetrieb-spiegel.service" "$HOME/shadowops-bot/deploy/notbetrieb-spiegel.timer" >/dev/null 2>&1 || true
@@ -62,4 +77,4 @@ for p in / /impressum /datenschutz "/creator/$(ssh "$HEL1" 'ls /srv/notbetrieb/d
 done
 ssh "$HEL1" 'sudo -u notbetrieb /opt/notbetrieb/notbetrieb-umschalter.sh status'
 echo "DNS zerodox.de (autoritativ): $(dig +noall +answer A zerodox.de @hydrogen.ns.hetzner.com)"
-echo; echo "Fertig. Erwartet: / 503, /impressum 200, /datenschutz 200, Kunden-Impressum 200, modus leer/normal, DNS weiter 88.99.160.210."
+echo; echo "Fertig. Erwartet: / 503, /impressum 200, /datenschutz 200, Kunden-Impressum 200, modus leer/normal, token=nein, DNS weiter 88.99.160.210."

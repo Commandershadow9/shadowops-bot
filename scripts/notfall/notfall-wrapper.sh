@@ -18,6 +18,10 @@
 # Migrationen, git, Secrets lesen, beliebige Shell.
 #
 # Jeder Aufruf wird protokolliert (Datei + journald), auch abgelehnte.
+#
+# Aktionsbudget (hier erzwungen, nicht im Prompt): höchstens 4 HANDELN-Befehle je 30 min.
+# Ausgaben von `logs`, `journal` und `traefik-fehler` werden geschwärzt (E-Mail, IPv4),
+# bevor sie den Hauptserver verlassen — der Bericht des Agenten landet in Discord.
 set -uo pipefail
 export LC_ALL=C.UTF-8
 
@@ -25,6 +29,9 @@ LOG="${NOTFALL_WRAPPER_LOG:-$HOME/.local/state/notfall-wrapper.log}"
 mkdir -p "$(dirname "$LOG")"
 CMD="${SSH_ORIGINAL_COMMAND:-${1:-}}"
 HIER="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+BUDGET="${NOTFALL_BUDGET_DATEI:-$HOME/.local/state/notfall-wrapper-budget}"
+BUDGET_MAX="${NOTFALL_BUDGET_MAX:-4}"
+BUDGET_FENSTER_S="${NOTFALL_BUDGET_FENSTER_S:-1800}"
 
 protokoll() {
   # %q: ein Befehl kann keine gefälschten Protokollzeilen erzeugen.
@@ -38,12 +45,43 @@ ablehnen() { protokoll "ABGELEHNT"; echo "ABGELEHNT: $1" >&2; echo "Erlaubt: hil
 case "$CMD" in
   *[\;\&\|\$\`\<\>\(\)\{\}\\\'\"*?~]*|*..*) ablehnen "Sonderzeichen" ;;
 esac
+set -f
 # shellcheck disable=SC2206
-set -f; ARGS=($CMD); set +f
+ARGS=($CMD)
+set +f
 VERB="${ARGS[0]:-hilfe}"
 ARG1="${ARGS[1]:-}"
 ARG2="${ARGS[2]:-}"
 [ "${#ARGS[@]}" -le 3 ] || ablehnen "zu viele Argumente"
+
+# Budget je Aktion buchen. flock: zwei parallele ssh-Aufrufe dürfen nicht beide den
+# letzten Platz bekommen. Gezählt werden nur zugelassene Aktionen (nach den Prüfungen).
+budget_buchen() {
+  mkdir -p "$(dirname "$BUDGET")"
+  exec 9>>"$BUDGET.lock"
+  flock -w 10 9 || ablehnen "Aktionsbudget nicht prüfbar (Sperre)"
+  local t n=0 z rest=""
+  t="$(date +%s)"
+  if [ -f "$BUDGET" ]; then
+    while read -r z; do
+      [[ "$z" =~ ^[0-9]+$ ]] || continue
+      [ $(( t - z )) -lt "$BUDGET_FENSTER_S" ] || continue
+      rest+="$z"$'\n'; n=$(( n + 1 ))
+    done <"$BUDGET"
+  fi
+  if [ "$n" -ge "$BUDGET_MAX" ]; then
+    ablehnen "Aktionsbudget erschöpft (höchstens $BUDGET_MAX Aktionen je $(( BUDGET_FENSTER_S / 60 )) min)"
+  fi
+  printf '%s%s\n' "$rest" "$t" >"$BUDGET.neu" && mv "$BUDGET.neu" "$BUDGET"
+  exec 9>&-
+}
+aktion() { budget_buchen; protokoll "AKTION"; }
+
+# E-Mail-Adressen und IPv4-Adressen schwärzen (Kundendaten, Angreifer-IPs aus Traefik).
+schwaerzen() {
+  sed -E -e 's/[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,}/[E-Mail]/g' \
+         -e 's/(^|[^0-9.])([0-9]{1,3}\.){3}[0-9]{1,3}([^0-9.]|$)/\1[IP]\3/g'
+}
 
 name_ok() { [[ "$1" =~ ^[a-z0-9][a-z0-9_.-]{0,62}$ ]]; }
 docker_() { sg docker -c "docker $(printf '%q ' "$@")"; }
@@ -64,7 +102,9 @@ container_erlaubt() {
   [ "${echt#/}" = "$1" ]
 }
 # systemd-User-Dienste, die neu gestartet werden dürfen.
-DIENSTE="shadowops-bot zerodox-support-agent seo-agent guildscout-feedback-agent"
+# ⚠️ Bewusst NICHT shadowops-bot: Ein Neustart mitten im Deploy löst den Rollback mit
+# `rsync --delete` aus (räumt Worktrees leer, ZERODOX#3515). Sein Journal bleibt lesbar.
+DIENSTE="zerodox-support-agent seo-agent guildscout-feedback-agent"
 # compose-Projekte für `up -d` (Verzeichnis je Kurzname). Ohne Build, ohne Pull:
 # es startet nur, was laut vorhandener Datei laufen soll.
 # ⚠️ Bewusst NICHT zerodox: `up -d` würde bei Konfigurationsdrift auch die
@@ -85,6 +125,8 @@ LESEN:   status · logs <container> [zeilen≤400] · zustand <container> · ino
          · traefik-fehler · aussen · heilstatus · journal <dienst> · dns
 HANDELN: start <container> · restart <container> · dienst-neustart <dienst>
          · compose-up <traefik|mcp> · heiler · platz-schaffen
+         (höchstens 4 HANDELN-Befehle je 30 min, danach ABGELEHNT)
+Dienste: zerodox-support-agent seo-agent guildscout-feedback-agent
 Nicht erlaubt: löschen, down, pull, build, apt, ufw, Dateien ändern, Migrationen, Secrets.
 EOF
     ;;
@@ -93,7 +135,7 @@ EOF
   logs)
     container_erlaubt "$ARG1" || ablehnen "Container nicht auf der Positivliste"
     n="${ARG2:-150}"; [[ "$n" =~ ^[0-9]{1,3}$ ]] && [ "$n" -le 400 ] || ablehnen "zeilen 1–400"
-    protokoll "OK"; docker_ logs --tail "$n" "$ARG1" 2>&1 | cut -c1-400 ;;
+    protokoll "OK"; docker_ logs --tail "$n" "$ARG1" 2>&1 | schwaerzen | cut -c1-400 ;;
   zustand)
     name_ok "$ARG1" || ablehnen "Name"
     protokoll "OK"
@@ -112,7 +154,7 @@ EOF
   ressourcen)
     protokoll "OK"; uptime; free -h; df -h / /var/lib/docker 2>/dev/null; systemctl --failed --no-legend --no-pager | head -20 ;;
   traefik-fehler)
-    protokoll "OK"; docker_ logs --since 15m sicherheitsdienst-traefik 2>&1 | grep -iE 'error|level=err|providerName' | tail -40 | cut -c1-400 ;;
+    protokoll "OK"; docker_ logs --since 15m sicherheitsdienst-traefik 2>&1 | grep -iE 'error|level=err|providerName' | tail -40 | schwaerzen | cut -c1-400 ;;
   aussen)
     protokoll "OK"
     for u in https://zerodox.de/api/health https://mcp.zerodox.de/.well-known/oauth-authorization-server https://guildscout.eu https://maydaysim.de; do
@@ -124,28 +166,28 @@ EOF
       [ -f "$f" ] && grep -q '"last_status":"down"' "$f" && echo "$(basename "$f"): $(cat "$f")"
     done; echo "(nur Watchdogs im Zustand down)" ;;
   journal)
-    [[ " $DIENSTE docker-socket-heiler zerodox-watchdog mcp-watchdog " == *" $ARG1 "* ]] || ablehnen "Dienst nicht freigegeben"
-    protokoll "OK"; journalctl --user -u "$ARG1" -n 80 --no-pager 2>&1 | cut -c1-400 ;;
+    [[ " $DIENSTE shadowops-bot docker-socket-heiler zerodox-watchdog mcp-watchdog " == *" $ARG1 "* ]] || ablehnen "Dienst nicht freigegeben"
+    protokoll "OK"; journalctl --user -u "$ARG1" -n 80 --no-pager 2>&1 | schwaerzen | cut -c1-400 ;;
   dns)
     protokoll "OK"; for h in zerodox.de github.com; do echo "$h $(getent hosts "$h" | awk '{print $1}' | head -1)"; done ;;
   start|restart)
     container_erlaubt "$ARG1" || ablehnen "Container nicht auf der Positivliste"
-    protokoll "AKTION"; docker_ "$VERB" "$ARG1" ;;
+    aktion; docker_ "$VERB" "$ARG1" ;;
   dienst-neustart)
     [[ " $DIENSTE " == *" $ARG1 "* ]] || ablehnen "Dienst nicht freigegeben"
-    protokoll "AKTION"; systemctl --user restart "$ARG1" && systemctl --user is-active "$ARG1" ;;
+    aktion; systemctl --user restart "$ARG1" && systemctl --user is-active "$ARG1" ;;
   compose-up)
     dir="$(compose_dir "$ARG1")" || ablehnen "Projekt unbekannt"
-    protokoll "AKTION"
+    aktion
     sg docker -c "cd $(printf '%q' "$dir") && docker compose up -d --no-build --pull never 2>&1" | tail -30 ;;
   heiler)
-    protokoll "AKTION"; sg docker -c "$HIER/notfall-heiler.sh" ;;
+    aktion; sg docker -c "$HIER/notfall-heiler.sh" ;;
   platz-schaffen)
     # Platte voll ist eine echte Nacht-Ausfallklasse (Runner-VM 16.08.2026). Nur was
     # sich jederzeit neu erzeugt: Build-Cache älter 24 h und Images OHNE Namen.
     # Niemals Volumes (Produktionsdaten), niemals benannte Images, kein `system prune`.
     [ -z "$ARG1" ] || ablehnen "platz-schaffen nimmt keine Argumente"
-    protokoll "AKTION"
+    aktion
     df -h / | tail -1
     docker_ builder prune -f --filter until=24h 2>&1 | tail -1
     docker_ image prune -f 2>&1 | tail -1
