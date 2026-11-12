@@ -84,7 +84,7 @@ case "$VERB" in
 LESEN:   status · logs <container> [zeilen≤400] · zustand <container> · inodes · ressourcen
          · traefik-fehler · aussen · heilstatus · journal <dienst> · dns
 HANDELN: start <container> · restart <container> · dienst-neustart <dienst>
-         · compose-up <traefik|mcp> · heiler
+         · compose-up <traefik|mcp> · heiler · platz-schaffen
 Nicht erlaubt: löschen, down, pull, build, apt, ufw, Dateien ändern, Migrationen, Secrets.
 EOF
     ;;
@@ -136,6 +136,16 @@ EOF
     sg docker -c "cd $(printf '%q' "$dir") && docker compose up -d --no-build --pull never 2>&1" | tail -30 ;;
   heiler)
     protokoll "AKTION"; sg docker -c "$HIER/notfall-heiler.sh" ;;
+  platz-schaffen)
+    # Platte voll ist eine echte Nacht-Ausfallklasse (Runner-VM 16.08.2026). Nur was
+    # sich jederzeit neu erzeugt: Build-Cache älter 24 h und Images OHNE Namen.
+    # Niemals Volumes (Produktionsdaten), niemals benannte Images, kein `system prune`.
+    [ -z "$ARG1" ] || ablehnen "platz-schaffen nimmt keine Argumente"
+    protokoll "AKTION"
+    df -h / | tail -1
+    docker_ builder prune -f --filter until=24h 2>&1 | tail -1
+    docker_ image prune -f 2>&1 | tail -1
+    df -h / | tail -1 ;;
   *)
     ablehnen "unbekannter Befehl '$VERB'" ;;
 esac
