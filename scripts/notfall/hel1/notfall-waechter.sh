@@ -82,16 +82,22 @@ agent_starten() {
   setze agent_gestartet "$(jetzt)"
   melde 4 "Notfall-Agent startet" "Hauptserver: $1 seit $(( ($(jetzt) - $(lies vorfall_seit)) / 60 )) min. Stufe 1 hat nicht gereicht. Bericht folgt (≤ 15 min)."
   (
-    bericht="$("$BASIS/notfall-agent.sh" 2>&1 | tail -c 3500)"
+    # env -i: Der Agent erbt NICHT ROBOT_PASS/NTFY_TOPIC/DISCORD_WEBHOOK des Wächters.
+    bericht="$(env -i HOME="$HOME" PATH=/usr/local/bin:/usr/bin:/bin LANG=C.UTF-8 \
+      "$BASIS/notfall-agent.sh" 2>&1 | tail -c 3500)"
     printf '%s\n' "$bericht" >"$STATE/agent-bericht-$(date +%Y%m%d-%H%M).txt"
     setze agent_fertig "$(jetzt)"
     zeile="$(printf '%s\n' "$bericht" | grep -m1 '^ERGEBNIS' || echo 'ERGEBNIS: kein Bericht')"
-    melde 4 "Notfall-Agent fertig — ${zeile#ERGEBNIS: }" "$bericht"
+    # ntfy.sh ist ein Fremddienst: dorthin nur die Ergebniszeile. Der volle Bericht
+    # (kann Log-Auszüge enthalten) geht in den eigenen Discord-Alarmkanal und bleibt auf HEL1.
+    ntfy 4 "Notfall-Agent fertig — ${zeile#ERGEBNIS: }" "Bericht in Discord und auf HEL1 unter $STATE."
+    discord "**Notfall-Agent fertig**
+$bericht"
   ) &
 }
 
 stufe1_hat_geheilt() {
-  timeout 20 ssh -o BatchMode=yes -o ConnectTimeout=8 notfall-haupt heilstatus 2>/dev/null \
+  timeout 20 "$BASIS/notfall-ssh" heilstatus 2>/dev/null \
     | grep -E 'watchdog_state_(zerodox|zerodox-mcp)\.json' | grep -q '"last_heal_at":"20'
 }
 

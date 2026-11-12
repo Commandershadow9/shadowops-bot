@@ -6,7 +6,7 @@
 # Gestartet von notfall-waechter.sh, höchstens 1× je Vorfall. Zeitlimit 15 min.
 #
 # Drei unabhängige Schranken:
-#   1. --tools Bash + --allowedTools "Bash(ssh notfall-haupt:*)" + --permission-mode dontAsk
+#   1. --tools Bash + --allowedTools "Bash(/opt/notfall/notfall-ssh:*)" + --permission-mode dontAsk
 #      → der Agent hat kein Read/Write/Edit/WebFetch/MCP; jeder andere Bash-Befehl wird verweigert
 #   2. Er läuft als unprivilegierter Benutzer `notfall` auf HEL1 (kein sudo, kein docker)
 #   3. Auf dem Hauptserver erzwingt authorized_keys `command=notfall-wrapper.sh` — die
@@ -30,11 +30,13 @@ if [ -z "${CLAUDE_CODE_OAUTH_TOKEN:-}" ]; then
   exit 3
 fi
 export CLAUDE_CODE_OAUTH_TOKEN
+# Binary liegt root-eigen in /opt — Updates bewusst per einrichten.sh, nie mitten im Notfall.
+export DISABLE_AUTOUPDATER=1 DISABLE_TELEMETRY=1
 
 CLAUDE="${NOTFALL_CLAUDE:-$BASIS/bin/claude}"
 timeout --kill-after=30 "${NOTFALL_AGENT_TIMEOUT_S:-900}" "$CLAUDE" -p "$(cat "$BASIS/notfall-prompt.md")" \
   --tools Bash \
-  --allowedTools "Bash(ssh notfall-haupt:*)" \
+  --allowedTools "Bash(/opt/notfall/notfall-ssh:*)" \
   --permission-mode dontAsk \
   --strict-mcp-config \
   --setting-sources "" \

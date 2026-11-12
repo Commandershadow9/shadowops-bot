@@ -65,3 +65,18 @@ def test_hilfe_listet_die_positivliste():
 def test_leerer_befehl_zeigt_hilfe():
     r, _ = _ruf("")
     assert r.returncode == 0 and "LESEN" in r.stdout
+
+
+STARTER = Path(__file__).resolve().parents[2] / "scripts" / "notfall" / "hel1" / "notfall-ssh"
+
+
+@pytest.mark.parametrize("args", [
+    ["-oProxyCommand=sh -c id", "status"],
+    ["status", "-oProxyCommand=id"],          # GNU-getopt parst Optionen auch nach dem Host
+    ["status", "-F/tmp/x"],
+    ["status;id"],
+    ["a", "b", "c", "d"],
+])
+def test_starter_laesst_keine_ssh_optionen_durch(args):
+    r = subprocess.run(["bash", str(STARTER), *args], capture_output=True, text=True, timeout=10)
+    assert r.returncode == 64, (args, r.stderr)

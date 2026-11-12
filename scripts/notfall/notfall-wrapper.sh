@@ -48,22 +48,20 @@ ARG2="${ARGS[2]:-}"
 name_ok() { [[ "$1" =~ ^[a-z0-9][a-z0-9_.-]{0,62}$ ]]; }
 docker_() { sg docker -c "docker $(printf '%q ' "$@")"; }
 
-# Container, die der Agent anfassen darf: alles, was gerade existiert, AUSSER
-# Datenbanken/Caches (ein Neustart dort ist nie die Heilung für „Seite 404“
-# und kann laufende Transaktionen kosten).
+# Container, die der Agent start/restart/logs darf — POSITIVLISTE (#5627).
+# Nur der Web-Pfad: Traefik, Socket-Proxies, Web-Apps, MCP. Datenbanken, Caches,
+# Backups und alles Unbekannte bleiben draussen, auch wenn ein Name neu dazukommt.
+ERLAUBT="sicherheitsdienst-traefik traefik-dockerproxy zerodox-mcp-dockerproxy-1 server-mcp-dockerproxy-1
+zerodox-web zerodox-maintenance zerodox-pdf zerodox-mcp-mcp-1 server-mcp-mcp-1
+guildscout-web guildscout-api-v3 app-leitstelle-web-1 app-leitstelle-web-2 zenkai-api zenkai-mcp avunex-web"
 container_erlaubt() {
   name_ok "$1" || return 1
-  # ⚠️ docker inspect akzeptiert auch ID-Präfixe: `restart 3f2a` träfe sonst einen
-  # Postgres-Container an der Namens-Sperre vorbei. Deshalb den echten Namen
-  # auflösen, exakte Gleichheit verlangen und zusätzlich das IMAGE prüfen.
-  local info echt bild
-  info="$(docker_ inspect --type container -f '{{.Name}}|{{.Config.Image}}' "$1" 2>/dev/null)" || return 1
-  echt="${info%%|*}"; echt="${echt#/}"; bild="${info#*|}"
-  [ "$echt" = "$1" ] || return 1
-  case "$echt|$bild" in
-    *postgres*|*-db|*-db\|*|*-db-*|*redis*|*pgbouncer*|*walg*|*backup*|*mysql*|*mariadb*|*mongo*) return 1 ;;
-  esac
-  return 0
+  [[ " $(echo $ERLAUBT) " == *" $1 "* ]] || return 1
+  # ⚠️ docker inspect akzeptiert ID-Präfixe — deshalb den echten Namen auflösen
+  # und exakte Gleichheit verlangen (Befund Sicherheitsprüfung 12.11.).
+  local echt
+  echt="$(docker_ inspect --type container -f '{{.Name}}' "$1" 2>/dev/null)" || return 1
+  [ "${echt#/}" = "$1" ]
 }
 # systemd-User-Dienste, die neu gestartet werden dürfen.
 DIENSTE="shadowops-bot zerodox-support-agent seo-agent guildscout-feedback-agent"
@@ -93,7 +91,7 @@ EOF
   status)
     protokoll "OK"; docker_ ps -a --format '{{.Names}}\t{{.Status}}\t{{.Image}}' ;;
   logs)
-    container_erlaubt "$ARG1" || ablehnen "Container unbekannt oder gesperrt"
+    container_erlaubt "$ARG1" || ablehnen "Container nicht auf der Positivliste"
     n="${ARG2:-150}"; [[ "$n" =~ ^[0-9]{1,3}$ ]] && [ "$n" -le 400 ] || ablehnen "zeilen 1–400"
     protokoll "OK"; docker_ logs --tail "$n" "$ARG1" 2>&1 | cut -c1-400 ;;
   zustand)
@@ -127,7 +125,7 @@ EOF
   dns)
     protokoll "OK"; for h in zerodox.de github.com; do echo "$h $(getent hosts "$h" | awk '{print $1}' | head -1)"; done ;;
   start|restart)
-    container_erlaubt "$ARG1" || ablehnen "Container unbekannt oder gesperrt (DB/Cache/Backup)"
+    container_erlaubt "$ARG1" || ablehnen "Container nicht auf der Positivliste"
     protokoll "AKTION"; docker_ "$VERB" "$ARG1" ;;
   dienst-neustart)
     [[ " $DIENSTE " == *" $ARG1 "* ]] || ablehnen "Dienst nicht freigegeben"
