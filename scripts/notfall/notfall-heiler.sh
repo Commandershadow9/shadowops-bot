@@ -88,7 +88,7 @@ esac
 [ "$getan" -gt 0 ] && sleep "$WARTE_S"
 rot=0
 for u in $DOMAINS; do
-  code="$(curl -s -o /dev/null -m 10 -w '%{http_code}' "$u" 2>/dev/null)"
+  code="$(curl -s -o /dev/null -m 10 --connect-to "::${NOTFALL_HAUPT_IP:-88.99.160.210}:" -w '%{http_code}' "$u" 2>/dev/null)"
   case "$code" in
     2??|3??) say "⑤ $code $u" ;;
     *) say "⑤ ✘ $code $u"; rot=$((rot + 1)) ;;

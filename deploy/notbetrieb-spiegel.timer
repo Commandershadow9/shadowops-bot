@@ -1,0 +1,10 @@
+[Unit]
+Description=Notbetrieb-Spiegel alle 5 min (ZERODOX #5629)
+
+[Timer]
+OnBootSec=3min
+OnUnitActiveSec=5min
+AccuracySec=30s
+
+[Install]
+WantedBy=timers.target

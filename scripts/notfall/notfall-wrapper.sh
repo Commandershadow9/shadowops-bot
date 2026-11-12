@@ -116,7 +116,7 @@ EOF
   aussen)
     protokoll "OK"
     for u in https://zerodox.de/api/health https://mcp.zerodox.de/.well-known/oauth-authorization-server https://guildscout.eu https://maydaysim.de; do
-      echo "$(curl -s -o /dev/null -m 10 -w '%{http_code}' "$u") $u"
+      echo "$(curl -s -o /dev/null -m 10 --connect-to "::${NOTFALL_HAUPT_IP:-88.99.160.210}:" -w '%{http_code}' "$u") $u"
     done ;;
   heilstatus)
     protokoll "OK"
