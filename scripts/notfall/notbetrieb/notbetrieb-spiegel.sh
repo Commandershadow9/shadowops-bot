@@ -46,7 +46,7 @@ install -m 644 "$HIER/notseite.html" "$D/seiten/notseite.html"
 for s in impressum:Impressum datenschutz:Datenschutz; do
   pfad="${s%%:*}"; titel="${s#*:}"; roh="$ARBEIT/tmp/$pfad.roh"; aus="$ARBEIT/tmp/$pfad.html"
   if curl -sf -m 30 --connect-to "::$HAUPT_IP:" -o "$roh" "https://zerodox.de/$pfad" \
-     && python3 "$HIER/seite_extrahieren.py" "$titel" "$roh" "$HIER/seite-vorlage.html" >"$aus"; then
+     && /usr/bin/python3 -I "$HIER/seite_extrahieren.py" "$titel" "$roh" "$HIER/seite-vorlage.html" >"$aus"; then
     install -m 644 "$aus" "$D/seiten/$pfad.html"
   else
     echo "$pfad: Abruf/Extraktion fehlgeschlagen, letzter Stand bleibt"

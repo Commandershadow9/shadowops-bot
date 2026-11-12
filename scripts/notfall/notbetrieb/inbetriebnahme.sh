@@ -36,7 +36,7 @@ schritt "4/8 Webserver auf HEL1 starten (braucht die Spiegeldaten)"
 ssh "$HEL1" 'bash /root/notbetrieb-einrichtung/einrichten-hel1.sh /root/notbetrieb-einrichtung/id_ed25519_notbetrieb_spiegel.pub'
 
 schritt "5/8 DNS-Token nach HEL1"
-tr -d '\r\n' <"$TOKEN_DATEI" | ssh "$HEL1" 'set -e; f=/etc/notbetrieb/notbetrieb.env; read -r t
+{ tr -d '\r\n' <"$TOKEN_DATEI"; echo; } | ssh "$HEL1" 'set -e; f=/etc/notbetrieb/notbetrieb.env; read -r t
   { grep -v "^HCLOUD_TOKEN=" "$f" || true; printf "HCLOUD_TOKEN=%s\n" "$t"; } >"$f.neu"
   chown notbetrieb:notbetrieb "$f.neu"; chmod 600 "$f.neu"; mv "$f.neu" "$f"
   systemctl restart notbetrieb-umschalter; echo "Token hinterlegt, nur für notbetrieb lesbar: $(stat -c "%a %U" "$f")"'
