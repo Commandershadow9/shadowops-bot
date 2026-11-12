@@ -9,6 +9,11 @@ EnvironmentFile=-/home/cmdshadow/.config/shadowops-watchdog.env
 Environment=WATCHDOG_SERVICE_NAME=zerodox
 Environment=WATCHDOG_HEALTH_URL=https://zerodox.de/api/health
 Environment=WATCHDOG_REQUIRE_BOT_READY=0
+# Stufe 1 der Notfall-Selbstheilung (ZERODOX #5627): ab dem 2. Down-Lauf
+# bekannte Ausfallklassen heilen (toter Socket-Proxy, gestoppter Traefik,
+# unhealthy zerodox-web), höchstens 1x je 10 min, Ergebnis in den Alarm.
+# sg docker: systemd --user läuft ohne die Gruppe docker.
+Environment="WATCHDOG_HEAL_CMD=/usr/bin/sg docker -c /home/cmdshadow/shadowops-bot/scripts/notfall/notfall-heiler.sh"
 # Webhook-URL kommt aus dem EnvironmentFile (gleicher wie shadowops-watchdog).
 # Falls dort als SHADOWOPS_WATCHDOG_WEBHOOK gesetzt: Backward-Compat-Fallback
 # im Script greift automatisch.

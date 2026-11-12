@@ -1,0 +1,12 @@
+#!/usr/bin/env bash
+# notfall-ssh — fester Starter für den Notfall-Agenten (ZERODOX #5627).
+# Der Agent darf NUR diesen Befehl aufrufen. Er baut den ssh-Aufruf nie selbst:
+# Optionen (-o ProxyCommand=…, -F …) wären sonst lokale Codeausführung auf HEL1.
+set -euo pipefail
+for w in "$@"; do
+  [[ "$w" =~ ^[a-z0-9][a-z0-9_.-]{0,62}$ ]] || { echo "ABGELEHNT: nur einfache Wörter ohne Optionen" >&2; exit 64; }
+done
+[ "$#" -le 3 ] || { echo "ABGELEHNT: höchstens 3 Wörter" >&2; exit 64; }
+exec /usr/bin/ssh -F /var/lib/notfall/.ssh/config \
+  -o ProxyCommand=none -o PermitLocalCommand=no -o ClearAllForwardings=yes -o BatchMode=yes \
+  notfall-haupt -- "$@"

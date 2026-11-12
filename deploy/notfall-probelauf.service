@@ -1,0 +1,8 @@
+[Unit]
+Description=Notfall-Probelauf — prüft monatlich die Selbstheilungskette ohne Ausfall (ZERODOX #5627)
+After=network-online.target
+
+[Service]
+Type=oneshot
+EnvironmentFile=-/home/cmdshadow/.config/shadowops-watchdog.env
+ExecStart=/home/cmdshadow/shadowops-bot/scripts/notfall/notfall-probelauf.sh --pruefen
