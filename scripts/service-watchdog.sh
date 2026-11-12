@@ -32,6 +32,11 @@
 #                                Use-Case: Aggregierte Health-Endpoints filtern auf eine
 #                                Komponente (z.B. mayday-ci-Pool bei runner-health.service
 #                                der auch ZERODOX-Pool aggregiert).
+#   WATCHDOG_HEAL_CMD     — optional: Heilbefehl (ZERODOX #5627). Ab dem 2. Down-Lauf
+#                           in Folge ausgeführt, höchstens 1× je WATCHDOG_HEAL_SPERRE_SEK
+#                           (default 600). Das Ergebnis geht nach Discord — als Teil
+#                           des Alarms oder als eigene Meldung. Leer = kein Heilen.
+#   WATCHDOG_HEAL_TIMEOUT_S — Zeitlimit des Heilbefehls (default 240)
 #
 # Backward-Compat: Falls SHADOWOPS_HEALTH_URL/SHADOWOPS_WATCHDOG_WEBHOOK/
 # SHADOWOPS_WATCHDOG_STATE/SHADOWOPS_WATCHDOG_TIMEOUT gesetzt sind, werden
@@ -123,8 +128,11 @@ write_state() {
     # Beginn des laufenden Ausfalls — Grundlage der Dauerangabe in der
     # Erinnerung (ZERODOX #2425). Leer, solange der Dienst oben ist.
     local down_since="${4:-}"
+    # Letzter Heilversuch (#5627) — global, damit die vier Ausgaenge von main()
+    # ihn nicht einzeln durchreichen muessen und keiner ihn vergisst.
+    local heal_ts="${LAST_HEAL_AT:-}"
     cat > "$STATE_FILE" <<EOF
-{"last_status":"$status","last_alert_at":"$alert_ts","consecutive_failures":$consecutive,"down_since":"$down_since","updated_at":"$TS","service":"$SERVICE_NAME"}
+{"last_status":"$status","last_alert_at":"$alert_ts","consecutive_failures":$consecutive,"down_since":"$down_since","last_heal_at":"$heal_ts","updated_at":"$TS","service":"$SERVICE_NAME"}
 EOF
 }
 
@@ -520,6 +528,7 @@ main() {
     local last_alert_at down_since
     last_alert_at="$(state_feld "$state" last_alert_at)"
     down_since="$(state_feld "$state" down_since)"
+    LAST_HEAL_AT="$(state_feld "$state" last_heal_at)"
     last_status="${last_status:-up}"
     consecutive="${consecutive:-0}"
 
@@ -564,6 +573,7 @@ main() {
                 "Service ist wieder erreichbar nach $consecutive Fehlversuch(en).\n\`$HEALTH_URL\`" \
                 3066993 || true  # grün
         fi
+        LAST_HEAL_AT=""
         write_state "up" 0 "" ""
         echo "[watchdog:$SERVICE_NAME] OK — healthy"
         exit 0
@@ -598,6 +608,37 @@ main() {
         (( erinnerung_sek < 3600 )) && erinnerung_sek=3600
     fi
 
+    # ─── Heilversuch bei Alarm (ZERODOX #5627) ─────────────────────────────
+    #
+    # Vorfall 12.11.2026: zerodox-watchdog alarmierte um 05:16 korrekt, gehandelt
+    # hat bis 06:21 niemand — es war Nacht. Die Luecke war die Reaktion, nicht
+    # die Erkennung. Ein fest programmierter Heiler fuer bekannte Ausfallklassen
+    # schliesst sie, ohne dass jemand wach sein muss.
+    #
+    # Erst ab dem ZWEITEN Down-Lauf (wie der Alarm), damit ein einzelner
+    # Netz-Schluckauf nichts neu startet. Hoechstens einmal je Sperrfrist, damit
+    # ein Heiler, der nicht hilft, keine Neustart-Schleife erzeugt.
+    local heal_bericht=""
+    if [[ -n "${WATCHDOG_HEAL_CMD:-}" && "$consecutive" -ge 2 ]]; then
+        local heal_sperre="${WATCHDOG_HEAL_SPERRE_SEK:-600}" seit_heal
+        seit_heal="$(sekunden_seit "$LAST_HEAL_AT")"
+        if [[ -z "$LAST_HEAL_AT" || "$seit_heal" -ge "$heal_sperre" ]]; then
+            local heal_out heal_rc=0
+            heal_out="$(timeout "${WATCHDOG_HEAL_TIMEOUT_S:-240}" bash -c "$WATCHDOG_HEAL_CMD" 2>&1)" || heal_rc=$?
+            LAST_HEAL_AT="$TS"
+            # Discord-Embeds vertragen keine beliebig langen Texte; das Ende
+            # traegt das Ergebnis (Aussenpruefung), deshalb tail statt head.
+            # ⚠️ send_discord_alert baut das JSON von Hand — Anfuehrungszeichen
+            # oder Backslashes in der Heiler-Ausgabe zerbraechen den ganzen
+            # Alarm. jq -Rs escapt korrekt; die aeusseren Quotes fallen weg.
+            heal_out="$(printf '%s' "$heal_out" | tail -c 900 | tr -d '`' | jq -Rs . | sed 's/^"//; s/"$//')"
+            heal_bericht="\n\n🩹 **Heilversuch** (Exit $heal_rc):\n\`\`\`\n${heal_out}\n\`\`\`"
+            echo "[watchdog:$SERVICE_NAME] Heilversuch ausgefuehrt, Exit $heal_rc"
+        else
+            echo "[watchdog:$SERVICE_NAME] Heilversuch gesperrt (letzter vor ${seit_heal}s)"
+        fi
+    fi
+
     local seit_alarm ausfall_dauer
     seit_alarm="$(sekunden_seit "$last_alert_at")"
     ausfall_dauer="$(dauer_lesbar "$(sekunden_seit "$down_since")")"
@@ -623,6 +664,8 @@ main() {
             titel="🔴 $SERVICE_NAME DOWN"
             text="Health-Check fehlgeschlagen ($consecutive konsekutive Failures): \`$reason\`\nEndpoint: \`$HEALTH_URL\`\n\nSofort prüfen: Service-Status und Logs."
         fi
+        text="${text}${heal_bericht}"
+        heal_bericht=""
 
         if send_discord_alert "$titel" "$text" 15158332; then  # rot
             write_state "down" "$consecutive" "$TS" "$down_since"
@@ -639,6 +682,14 @@ main() {
             echo "[watchdog:$SERVICE_NAME] FAIL — down ($reason) UND Webhook fehlgeschlagen"
             exit 1
         fi
+    fi
+
+    # Heilversuch ohne gleichzeitigen Alarm: eigene Meldung, sonst liefe
+    # ein automatischer Neustart auf Produktion unbemerkt. Fehlschlag des
+    # Webhooks aendert hier nichts am Ausgang — der Alarm selbst ist oben.
+    if [[ -n "$heal_bericht" ]]; then
+        send_discord_alert "🩹 $SERVICE_NAME: Heilversuch (down seit $ausfall_dauer)" \
+            "Grund: \`$reason\`${heal_bericht}" 15105570 || true  # orange
     fi
 
     # ⚠️ `last_alert_at` wird hier UNVERAENDERT durchgereicht. Vorher stand an
