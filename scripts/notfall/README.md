@@ -70,3 +70,41 @@ ssh zerodox-ci-hel1 'systemctl stop notfall-waechter'
 ```
 
 Aktualisieren von HEL1 nach einer Änderung hier: `scp -r scripts/notfall/hel1 zerodox-ci-hel1:/tmp/notfall-hel1 && ssh zerodox-ci-hel1 bash /tmp/notfall-hel1/einrichten.sh`.
+
+## Notbetrieb bei Totalausfall des Hauptservers (#5629)
+
+Raucht der Hauptserver vollständig ab (Hardware, Rechenzentrum), zeigt `zerodox.de` nach
+≥ 10 min auf HEL1. Dort bleiben online: eine **Notseite** (503 mit `Retry-After`, Hinweis
+„Störung, Daten gesichert, Post wird angenommen, Kontakt/Presse info@zerodox.de“),
+**Impressum** und **Datenschutz** von ZERODOX (Kopie, 200) und alle **Kunden-Impressen**
+`/creator/<slug>/impressum` (Schnappschüsse aus #4262, 200, `noindex`). Portal, Login,
+Zahlungen und API liefern 503. Es gibt keine Datenbank auf HEL1, also auch keine Schreibvorgänge.
+
+| Teil | Wo | Was |
+|---|---|---|
+| `notbetrieb-spiegel.sh` | Hauptserver, Timer alle 5 min | Impressen (`rsync --delete`), Rechtsseiten (Positivlisten-Extraktor), LE-Zertifikat aus Traefik → `notbetrieb@10.8.0.12` (Schlüssel per `rrsync` auf `/srv/notbetrieb/daten` begrenzt) |
+| `notbetrieb-web` | HEL1, Docker | `nginx-unprivileged`, read-only, `cap-drop ALL`, als Benutzer `notbetrieb`, `157.180.55.95:80/443` |
+| `notbetrieb-umschalter.service` | HEL1, Benutzer `notbetrieb` | setzt `zerodox.de A` auf HEL1 bzw. zurück; Token in `/etc/notbetrieb/notbetrieb.env` (0600, **nicht** für den KI-Agenten lesbar) |
+| `notbetrieb-reload.timer` | HEL1, täglich 05:20 | nginx lädt das gespiegelte Zertifikat neu |
+
+**Regeln des Umschalters** (im Code verdrahtet, nicht konfigurierbar):
+- Geändert wird nur `@ A` (`www` ist CNAME darauf), nur zwischen `88.99.160.210` und `157.180.55.95`. MX und alle anderen Einträge nie.
+- TOT = kein Ping über WireGuard und öffentlich **und** keine HTTP-Antwort der Haupt-IP. Antwortet der Rechner irgendwie, sind Stufe 1/2 zuständig.
+- Umschalten nach 10 min TOT, wenn der vorletzte Hop vor dem Hauptserver im Traceroute antwortet (Strecke bis ins Rechenzentrum intakt), sonst nach 30 min.
+- Nicht umschalten, wenn HEL1 blind ist, `/etc/notbetrieb/sperre` existiert, im DNS ein dritter Wert steht oder HEL1 die Notseite selbst nicht ausliefert.
+- Zurück erst nach 10 min durchgehend `200` von `zerodox.de/api/health` an der Haupt-IP. ntfy + Discord bei beidem.
+- Wächter, Heiler und Wrapper messen die Domains fest an der Haupt-IP (`--connect-to`). Sonst würde die Notseite sie nach der Rückkehr täuschen.
+
+**Zertifikat:** Ein eigenes Zertifikat (DNS-01) ist nicht nötig. Das LE-Zertifikat wird mitgespiegelt; LE erneuert 30 Tage vor Ablauf, die Kopie hat also im Ernstfall mindestens 30 Tage Restlaufzeit.
+
+**Inbetriebnahme (einmalig, Betreiber):** `bash ~/shadowops-bot/scripts/notfall/notbetrieb/inbetriebnahme.sh`
+
+**Bedienung auf HEL1:**
+```bash
+sudo -u notbetrieb /opt/notbetrieb/notbetrieb-umschalter.sh status    # Zustand
+sudo -u notbetrieb /opt/notbetrieb/notbetrieb-umschalter.sh an        # von Hand auf HEL1
+sudo -u notbetrieb /opt/notbetrieb/notbetrieb-umschalter.sh aus       # von Hand zurück
+sudo -u notbetrieb /opt/notbetrieb/notbetrieb-umschalter.sh test-dns  # Probelauf über notbetrieb-test.zerodox.de
+touch /etc/notbetrieb/sperre                                          # Automatik aus (z. B. geplante Wartung)
+```
+⚠️ Wer `an` von Hand bei gesundem Hauptserver auslöst, wird nach 10 min automatisch zurückgeschaltet.

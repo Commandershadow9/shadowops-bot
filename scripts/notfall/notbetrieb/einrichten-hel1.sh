@@ -103,5 +103,8 @@ EOF
 systemctl daemon-reload
 systemctl enable --now notbetrieb-reload.timer >/dev/null
 systemctl enable notbetrieb-umschalter.service >/dev/null
-systemctl restart notbetrieb-umschalter.service
+# Ohne Spiegeldaten noch nicht starten, sonst meldet er sofort „Spiegel veraltet“.
+if [ -f /srv/notbetrieb/daten/stand ]; then
+  systemctl restart notbetrieb-umschalter.service
+fi
 echo "Umschalter: $(systemctl is-active notbetrieb-umschalter)"
