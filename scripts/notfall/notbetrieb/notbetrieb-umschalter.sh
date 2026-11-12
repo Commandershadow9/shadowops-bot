@@ -264,7 +264,7 @@ lauf() {
   if blind; then log "BLIND — HEL1 erreicht keine Referenz, keine Aktion"; return 0; fi
   local modus; modus="$(lies modus)"; modus="${modus:-normal}"
   if [ -e "$SPERRE" ]; then
-    einmal_melden gemeldet_sperre 3 "Notbetrieb gesperrt" "$SPERRE existiert — keine automatische Umschaltung."
+    einmal_melden gemeldet_sperre 4 "Notbetrieb gesperrt" "$SPERRE existiert — keine automatische Umschaltung."
     return 0
   fi
   weg gemeldet_sperre
@@ -286,7 +286,7 @@ lauf() {
       pat_pruefen
       vorposten_merken
       if [ "$(spiegel_alter)" -ge "$SPIEGEL_ALT_S" ]; then
-        einmal_melden gemeldet_spiegel_alt 3 "Notbetrieb: Spiegel veraltet" \
+        einmal_melden gemeldet_spiegel_alt 4 "Notbetrieb: Spiegel veraltet" \
           "Letzte Spiegelung vor $(( $(spiegel_alter) / 60 )) min. Timer notbetrieb-spiegel auf dem Hauptserver prüfen."
       else
         weg gemeldet_spiegel_alt
