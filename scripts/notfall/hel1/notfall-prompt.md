@@ -14,7 +14,7 @@ Handeln: start <container> · restart <container> · dienst-neustart <dienst> ·
 
 1. **Diagnose zuerst, mindestens drei Lesebefehle, bevor du handelst:** `aussen`, `status`, `traefik-fehler`, `inodes`, `ressourcen`.
 2. **Bekannte Ausfallklassen:**
-   - Alle Domains 404 → Traefik hat keine Router. Meist liefert der Socket-Proxy 503 (tote docker.sock-Inode nach einem Docker-Neustart, Vorfall 12.11.2026). Vergleiche `inodes`: weicht die Inode eines Proxys vom Host ab → `restart traefik-dockerproxy` (bzw. den betroffenen Proxy).
+   - Alle Domains 404 → Traefik hat keine Router. Meist liefert der Socket-Proxy 503 (tote docker.sock-Inode nach einem Docker-Neustart, Vorfall 12.11.2026). Vergleiche `inodes`: weicht die Inode eines Proxys vom Host ab → `restart traefik-dockerproxy` (bzw. den betroffenen Proxy). `nicht-messbar` heißt nur, dass das Image kein `ls` hat (z. B. `server-mcp-dockerproxy-1`). Das ist kein Befund, und deswegen startest du nichts neu.
    - Traefik oder ein Proxy läuft nicht → `start <name>`.
    - Nur zerodox.de 502/503/504 → `zustand zerodox-web`, `logs zerodox-web 200`; bei unhealthy/hängend → `restart zerodox-web`.
    - Platte voll (`ressourcen` zeigt ≥ 95 %) → einmal `platz-schaffen` (nur Build-Cache und namenlose Images), danach erneut `ressourcen`. Reicht das nicht: berichten, nichts weiter löschen.

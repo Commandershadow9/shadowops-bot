@@ -103,7 +103,11 @@ EOF
     echo "host $(stat -c '%i %z' /var/run/docker.sock)"
     for c in $(docker_ ps --format '{{.Names}}'); do
       docker_ inspect -f '{{range .Mounts}}{{if eq .Destination "/var/run/docker.sock"}}x{{end}}{{end}}' "$c" | grep -q x || continue
-      echo "$c $(docker_ exec "$c" ls -i /var/run/docker.sock 2>&1 | awk '{print $1}')"
+      # Distroless-Images (z. B. wollomatic/socket-proxy) haben kein ls → "nicht-messbar",
+      # damit ein Fehlertext nie wie eine abweichende Inode aussieht.
+      ino=$(docker_ exec "$c" ls -i /var/run/docker.sock 2>/dev/null | awk '{print $1}')
+      [[ "$ino" =~ ^[0-9]+$ ]] || ino="nicht-messbar"
+      echo "$c $ino"
     done ;;
   ressourcen)
     protokoll "OK"; uptime; free -h; df -h / /var/lib/docker 2>/dev/null; systemctl --failed --no-legend --no-pager | head -20 ;;
