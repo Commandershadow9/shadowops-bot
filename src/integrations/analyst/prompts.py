@@ -169,6 +169,11 @@ Aenderungen hier koennen Docker-Container, Reverse-Proxy oder Service-Kommunikat
 | UFW-Regeln (ufw allow/deny) | Blockiert moeglicherweise legitimen Docker-Traffic oder oeffnet Ports ungewollt |
 | systemd Unit-Files | Falscher Bind/Port bricht Service nach naechstem Restart |
 | Traefik-Labels und -Routing | Externe Erreichbarkeit von GuildScout + ZERODOX |
+| Docker-Engine-Pakete (`docker-ce`, `containerd.io`) | Upgrade startet dockerd neu → neuer `docker.sock`, Socket-Proxies behalten die tote Inode, Traefik verliert alle Router. Statt `apt upgrade -y` nur gezielt `apt-get install --only-upgrade <pakete>` OHNE diese beiden; Docker-Update als Issue melden. |
+| Neustart von Traefik / Socket-Proxies | Traefik hält Router nur im Speicher; Neustart bei kaputtem Proxy = Totalausfall aller Domains |
+
+**Vorfall 2026-11-12:** Fix-Session fuehrte `sudo apt upgrade -y` inkl. docker-ce aus →
+zerodox.de, mcp.zerodox.de und alle Domains hinter Traefik ~1 h mit 404.
 
 **Vorfall 2026-03-17:** Analyst hat Bind-Adressen von 0.0.0.0 auf 127.0.0.1 geaendert →
 11h Bot-Ausfall + Changelog-API fuer beide Projekte unerreichbar. Fix war Revert.
