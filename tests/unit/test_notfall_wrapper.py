@@ -48,6 +48,7 @@ def _ruf(befehl: str):
     "restart A B C D",
     "status\nrestart zerodox-db",        # Steuerzeichen / Log-Injection
     "restart 0",                          # ID-Präfix statt Name
+    "platz-schaffen volumes",             # keine Argumente, nie Volumes
 ])
 def test_gefaehrliches_wird_abgelehnt_und_protokolliert(befehl):
     r, log = _ruf(befehl)
