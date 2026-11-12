@@ -27,12 +27,14 @@ CMD="${SSH_ORIGINAL_COMMAND:-${1:-}}"
 HIER="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 
 protokoll() {
-  printf '%s %s %s\n' "$(date -Is)" "$1" "$CMD" >>"$LOG"
-  logger -t notfall-wrapper "$1 $CMD" 2>/dev/null || true
+  # %q: ein Befehl kann keine gefälschten Protokollzeilen erzeugen.
+  printf '%s %s %q\n' "$(date -Is)" "$1" "$CMD" >>"$LOG"
+  logger -t notfall-wrapper "$1 $(printf '%q' "$CMD")" 2>/dev/null || true
 }
 ablehnen() { protokoll "ABGELEHNT"; echo "ABGELEHNT: $1" >&2; echo "Erlaubt: hilfe" >&2; exit 64; }
 
-# Nur einfache Wörter — keine Shell-Metazeichen, keine Pfade, keine Optionen.
+# Nur einfache Wörter — keine Steuerzeichen, keine Shell-Metazeichen, keine Pfade.
+[[ "$CMD" =~ [[:cntrl:]] ]] && ablehnen "Steuerzeichen"
 case "$CMD" in
   *[\;\&\|\$\`\<\>\(\)\{\}\\\'\"*?~]*|*..*) ablehnen "Sonderzeichen" ;;
 esac
@@ -51,8 +53,17 @@ docker_() { sg docker -c "docker $(printf '%q ' "$@")"; }
 # und kann laufende Transaktionen kosten).
 container_erlaubt() {
   name_ok "$1" || return 1
-  case "$1" in *postgres*|*-db|*-db-*|*redis*|*pgbouncer*|*walg*|*backup*) return 1 ;; esac
-  docker_ inspect -f '{{.Name}}' "$1" >/dev/null 2>&1
+  # ⚠️ docker inspect akzeptiert auch ID-Präfixe: `restart 3f2a` träfe sonst einen
+  # Postgres-Container an der Namens-Sperre vorbei. Deshalb den echten Namen
+  # auflösen, exakte Gleichheit verlangen und zusätzlich das IMAGE prüfen.
+  local info echt bild
+  info="$(docker_ inspect --type container -f '{{.Name}}|{{.Config.Image}}' "$1" 2>/dev/null)" || return 1
+  echt="${info%%|*}"; echt="${echt#/}"; bild="${info#*|}"
+  [ "$echt" = "$1" ] || return 1
+  case "$echt|$bild" in
+    *postgres*|*-db|*-db\|*|*-db-*|*redis*|*pgbouncer*|*walg*|*backup*|*mysql*|*mariadb*|*mongo*) return 1 ;;
+  esac
+  return 0
 }
 # systemd-User-Dienste, die neu gestartet werden dürfen.
 DIENSTE="shadowops-bot zerodox-support-agent seo-agent guildscout-feedback-agent"
