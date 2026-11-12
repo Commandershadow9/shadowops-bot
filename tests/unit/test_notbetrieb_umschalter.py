@@ -42,10 +42,11 @@ if [ "${FAKE_VORPOSTEN:-1}" = 1 ]; then echo " 7  213.133.117.190  35 ms"; else 
 """
 
 
-def _lauf(state: dict, sperre=False, spiegel_alter=60, **fake):
+def _lauf(state: dict, sperre=False, spiegel_alter=60, token="t", args=(), **fake):
     tmp = Path(tempfile.mkdtemp(prefix="notbetrieb-"))
     (tmp / "bin").mkdir()
-    for name, inhalt in (("curl", CURL), ("ping", PING), ("traceroute", TRACE)):
+    dig = '#!/usr/bin/env bash\necho "${FAKE_DNS:-88.99.160.210}"\n'  # nie echtes Netz im Test
+    for name, inhalt in (("curl", CURL), ("ping", PING), ("traceroute", TRACE), ("dig", dig)):
         f = tmp / "bin" / name
         f.write_text(inhalt)
         f.chmod(0o755)
@@ -66,10 +67,10 @@ def _lauf(state: dict, sperre=False, spiegel_alter=60, **fake):
         "PATH": f"{tmp / 'bin'}:{os.environ['PATH']}",
         "NOTBETRIEB_STATE": str(st), "NOTBETRIEB_DATEN": str(daten), "NOTBETRIEB_SPERRE": str(sp),
         "NOTBETRIEB_EINMAL": "1", "NTFY_TOPIC": "test-topic", "DISCORD_WEBHOOK": "",
-        "HCLOUD_TOKEN": "t", "FAKE_LOG": str(log),
+        "HCLOUD_TOKEN": token, "FAKE_LOG": str(log),
         **{f"FAKE_{k.upper()}": str(v) for k, v in fake.items()},
     }
-    r = subprocess.run(["bash", str(SCRIPT)], env=env, capture_output=True, text=True, timeout=30)
+    r = subprocess.run(["bash", str(SCRIPT), *args], env=env, capture_output=True, text=True, timeout=30)
     datei = lambda n: (st / n).read_text().strip() if (st / n).exists() else ""  # noqa: E731
     gesetzt = [z for z in log.read_text().splitlines() if z.startswith("SET ")]
     return r, log.read_text(), gesetzt, datei
@@ -161,3 +162,81 @@ def test_veralteter_spiegel_wird_einmal_gemeldet():
     assert "Spiegel veraltet" in log and d("gemeldet_spiegel_alt")
     _, log, _, _ = _lauf({"gemeldet_spiegel_alt": vor(60)}, spiegel_alter=7200)
     assert "Spiegel veraltet" not in log
+
+
+
+# ── Härtung nach Sicherheitsreview (ZERODOX #5627/#5629) ───────────────────
+
+def _api_aufrufe(log):
+    return [z for z in log.splitlines() if "/zones/" in z]
+
+
+def test_ohne_token_nie_api_sondern_einmal_von_hand_melden():
+    """Auf HEL1 liegt bewusst kein Token (CI-Host). Dann nie die API, nur Anleitung."""
+    _, log, gesetzt, d = _lauf(tot_seit(601), token="", **TOT)
+    assert gesetzt == [] and _api_aufrufe(log) == []
+    assert "von Hand umschalten" in log and "Priority: 5" in log
+    assert HEL1 in log and HAUPT in log and "console.hetzner.com" in log
+    assert "seit 10 min tot" in log
+    assert d("modus") in ("", "normal") and d("gemeldet_hand_an")
+    # zweiter Lauf im selben Vorfall: keine Wiederholung
+    st = {**tot_seit(700), "gemeldet_hand_an": vor(60)}
+    _, log, gesetzt, _ = _lauf(st, token="", **TOT)
+    assert "von Hand umschalten" not in log and _api_aufrufe(log) == []
+
+
+def test_ohne_token_nicht_bereit_hat_vorrang():
+    _, log, _, _ = _lauf(tot_seit(601), token="", lokal="000", **TOT)
+    assert "NICHT bereit" in log and "von Hand umschalten" not in log
+
+
+def test_ohne_token_erholung_setzt_flag_zurueck():
+    _, log, _, d = _lauf({"gemeldet_hand_an": vor(600)}, token="")
+    assert not d("gemeldet_hand_an") and _api_aufrufe(log) == []
+
+
+def test_ohne_token_status_zeigt_token_nein():
+    r, log, _, _ = _lauf({}, token="", args=("status",))
+    assert "token=nein" in r.stdout and _api_aufrufe(log) == []
+
+
+def test_ohne_token_test_dns_und_an_brechen_klar_ab():
+    r, log, _, _ = _lauf({}, token="", args=("test-dns",))
+    assert r.returncode != 0 and "HCLOUD_TOKEN" in r.stdout and _api_aufrufe(log) == []
+    r, log, _, _ = _lauf({}, token="", args=("an",))
+    assert r.returncode != 0 and "Hetzner Console" in r.stdout and _api_aufrufe(log) == []
+
+
+def test_token_nie_in_prozessargumenten():
+    """Befund 11: Der Header geht über stdin (-K -), nicht als Argument."""
+    _, log, gesetzt, _ = _lauf(tot_seit(601), token="geheimertoken123", **TOT)
+    assert len(gesetzt) == 1
+    assert "geheimertoken123" not in log and "Bearer" not in log
+    assert all("-K -" in z for z in _api_aufrufe(log))
+
+
+def test_abgleich_dns_auf_hel1_bei_modus_normal_und_gesundem_hauptserver():
+    """Befund 8: Abbruch zwischen API-Aufruf und Zustand → im nächsten Lauf zurück + Alarm."""
+    _, log, gesetzt, d = _lauf({"absicht": "notbetrieb"}, dns=HEL1)
+    assert len(gesetzt) == 1 and HAUPT in gesetzt[0]
+    assert "Abgleich" in log and "Priority: 5" in log and d("absicht") == "normal"
+
+
+def test_abgleich_nicht_bei_krankem_hauptserver():
+    _, _, gesetzt, _ = _lauf({}, dns=HEL1, haupt_http="502")
+    assert gesetzt == []
+
+
+def test_absicht_wird_vor_dem_umschalten_geschrieben():
+    _, _, gesetzt, d = _lauf(tot_seit(601), **TOT)
+    assert len(gesetzt) == 1 and d("absicht") == "notbetrieb"
+
+
+def test_leere_zeitstempel_datei_ist_kein_syntaxfehler():
+    """Befund 9: leere/kaputte Zeitstempel gelten als nicht gesetzt."""
+    r, _, gesetzt, d = _lauf({"tot_seit": "", "vorposten": "213.133.117.190"}, **TOT)
+    assert "syntax error" not in r.stderr, r.stderr
+    assert gesetzt == [] and d("tot_seit").isdigit()
+    r, _, gesetzt, d = _lauf({"modus": "notbetrieb", "gesund_seit": "kaputt"}, dns=HEL1)
+    assert "syntax error" not in r.stderr, r.stderr
+    assert gesetzt == [] and d("gesund_seit").isdigit()

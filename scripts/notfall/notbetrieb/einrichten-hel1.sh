@@ -5,9 +5,9 @@
 #
 #   bash einrichten-hel1.sh <spiegel-pubkey-datei>
 #
-# Der DNS-Token kommt NICHT über dieses Skript, sondern getrennt per stdin direkt in
-# /etc/notbetrieb/notbetrieb.env (siehe README). Fehlt er, läuft der Umschalter, schaltet aber
-# nichts um und meldet das beim ersten Versuch.
+# ⚠️ Auf HEL1 liegt bewusst KEIN DNS-Token (HEL1 ist CI-Host, Runner = docker-Gruppe = root).
+# Ohne Token ruft der Umschalter die Hetzner-API nie auf und meldet bei Umschaltbedarf
+# „von Hand umschalten“ mit Anleitung (siehe README, Sicherheitsgrenzen).
 set -euo pipefail
 HIER="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 PUBKEY="${1:?Pfad zum öffentlichen Spiegel-Schlüssel fehlt}"
@@ -45,7 +45,10 @@ done
 # ③ Spiegel-Schlüssel: kann nur nach /srv/notbetrieb/daten schreiben, nur vom Hauptserver.
 key="$(tr -d '\r\n' <"$PUBKEY")"
 [[ "$key" =~ ^ssh-ed25519\ [A-Za-z0-9+/=]+(\ .*)?$ ]] || { echo "kein ed25519-Schlüssel"; exit 1; }
-printf 'command="/usr/bin/rrsync /srv/notbetrieb/daten",from="10.8.0.1",restrict %s\n' "$key" >/var/lib/notbetrieb/.ssh/authorized_keys
+# -wo: nur schreiben (der Schlüssel kann nichts von HEL1 lesen). -munge: Symlinks, die der
+# Sender anlegt, werden entschärft und zeigen nie aus dem Verzeichnis heraus. Beide Optionen
+# kennt das Python-rrsync ab rsync 3.2.4 (Debian 13: 3.4.x); der Spiegel schickt keine Symlinks.
+printf 'command="/usr/bin/rrsync -wo -munge /srv/notbetrieb/daten",from="10.8.0.1",restrict %s\n' "$key" >/var/lib/notbetrieb/.ssh/authorized_keys
 chown notbetrieb:notbetrieb /var/lib/notbetrieb/.ssh/authorized_keys; chmod 600 /var/lib/notbetrieb/.ssh/authorized_keys
 
 # ④ Webserver: unprivilegiert, read-only, ohne Capabilities.

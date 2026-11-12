@@ -11,6 +11,13 @@
 # /opt/notfall (root-eigen, für notfall nur lesbar), /var/lib/notfall (Zustand),
 # /etc/notfall/{notfall,claude}.env (0640 root:notfall; Werte trägt der Betreiber ein),
 # SSH-Schlüssel + Host-Alias `notfall-haupt`, systemd-Dienst notfall-waechter.service.
+#
+# ssh-config und known_hosts liegen in /opt/notfall/ssh/ (root, 0644), NICHT im Heim von
+# `notfall`: Der Agent läuft als `notfall` und dürfte sonst Ziel und Hostschlüssel umschreiben.
+# ⚠️ Offener Folgeschritt: Agent und Wächter laufen noch unter DEMSELBEN Benutzer. Der Agent
+# könnte damit den Zustand des Wächters (/var/lib/notfall) und /etc/notfall/notfall.env lesen.
+# Die Trennung (eigener Benutzer für den Agenten) ist noch nicht umgesetzt; InaccessiblePaths
+# in der Unit geht nicht, weil der Wächter selbst die env braucht.
 set -euo pipefail
 QUELLE="$(cd "$(dirname "$0")" && pwd)"
 
@@ -29,22 +36,34 @@ done
 if [ ! -f /var/lib/notfall/.ssh/id_ed25519 ]; then
   sudo -u notfall ssh-keygen -q -t ed25519 -N '' -C notfall-hel1 -f /var/lib/notfall/.ssh/id_ed25519
 fi
-cat >/var/lib/notfall/.ssh/config <<'EOF'
+SSHDIR=/opt/notfall/ssh
+install -d -m 0755 -o root -g root "$SSHDIR"
+cat >"$SSHDIR/config.neu" <<'EOF'
 Host notfall-haupt
   HostName 10.8.0.1
   Port 47822
   User cmdshadow
-  IdentityFile ~/.ssh/id_ed25519
+  IdentityFile /var/lib/notfall/.ssh/id_ed25519
   IdentitiesOnly yes
   BatchMode yes
   ConnectTimeout 8
   StrictHostKeyChecking yes
+  UserKnownHostsFile /opt/notfall/ssh/known_hosts
+  GlobalKnownHostsFile /dev/null
 EOF
-chown notfall:notfall /var/lib/notfall/.ssh/config; chmod 0600 /var/lib/notfall/.ssh/config
-if ! sudo -u notfall ssh-keygen -F '[10.8.0.1]:47822' -f /var/lib/notfall/.ssh/known_hosts >/dev/null 2>&1; then
-  ssh-keyscan -p 47822 -t ed25519 10.8.0.1 2>/dev/null >>/var/lib/notfall/.ssh/known_hosts
-  chown notfall:notfall /var/lib/notfall/.ssh/known_hosts
+chown root:root "$SSHDIR/config.neu"; chmod 0644 "$SSHDIR/config.neu"; mv "$SSHDIR/config.neu" "$SSHDIR/config"
+# Bestehende Hostschlüssel übernehmen (bisher im Heim von notfall), sonst einmal scannen.
+touch "$SSHDIR/known_hosts"
+if [ -f /var/lib/notfall/.ssh/known_hosts ]; then
+  sort -u "$SSHDIR/known_hosts" /var/lib/notfall/.ssh/known_hosts >"$SSHDIR/known_hosts.neu"
+  mv "$SSHDIR/known_hosts.neu" "$SSHDIR/known_hosts"
 fi
+if ! ssh-keygen -F '[10.8.0.1]:47822' -f "$SSHDIR/known_hosts" >/dev/null 2>&1; then
+  ssh-keyscan -p 47822 -t ed25519 10.8.0.1 2>/dev/null >>"$SSHDIR/known_hosts"
+fi
+chown root:root "$SSHDIR/known_hosts"; chmod 0644 "$SSHDIR/known_hosts"
+# Die alte, für notfall schreibbare Konfiguration wird nicht mehr gelesen (notfall-ssh nutzt -F).
+rm -f /var/lib/notfall/.ssh/config
 
 cat >/etc/systemd/system/notfall-waechter.service <<'EOF'
 [Unit]

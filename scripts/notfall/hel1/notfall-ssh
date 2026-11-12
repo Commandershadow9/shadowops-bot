@@ -7,6 +7,10 @@ for w in "$@"; do
   [[ "$w" =~ ^[a-z0-9][a-z0-9_.-]{0,62}$ ]] || { echo "ABGELEHNT: nur einfache Wörter ohne Optionen" >&2; exit 64; }
 done
 [ "$#" -le 3 ] || { echo "ABGELEHNT: höchstens 3 Wörter" >&2; exit 64; }
-exec /usr/bin/ssh -F /var/lib/notfall/.ssh/config \
+# Konfiguration und known_hosts liegen root-eigen in /opt/notfall/ssh/ (0644): Der Benutzer
+# `notfall` (unter dem auch der Agent läuft) kann sie nicht umschreiben — weder Ziel noch
+# Hostschlüssel. Nur der private Schlüssel liegt in /var/lib/notfall/.ssh (muss lesbar sein).
+exec /usr/bin/ssh -F /opt/notfall/ssh/config \
+  -o UserKnownHostsFile=/opt/notfall/ssh/known_hosts -o StrictHostKeyChecking=yes \
   -o ProxyCommand=none -o PermitLocalCommand=no -o ClearAllForwardings=yes -o BatchMode=yes \
   notfall-haupt -- "$@"

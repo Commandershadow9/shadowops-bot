@@ -38,7 +38,14 @@ notfall-wrapper.sh  ◄── ssh command= ────────────�
 2. **HEL1:** Benutzer `notfall` ohne sudo und ohne docker. Das Binary liegt root-eigen in `/opt/notfall/bin`.
 3. **Hauptserver:** `authorized_keys` erzwingt `notfall-wrapper.sh` mit `from="10.8.0.12",restrict`. Erlaubt sind nur
    Lesen und Umkehrbares an einer **Positivliste** von Containern. Datenbanken, Caches, `down`, `pull`, `apt`, `ufw`
-   und Dateiänderungen sind nicht erreichbar.
+   und Dateiänderungen sind nicht erreichbar. Der Wrapper erzwingt außerdem ein **Aktionsbudget** (höchstens
+   4 HANDELN-Befehle je 30 min, Zähler `~/.local/state/notfall-wrapper-budget`, `flock`) und schwärzt E-Mail- und
+   IPv4-Adressen in `logs`, `journal` und `traefik-fehler`. `shadowops-bot` steht **nicht** auf der Neustart-Liste:
+   Ein Neustart mitten im Deploy löst den Rollback mit `rsync --delete` aus.
+
+Die ssh-Konfiguration und `known_hosts` des Agenten liegen root-eigen in `/opt/notfall/ssh/` (0644). `notfall-ssh`
+nutzt `-F /opt/notfall/ssh/config` und `StrictHostKeyChecking yes`. Nur der private Schlüssel liegt im Heim von
+`notfall` (`/var/lib/notfall/.ssh`), weil der Benutzer ihn lesen muss.
 
 ⚠️ **Nie `Bash(ssh notfall-haupt:*)` erlauben.** GNU-getopt parst Optionen auch nach dem Host. Mit
 `ssh notfall-haupt -oProxyCommand=…` liefe beliebiger Code auf HEL1 (Befund der Sicherheitsprüfung 12.11.).
@@ -50,8 +57,11 @@ notfall-wrapper.sh  ◄── ssh command= ────────────�
 - `claude.env`: `CLAUDE_CODE_OAUTH_TOKEN` (Hauptabo, `claude setup-token`). Der Agent läuft ohne Proxy-Port. Sein
   Verbrauch erscheint deshalb **nicht** in `ki usage`. Bei höchstens 1 Lauf je Vorfall ist das hingenommen.
 
-ntfy.sh ist ein Fremddienst. Dorthin gehen nur neutrale Zustandssätze und die Ergebniszeile des Agenten,
-nie Log-Auszüge. Der volle Bericht geht nach Discord und liegt unter `/var/lib/notfall/agent-bericht-*.txt`.
+ntfy.sh ist ein Fremddienst. Dorthin gehen nur neutrale Zustandssätze und vom Agenten **nur ein fester Wert**
+(`GEHEILT`, `NICHT GEHEILT` oder `UNKLAR`, aus der `ERGEBNIS`-Zeile abgeleitet), nie Freitext. Der volle Bericht
+geht als Codeblock mit der Kopfzeile „Bericht des Notfall-Agenten (unverifiziert)“ nach Discord, ohne
+Erwähnungen (`allowed_mentions` leer). Er liegt unter `/var/lib/notfall/agent-bericht-*.txt` und wird nach
+30 Tagen gelöscht.
 
 ## Betrieb
 
@@ -84,7 +94,7 @@ Zahlungen und API liefern 503. Es gibt keine Datenbank auf HEL1, also auch keine
 |---|---|---|
 | `notbetrieb-spiegel.sh` | Hauptserver, Timer alle 5 min | Impressen (`rsync --delete`), Rechtsseiten (Positivlisten-Extraktor), LE-Zertifikat aus Traefik → `notbetrieb@10.8.0.12` (Schlüssel per `rrsync` auf `/srv/notbetrieb/daten` begrenzt) |
 | `notbetrieb-web` | HEL1, Docker | `nginx-unprivileged`, read-only, `cap-drop ALL`, als Benutzer `notbetrieb`, `157.180.55.95:80/443` |
-| `notbetrieb-umschalter.service` | HEL1, Benutzer `notbetrieb` | setzt `zerodox.de A` auf HEL1 bzw. zurück; Token in `/etc/notbetrieb/notbetrieb.env` (0600, **nicht** für den KI-Agenten lesbar) |
+| `notbetrieb-umschalter.service` | HEL1, Benutzer `notbetrieb` | erkennt den Totalausfall. **Ohne Token** (Normalfall auf HEL1) meldet er einmal je Vorfall „🛟 Notbetrieb nötig — von Hand umschalten“ mit Anleitung und ruft die API nie auf. Mit Token setzt er `zerodox.de A` selbst |
 | `notbetrieb-reload.timer` | HEL1, täglich 05:20 | nginx lädt das gespiegelte Zertifikat neu |
 
 **Regeln des Umschalters** (im Code verdrahtet, nicht konfigurierbar):
@@ -93,6 +103,9 @@ Zahlungen und API liefern 503. Es gibt keine Datenbank auf HEL1, also auch keine
 - Umschalten nach 10 min TOT, wenn der vorletzte Hop vor dem Hauptserver im Traceroute antwortet (Strecke bis ins Rechenzentrum intakt), sonst nach 30 min.
 - Nicht umschalten, wenn HEL1 blind ist, `/etc/notbetrieb/sperre` existiert, im DNS ein dritter Wert steht oder HEL1 die Notseite selbst nicht ausliefert.
 - Zurück erst nach 10 min durchgehend `200` von `zerodox.de/api/health` an der Haupt-IP. ntfy + Discord bei beidem.
+- Mit Token: Vor jedem API-Aufruf wird die Absicht (`absicht`) geschrieben. Steht `modus=normal`, zeigt das DNS aber
+  auf HEL1 und ist der Hauptserver gesund, schaltet der nächste Lauf zurück und meldet „Abgleich“.
+- Der Token geht nur über stdin an curl (`-K -`), nie als Prozessargument.
 - Wächter, Heiler und Wrapper messen die Domains fest an der Haupt-IP (`--connect-to`). Sonst würde die Notseite sie nach der Rückkehr täuschen.
 
 **Zertifikat:** Ein eigenes Zertifikat (DNS-01) ist nicht nötig. Das LE-Zertifikat wird mitgespiegelt; LE erneuert 30 Tage vor Ablauf, die Kopie hat also im Ernstfall mindestens 30 Tage Restlaufzeit.
@@ -101,10 +114,34 @@ Zahlungen und API liefern 503. Es gibt keine Datenbank auf HEL1, also auch keine
 
 **Bedienung auf HEL1:**
 ```bash
-sudo -u notbetrieb /opt/notbetrieb/notbetrieb-umschalter.sh status    # Zustand
+sudo -u notbetrieb /opt/notbetrieb/notbetrieb-umschalter.sh status    # Zustand (token=ja|nein)
 sudo -u notbetrieb /opt/notbetrieb/notbetrieb-umschalter.sh an        # von Hand auf HEL1
 sudo -u notbetrieb /opt/notbetrieb/notbetrieb-umschalter.sh aus       # von Hand zurück
-sudo -u notbetrieb /opt/notbetrieb/notbetrieb-umschalter.sh test-dns  # Probelauf über notbetrieb-test.zerodox.de
+sudo -u notbetrieb /opt/notbetrieb/notbetrieb-umschalter.sh test-dns  # nur mit Token; ohne bricht er ab (Probelauf läuft vom Hauptserver, siehe inbetriebnahme.sh)
 touch /etc/notbetrieb/sperre                                          # Automatik aus (z. B. geplante Wartung)
 ```
 ⚠️ Wer `an` von Hand bei gesundem Hauptserver auslöst, wird nach 10 min automatisch zurückgeschaltet.
+
+## Sicherheitsgrenzen und bekannte Restrisiken
+
+- **HEL1 ist ein CI-Host.** Die Runner-Benutzer sind in der `docker`-Gruppe und damit root-äquivalent. Jedes
+  Geheimnis auf HEL1 ist für einen kompromittierten CI-Lauf erreichbar.
+  - **Kein DNS-Token auf HEL1.** Der Hetzner-Cloud-Token könnte die ganze Zone übernehmen, auch MX (Post-Umleitung).
+    Deshalb schaltet der Umschalter dort nicht selbst, sondern meldet „von Hand umschalten“ mit Anleitung
+    (Hetzner Console → DNS → zerodox.de → `@ A` auf `157.180.55.95`, zurück auf `88.99.160.210`).
+    `inbetriebnahme.sh` entfernt einen vorhandenen Token und fährt den DNS-Probelauf vom Hauptserver aus.
+  - **Robot-Zugang (Hardware-Reset) erst nach Umzug auf einen eigenen Server.** Die Robot-Zugangsdaten können
+    jeden Server des Kontos resetten oder neu installieren. Solange der Wächter auf HEL1 läuft, gehört
+    `ROBOT_*` nicht in `/etc/notfall/notfall.env`; ohne sie meldet die Reset-Stufe „bitte selbst resetten“.
+- **Folgeschritt: eigener Kleinserver** für Wächter, Umschalter und Notseite (ohne CI, ohne docker-Gruppe für
+  Fremdcode). Erst dort dürfen DNS-Token und Robot-Zugang liegen.
+- **Agent und Wächter teilen sich noch den Benutzer `notfall`.** Der Agent könnte damit den Wächter-Zustand und
+  `/etc/notfall/notfall.env` lesen. `InaccessiblePaths` in der Unit geht nicht (der Wächter braucht die env).
+  Die Trennung (eigener Benutzer für den Agenten) ist offen.
+- **CrowdSec-Whitelist für `157.180.55.95` nötig.** Wächter und Umschalter prüfen den Hauptserver jede Minute von
+  HEL1 aus. Ohne Eintrag in der Whitelist `cmdshadow/eigene-infrastruktur` kann CrowdSec HEL1 sperren, und die
+  Außenprüfung hielte eine Sperre für einen Ausfall.
+- **Der Agent-Bericht ist unverifiziert.** Er entsteht aus Logs, die Angreifer beeinflussen können. Deshalb nur
+  als Codeblock in Discord, nie als Freitext in ntfy, und nie als Grundlage einer automatischen Handlung.
+- **Spiegel-Schlüssel:** `rrsync -wo -munge` erlaubt nur Schreiben nach `/srv/notbetrieb/daten` und entschärft
+  Symlinks. Lesen von HEL1 ist mit diesem Schlüssel nicht möglich.
