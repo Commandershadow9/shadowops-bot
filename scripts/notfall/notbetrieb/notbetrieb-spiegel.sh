@@ -12,7 +12,8 @@
 #               bleibt der letzte gute Stand liegen.
 #   tls/        Zertifikat zerodox.de/www aus Traefik (acme.json). LE erneuert 30 Tage
 #               vor Ablauf, die Kopie hat im Ernstfall also mindestens 30 Tage Restlaufzeit.
-#   stand       Zeitstempel des Laufs; der Umschalter auf HEL1 meldet, wenn er > 1 h alt ist.
+#   stand       Zeitstempel des letzten Laufs mit vollständig gelesenen Impressen; der
+#               Umschalter auf HEL1 meldet, wenn er > 1 h alt ist.
 #
 # Ziel: notbetrieb@10.8.0.12 mit eigenem Schlüssel; auf HEL1 erzwingt `rrsync` das
 # Zielverzeichnis /srv/notbetrieb/daten (der Schlüssel kann nichts anderes).
@@ -77,7 +78,9 @@ acme="$ARBEIT/tmp/acme.json"
   fi
   rm -f "$acme" "$ARBEIT/tmp/fullchain.pem" "$ARBEIT/tmp/privkey.pem" )
 
-date +%s >"$D/stand"
+# Nur bei vollständig gelesenen Impressen erneuern: Bleibt der Stand stehen, meldet der
+# Umschalter nach 1 h „Spiegel veraltet“. Sonst blieben depublizierte Impressen still auf HEL1.
+[ "$fehler" = 0 ] && date +%s >"$D/stand"
 
 # ④ Übertragen
 if ! rsync -a --delete --delay-updates -e "ssh -p 47822 -i $SCHLUESSEL -o IdentitiesOnly=yes -o BatchMode=yes -o ConnectTimeout=15" \
