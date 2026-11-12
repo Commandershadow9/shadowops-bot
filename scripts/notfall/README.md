@@ -109,6 +109,7 @@ Zahlungen und API liefern 503. Es gibt keine Datenbank auf HEL1, also auch keine
   ausliefert, `aus` nur nach 3× 200. Ein gestohlener PAT löst also höchstens einen Lauf aus, der nichts tut.
   Anstoß höchstens alle 5 min je Richtung; den DNS-Stand liest HEL1 am autoritativen Nameserver (`dig`).
   Zeitplan alle 3 h als Rückfallnetz: steht `@` auf HEL1 bei gesundem Hauptserver → zurück.
+  Der PAT wird täglich geprüft (läuft nach max. 1 Jahr ab); abgelehnt → einmal „GitHub-Schlüssel ungültig“.
   **Vom Handy:** jede ntfy-Meldung hat den Knopf „Schalter öffnen“ → GitHub-App → *Run workflow* → `an`/`aus`.
 - Mit Token: Vor jedem API-Aufruf wird die Absicht (`absicht`) geschrieben. Steht `modus=normal`, zeigt das DNS aber
   auf HEL1 und ist der Hauptserver gesund, schaltet der nächste Lauf zurück und meldet „Abgleich“.
