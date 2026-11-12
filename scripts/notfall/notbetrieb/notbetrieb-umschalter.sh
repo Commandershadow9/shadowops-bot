@@ -16,6 +16,15 @@
 # Mit Token (nur auf einem eigenen, vertrauenswürdigen Host) liegt er in
 # /etc/notbetrieb/notbetrieb.env (0600 notbetrieb) und geht nur über stdin an curl.
 #
+# GitHub-Anstoß (seit 12.11.2026, Normalfall auf HEL1): Statt eines DNS-Tokens liegt hier
+# GITHUB_DISPATCH_TOKEN, ein Fine-grained PAT mit NUR „Actions: write“ auf dem privaten Repo
+# Commandershadow9/zerodox-notschalter. Der Umschalter stößt dort den Workflow „Notbetrieb“
+# an (an/aus). Der DNS-Token liegt nur als Repo-Geheimnis; der Lauf auf einem GitHub-Runner
+# misst selbst (3×) und schaltet nur zwischen HAUPT_IP und HEL1_IP. Ein gestohlener PAT kann
+# also nur einen Lauf auslösen, der bei gesundem Hauptserver nichts tut. Den DNS-Stand liest
+# der Umschalter dann am autoritativen Nameserver (dig), nicht über die API.
+# Scheitert der Anstoß, fällt er auf die Meldung „von Hand umschalten“ zurück.
+#
 # Harte Grenzen (im Code, nicht in einer Konfiguration):
 #   - geändert wird nur der A-Eintrag `@` der Zone (www ist CNAME darauf)
 #     bzw. im Test `notbetrieb-test`; MX und alles andere nie
@@ -33,6 +42,7 @@
 #         notbetrieb-umschalter.sh status     Zustand anzeigen
 #         notbetrieb-umschalter.sh an|aus     von Hand umschalten (Betreiber)
 #         notbetrieb-umschalter.sh test-dns   Probelauf über notbetrieb-test.zerodox.de
+#         notbetrieb-umschalter.sh test-github  Probelauf des GitHub-Anstoßes (notbetrieb-test)
 set -uo pipefail
 
 # shellcheck disable=SC1091
@@ -65,7 +75,10 @@ weg() { rm -f "$STATE/$1"; }
 
 ntfy() { # ntfy <prio> <titel> <text>
   [ -z "${NTFY_TOPIC:-}" ] && return 0
-  curl -s -m 15 -H "Title: $2" -H "Priority: $1" -H "Tags: satellite" -d "$3" "$NTFY/$NTFY_TOPIC" >/dev/null || log "ntfy fehlgeschlagen"
+  # Knopf in der App: öffnet den Schalter (GitHub-App → Run workflow → an/aus). Keine Daten im Link.
+  curl -s -m 15 -H "Title: $2" -H "Priority: $1" -H "Tags: satellite" \
+    -H "Actions: view, Schalter öffnen, https://github.com/Commandershadow9/zerodox-notschalter/actions/workflows/notbetrieb.yml" \
+    -d "$3" "$NTFY/$NTFY_TOPIC" >/dev/null || log "ntfy fehlgeschlagen"
 }
 discord() {
   [ -z "${DISCORD_WEBHOOK:-}" ] && return 0
@@ -79,6 +92,25 @@ einmal_melden() { # einmal_melden <flag> <prio> <titel> <text>
   setze "$1" "$(jetzt)"; melde "$2" "$3" "$4"
 }
 token_da() { [ -n "${HCLOUD_TOKEN:-}" ]; }
+github_da() { ! token_da && [[ "${GITHUB_DISPATCH_TOKEN:-}" =~ ^github_pat_[A-Za-z0-9_]+$ ]]; }
+GH_WORKFLOW="${NOTSCHALTER_WORKFLOW:-https://api.github.com/repos/Commandershadow9/zerodox-notschalter/actions/workflows/notbetrieb.yml/dispatches}"
+NS="${NOTBETRIEB_NS:-hydrogen.ns.hetzner.com}"
+ANSTOSS_PAUSE_S="${NOTBETRIEB_ANSTOSS_PAUSE_S:-300}"
+dns_ns() { dig +short +time=5 +tries=2 A "${1:-zerodox.de}" "@$NS" 2>/dev/null | head -1; }
+anstossen() { # anstossen <aktion> [ohne-pause] → GitHub-Workflow „Notbetrieb“ starten
+  local a="$1" letzt; letzt="$(zahl "angestossen_$a")"
+  if [ -z "${2:-}" ] && [ -n "$letzt" ] && [ $(( $(jetzt) - letzt )) -lt "$ANSTOSS_PAUSE_S" ]; then
+    log "Anstoß $a läuft bereits (vor $(( $(jetzt) - letzt )) s)"; return 0
+  fi
+  local code
+  # Token über stdin (-K -), nie als Prozessargument.
+  code=$(printf 'header = "Authorization: Bearer %s"\n' "$GITHUB_DISPATCH_TOKEN" \
+    | curl -s -m 20 -K - -X POST -H "Accept: application/vnd.github+json" \
+      -H "X-GitHub-Api-Version: 2022-11-28" -o /dev/null -w '%{http_code}' \
+      --data "$(jq -cn --arg a "$a" '{ref:"main",inputs:{aktion:$a}}')" "$GH_WORKFLOW")
+  if [ "$code" = "204" ]; then setze "angestossen_$a" "$(jetzt)"; log "GitHub-Anstoß $a: ok"; return 0; fi
+  log "GitHub-Anstoß $a: HTTP ${code:-keine Antwort}"; return 1
+}
 
 # ── DNS (Hetzner Cloud API) ────────────────────────────────────────────────
 name_erlaubt() { [ "$1" = "@" ] || [ "$1" = "notbetrieb-test" ]; }
@@ -141,10 +173,18 @@ umschalten_an() { # umschalten_an <grund> [tot-minuten]
       "Der Hauptserver ist tot, aber HEL1 liefert die Notseite nicht aus (nginx/Zertifikat prüfen). DNS bleibt unverändert."
     return 1
   fi
+  if github_da; then
+    if [ "$(dns_ns)" = "$HEL1_IP" ]; then
+      setze modus notbetrieb; setze an_seit "$(jetzt)"; weg gemeldet_hand_an
+      log "Notbetrieb aktiv (über GitHub geschaltet)"; return 0
+    fi
+    anstossen an && return 0
+    # Anstoß gescheitert → Rückfall auf die Meldung von Hand (unten).
+  fi
   if ! token_da; then
     # Kein Token auf HEL1 (bewusst, siehe Kopf): Der Mensch schaltet, das Skript sagt wie.
     einmal_melden gemeldet_hand_an 5 "🛟 Notbetrieb nötig — von Hand umschalten" \
-      "Hauptserver seit ${2:-?} min tot, HEL1 ist bereit (Notseite, Impressum, Datenschutz, Kunden-Impressen). In der Hetzner Console (console.hetzner.com → DNS → zerodox.de) den A-Eintrag @ auf $HEL1_IP setzen. Zurück auf $HAUPT_IP, wenn der Hauptserver wieder läuft."
+      "Hauptserver seit ${2:-?} min tot, HEL1 ist bereit (Notseite, Impressum, Datenschutz, Kunden-Impressen). Knopf „Schalter öffnen“ → Run workflow → an. Notfalls in der Hetzner Console (console.hetzner.com → DNS → zerodox.de) den A-Eintrag @ auf $HEL1_IP setzen. Zurück auf $HAUPT_IP, wenn der Hauptserver wieder läuft."
     return 0
   fi
   local ist; ist="$(dns_lies @)"
@@ -160,9 +200,16 @@ umschalten_an() { # umschalten_an <grund> [tot-minuten]
   melde 5 "🛟 Notbetrieb AKTIV" "zerodox.de zeigt jetzt auf HEL1 ($1). Online: Notseite, Impressum, Datenschutz, Kunden-Impressen (Stand vor $(( $(spiegel_alter) / 60 )) min). Portal/Login/Zahlungen aus. Rückschaltung automatisch nach 10 min stabil gesundem Hauptserver."
 }
 umschalten_aus() { # umschalten_aus <grund>
+  if github_da; then
+    if [ "$(dns_ns)" = "$HAUPT_IP" ]; then
+      setze modus normal; setze absicht normal; weg an_seit; weg tot_seit; weg gesund_seit; weg gemeldet_hand_aus
+      log "Notbetrieb beendet (über GitHub zurückgeschaltet)"; return 0
+    fi
+    anstossen aus && return 0
+  fi
   if ! token_da; then
     einmal_melden gemeldet_hand_aus 5 "Notbetrieb: von Hand zurückschalten" \
-      "Der Hauptserver ist wieder gesund. In der Hetzner Console (console.hetzner.com → DNS → zerodox.de) den A-Eintrag @ auf $HAUPT_IP setzen."
+      "Der Hauptserver ist wieder gesund. Knopf „Schalter öffnen“ → Run workflow → aus. Notfalls in der Hetzner Console (console.hetzner.com → DNS → zerodox.de) den A-Eintrag @ auf $HAUPT_IP setzen."
     return 0
   fi
   local ist; ist="$(dns_lies @)"
@@ -178,6 +225,12 @@ umschalten_aus() { # umschalten_aus <grund>
 }
 
 abgleich() { # Modus normal, DNS zeigt aber auf HEL1 (Abbruch zwischen API-Aufruf und Zustand)
+  if github_da; then
+    # GitHub schaltete an, während HEL1 „normal“ glaubte, und der Hauptserver ist wieder da:
+    # zurück anstoßen (der Lauf misst selbst und schaltet nur bei stabil gesundem Hauptserver).
+    [ "$(dns_ns)" = "$HEL1_IP" ] && haupt_gesund && anstossen aus
+    return 0
+  fi
   token_da || return 0
   [ "$(dns_lies @)" = "$HEL1_IP" ] || return 0
   haupt_gesund || return 0
@@ -235,6 +288,22 @@ lauf() {
   setze letzter_lauf "$t"
 }
 
+test_github() { # Probelauf des GitHub-Wegs ohne Kunden: notbetrieb-test an, prüfen, aus
+  github_da || { echo "test-github braucht GITHUB_DISPATCH_TOKEN (github_pat_…) in /etc/notbetrieb/notbetrieb.env"; return 2; }
+  local ok=1 i
+  anstossen test-an sofort || { echo "Anstoß test-an: gescheitert"; return 1; }
+  echo "Anstoß test-an: ok — warte auf notbetrieb-test.zerodox.de → $HEL1_IP (bis 4 min)"
+  for i in $(seq 1 48); do [ "$(dns_ns notbetrieb-test.zerodox.de)" = "$HEL1_IP" ] && break; sleep 5; done
+  echo "autoritativ: '$(dns_ns notbetrieb-test.zerodox.de)' nach $((i * 5)) s"
+  [ "$(dns_ns notbetrieb-test.zerodox.de)" = "$HEL1_IP" ] || ok=0
+  anstossen test-aus sofort || { echo "Anstoß test-aus: gescheitert"; return 1; }
+  echo "Anstoß test-aus: ok — warte, bis der Testeintrag weg ist (bis 4 min)"
+  for i in $(seq 1 48); do [ -z "$(dns_ns notbetrieb-test.zerodox.de)" ] && break; sleep 5; done
+  [ -z "$(dns_ns notbetrieb-test.zerodox.de)" ] && echo "Testeintrag entfernt nach $((i * 5)) s" || { echo "Testeintrag noch da"; ok=0; }
+  [ "$ok" = 1 ] && echo "GitHub-Weg: OK" || echo "GitHub-Weg: FEHLER"
+  [ "$ok" = 1 ]
+}
+
 test_dns() { # Probelauf ohne Kunden: notbetrieb-test.zerodox.de anlegen, prüfen, löschen
   if ! token_da; then
     echo "test-dns braucht HCLOUD_TOKEN — auf HEL1 liegt bewusst keiner. Probelauf vom Hauptserver:"
@@ -262,13 +331,20 @@ case "${1:-}" in
   status)
     if token_da; then dns="$(dns_lies @ | tr '\n' ' ')"; tok=ja
     else dns="$(dig +short A zerodox.de @hydrogen.ns.hetzner.com 2>/dev/null | tr '\n' ' ')"; tok=nein; fi
-    echo "modus=$(lies modus) absicht=$(lies absicht) token=$tok dns=${dns}tot_seit=$(lies tot_seit) gesund_seit=$(lies gesund_seit)"
+    github_da && gh=ja || gh=nein
+    echo "modus=$(lies modus) absicht=$(lies absicht) token=$tok github=$gh dns=${dns}tot_seit=$(lies tot_seit) gesund_seit=$(lies gesund_seit)"
     echo "vorposten=$(lies vorposten) spiegel_alter=$(spiegel_alter)s lokal_bereit=$(lokal_bereit && echo ja || echo nein) sperre=$([ -e "$SPERRE" ] && echo ja || echo nein)" ;;
   an|aus)
+    if github_da; then
+      anstossen "$1" sofort || exit 1
+      echo "GitHub-Lauf „$1“ angestoßen — er misst selbst und schaltet nur, wenn der Hauptserver"
+      echo "wirklich tot (an) bzw. stabil gesund (aus) ist. Ergebnis kommt per ntfy."; exit 0
+    fi
     token_da || { echo "Kein HCLOUD_TOKEN — von Hand in der Hetzner Console umschalten (console.hetzner.com → DNS → zerodox.de, A-Eintrag @: an = $HEL1_IP, aus = $HAUPT_IP)."; exit 2; }
     if [ "$1" = an ]; then setze modus normal; umschalten_an "von Hand"; exit $?; fi
     setze modus notbetrieb; umschalten_aus "von Hand"; exit $? ;;
   test-dns) test_dns; exit $? ;;
+  test-github) test_github; exit $? ;;
   "")
     while :; do lauf; [ "$EINMAL" = 1 ] && break; sleep "$TAKT_S"; done ;;
   *) echo "Aufruf: $0 [status|an|aus|test-dns]"; exit 64 ;;
