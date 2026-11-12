@@ -25,7 +25,11 @@ install -d -m 750 -o root -g notbetrieb /etc/notbetrieb
 install -d -m 700 -o notbetrieb -g notbetrieb /var/lib/notbetrieb /var/lib/notbetrieb/.ssh
 
 install -m 755 -o root -g root "$HIER/notbetrieb-umschalter.sh" /opt/notbetrieb/notbetrieb-umschalter.sh
-install -m 644 -o root -g root "$HIER/nginx-notbetrieb.conf" /opt/notbetrieb/nginx-notbetrieb.conf
+# Verzeichnis statt Einzeldatei einbinden: Ein Datei-Bind-Mount hält die alte Inode fest,
+# ein Update per install käme im Container nie an (dieselbe Falle wie docker.sock, #5627).
+install -d -m 755 -o root -g root /opt/notbetrieb/conf
+install -m 644 -o root -g root "$HIER/nginx-notbetrieb.conf" /opt/notbetrieb/conf/default.conf
+rm -f /opt/notbetrieb/nginx-notbetrieb.conf
 
 # ② Konfiguration: ntfy/Discord vom Notfall-Wächter übernehmen, Token bleibt unangetastet.
 ENV=/etc/notbetrieb/notbetrieb.env
@@ -51,7 +55,7 @@ if [ -f /srv/notbetrieb/daten/tls/fullchain.pem ]; then
     --user "$UID_NB:$GID_NB" --read-only --tmpfs /tmp:size=16m \
     --cap-drop ALL --security-opt no-new-privileges --memory 128m --pids-limit 64 \
     -p "$HEL1_IP:80:8080" -p "$HEL1_IP:443:8443" \
-    -v /opt/notbetrieb/nginx-notbetrieb.conf:/etc/nginx/conf.d/default.conf:ro \
+    -v /opt/notbetrieb/conf:/etc/nginx/conf.d:ro \
     -v /srv/notbetrieb/daten:/srv/daten:ro \
     "$IMAGE" >/dev/null
   echo "notbetrieb-web gestartet"
