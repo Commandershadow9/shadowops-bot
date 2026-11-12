@@ -60,6 +60,9 @@ class CodeAnalyzer:
             # hat. Auch .claude/skills und .claude/hooks gehoeren nicht zur
             # Anwendung, sondern zur Werkzeugkiste.
             '.claude',
+            # Vorfall 12.11.2026: ~/ZERODOX/worktrees/ (1,7 GB Arbeitskopien) liess
+            # die Analyse 19.247 Dateien zaehlen und den Bot-Start ~8 min blockieren.
+            'worktrees',
         }
 
         # Cache

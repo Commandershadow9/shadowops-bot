@@ -703,7 +703,10 @@ class ShadowOpsBot(commands.Bot):
                 # Initialisiere Context Manager (RAG System)
                 self.logger.info("🔄 [1/5] Initialisiere Context Manager (RAG)...")
                 self.context_manager = ContextManager(config=self.config)
-                self.context_manager.load_all_contexts()
+                # Vorfall 12.11.2026: synchron aufgerufen blockierte die Code-Analyse
+                # (~8 min) den Event-Loop — kein Health-Server, keine Deploy-Webhooks,
+                # kein Discord. Im Thread bleibt der Bot waehrenddessen erreichbar.
+                await asyncio.to_thread(self.context_manager.load_all_contexts)
                 self.logger.info("✅ [1/5] Context Manager bereit")
 
                 # Initialisiere AI Service mit Context Manager und Discord Logger
