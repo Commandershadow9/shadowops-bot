@@ -1,0 +1,9 @@
+[Unit]
+Description=Notbetrieb: Impressen, Rechtsseiten und Zertifikat nach HEL1 spiegeln (ZERODOX #5629)
+
+[Service]
+Type=oneshot
+# systemd --user hat die Gruppe docker nicht (siehe WATCHDOG_FAMILIE), daher sg.
+ExecStart=/usr/bin/sg docker -c /home/cmdshadow/shadowops-bot/scripts/notfall/notbetrieb/notbetrieb-spiegel.sh
+TimeoutStartSec=240
+Nice=10

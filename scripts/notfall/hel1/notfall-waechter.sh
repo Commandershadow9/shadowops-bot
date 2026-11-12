@@ -113,7 +113,7 @@ lauf() {
   local rot=0 gesamt=0 codes="" u c
   for u in $DOMAINS; do
     gesamt=$((gesamt + 1))
-    c=$(curl -s -o /dev/null -m 10 -w '%{http_code}' "$u" 2>/dev/null)
+    c=$(curl -s -o /dev/null -m 10 --connect-to "::${NOTFALL_HAUPT_IP:-88.99.160.210}:" -w '%{http_code}' "$u" 2>/dev/null)
     codes+="$c ${u#https://}"$'\n'
     case "$c" in 2??|3??) ;; *) rot=$((rot + 1)) ;; esac
   done
