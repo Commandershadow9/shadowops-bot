@@ -52,18 +52,22 @@ Host notfall-haupt
   GlobalKnownHostsFile /dev/null
 EOF
 chown root:root "$SSHDIR/config.neu"; chmod 0644 "$SSHDIR/config.neu"; mv "$SSHDIR/config.neu" "$SSHDIR/config"
-# Bestehende Hostschlüssel übernehmen (bisher im Heim von notfall), sonst einmal scannen.
-touch "$SSHDIR/known_hosts"
-if [ -f /var/lib/notfall/.ssh/known_hosts ]; then
-  sort -u "$SSHDIR/known_hosts" /var/lib/notfall/.ssh/known_hosts >"$SSHDIR/known_hosts.neu"
-  mv "$SSHDIR/known_hosts.neu" "$SSHDIR/known_hosts"
+# Hostschlüssel NUR aus einem frischen Scan, geprüft gegen den fest hinterlegten Fingerabdruck
+# des Hauptservers. Die alte known_hosts im Heim von notfall wird bewusst nicht übernommen:
+# Genau dieser Benutzer (der Agent) könnte sie beschreiben oder durch einen Symlink ersetzen.
+# Bei Neuaufsetzen des Hauptservers: ssh-keygen -lf /etc/ssh/ssh_host_ed25519_key.pub dort.
+HAUPT_HOSTKEY_FP="${HAUPT_HOSTKEY_FP:-SHA256:r/c+WwuhVMZ5j6sZM6XA9Q5yOBOsaqPbd548zenw/Mo}"
+scan="$(ssh-keyscan -p 47822 -t ed25519 10.8.0.1 2>/dev/null | grep -E '^\[10\.8\.0\.1\]:47822 ssh-ed25519 ' | head -1)"
+if [ -n "$scan" ] && [ "$(ssh-keygen -lf - <<<"$scan" | awk '{print $2}')" = "$HAUPT_HOSTKEY_FP" ]; then
+  printf '%s\n' "$scan" >"$SSHDIR/known_hosts.neu" && mv "$SSHDIR/known_hosts.neu" "$SSHDIR/known_hosts"
+else
+  echo "FEHLER: Hostschlüssel des Hauptservers passt nicht zu $HAUPT_HOSTKEY_FP — known_hosts unverändert" >&2
+  [ -f "$SSHDIR/known_hosts" ] || exit 1
 fi
-if ! ssh-keygen -F '[10.8.0.1]:47822' -f "$SSHDIR/known_hosts" >/dev/null 2>&1; then
-  ssh-keyscan -p 47822 -t ed25519 10.8.0.1 2>/dev/null >>"$SSHDIR/known_hosts"
-fi
+[ -L /var/lib/notfall/.ssh ] || rm -f /var/lib/notfall/.ssh/known_hosts
 chown root:root "$SSHDIR/known_hosts"; chmod 0644 "$SSHDIR/known_hosts"
 # Die alte, für notfall schreibbare Konfiguration wird nicht mehr gelesen (notfall-ssh nutzt -F).
-rm -f /var/lib/notfall/.ssh/config
+[ -L /var/lib/notfall/.ssh ] || rm -f /var/lib/notfall/.ssh/config  # nie einem Symlink des Agenten folgen
 
 cat >/etc/systemd/system/notfall-waechter.service <<'EOF'
 [Unit]
