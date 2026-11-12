@@ -25,6 +25,7 @@ for a in "$@"; do [ "$prev" = "-o" ] && out="$a"; prev="$a"; done
 case "$url" in
   https://ntfy.sh/v1/health|https://api.hetzner.cloud/v1) [ "${FAKE_BLIND:-0}" = 1 ] && exit 7; exit 0 ;;
   *ntfy.sh/*) exit 0 ;;
+  *api.github.com/*/dispatches) echo "DISPATCH $*" >> "$FAKE_LOG"; echo "${FAKE_GH_CODE:-204}"; exit 0 ;;
   */rrsets/*/A/actions/set_records) echo "SET $*" >> "$FAKE_LOG"; [ -n "$out" ] && echo '{}' > "$out"; echo 201; exit 0 ;;
   */rrsets/*/A) [ -n "$out" ] && printf '{"rrset":{"records":[{"value":"%s"}]}}' "${FAKE_DNS:-88.99.160.210}" > "$out"; echo 200; exit 0 ;;
 esac
@@ -42,7 +43,7 @@ if [ "${FAKE_VORPOSTEN:-1}" = 1 ]; then echo " 7  213.133.117.190  35 ms"; else 
 """
 
 
-def _lauf(state: dict, sperre=False, spiegel_alter=60, token="t", args=(), **fake):
+def _lauf(state: dict, sperre=False, spiegel_alter=60, token="t", args=(), gh="", **fake):
     tmp = Path(tempfile.mkdtemp(prefix="notbetrieb-"))
     (tmp / "bin").mkdir()
     dig = '#!/usr/bin/env bash\necho "${FAKE_DNS:-88.99.160.210}"\n'  # nie echtes Netz im Test
@@ -67,7 +68,7 @@ def _lauf(state: dict, sperre=False, spiegel_alter=60, token="t", args=(), **fak
         "PATH": f"{tmp / 'bin'}:{os.environ['PATH']}",
         "NOTBETRIEB_STATE": str(st), "NOTBETRIEB_DATEN": str(daten), "NOTBETRIEB_SPERRE": str(sp),
         "NOTBETRIEB_EINMAL": "1", "NTFY_TOPIC": "test-topic", "DISCORD_WEBHOOK": "",
-        "HCLOUD_TOKEN": token, "FAKE_LOG": str(log),
+        "HCLOUD_TOKEN": token, "GITHUB_DISPATCH_TOKEN": gh, "FAKE_LOG": str(log),
         **{f"FAKE_{k.upper()}": str(v) for k, v in fake.items()},
     }
     r = subprocess.run(["bash", str(SCRIPT), *args], env=env, capture_output=True, text=True, timeout=30)
@@ -240,3 +241,95 @@ def test_leere_zeitstempel_datei_ist_kein_syntaxfehler():
     r, _, gesetzt, d = _lauf({"modus": "notbetrieb", "gesund_seit": "kaputt"}, dns=HEL1)
     assert "syntax error" not in r.stderr, r.stderr
     assert gesetzt == [] and d("gesund_seit").isdigit()
+
+
+# ── GitHub-Anstoß (seit 12.11.2026): HEL1 hat keinen DNS-Token, nur einen PAT, der den ──
+# ── Workflow in Commandershadow9/zerodox-notschalter anstößt. Der misst selbst.        ──
+
+GH = "github_pat_11ABCDEFG0123456789_abcdefXYZ"
+
+
+def _anstoesse(log):
+    return [z for z in log.splitlines() if z.startswith("DISPATCH ")]
+
+
+def test_github_tot_stoesst_an_statt_api_oder_hand():
+    _, log, gesetzt, d = _lauf(tot_seit(601), token="", gh=GH, **TOT)
+    a = _anstoesse(log)
+    assert len(a) == 1 and '"aktion":"an"' in a[0] and '"ref":"main"' in a[0]
+    assert gesetzt == [] and _api_aufrufe(log) == [] and "von Hand umschalten" not in log
+    assert d("angestossen_an") and d("modus") in ("", "normal")
+
+
+def test_github_pat_nie_in_prozessargumenten():
+    _, log, _, _ = _lauf(tot_seit(601), token="", gh=GH, **TOT)
+    assert GH not in log and "Bearer" not in log
+    assert all("-K -" in z for z in _anstoesse(log))
+
+
+def test_github_anstoss_wird_nicht_wiederholt_solange_er_laeuft():
+    st = {**tot_seit(700), "angestossen_an": vor(60)}
+    _, log, _, _ = _lauf(st, token="", gh=GH, **TOT)
+    assert _anstoesse(log) == []
+    st = {**tot_seit(1000), "angestossen_an": vor(400)}
+    _, log, _, _ = _lauf(st, token="", gh=GH, **TOT)
+    assert len(_anstoesse(log)) == 1
+
+
+def test_github_gescheitert_faellt_auf_hand_meldung_zurueck():
+    _, log, _, d = _lauf(tot_seit(601), token="", gh=GH, gh_code="401", **TOT)
+    assert "von Hand umschalten" in log and "Schalter öffnen" in log and not d("angestossen_an")
+
+
+def test_github_dns_schon_auf_hel1_heisst_notbetrieb_aktiv():
+    _, log, _, d = _lauf(tot_seit(700), token="", gh=GH, dns=HEL1, **TOT)
+    assert _anstoesse(log) == [] and d("modus") == "notbetrieb"
+
+
+def test_github_rueckschaltung_stoesst_aus_an_und_uebernimmt_dns_stand():
+    st = {"modus": "notbetrieb", "gesund_seit": vor(601)}
+    _, log, _, d = _lauf(st, token="", gh=GH, dns=HEL1)
+    a = _anstoesse(log)
+    assert len(a) == 1 and '"aktion":"aus"' in a[0] and d("modus") == "notbetrieb"
+    _, log, _, d = _lauf({**st, "angestossen_aus": vor(60)}, token="", gh=GH, dns=HAUPT)
+    assert _anstoesse(log) == [] and d("modus") == "normal"
+
+
+def test_github_abgleich_dns_auf_hel1_bei_gesundem_hauptserver():
+    _, log, _, _ = _lauf({}, token="", gh=GH, dns=HEL1)
+    a = _anstoesse(log)
+    assert len(a) == 1 and '"aktion":"aus"' in a[0]
+
+
+def test_github_kein_anstoss_bei_gesundem_server_und_normalem_dns():
+    _, log, _, _ = _lauf({}, token="", gh=GH)
+    assert _anstoesse(log) == []
+
+
+def test_github_ungueltiger_pat_wird_nicht_benutzt():
+    _, log, _, _ = _lauf(tot_seit(601), token="", gh="ghp_klassischer$(boese)", **TOT)
+    assert _anstoesse(log) == [] and "von Hand umschalten" in log
+
+
+def test_github_sperre_und_blind_verhindern_anstoss():
+    _, log, _, _ = _lauf(tot_seit(3600), token="", gh=GH, sperre=True, **TOT)
+    assert _anstoesse(log) == []
+    _, log, _, _ = _lauf(tot_seit(3600), token="", gh=GH, blind=1, **TOT)
+    assert _anstoesse(log) == []
+
+
+def test_github_nicht_bereit_hat_vorrang_vor_anstoss():
+    _, log, _, _ = _lauf(tot_seit(601), token="", gh=GH, lokal="000", **TOT)
+    assert _anstoesse(log) == [] and "NICHT bereit" in log
+
+
+def test_github_von_hand_an_stoesst_sofort_an_und_status_zeigt_github():
+    r, log, _, _ = _lauf({"angestossen_an": vor(10)}, token="", gh=GH, args=("an",))
+    assert r.returncode == 0 and len(_anstoesse(log)) == 1 and "misst selbst" in r.stdout
+    r, _, _, _ = _lauf({}, token="", gh=GH, args=("status",))
+    assert "github=ja" in r.stdout
+
+
+def test_dns_token_hat_vorrang_vor_github():
+    _, log, gesetzt, _ = _lauf(tot_seit(601), gh=GH, **TOT)
+    assert _anstoesse(log) == [] and len(gesetzt) == 1

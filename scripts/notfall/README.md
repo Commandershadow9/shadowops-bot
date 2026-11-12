@@ -94,7 +94,7 @@ Zahlungen und API liefern 503. Es gibt keine Datenbank auf HEL1, also auch keine
 |---|---|---|
 | `notbetrieb-spiegel.sh` | Hauptserver, Timer alle 5 min | Impressen (`rsync --delete`), Rechtsseiten (Positivlisten-Extraktor), LE-Zertifikat aus Traefik → `notbetrieb@10.8.0.12` (Schlüssel per `rrsync` auf `/srv/notbetrieb/daten` begrenzt) |
 | `notbetrieb-web` | HEL1, Docker | `nginx-unprivileged`, read-only, `cap-drop ALL`, als Benutzer `notbetrieb`, `157.180.55.95:80/443` |
-| `notbetrieb-umschalter.service` | HEL1, Benutzer `notbetrieb` | erkennt den Totalausfall. **Ohne Token** (Normalfall auf HEL1) meldet er einmal je Vorfall „🛟 Notbetrieb nötig — von Hand umschalten“ mit Anleitung und ruft die API nie auf. Mit Token setzt er `zerodox.de A` selbst |
+| `notbetrieb-umschalter.service` | HEL1, Benutzer `notbetrieb` | erkennt den Totalausfall. **Normalfall auf HEL1: GitHub-Anstoß** — er startet den Workflow *Notbetrieb* im privaten Repo `Commandershadow9/zerodox-notschalter` (an/aus), der selbst misst und `zerodox.de A` setzt. Scheitert der Anstoß (oder fehlt `GITHUB_DISPATCH_TOKEN`), meldet er einmal je Vorfall „🛟 Notbetrieb nötig — von Hand umschalten“. Mit DNS-Token (nur auf einem eigenen Host) setzt er selbst |
 | `notbetrieb-reload.timer` | HEL1, täglich 05:20 | nginx lädt das gespiegelte Zertifikat neu |
 
 **Regeln des Umschalters** (im Code verdrahtet, nicht konfigurierbar):
@@ -103,6 +103,13 @@ Zahlungen und API liefern 503. Es gibt keine Datenbank auf HEL1, also auch keine
 - Umschalten nach 10 min TOT, wenn der vorletzte Hop vor dem Hauptserver im Traceroute antwortet (Strecke bis ins Rechenzentrum intakt), sonst nach 30 min.
 - Nicht umschalten, wenn HEL1 blind ist, `/etc/notbetrieb/sperre` existiert, im DNS ein dritter Wert steht oder HEL1 die Notseite selbst nicht ausliefert.
 - Zurück erst nach 10 min durchgehend `200` von `zerodox.de/api/health` an der Haupt-IP. ntfy + Discord bei beidem.
+- **GitHub-Weg** (seit 12.11.2026): `GITHUB_DISPATCH_TOKEN` in `/etc/notbetrieb/notbetrieb.env` ist ein Fine-grained PAT
+  mit **nur „Actions: write“ auf `zerodox-notschalter`**. Der DNS-Token liegt dort nur als Repo-Geheimnis. Der Lauf auf
+  einem GitHub-Runner glaubt HEL1 nichts: `an` nur nach 3× nicht-200 an der Haupt-IP **und** wenn HEL1 die Notseite
+  ausliefert, `aus` nur nach 3× 200. Ein gestohlener PAT löst also höchstens einen Lauf aus, der nichts tut.
+  Anstoß höchstens alle 5 min je Richtung; den DNS-Stand liest HEL1 am autoritativen Nameserver (`dig`).
+  Zeitplan alle 3 h als Rückfallnetz: steht `@` auf HEL1 bei gesundem Hauptserver → zurück.
+  **Vom Handy:** jede ntfy-Meldung hat den Knopf „Schalter öffnen“ → GitHub-App → *Run workflow* → `an`/`aus`.
 - Mit Token: Vor jedem API-Aufruf wird die Absicht (`absicht`) geschrieben. Steht `modus=normal`, zeigt das DNS aber
   auf HEL1 und ist der Hauptserver gesund, schaltet der nächste Lauf zurück und meldet „Abgleich“.
 - Der Token geht nur über stdin an curl (`-K -`), nie als Prozessargument.
@@ -114,10 +121,11 @@ Zahlungen und API liefern 503. Es gibt keine Datenbank auf HEL1, also auch keine
 
 **Bedienung auf HEL1:**
 ```bash
-sudo -u notbetrieb /opt/notbetrieb/notbetrieb-umschalter.sh status    # Zustand (token=ja|nein)
+sudo -u notbetrieb /opt/notbetrieb/notbetrieb-umschalter.sh status    # Zustand (token=ja|nein, github=ja|nein)
 sudo -u notbetrieb /opt/notbetrieb/notbetrieb-umschalter.sh an        # von Hand auf HEL1
 sudo -u notbetrieb /opt/notbetrieb/notbetrieb-umschalter.sh aus       # von Hand zurück
 sudo -u notbetrieb /opt/notbetrieb/notbetrieb-umschalter.sh test-dns  # nur mit Token; ohne bricht er ab (Probelauf läuft vom Hauptserver, siehe inbetriebnahme.sh)
+sudo -u notbetrieb /opt/notbetrieb/notbetrieb-umschalter.sh test-github  # Probelauf GitHub-Weg an notbetrieb-test (ohne Kunden)
 touch /etc/notbetrieb/sperre                                          # Automatik aus (z. B. geplante Wartung)
 ```
 ⚠️ Wer `an` von Hand bei gesundem Hauptserver auslöst, wird nach 10 min automatisch zurückgeschaltet.
@@ -127,14 +135,18 @@ touch /etc/notbetrieb/sperre                                          # Automati
 - **HEL1 ist ein CI-Host.** Die Runner-Benutzer sind in der `docker`-Gruppe und damit root-äquivalent. Jedes
   Geheimnis auf HEL1 ist für einen kompromittierten CI-Lauf erreichbar.
   - **Kein DNS-Token auf HEL1.** Der Hetzner-Cloud-Token könnte die ganze Zone übernehmen, auch MX (Post-Umleitung).
-    Deshalb schaltet der Umschalter dort nicht selbst, sondern meldet „von Hand umschalten“ mit Anleitung
+    Deshalb schaltet der Umschalter dort nicht selbst, sondern stößt den GitHub-Workflow an (PAT nur
+    „Actions: write“ auf einem Repo, s. o.); Rückfall ist die Meldung „von Hand umschalten“
     (Hetzner Console → DNS → zerodox.de → `@ A` auf `157.180.55.95`, zurück auf `88.99.160.210`).
+    ⚠️ Auf `zerodox-notschalter` darf nur der Betreiber Schreibrecht haben: Wer dort Code pushen kann, kann das
+    Repo-Geheimnis auslesen.
     `inbetriebnahme.sh` entfernt einen vorhandenen Token und fährt den DNS-Probelauf vom Hauptserver aus.
   - **Robot-Zugang (Hardware-Reset) erst nach Umzug auf einen eigenen Server.** Die Robot-Zugangsdaten können
     jeden Server des Kontos resetten oder neu installieren. Solange der Wächter auf HEL1 läuft, gehört
     `ROBOT_*` nicht in `/etc/notfall/notfall.env`; ohne sie meldet die Reset-Stufe „bitte selbst resetten“.
-- **Folgeschritt: eigener Kleinserver** für Wächter, Umschalter und Notseite (ohne CI, ohne docker-Gruppe für
-  Fremdcode). Erst dort dürfen DNS-Token und Robot-Zugang liegen.
+- **Optional: eigener Kleinserver** für Wächter, Umschalter und Notseite (ohne CI, ohne docker-Gruppe für
+  Fremdcode). Die DNS-Umschaltung braucht ihn seit dem GitHub-Weg nicht mehr; nur der automatische
+  Hardware-Reset (Robot-Zugang) wartet weiter darauf.
 - **Agent und Wächter teilen sich noch den Benutzer `notfall`.** Der Agent könnte damit den Wächter-Zustand und
   `/etc/notfall/notfall.env` lesen. `InaccessiblePaths` in der Unit geht nicht (der Wächter braucht die env).
   Die Trennung (eigener Benutzer für den Agenten) ist offen.
