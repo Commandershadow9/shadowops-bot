@@ -20,7 +20,7 @@
 | Discord | discord.py | siehe requirements.txt |
 | Datenbank | PostgreSQL | 3 DBs: security_analyst, agent_learning, seo_agent |
 | Cache | Redis | — |
-| AI Primary | Codex CLI | gpt-4o / gpt-5.3-codex / o3 |
+| AI Primary | Codex CLI | gpt-4o / gpt-5.5 / o3 |
 | AI Fallback | Claude CLI | claude-sonnet-4-6 / claude-opus-4-6 |
 | Container | Docker | mit Trivy fuer Scans |
 | Service | systemd | `/etc/systemd/system/shadowops-bot.service` |
@@ -42,7 +42,7 @@
 shadowops-bot/
 ├── src/
 │   ├── bot.py                    # Haupt-Bot
-│   ├── cogs/                     # Slash-Commands (admin, inspector, monitoring)
+│   ├── cogs/                     # Slash-Commands (admin, claude_cli, cron_heartbeat, crowdsec_notfall, customer_setup_commands, inspector, monitoring, phase_5e_health_aggregator)
 │   ├── integrations/             # Externe Systeme (siehe unten)
 │   ├── patch_notes/              # Patch Notes Pipeline v6 (5-Stufen State Machine, ~2100 Zeilen)
 │   ├── schemas/                  # JSON-Schemas fuer Structured Output (fix_strategy, patch_notes, incident_analysis, jules_review)
@@ -207,6 +207,7 @@ Read-Only ACL auf `scripts/` und `deploy/` für `keydev` ist gesetzt (`getfacl` 
 - **Niemals** `pytest` mit Live-DB laufen lassen — Fixtures nutzen.
 - **Niemals** Discord-Token, Webhook-Secrets, oder DB-Passwords im Code referenzieren — nur `os.environ`.
 - **Niemals** systemd-Service per Worker-PR aendern — das ist Server-State, nicht Repo-State.
+- **Niemals** `docker-ce`, `containerd` oder verwandte Container-Runtime-Pakete per Fix-Session aktualisieren — das killt laufende Container (#691). Maintenance-Window verwenden.
 
 ## Setup-Commands
 
@@ -286,6 +287,7 @@ Worker-Konventionen:
 
 ## Letztes Update dieser Datei
 
+2026-11-13 — Neue Cogs + Notfall-Selbstheilung (#691, #694–#702): Vier neue Cogs in Produktion — `crowdsec_notfall.py` (Owner-only Notfall-Zugang bei CrowdSec-Sperre via Discord-Handy, entstanden aus Vorfall 2026-09-10 wo Betreiber 4h ausgesperrt war — `/sperren`+`/entsperren` rufen `/usr/local/bin/zerodox-crowdsec-entsperren` auf), `cron_heartbeat.py` (Mtime-Watcher für Cron-Log-Dateien als Layer-3-Defense für ZERODOX Synthetic-Monitor, Lehre aus ZERODOX-Vorfall 2026-04-13/14), `phase_5e_health_aggregator.py` (Phase-5e Health-Aggregator), `customer_setup_commands.py` (Customer-Server-Setup-Befehle). Notfall-Agent: bei voller Platte darf Build-Cache und namenlose Images geräumt werden (#695). Notbetrieb HEL1: ZERODOX-Failover auf Hetzner-Server bei Totalausfall, Umschaltung per GitHub-Trigger (#697–#702), tägliche GitHub-Key-Prüfung (#701). Tech-Stack-Korrektur: `gpt-5.3-codex` ist seit 2026-07-09 HTTP 400 (ChatGPT-Abo nicht mehr unterstützt) — Tech-Stack-Tabelle auf `gpt-5.5` korrigiert. DON'T ergänzt: `docker-ce`/`containerd` nicht per Fix-Session aktualisieren (#691).
 2026-11-09 — CI-Reconcile bei fremder Deploy-Sperre (#674/#675): `_reconcile_ci_success_deployment` in `ci_mixin.py` prüft jetzt zu Beginn jeder Runde `_fremde_deploy_sperre()` — bei fremder Sperre ohne eigenen Bot-Deploy gibt es keinen Versuch, keine Messung, eine Logzeile. Bei fremdem Ausliefern zieht `deploy_feedback.melde_fremd_ausgeliefert()` einen noch `pending` Status auf `success` nach. `deploy_feedback` ist neues Sub-Modul in `github_integration/` (Package-Liste aktualisiert). Vollständige Regeln und Grenzen in `.claude/rules/safety.md`. Tests: `test_ci_reconcile_fremde_sperre.py` + `test_ci_reconcile_merge_serie.py` + `test_deploy_feedback_github.py`.
 
 2026-07-09 — Security-Agent-Team Phase 0 + W1 (#290 / PRs #333, #338, #339 — alle gemerged + live): **Phase 0:** AI-Kern des Monolithen war seit 07.07. komplett tot — Doppel-Ursache: `security_analyst.model gpt-5.3-codex` vom ChatGPT-Abo nicht mehr unterstützt (HTTP 400) + hartcodierter Claude-CLI-Pfad `~/.local/bin/claude` existiert seit npm-Umzug nicht mehr (FileNotFoundError in Fallback UND Fix-Phase). Fixes: `resolve_claude_cli_path()` (env `CLAUDE_CLI_PATH` → configured → which → Fallback-Liste), Live-Config auf `gpt-5.5` (real getestet; `gpt-5.5-codex` → 400), Reflection-KeyError `'"quality_score"'` = `str.format()` auf Template mit JSON-Beispiel → `render_reflection_prompt()` mit `.replace()`, stale Server-Fakten (Debian 12/8 GB → Debian 13/64 GB) in 7 Prompt-Stellen, fail2ban aus Tool-Listen (nicht installiert, #295). **Live verifiziert:** Session #539 OK via codex/gpt-5.5 (6 Findings/6 Issues) — dabei nächsten verdeckten Bug gefangen: Fix-Phase crashte bei LLM-`summary` als dict (`dict + str`) → #338. **W1 (PR #339, zweistufig subagent-reviewt):** `orchestrator_main` = echter `sec:trigger`-Subscribe-Loop, `trigger`-Durchreichung, Trigger-/Reaper-/Soak-Scripts, `security-freshness-watchdog`, Modell-Default-Hygiene repo-weit. Reviews fingen CRITICAL (`findings` hat `found_at`, NICHT `created_at` — Soak-Script wäre stumm gewesen) + IMPORTANT (psql-Command-Tag-Off-by-one bei `RETURNING 1 | wc -l` → CTE-Zählung; gleicher Bug im SEO-Reaper gefixt, agents@a472627). **Ops:** Units + env-Datei (600) + 3 Crons (05:23/06:41/07:31) installiert, erster E2E-Lauf 2×`ok`/14 Findings (GuildScout: 1 CRITICAL + 4 HIGH npm!), Watchdog getestet + Timer aktiv. **7d-Soak bis ~2026-07-16**, dann W2. Dazu Phase-0-Ops: Trivy 0.72.0 + Daily-Scan 04:15 reaktiviert (`~/scripts/trivy-daily-scan.sh`, Bot-Format; Erstlauf 15 Images: 15 CRITICAL/242 HIGH), kptr_restrict=1, Backup-Dirs 700/750, Dashboard-Binding 127.0.0.1, 9 obsolete Issues geschlossen (#313 #314 #295 #310 #311 #327 #328 #330 #331). Spec v2: `docs/design/2026-07-09-security-agent-team-v2-spec.md`.
