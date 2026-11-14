@@ -359,6 +359,29 @@ Shows overview of all monitored projects.
 
 ---
 
+### Customer Server Setup Commands
+
+#### `/setup-customer-server`
+Creates GuildScout monitoring channels on a customer Discord server and returns the corresponding `config.yaml` snippet.
+
+**Permissions:** Administrator
+**Parameters:** None
+**Returns:** Ephemeral embed listing created channels plus a ready-to-paste `config.yaml` block for `external_notifications`.
+
+**Use case:** Run this once after inviting ShadowOps to a GuildScout customer server. The bot creates the required channels (category + notification channels) with correct permissions, then outputs the config snippet to add to `config/config.yaml` followed by a bot restart.
+
+**Failure conditions:**
+- Bot missing `Manage Channels` permission
+- Channels already exist
+- `customer_server_setup` integration not initialized
+
+**Example:**
+```
+/setup-customer-server
+```
+
+---
+
 ### Mobile Workflow Commands
 
 #### `/claude`
